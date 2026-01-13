@@ -4,6 +4,7 @@ import { SelectionManager } from "./SelectionManager";
 import { MaskManager } from "./MaskManager";
 import { PersistenceManager } from "./PersistenceManager";
 import { HistoryManager } from "./HistoryManager";
+import { SnappingManager, type SnappingConfig } from "./SnappingManager";
 import { switchClip } from "./clipping";
 import { switchShape, nextShape } from "./shapes";
 import { ImageFrame } from "./ImageFrame";
@@ -40,6 +41,7 @@ export class FabricEditor {
   readonly masks: MaskManager;
   readonly persistence: PersistenceManager;
   readonly history: HistoryManager;
+  readonly snapping: SnappingManager;
 
   private state: EditorState;
   private config: EditorConfig;
@@ -59,6 +61,7 @@ export class FabricEditor {
     this.masks = new MaskManager(this.canvas);
     this.persistence = new PersistenceManager(this.canvas, this.layers);
     this.history = new HistoryManager(this.canvas, this.layers);
+    this.snapping = new SnappingManager(this.canvas);
 
     // Étendre FabricObject pour inclure layerId dans le JSON
     this.extendFabricObject();
@@ -463,6 +466,7 @@ export class FabricEditor {
    * Nettoie les ressources
    */
   dispose(): void {
+    this.snapping.dispose();
     this.selection.dispose();
     this.canvas.dispose();
   }

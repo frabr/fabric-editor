@@ -12,6 +12,7 @@ export { SelectionManager } from "./SelectionManager";
 export { MaskManager } from "./MaskManager";
 export { PersistenceManager } from "./PersistenceManager";
 export { HistoryManager } from "./HistoryManager";
+export { SnappingManager } from "./SnappingManager";
 
 // Handlers
 export { ImageDropHandler } from "./ImageDropHandler";
@@ -81,3 +82,4 @@ export type {
 } from "./types";
 
 export type { HistoryState, HistoryCallbacks } from "./HistoryManager";
+export type { SnappingConfig } from "./SnappingManager";
