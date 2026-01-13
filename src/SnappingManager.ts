@@ -16,6 +16,13 @@ interface SnapGuide {
   position: number;
 }
 
+interface SnapState {
+  snappedX: "center" | "left" | "right" | null;
+  snappedY: "center" | "top" | "bottom" | null;
+  lastPointerX: number;
+  lastPointerY: number;
+}
+
 /**
  * Gère le snapping (aimantage) des objets sur le canvas.
  *
@@ -28,6 +35,9 @@ export class SnappingManager {
   private config: Required<SnappingConfig>;
   private guides: Line[] = [];
   private enabled: boolean = true;
+  private snapState: SnapState | null = null;
+  /** Multiplicateur pour le seuil de sortie du snap (défaut: 2x le seuil d'entrée) */
+  private exitMultiplier: number = 2;
 
   constructor(canvas: Canvas, config: SnappingConfig = {}) {
     this.canvas = canvas;
@@ -66,13 +76,23 @@ export class SnappingManager {
   }
 
   private setupEventListeners(): void {
-    this.canvas.on("object:moving", (e) => this.handleObjectMoving(e.target));
+    this.canvas.on("object:moving", (e) => this.handleObjectMoving(e));
     this.canvas.on("object:scaling", (e) => this.handleObjectScaling(e.target));
-    this.canvas.on("object:modified", () => this.clearGuides());
-    this.canvas.on("selection:cleared", () => this.clearGuides());
+    this.canvas.on("object:modified", () => {
+      this.clearGuides();
+      this.snapState = null;
+    });
+    this.canvas.on("selection:cleared", () => {
+      this.clearGuides();
+      this.snapState = null;
+    });
+    this.canvas.on("mouse:down", () => {
+      this.snapState = null;
+    });
   }
 
-  private handleObjectMoving(obj: FabricObject | undefined): void {
+  private handleObjectMoving(e: { target?: FabricObject; pointer?: { x: number; y: number } }): void {
+    const obj = e.target;
     if (!obj || !this.enabled) return;
 
     // Ignorer l'image de fond
@@ -80,6 +100,9 @@ export class SnappingManager {
 
     const activeGuides: SnapGuide[] = [];
     const bound = obj.getBoundingRect();
+
+    // Position actuelle du pointeur (ou estimer depuis l'objet)
+    const pointer = e.pointer || { x: obj.left || 0, y: obj.top || 0 };
 
     // Centre de l'objet
     const objCenterX = bound.left + bound.width / 2;
@@ -89,54 +112,137 @@ export class SnappingManager {
     const canvasCenterX = this.canvas.width / 2;
     const canvasCenterY = this.canvas.height / 2;
 
+    // Initialiser l'état du snap si nécessaire
+    if (!this.snapState) {
+      this.snapState = {
+        snappedX: null,
+        snappedY: null,
+        lastPointerX: pointer.x,
+        lastPointerY: pointer.y,
+      };
+    }
+
+    // Calculer le déplacement du pointeur depuis le dernier snap
+    const pointerDeltaX = pointer.x - this.snapState.lastPointerX;
+    const pointerDeltaY = pointer.y - this.snapState.lastPointerY;
+
+    // Seuils
+    const enterThreshold = this.config.threshold;
+    const exitThreshold = this.config.threshold * this.exitMultiplier;
+
     let snapX: number | null = null;
     let snapY: number | null = null;
+    let newSnappedX: SnapState["snappedX"] = null;
+    let newSnappedY: SnapState["snappedY"] = null;
 
-    // Snap au centre horizontal
+    // === SNAP HORIZONTAL ===
     if (this.config.snapToCenter) {
-      if (Math.abs(objCenterX - canvasCenterX) < this.config.threshold) {
+      const distToCenter = Math.abs(objCenterX - canvasCenterX);
+      const wasSnappedToCenter = this.snapState.snappedX === "center";
+
+      if (wasSnappedToCenter) {
+        // Déjà snappé au centre : vérifier si on doit sortir
+        if (Math.abs(pointerDeltaX) < exitThreshold) {
+          snapX = canvasCenterX - bound.width / 2;
+          newSnappedX = "center";
+          activeGuides.push({ orientation: "vertical", position: canvasCenterX });
+        }
+      } else if (distToCenter < enterThreshold) {
+        // Pas encore snappé : entrer dans le snap
         snapX = canvasCenterX - bound.width / 2;
+        newSnappedX = "center";
         activeGuides.push({ orientation: "vertical", position: canvasCenterX });
-      }
-
-      // Snap au centre vertical
-      if (Math.abs(objCenterY - canvasCenterY) < this.config.threshold) {
-        snapY = canvasCenterY - bound.height / 2;
-        activeGuides.push({ orientation: "horizontal", position: canvasCenterY });
+        this.snapState.lastPointerX = pointer.x;
       }
     }
 
-    // Snap aux bords
-    if (this.config.snapToEdges) {
-      // Bord gauche
-      if (Math.abs(bound.left) < this.config.threshold) {
+    if (this.config.snapToEdges && newSnappedX === null) {
+      const distToLeft = Math.abs(bound.left);
+      const distToRight = Math.abs(bound.left + bound.width - this.canvas.width);
+      const wasSnappedToLeft = this.snapState.snappedX === "left";
+      const wasSnappedToRight = this.snapState.snappedX === "right";
+
+      if (wasSnappedToLeft) {
+        if (Math.abs(pointerDeltaX) < exitThreshold) {
+          snapX = 0;
+          newSnappedX = "left";
+          activeGuides.push({ orientation: "vertical", position: 0 });
+        }
+      } else if (wasSnappedToRight) {
+        if (Math.abs(pointerDeltaX) < exitThreshold) {
+          snapX = this.canvas.width - bound.width;
+          newSnappedX = "right";
+          activeGuides.push({ orientation: "vertical", position: this.canvas.width });
+        }
+      } else if (distToLeft < enterThreshold) {
         snapX = 0;
+        newSnappedX = "left";
         activeGuides.push({ orientation: "vertical", position: 0 });
-      }
-      // Bord droit
-      else if (Math.abs(bound.left + bound.width - this.canvas.width) < this.config.threshold) {
+        this.snapState.lastPointerX = pointer.x;
+      } else if (distToRight < enterThreshold) {
         snapX = this.canvas.width - bound.width;
+        newSnappedX = "right";
         activeGuides.push({ orientation: "vertical", position: this.canvas.width });
-      }
-
-      // Bord haut
-      if (Math.abs(bound.top) < this.config.threshold) {
-        snapY = 0;
-        activeGuides.push({ orientation: "horizontal", position: 0 });
-      }
-      // Bord bas
-      else if (Math.abs(bound.top + bound.height - this.canvas.height) < this.config.threshold) {
-        snapY = this.canvas.height - bound.height;
-        activeGuides.push({ orientation: "horizontal", position: this.canvas.height });
+        this.snapState.lastPointerX = pointer.x;
       }
     }
+
+    // === SNAP VERTICAL ===
+    if (this.config.snapToCenter) {
+      const distToCenter = Math.abs(objCenterY - canvasCenterY);
+      const wasSnappedToCenter = this.snapState.snappedY === "center";
+
+      if (wasSnappedToCenter) {
+        if (Math.abs(pointerDeltaY) < exitThreshold) {
+          snapY = canvasCenterY - bound.height / 2;
+          newSnappedY = "center";
+          activeGuides.push({ orientation: "horizontal", position: canvasCenterY });
+        }
+      } else if (distToCenter < enterThreshold) {
+        snapY = canvasCenterY - bound.height / 2;
+        newSnappedY = "center";
+        activeGuides.push({ orientation: "horizontal", position: canvasCenterY });
+        this.snapState.lastPointerY = pointer.y;
+      }
+    }
+
+    if (this.config.snapToEdges && newSnappedY === null) {
+      const distToTop = Math.abs(bound.top);
+      const distToBottom = Math.abs(bound.top + bound.height - this.canvas.height);
+      const wasSnappedToTop = this.snapState.snappedY === "top";
+      const wasSnappedToBottom = this.snapState.snappedY === "bottom";
+
+      if (wasSnappedToTop) {
+        if (Math.abs(pointerDeltaY) < exitThreshold) {
+          snapY = 0;
+          newSnappedY = "top";
+          activeGuides.push({ orientation: "horizontal", position: 0 });
+        }
+      } else if (wasSnappedToBottom) {
+        if (Math.abs(pointerDeltaY) < exitThreshold) {
+          snapY = this.canvas.height - bound.height;
+          newSnappedY = "bottom";
+          activeGuides.push({ orientation: "horizontal", position: this.canvas.height });
+        }
+      } else if (distToTop < enterThreshold) {
+        snapY = 0;
+        newSnappedY = "top";
+        activeGuides.push({ orientation: "horizontal", position: 0 });
+        this.snapState.lastPointerY = pointer.y;
+      } else if (distToBottom < enterThreshold) {
+        snapY = this.canvas.height - bound.height;
+        newSnappedY = "bottom";
+        activeGuides.push({ orientation: "horizontal", position: this.canvas.height });
+        this.snapState.lastPointerY = pointer.y;
+      }
+    }
+
+    // Mettre à jour l'état du snap
+    this.snapState.snappedX = newSnappedX;
+    this.snapState.snappedY = newSnappedY;
 
     // Appliquer le snap
-    // Pour les objets avec origin au centre, on doit ajuster
     if (snapX !== null || snapY !== null) {
-      const newLeft = snapX !== null ? snapX + bound.width / 2 : obj.left;
-      const newTop = snapY !== null ? snapY + bound.height / 2 : obj.top;
-
       // Vérifier si l'objet a son origin au centre
       if (obj.originX === "center" && obj.originY === "center") {
         obj.set({
