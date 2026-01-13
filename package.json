@@ -1,0 +1,41 @@
+{
+  "name": "@apibots-io/fabric-editor",
+  "version": "1.0.0",
+  "description": "Fabric.js-based image editor with layers, clipping, and frame support",
+  "main": "dist/index.js",
+  "module": "dist/index.mjs",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "test": "vitest",
+    "test:run": "vitest run",
+    "prepublishOnly": "npm run build"
+  },
+  "peerDependencies": {
+    "fabric": "^6.0.0"
+  },
+  "devDependencies": {
+    "fabric": "^6.5.4",
+    "tsup": "^8.0.0",
+    "typescript": "^5.3.0",
+    "vitest": "^2.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+ssh://git@github.com/apibots-io/fabric-editor.git"
+  },
+  "author": "Apibots",
+  "license": "UNLICENSED",
+  "private": true
+}
