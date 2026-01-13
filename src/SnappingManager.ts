@@ -328,7 +328,7 @@ export class SnappingManager {
         ? [guide.position, 0, guide.position, this.canvas.height]
         : [0, guide.position, this.canvas.width, guide.position];
 
-    return new Line(coords, {
+    return new Line(coords as [number, number, number, number], {
       stroke: this.config.guideColor,
       strokeWidth: 1,
       strokeDashArray: [5, 5],
