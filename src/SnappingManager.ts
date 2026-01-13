@@ -23,6 +23,22 @@ interface SnapState {
   lastPointerY: number;
 }
 
+interface ResizeSnapState {
+  snappedEdgeX: "left" | "right" | "center" | null;
+  snappedEdgeY: "top" | "bottom" | "center" | null;
+  lastPointerX: number;
+  lastPointerY: number;
+}
+
+export interface ResizeSnapResult {
+  /** Nouvelle largeur ajustée (ou null si pas de snap horizontal) */
+  width: number | null;
+  /** Nouvelle hauteur ajustée (ou null si pas de snap vertical) */
+  height: number | null;
+  /** Guides actifs à afficher */
+  guides: SnapGuide[];
+}
+
 /**
  * Gère le snapping (aimantage) des objets sur le canvas.
  *
@@ -36,6 +52,7 @@ export class SnappingManager {
   private guides: Line[] = [];
   private enabled: boolean = true;
   private snapState: SnapState | null = null;
+  private resizeSnapState: ResizeSnapState | null = null;
   /** Multiplicateur pour le seuil de sortie du snap (défaut: 2x le seuil d'entrée) */
   private exitMultiplier: number = 2;
 
@@ -326,6 +343,168 @@ export class SnappingManager {
       this.canvas.remove(guide);
     }
     this.guides = [];
+  }
+
+  /**
+   * Calcule le snap pendant le redimensionnement d'un objet
+   *
+   * @param bounds - Les bords de l'objet (left, top, right, bottom)
+   * @param changeX - Direction du resize horizontal (-1 = gauche, 1 = droite, 0 = pas de changement)
+   * @param changeY - Direction du resize vertical (-1 = haut, 1 = bas, 0 = pas de changement)
+   * @param pointer - Position actuelle du pointeur
+   * @returns Les dimensions ajustées et les guides à afficher
+   */
+  calculateResizeSnap(
+    bounds: { left: number; top: number; right: number; bottom: number },
+    changeX: -1 | 0 | 1,
+    changeY: -1 | 0 | 1,
+    pointer: { x: number; y: number }
+  ): ResizeSnapResult {
+    if (!this.enabled) {
+      return { width: null, height: null, guides: [] };
+    }
+
+    const activeGuides: SnapGuide[] = [];
+    const enterThreshold = this.config.threshold;
+    const exitThreshold = this.config.threshold * this.exitMultiplier;
+
+    // Initialiser l'état du resize snap si nécessaire
+    if (!this.resizeSnapState) {
+      this.resizeSnapState = {
+        snappedEdgeX: null,
+        snappedEdgeY: null,
+        lastPointerX: pointer.x,
+        lastPointerY: pointer.y,
+      };
+    }
+
+    const pointerDeltaX = pointer.x - this.resizeSnapState.lastPointerX;
+    const pointerDeltaY = pointer.y - this.resizeSnapState.lastPointerY;
+
+    let snapWidth: number | null = null;
+    let snapHeight: number | null = null;
+    let newSnappedEdgeX: ResizeSnapState["snappedEdgeX"] = null;
+    let newSnappedEdgeY: ResizeSnapState["snappedEdgeY"] = null;
+
+    const currentWidth = bounds.right - bounds.left;
+    const currentHeight = bounds.bottom - bounds.top;
+    const canvasWidth = this.canvas.width;
+    const canvasHeight = this.canvas.height;
+    const canvasCenterX = canvasWidth / 2;
+    const canvasCenterY = canvasHeight / 2;
+
+    // === SNAP HORIZONTAL (bord qui bouge) ===
+    if (changeX !== 0) {
+      const movingEdgeX = changeX === 1 ? bounds.right : bounds.left;
+      const fixedEdgeX = changeX === 1 ? bounds.left : bounds.right;
+
+      // Snap au bord du canvas (droit ou gauche selon la direction)
+      if (this.config.snapToEdges) {
+        const targetEdge = changeX === 1 ? canvasWidth : 0;
+        const edgeName = changeX === 1 ? "right" : "left";
+        const distToEdge = Math.abs(movingEdgeX - targetEdge);
+        const wasSnapped = this.resizeSnapState.snappedEdgeX === edgeName;
+
+        if (wasSnapped) {
+          if (Math.abs(pointerDeltaX) < exitThreshold) {
+            snapWidth = Math.abs(targetEdge - fixedEdgeX);
+            newSnappedEdgeX = edgeName;
+            activeGuides.push({ orientation: "vertical", position: targetEdge });
+          }
+        } else if (distToEdge < enterThreshold) {
+          snapWidth = Math.abs(targetEdge - fixedEdgeX);
+          newSnappedEdgeX = edgeName;
+          activeGuides.push({ orientation: "vertical", position: targetEdge });
+          this.resizeSnapState.lastPointerX = pointer.x;
+        }
+      }
+
+      // Snap au centre horizontal du canvas
+      if (this.config.snapToCenter && newSnappedEdgeX === null) {
+        const distToCenter = Math.abs(movingEdgeX - canvasCenterX);
+        const wasSnappedToCenter = this.resizeSnapState.snappedEdgeX === "center";
+
+        if (wasSnappedToCenter) {
+          if (Math.abs(pointerDeltaX) < exitThreshold) {
+            snapWidth = Math.abs(canvasCenterX - fixedEdgeX);
+            newSnappedEdgeX = "center";
+            activeGuides.push({ orientation: "vertical", position: canvasCenterX });
+          }
+        } else if (distToCenter < enterThreshold) {
+          snapWidth = Math.abs(canvasCenterX - fixedEdgeX);
+          newSnappedEdgeX = "center";
+          activeGuides.push({ orientation: "vertical", position: canvasCenterX });
+          this.resizeSnapState.lastPointerX = pointer.x;
+        }
+      }
+    }
+
+    // === SNAP VERTICAL (bord qui bouge) ===
+    if (changeY !== 0) {
+      const movingEdgeY = changeY === 1 ? bounds.bottom : bounds.top;
+      const fixedEdgeY = changeY === 1 ? bounds.top : bounds.bottom;
+
+      // Snap au bord du canvas (bas ou haut selon la direction)
+      if (this.config.snapToEdges) {
+        const targetEdge = changeY === 1 ? canvasHeight : 0;
+        const edgeName = changeY === 1 ? "bottom" : "top";
+        const distToEdge = Math.abs(movingEdgeY - targetEdge);
+        const wasSnapped = this.resizeSnapState.snappedEdgeY === edgeName;
+
+        if (wasSnapped) {
+          if (Math.abs(pointerDeltaY) < exitThreshold) {
+            snapHeight = Math.abs(targetEdge - fixedEdgeY);
+            newSnappedEdgeY = edgeName;
+            activeGuides.push({ orientation: "horizontal", position: targetEdge });
+          }
+        } else if (distToEdge < enterThreshold) {
+          snapHeight = Math.abs(targetEdge - fixedEdgeY);
+          newSnappedEdgeY = edgeName;
+          activeGuides.push({ orientation: "horizontal", position: targetEdge });
+          this.resizeSnapState.lastPointerY = pointer.y;
+        }
+      }
+
+      // Snap au centre vertical du canvas
+      if (this.config.snapToCenter && newSnappedEdgeY === null) {
+        const distToCenter = Math.abs(movingEdgeY - canvasCenterY);
+        const wasSnappedToCenter = this.resizeSnapState.snappedEdgeY === "center";
+
+        if (wasSnappedToCenter) {
+          if (Math.abs(pointerDeltaY) < exitThreshold) {
+            snapHeight = Math.abs(canvasCenterY - fixedEdgeY);
+            newSnappedEdgeY = "center";
+            activeGuides.push({ orientation: "horizontal", position: canvasCenterY });
+          }
+        } else if (distToCenter < enterThreshold) {
+          snapHeight = Math.abs(canvasCenterY - fixedEdgeY);
+          newSnappedEdgeY = "center";
+          activeGuides.push({ orientation: "horizontal", position: canvasCenterY });
+          this.resizeSnapState.lastPointerY = pointer.y;
+        }
+      }
+    }
+
+    // Mettre à jour l'état du snap
+    this.resizeSnapState.snappedEdgeX = newSnappedEdgeX;
+    this.resizeSnapState.snappedEdgeY = newSnappedEdgeY;
+
+    // Afficher les guides
+    this.updateGuides(activeGuides);
+
+    return {
+      width: snapWidth,
+      height: snapHeight,
+      guides: activeGuides,
+    };
+  }
+
+  /**
+   * Réinitialise l'état du snap de resize (à appeler quand le resize est terminé)
+   */
+  resetResizeSnap(): void {
+    this.resizeSnapState = null;
+    this.clearGuides();
   }
 
   /**

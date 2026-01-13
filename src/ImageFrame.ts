@@ -5,6 +5,7 @@ import {
   classRegistry,
   type TPointerEvent,
   type Transform,
+  type Canvas,
   LayoutManager,
   FixedLayout,
 } from "fabric";
@@ -15,6 +16,12 @@ import {
   createHexagon,
   createRoundedRect,
 } from "./shapes/factories";
+import type { SnappingManager } from "./SnappingManager";
+
+/** Interface pour accéder au SnappingManager depuis le canvas */
+interface CanvasWithSnapping extends Canvas {
+  snappingManager?: SnappingManager;
+}
 
 export interface ImageFrameOptions {
   left?: number;
@@ -370,6 +377,12 @@ export class ImageFrame extends Group {
    */
   private _setupScaleAbsorption(): void {
     this.on("modified", () => {
+      // Réinitialiser le snap state de resize
+      const canvas = this.canvas as CanvasWithSnapping | undefined;
+      if (canvas?.snappingManager) {
+        canvas.snappingManager.resetResizeSnap();
+      }
+
       if (Math.abs(this.scaleX - 1) < 0.001 && Math.abs(this.scaleY - 1) < 0.001) {
         return;
       }
@@ -388,7 +401,7 @@ export class ImageFrame extends Group {
     const resizeHandler = (changeX: -1 | 0 | 1, changeY: -1 | 0 | 1) => {
       return (eventData: TPointerEvent, transform: TransformState): boolean => {
         const target = transform.target as ImageFrame;
-        const canvas = target.canvas;
+        const canvas = target.canvas as CanvasWithSnapping | undefined;
         if (!canvas) return false;
 
         const pointer = canvas.getScenePoint(eventData);
@@ -409,8 +422,81 @@ export class ImageFrame extends Group {
         );
 
         // Calculer les nouvelles dimensions (sans le * 2, pour un resize non-centré)
-        const newWidth = Math.max(20, transform._startWidth + rotated.x * changeX);
-        const newHeight = Math.max(20, transform._startHeight! + rotated.y * changeY);
+        let newWidth = Math.max(20, transform._startWidth + rotated.x * changeX);
+        let newHeight = Math.max(20, transform._startHeight! + rotated.y * changeY);
+
+        // === Snapping pendant le resize ===
+        // Calculer les bounds actuels de l'objet pour le snapping
+        // Le coin fixe reste à sa position de départ
+        const startCenterX = transform._startLeft!;
+        const startCenterY = transform._startTop!;
+        const startHalfWidth = transform._startWidth / 2;
+        const startHalfHeight = transform._startHeight! / 2;
+
+        // Calculer la position du coin fixe (opposé au coin qu'on tire)
+        const fixedCornerLocalX = -changeX * startHalfWidth; // changeX=1 (droite) -> fixe à gauche
+        const fixedCornerLocalY = -changeY * startHalfHeight;
+
+        // Convertir en coordonnées canvas (avec rotation)
+        const fixedCornerRotated = rotatePoint(fixedCornerLocalX, fixedCornerLocalY, -target.angle);
+        const fixedCornerX = startCenterX + fixedCornerRotated.x;
+        const fixedCornerY = startCenterY + fixedCornerRotated.y;
+
+        // Calculer les bounds avec les nouvelles dimensions
+        // Pour simplifier, on utilise les bounds sans rotation pour le snap
+        // (le snap fonctionne mieux avec des objets non-rotés ou peu rotés)
+        let bounds: { left: number; top: number; right: number; bottom: number };
+        if (Math.abs(target.angle % 90) < 1) {
+          // Objet aligné : calcul précis des bounds
+          if (changeX === 1) {
+            bounds = {
+              left: fixedCornerX,
+              right: fixedCornerX + newWidth,
+              top: changeY === 1 ? fixedCornerY : fixedCornerY - newHeight,
+              bottom: changeY === 1 ? fixedCornerY + newHeight : fixedCornerY,
+            };
+          } else if (changeX === -1) {
+            bounds = {
+              left: fixedCornerX - newWidth,
+              right: fixedCornerX,
+              top: changeY === 1 ? fixedCornerY : fixedCornerY - newHeight,
+              bottom: changeY === 1 ? fixedCornerY + newHeight : fixedCornerY,
+            };
+          } else {
+            // changeX === 0 (resize vertical uniquement)
+            bounds = {
+              left: startCenterX - newWidth / 2,
+              right: startCenterX + newWidth / 2,
+              top: changeY === 1 ? fixedCornerY : fixedCornerY - newHeight,
+              bottom: changeY === 1 ? fixedCornerY + newHeight : fixedCornerY,
+            };
+          }
+        } else {
+          // Objet roté : utiliser getBoundingRect approximatif
+          const halfW = newWidth / 2;
+          const halfH = newHeight / 2;
+          const centerX = startCenterX + (newWidth - transform._startWidth) / 2 * changeX;
+          const centerY = startCenterY + (newHeight - transform._startHeight!) / 2 * changeY;
+          bounds = {
+            left: centerX - halfW,
+            right: centerX + halfW,
+            top: centerY - halfH,
+            bottom: centerY + halfH,
+          };
+        }
+
+        // Appliquer le snapping si disponible
+        const snappingManager = canvas.snappingManager;
+        if (snappingManager) {
+          const snapResult = snappingManager.calculateResizeSnap(bounds, changeX, changeY, pointer);
+
+          if (snapResult.width !== null) {
+            newWidth = snapResult.width;
+          }
+          if (snapResult.height !== null) {
+            newHeight = snapResult.height;
+          }
+        }
 
         // Calculer le décalage pour garder le coin opposé fixe
         // L'objet a son origin au centre, donc on doit compenser le déplacement

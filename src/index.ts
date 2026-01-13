@@ -82,4 +82,4 @@ export type {
 } from "./types";
 
 export type { HistoryState, HistoryCallbacks } from "./HistoryManager";
-export type { SnappingConfig } from "./SnappingManager";
+export type { SnappingConfig, ResizeSnapResult } from "./SnappingManager";

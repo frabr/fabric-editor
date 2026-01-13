@@ -63,6 +63,9 @@ export class FabricEditor {
     this.history = new HistoryManager(this.canvas, this.layers);
     this.snapping = new SnappingManager(this.canvas);
 
+    // Stocker une référence au SnappingManager sur le canvas pour l'accès depuis ImageFrame
+    (this.canvas as unknown as { snappingManager: SnappingManager }).snappingManager = this.snapping;
+
     // Étendre FabricObject pour inclure layerId dans le JSON
     this.extendFabricObject();
 

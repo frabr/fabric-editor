@@ -21,6 +21,7 @@ src/
 ├── PendingUploadsManager.ts # Lazy upload vers Cloudinary
 ├── ImageFrame.ts           # Conteneur d'image avec cadre fixe
 ├── HistoryManager.ts       # Undo/redo
+├── SnappingManager.ts      # Aimantage aux bords et au centre
 ├── locking.ts              # Verrouillage des calques (position/contenu)
 ├── shapes/
 │   ├── paths.ts            # Constantes SVG (coeur, hexagone)
@@ -219,6 +220,35 @@ editor.persistence.compactAroundLayers();
 // Réinitialiser
 editor.persistence.reset();
 ```
+
+### Snapping (Aimantage)
+
+Le `SnappingManager` permet aux objets de s'aligner automatiquement sur les bords et le centre du canvas, pendant le déplacement et le redimensionnement.
+
+```typescript
+// Activé par défaut, accessible via editor.snapping
+editor.snapping.setEnabled(false); // Désactiver
+editor.snapping.setEnabled(true);  // Réactiver
+
+// Vérifier l'état
+if (editor.snapping.isEnabled()) {
+  // ...
+}
+
+// Configurer
+editor.snapping.updateConfig({
+  threshold: 15,        // Distance en pixels pour déclencher le snap (défaut: 10)
+  snapToCenter: true,   // Snap au centre du canvas (défaut: true)
+  snapToEdges: true,    // Snap aux bords du canvas (défaut: true)
+  guideColor: "#00ff00" // Couleur des guides visuels (défaut: "#ff00ff")
+});
+```
+
+**Comportement :**
+- **Déplacement** : les objets s'aimantent au centre et aux bords du canvas
+- **Redimensionnement** : les bords de l'objet s'aimantent aux bords et au centre du canvas (ImageFrame uniquement pour l'instant)
+- **Guides visuels** : des lignes pointillées apparaissent pour indiquer l'alignement
+- **Seuil de sortie** : il faut déplacer le curseur de 2× le seuil d'entrée pour "décoller" d'un point de snap
 
 ### Masques
 
