@@ -1,5 +1,5 @@
 {
-  "name": "@apibots-io/fabric-editor",
+  "name": "@frabr/fabric-editor",
   "version": "1.0.1",
   "description": "Fabric.js-based image editor with layers, clipping, and frame support",
   "main": "src/index.ts",
@@ -33,7 +33,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+ssh://git@github.com/apibots-io/fabric-editor.git"
+    "url": "git+ssh://git@github.com/frabr/fabric-editor.git"
   },
   "author": "Apibots",
   "license": "UNLICENSED",
