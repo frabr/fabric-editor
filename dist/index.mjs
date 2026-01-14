@@ -13,11 +13,11 @@ var PendingUploadsManager_exports = {};
 __export(PendingUploadsManager_exports, {
   PendingUploadsManager: () => PendingUploadsManager
 });
-var PendingUploadsManager;
+var _PendingUploadsManager, PendingUploadsManager;
 var init_PendingUploadsManager = __esm({
   "src/PendingUploadsManager.ts"() {
     "use strict";
-    PendingUploadsManager = class {
+    _PendingUploadsManager = class _PendingUploadsManager {
       constructor(uploadFn) {
         /** Map blob URL → File original */
         this.pending = /* @__PURE__ */ new Map();
@@ -28,7 +28,12 @@ var init_PendingUploadsManager = __esm({
        * @returns URL blob locale utilisable immédiatement
        */
       add(file) {
-        const blobUrl = URL.createObjectURL(file);
+        let blobUrl;
+        if (typeof URL !== "undefined" && typeof URL.createObjectURL === "function") {
+          blobUrl = URL.createObjectURL(file);
+        } else {
+          blobUrl = `node-blob://${++_PendingUploadsManager.nodeIdCounter}`;
+        }
         this.pending.set(blobUrl, file);
         return blobUrl;
       }
@@ -67,7 +72,9 @@ var init_PendingUploadsManager = __esm({
         const uploaded = await Promise.all(uploads);
         for (const { blobUrl, cloudinaryUrl } of uploaded) {
           results.set(blobUrl, cloudinaryUrl);
-          URL.revokeObjectURL(blobUrl);
+          if (typeof URL !== "undefined" && typeof URL.revokeObjectURL === "function") {
+            URL.revokeObjectURL(blobUrl);
+          }
           this.pending.delete(blobUrl);
         }
         return results;
@@ -93,12 +100,17 @@ var init_PendingUploadsManager = __esm({
        * À appeler si l'utilisateur abandonne
        */
       clear() {
-        for (const blobUrl of this.pending.keys()) {
-          URL.revokeObjectURL(blobUrl);
+        if (typeof URL !== "undefined" && typeof URL.revokeObjectURL === "function") {
+          for (const blobUrl of this.pending.keys()) {
+            URL.revokeObjectURL(blobUrl);
+          }
         }
         this.pending.clear();
       }
     };
+    /** Compteur pour générer des IDs uniques en environnement Node.js */
+    _PendingUploadsManager.nodeIdCounter = 0;
+    PendingUploadsManager = _PendingUploadsManager;
   }
 });
 
@@ -1639,9 +1651,16 @@ var MaskManager = class {
    * Version synchrone du redimensionnement
    */
   resizeCanvasToFitSync(maxSize, container) {
-    const vw = Math.min(maxSize, window?.innerWidth || document?.documentElement?.clientWidth);
-    const vh = Math.min(maxSize, window?.innerHeight || document?.documentElement?.clientHeight);
-    const xPadding = window.innerWidth >= 768 ? 80 : 20;
+    const hasWindow = typeof window !== "undefined";
+    const vw = Math.min(
+      maxSize,
+      hasWindow ? window.innerWidth || document.documentElement.clientWidth : maxSize
+    );
+    const vh = Math.min(
+      maxSize,
+      hasWindow ? window.innerHeight || document.documentElement.clientHeight : maxSize
+    );
+    const xPadding = hasWindow && window.innerWidth >= 768 ? 80 : 20;
     const scaleX = (vw - xPadding) / this.canvas.width;
     const scaleY = (vh - 138) / this.canvas.height;
     const zoom = Math.min(scaleX, scaleY);

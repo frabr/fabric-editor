@@ -1,6 +1,6 @@
 {
   "name": "@frabr/fabric-editor",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "description": "Fabric.js-based image editor with layers, clipping, and frame support",
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",
@@ -10,6 +10,11 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.mjs",
       "require": "./dist/index.js"
+    },
+    "./node": {
+      "types": "./dist/node.d.ts",
+      "import": "./dist/node.mjs",
+      "require": "./dist/node.js"
     }
   },
   "files": [
@@ -24,9 +29,16 @@
     "prepublishOnly": "npm run build"
   },
   "peerDependencies": {
+    "canvas": "^2.0.0",
     "fabric": "^6.0.0"
   },
+  "peerDependenciesMeta": {
+    "canvas": {
+      "optional": true
+    }
+  },
   "devDependencies": {
+    "@types/node": "^25.0.8",
     "fabric": "^6.5.4",
     "tsup": "^8.0.0",
     "typescript": "^5.3.0",
