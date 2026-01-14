@@ -328,7 +328,7 @@ export class FabricEditor {
     );
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    fontFaces.forEach((f) => (document.fonts as any).add(f));
+    fontFaces?.forEach((f) => (document?.fonts as any)?.add(f));
   }
 
   /**

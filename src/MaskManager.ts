@@ -153,8 +153,8 @@ export class MaskManager {
    * Version synchrone du redimensionnement
    */
   private resizeCanvasToFitSync(maxSize: number, container?: HTMLElement): void {
-    const vw = Math.min(maxSize, window.innerWidth || document.documentElement.clientWidth);
-    const vh = Math.min(maxSize, window.innerHeight || document.documentElement.clientHeight);
+    const vw = Math.min(maxSize, window?.innerWidth || document?.documentElement?.clientWidth);
+    const vh = Math.min(maxSize, window?.innerHeight || document?.documentElement?.clientHeight);
 
     const xPadding = window.innerWidth >= 768 ? 80 : 20;
     const scaleX = (vw - xPadding) / this.canvas.width;

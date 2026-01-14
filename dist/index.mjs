@@ -1639,8 +1639,8 @@ var MaskManager = class {
    * Version synchrone du redimensionnement
    */
   resizeCanvasToFitSync(maxSize, container) {
-    const vw = Math.min(maxSize, window.innerWidth || document.documentElement.clientWidth);
-    const vh = Math.min(maxSize, window.innerHeight || document.documentElement.clientHeight);
+    const vw = Math.min(maxSize, window?.innerWidth || document?.documentElement?.clientWidth);
+    const vh = Math.min(maxSize, window?.innerHeight || document?.documentElement?.clientHeight);
     const xPadding = window.innerWidth >= 768 ? 80 : 20;
     const scaleX = (vw - xPadding) / this.canvas.width;
     const scaleY = (vh - 138) / this.canvas.height;
@@ -2630,7 +2630,7 @@ var FabricEditor = class {
         }).load();
       })
     );
-    fontFaces.forEach((f) => document.fonts.add(f));
+    fontFaces?.forEach((f) => document?.fonts?.add(f));
   }
   /**
    * Bascule le clip de l'objet sélectionné vers la forme suivante
