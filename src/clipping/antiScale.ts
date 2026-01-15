@@ -1,4 +1,4 @@
-import type { FabricObject } from "fabric";
+import type { FabricObject } from "#fabric";
 
 /**
  * Calcule les facteurs d'anti-scale pour maintenir les proportions d'un clip

@@ -7,7 +7,11 @@
  * Prérequis : npm install canvas
  */
 
-import { Canvas as FabricCanvas, StaticCanvas, FabricObject } from "fabric";
+import { createRequire } from "module";
+import { Canvas as FabricCanvas, StaticCanvas, FabricObject } from "#fabric";
+
+// Pour require("canvas") dans registerFonts
+const require = createRequire(import.meta.url);
 import { LayerManager } from "./LayerManager";
 import { PersistenceManager } from "./PersistenceManager";
 import { HistoryManager } from "./HistoryManager";

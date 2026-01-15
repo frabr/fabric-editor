@@ -172,13 +172,13 @@ __export(index_exports, {
 module.exports = __toCommonJS(index_exports);
 
 // src/FabricEditor.ts
-var import_fabric10 = require("fabric");
+var import_fabric10 = require("#fabric");
 
 // src/LayerManager.ts
-var import_fabric5 = require("fabric");
+var import_fabric5 = require("#fabric");
 
 // src/controls/CustomTextbox.ts
-var import_fabric = require("fabric");
+var import_fabric = require("#fabric");
 var CustomTextbox = class extends import_fabric.IText {
   /**
    * Override pour ajouter le textarea au canvas container
@@ -234,14 +234,14 @@ var CustomTextbox = class extends import_fabric.IText {
 };
 
 // src/shapes/factories.ts
-var import_fabric3 = require("fabric");
+var import_fabric3 = require("#fabric");
 
 // src/shapes/paths.ts
 var HEART_PATH = "M 0 13 Q -1 13 -4 11 C -12 5 -17 -3 -12 -10 C -9 -14 -2 -13 0 -7 C 2 -13 9 -14 12 -10 C 17 -3 11 5 4 11 Q 1 13 0 13 Z";
 var HEXAGON_PATH = "M-2 -23.3453C-0.7624 -24.0598 0.7624 -24.0598 2 -23.3453L19.2176 -13.4047C20.4552 -12.6902 21.2176 -11.3697 21.2176 -9.9406V10.4406C21.2176 11.8697 20.4552 13.1902 19.2176 13.9047L2 23.8453C0.7624 24.5598 -0.7624 24.5598 -2 23.8453L-19.2176 13.9047C-20.4552 13.1902 -21.2176 11.8697 -21.2176 10.4406V-9.9406C-21.2176 -11.3697 -20.4552 -12.6902 -19.2176 -13.4047L-2 -23.3453Z";
 
 // src/controls/cropControls.ts
-var import_fabric2 = require("fabric");
+var import_fabric2 = require("#fabric");
 var CROP_CONFIGS = {
   left: {
     dimension: "width",
@@ -528,7 +528,7 @@ function isPositionLocked(obj) {
 }
 
 // src/ImageFrame.ts
-var import_fabric4 = require("fabric");
+var import_fabric4 = require("#fabric");
 function rotatePoint(dx, dy, angleDeg) {
   const angle = -angleDeg * Math.PI / 180;
   return {
@@ -1032,11 +1032,13 @@ var LayerManager = class {
     return objects.filter(Boolean);
   }
   /**
-   * Ajoute un objet au canvas et le sélectionne
+   * Ajoute un objet au canvas et le sélectionne (si interactif)
    */
   add(obj) {
     this.canvas.add(obj);
-    this.canvas.setActiveObject(obj);
+    if (typeof this.canvas.setActiveObject === "function") {
+      this.canvas.setActiveObject(obj);
+    }
     return obj;
   }
   /**
@@ -1285,7 +1287,6 @@ var LayerManager = class {
     if (obj && layer.lockMode) {
       applyLockMode(obj, layer.lockMode);
     }
-    console.log(obj);
     return obj;
   }
   /**
@@ -1355,7 +1356,7 @@ var LayerManager = class {
 };
 
 // src/SelectionManager.ts
-var import_fabric6 = require("fabric");
+var import_fabric6 = require("#fabric");
 var OBJECT_CONTROLS = {
   // Formes créées par l'éditeur (layerType: "shape")
   shape: ["outline", "clip", "color"],
@@ -1569,7 +1570,7 @@ var SelectionManager = class {
 };
 
 // src/MaskManager.ts
-var import_fabric7 = require("fabric");
+var import_fabric7 = require("#fabric");
 var MASK_LAYER_ID = "mask";
 var BACKGROUND_LAYER_ID2 = "originalImage";
 var MaskManager = class {
@@ -1711,7 +1712,7 @@ var MaskManager = class {
 };
 
 // src/PersistenceManager.ts
-var import_fabric8 = require("fabric");
+var import_fabric8 = require("#fabric");
 var PersistenceManager = class {
   constructor(canvas, layers) {
     this.canvas = canvas;
@@ -1952,7 +1953,7 @@ var HistoryManager = class {
 };
 
 // src/SnappingManager.ts
-var import_fabric9 = require("fabric");
+var import_fabric9 = require("#fabric");
 var SnappingManager = class {
   constructor(canvas, config = {}) {
     this.guides = [];
@@ -2882,7 +2883,7 @@ var FabricEditor = class {
 };
 
 // src/ImageDropHandler.ts
-var import_fabric11 = require("fabric");
+var import_fabric11 = require("#fabric");
 var HIGHLIGHT_COLOR = "#3b82f6";
 var ImageDropHandler = class {
   constructor(editor, config) {

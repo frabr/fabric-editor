@@ -1,4 +1,4 @@
-import { Canvas, FabricImage, FabricObject } from "fabric";
+import { Canvas, FabricImage, FabricObject } from "#fabric";
 
 const MASK_LAYER_ID = "mask";
 const BACKGROUND_LAYER_ID = "originalImage";

@@ -1,4 +1,4 @@
-import { Canvas, FabricObject, FabricImage, Point, Control, controlsUtils } from "fabric";
+import { Canvas, FabricObject, FabricImage, Point, Control, controlsUtils } from "#fabric";
 import { LayerManager } from "./LayerManager";
 import { SelectionManager } from "./SelectionManager";
 import { MaskManager } from "./MaskManager";

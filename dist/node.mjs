@@ -1,11 +1,5 @@
 var __defProp = Object.defineProperty;
 var __getOwnPropNames = Object.getOwnPropertyNames;
-var __require = /* @__PURE__ */ ((x) => typeof require !== "undefined" ? require : typeof Proxy !== "undefined" ? new Proxy(x, {
-  get: (a, b) => (typeof require !== "undefined" ? require : a)[b]
-}) : x)(function(x) {
-  if (typeof require !== "undefined") return require.apply(this, arguments);
-  throw Error('Dynamic require of "' + x + '" is not supported');
-});
 var __esm = (fn, res) => function __init() {
   return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
 };
@@ -121,7 +115,8 @@ var init_PendingUploadsManager = __esm({
 });
 
 // src/node.ts
-import { StaticCanvas, FabricObject as FabricObject4 } from "fabric";
+import { createRequire } from "module";
+import { StaticCanvas, FabricObject as FabricObject4 } from "#fabric";
 
 // src/LayerManager.ts
 import {
@@ -130,10 +125,10 @@ import {
   Rect as Rect3,
   Path as Path2,
   Circle as Circle2
-} from "fabric";
+} from "#fabric";
 
 // src/controls/CustomTextbox.ts
-import { IText, Point } from "fabric";
+import { IText, Point } from "#fabric";
 var CustomTextbox = class extends IText {
   /**
    * Override pour ajouter le textarea au canvas container
@@ -194,7 +189,7 @@ import {
   FabricImage as FabricImage2,
   Rect,
   Circle
-} from "fabric";
+} from "#fabric";
 
 // src/shapes/paths.ts
 var HEART_PATH = "M 0 13 Q -1 13 -4 11 C -12 5 -17 -3 -12 -10 C -9 -14 -2 -13 0 -7 C 2 -13 9 -14 12 -10 C 17 -3 11 5 4 11 Q 1 13 0 13 Z";
@@ -203,7 +198,7 @@ var HEXAGON_PATH = "M-2 -23.3453C-0.7624 -24.0598 0.7624 -24.0598 2 -23.3453L19.
 // src/controls/cropControls.ts
 import {
   Control
-} from "fabric";
+} from "#fabric";
 var CROP_CONFIGS = {
   left: {
     dimension: "width",
@@ -412,7 +407,7 @@ import {
   classRegistry,
   LayoutManager,
   FixedLayout
-} from "fabric";
+} from "#fabric";
 function rotatePoint(dx, dy, angleDeg) {
   const angle = -angleDeg * Math.PI / 180;
   return {
@@ -916,11 +911,13 @@ var LayerManager = class {
     return objects.filter(Boolean);
   }
   /**
-   * Ajoute un objet au canvas et le sélectionne
+   * Ajoute un objet au canvas et le sélectionne (si interactif)
    */
   add(obj) {
     this.canvas.add(obj);
-    this.canvas.setActiveObject(obj);
+    if (typeof this.canvas.setActiveObject === "function") {
+      this.canvas.setActiveObject(obj);
+    }
     return obj;
   }
   /**
@@ -1169,7 +1166,6 @@ var LayerManager = class {
     if (obj && layer.lockMode) {
       applyLockMode(obj, layer.lockMode);
     }
-    console.log(obj);
     return obj;
   }
   /**
@@ -1239,7 +1235,7 @@ var LayerManager = class {
 };
 
 // src/PersistenceManager.ts
-import { Group as Group3 } from "fabric";
+import { Group as Group3 } from "#fabric";
 var PersistenceManager = class {
   constructor(canvas, layers) {
     this.canvas = canvas;
@@ -1480,6 +1476,7 @@ var HistoryManager = class {
 };
 
 // src/node.ts
+var require2 = createRequire(import.meta.url);
 function computeDimensions(width, height, constraint) {
   if (width > height) {
     const ratio = constraint / width;
@@ -1605,7 +1602,7 @@ var NodeEditor = class {
 };
 function registerFonts(fonts) {
   try {
-    const { registerFont } = __require("canvas");
+    const { registerFont } = require2("canvas");
     for (const font of fonts) {
       registerFont(font.path, {
         family: font.family,

@@ -4,7 +4,7 @@ import {
   Control,
   type TPointerEvent,
   type Transform,
-} from "fabric";
+} from "#fabric";
 
 type Side = "left" | "right" | "top" | "bottom";
 

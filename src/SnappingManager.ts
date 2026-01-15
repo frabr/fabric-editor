@@ -1,4 +1,4 @@
-import { Canvas, FabricObject, Line } from "fabric";
+import { Canvas, FabricObject, Line } from "#fabric";
 
 export interface SnappingConfig {
   /** Distance en pixels pour déclencher le snap (défaut: 10) */

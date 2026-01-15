@@ -1,4 +1,4 @@
-import { IText, Point } from "fabric";
+import { IText, Point } from "#fabric";
 
 /**
  * Textbox personnalisé qui :

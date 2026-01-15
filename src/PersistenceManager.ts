@@ -1,4 +1,4 @@
-import { Canvas, Group } from "fabric";
+import { Canvas, Group } from "#fabric";
 import type { LayerManager } from "./LayerManager";
 import type { PendingUploadsManager } from "./PendingUploadsManager";
 import type { SaveOptions, SaveResult, LayerData } from "./types";

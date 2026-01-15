@@ -115,7 +115,7 @@ var init_PendingUploadsManager = __esm({
 });
 
 // src/FabricEditor.ts
-import { Canvas as Canvas5, FabricObject as FabricObject6, FabricImage as FabricImage6, Point as Point2, Control as Control2, controlsUtils } from "fabric";
+import { Canvas as Canvas5, FabricObject as FabricObject6, FabricImage as FabricImage6, Point as Point2, Control as Control2, controlsUtils } from "#fabric";
 
 // src/LayerManager.ts
 import {
@@ -124,10 +124,10 @@ import {
   Rect as Rect3,
   Path as Path2,
   Circle as Circle2
-} from "fabric";
+} from "#fabric";
 
 // src/controls/CustomTextbox.ts
-import { IText, Point } from "fabric";
+import { IText, Point } from "#fabric";
 var CustomTextbox = class extends IText {
   /**
    * Override pour ajouter le textarea au canvas container
@@ -188,7 +188,7 @@ import {
   FabricImage as FabricImage2,
   Rect,
   Circle
-} from "fabric";
+} from "#fabric";
 
 // src/shapes/paths.ts
 var HEART_PATH = "M 0 13 Q -1 13 -4 11 C -12 5 -17 -3 -12 -10 C -9 -14 -2 -13 0 -7 C 2 -13 9 -14 12 -10 C 17 -3 11 5 4 11 Q 1 13 0 13 Z";
@@ -197,7 +197,7 @@ var HEXAGON_PATH = "M-2 -23.3453C-0.7624 -24.0598 0.7624 -24.0598 2 -23.3453L19.
 // src/controls/cropControls.ts
 import {
   Control
-} from "fabric";
+} from "#fabric";
 var CROP_CONFIGS = {
   left: {
     dimension: "width",
@@ -491,7 +491,7 @@ import {
   classRegistry,
   LayoutManager,
   FixedLayout
-} from "fabric";
+} from "#fabric";
 function rotatePoint(dx, dy, angleDeg) {
   const angle = -angleDeg * Math.PI / 180;
   return {
@@ -995,11 +995,13 @@ var LayerManager = class {
     return objects.filter(Boolean);
   }
   /**
-   * Ajoute un objet au canvas et le sélectionne
+   * Ajoute un objet au canvas et le sélectionne (si interactif)
    */
   add(obj) {
     this.canvas.add(obj);
-    this.canvas.setActiveObject(obj);
+    if (typeof this.canvas.setActiveObject === "function") {
+      this.canvas.setActiveObject(obj);
+    }
     return obj;
   }
   /**
@@ -1248,7 +1250,6 @@ var LayerManager = class {
     if (obj && layer.lockMode) {
       applyLockMode(obj, layer.lockMode);
     }
-    console.log(obj);
     return obj;
   }
   /**
@@ -1318,7 +1319,7 @@ var LayerManager = class {
 };
 
 // src/SelectionManager.ts
-import { ActiveSelection } from "fabric";
+import { ActiveSelection } from "#fabric";
 var OBJECT_CONTROLS = {
   // Formes créées par l'éditeur (layerType: "shape")
   shape: ["outline", "clip", "color"],
@@ -1532,7 +1533,7 @@ var SelectionManager = class {
 };
 
 // src/MaskManager.ts
-import { FabricImage as FabricImage5 } from "fabric";
+import { FabricImage as FabricImage5 } from "#fabric";
 var MASK_LAYER_ID = "mask";
 var BACKGROUND_LAYER_ID2 = "originalImage";
 var MaskManager = class {
@@ -1674,7 +1675,7 @@ var MaskManager = class {
 };
 
 // src/PersistenceManager.ts
-import { Group as Group3 } from "fabric";
+import { Group as Group3 } from "#fabric";
 var PersistenceManager = class {
   constructor(canvas, layers) {
     this.canvas = canvas;
@@ -1915,7 +1916,7 @@ var HistoryManager = class {
 };
 
 // src/SnappingManager.ts
-import { Line } from "fabric";
+import { Line } from "#fabric";
 var SnappingManager = class {
   constructor(canvas, config = {}) {
     this.guides = [];
@@ -2845,7 +2846,7 @@ var FabricEditor = class {
 };
 
 // src/ImageDropHandler.ts
-import { Rect as Rect4 } from "fabric";
+import { Rect as Rect4 } from "#fabric";
 var HIGHLIGHT_COLOR = "#3b82f6";
 var ImageDropHandler = class {
   constructor(editor, config) {
