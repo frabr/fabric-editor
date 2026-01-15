@@ -1,4 +1,4 @@
-import type { FabricObject } from "fabric";
+import type { FabricObject } from "#fabric";
 
 /**
  * Modes de verrouillage pour les calques

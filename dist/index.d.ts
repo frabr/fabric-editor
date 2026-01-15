@@ -1,4 +1,4 @@
-import { IText, FabricObject, Group, FabricImage, Canvas, Rect, TOptions, RectProps, CircleProps, Circle, PathProps, Path } from 'fabric';
+import { IText, FabricObject, Group, FabricImage, Canvas, Rect, TOptions, RectProps, CircleProps, Circle, PathProps, Path } from '#fabric';
 
 /**
  * Textbox personnalisé qui :
@@ -300,7 +300,7 @@ declare class LayerManager {
      */
     loadLayers(layers: LayerData[]): Promise<FabricObject[]>;
     /**
-     * Ajoute un objet au canvas et le sélectionne
+     * Ajoute un objet au canvas et le sélectionne (si interactif)
      */
     add(obj: FabricObject): FabricObject;
     /**
@@ -525,6 +525,8 @@ declare class PendingUploadsManager {
     private pending;
     /** Fonction d'upload (injectée pour découplage) */
     private uploadFn;
+    /** Compteur pour générer des IDs uniques en environnement Node.js */
+    private static nodeIdCounter;
     constructor(uploadFn: (file: File) => Promise<string>);
     /**
      * Ajoute un fichier en attente d'upload

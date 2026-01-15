@@ -11,6 +11,9 @@ export class PendingUploadsManager {
   /** Fonction d'upload (injectée pour découplage) */
   private uploadFn: (file: File) => Promise<string>;
 
+  /** Compteur pour générer des IDs uniques en environnement Node.js */
+  private static nodeIdCounter = 0;
+
   constructor(uploadFn: (file: File) => Promise<string>) {
     this.uploadFn = uploadFn;
   }
@@ -20,7 +23,16 @@ export class PendingUploadsManager {
    * @returns URL blob locale utilisable immédiatement
    */
   add(file: File): string {
-    const blobUrl = URL.createObjectURL(file);
+    let blobUrl: string;
+
+    // En environnement Node.js, URL.createObjectURL n'existe pas
+    if (typeof URL !== "undefined" && typeof URL.createObjectURL === "function") {
+      blobUrl = URL.createObjectURL(file);
+    } else {
+      // Fallback: générer un ID unique pour Node.js
+      blobUrl = `node-blob://${++PendingUploadsManager.nodeIdCounter}`;
+    }
+
     this.pending.set(blobUrl, file);
     return blobUrl;
   }
@@ -69,7 +81,10 @@ export class PendingUploadsManager {
     // Construire la map de résultats et libérer les blob URLs
     for (const { blobUrl, cloudinaryUrl } of uploaded) {
       results.set(blobUrl, cloudinaryUrl);
-      URL.revokeObjectURL(blobUrl);
+      // Libérer le blob URL si disponible (navigateur uniquement)
+      if (typeof URL !== "undefined" && typeof URL.revokeObjectURL === "function") {
+        URL.revokeObjectURL(blobUrl);
+      }
       this.pending.delete(blobUrl);
     }
 
@@ -102,8 +117,11 @@ export class PendingUploadsManager {
    * À appeler si l'utilisateur abandonne
    */
   clear(): void {
-    for (const blobUrl of this.pending.keys()) {
-      URL.revokeObjectURL(blobUrl);
+    // Libérer les blob URLs si disponible (navigateur uniquement)
+    if (typeof URL !== "undefined" && typeof URL.revokeObjectURL === "function") {
+      for (const blobUrl of this.pending.keys()) {
+        URL.revokeObjectURL(blobUrl);
+      }
     }
     this.pending.clear();
   }

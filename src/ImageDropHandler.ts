@@ -1,4 +1,4 @@
-import { FabricImage, Rect, type FabricObject } from "fabric";
+import { FabricImage, Rect, type FabricObject } from "#fabric";
 import type { FabricEditor } from "./FabricEditor";
 import { isContentLocked } from "./locking";
 import { ImageFrame } from "./ImageFrame";

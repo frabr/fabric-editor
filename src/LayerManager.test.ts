@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { LayerManager } from "./LayerManager";
-import type { Canvas, FabricObject } from "fabric";
+import type { Canvas, FabricObject } from "#fabric";
 
 // Mock du canvas Fabric
 function createMockCanvas() {
@@ -189,8 +189,8 @@ describe("LayerManager", () => {
       const result = manager.serialize();
 
       expect(result).toHaveLength(2);
-      expect(layer1.toObject).toHaveBeenCalledWith(["layerId"]);
-      expect(layer2.toObject).toHaveBeenCalledWith(["layerId"]);
+      expect(layer1.toObject).toHaveBeenCalledWith(["layerId", "lockMode", "lockContent"]);
+      expect(layer2.toObject).toHaveBeenCalledWith(["layerId", "lockMode", "lockContent"]);
     });
   });
 });

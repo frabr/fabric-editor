@@ -8,7 +8,7 @@ import {
   type PathProps,
   type RectProps,
   type CircleProps,
-} from "fabric";
+} from "#fabric";
 import { HEART_PATH, HEXAGON_PATH } from "./paths";
 import type { ShapeType } from "../types";
 import { addCropControls } from "../controls/cropControls";

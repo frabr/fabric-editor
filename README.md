@@ -1,43 +1,86 @@
 # @frabr/fabric-editor
 
-Éditeur d'images basé sur Fabric.js, avec support des calques, clipping et frames.
+Editeur d'images base sur Fabric.js, avec support des calques, clipping, frames et **rendu SSR Node.js**.
+
+## Points d'entree
+
+La bibliotheque expose deux points d'entree selon l'environnement :
+
+| Import | Environnement | Utilisation |
+|--------|---------------|-------------|
+| `@frabr/fabric-editor` | Browser | Editeur interactif avec Canvas DOM |
+| `@frabr/fabric-editor/node` | Node.js | Rendu SSR avec StaticCanvas + node-canvas |
+
+```typescript
+// Browser - editeur interactif
+import { FabricEditor } from "@frabr/fabric-editor";
+
+// Node.js - rendu serveur
+import { createNodeEditor, registerFonts } from "@frabr/fabric-editor/node";
+```
 
 ## Installation
 
 ```bash
-npm install git+ssh://git@github.com/frabr/fabric-editor.git#v1.0.1
+npm install @frabr/fabric-editor
+```
+
+**Prerequis pour Node.js SSR :**
+```bash
+npm install canvas  # Requis pour le rendu Node.js
 ```
 
 ## Architecture
 
 ```
 src/
-├── FabricEditor.ts         # Classe principale, coordonne les managers
-├── LayerManager.ts         # Gestion des calques (CRUD, sérialisation)
-├── SelectionManager.ts     # Gestion de la sélection et callbacks
+├── index.ts                # Exports Browser
+├── node.ts                 # Exports Node.js (SSR)
+├── FabricEditor.ts         # Classe principale Browser
+├── LayerManager.ts         # Gestion des calques (CRUD, serialisation)
+├── SelectionManager.ts     # Gestion de la selection
 ├── MaskManager.ts          # Application des masques
 ├── PersistenceManager.ts   # Sauvegarde, export, rasterisation
-├── ImageDropHandler.ts     # Drag & drop d'images (ajout/remplacement)
-├── PendingUploadsManager.ts # Lazy upload vers Cloudinary
-├── ImageFrame.ts           # Conteneur d'image avec cadre fixe
 ├── HistoryManager.ts       # Undo/redo
 ├── SnappingManager.ts      # Aimantage aux bords et au centre
-├── locking.ts              # Verrouillage des calques (position/contenu)
-├── shapes/
-│   ├── paths.ts            # Constantes SVG (coeur, hexagone)
-│   ├── factories.ts        # Création d'objets (rect, circle, image...)
-│   └── shapeWheel.ts       # Cycle entre les formes
-├── clipping/
-│   ├── antiScale.ts        # Compensation du scale pour les clips
-│   └── clipStrategies.ts   # Stratégies de clip (circle, heart, etc.)
-├── controls/
-│   ├── cropControls.ts     # Contrôles de recadrage
-│   └── CustomTextbox.ts    # Extension IText avec layerId
-├── types.ts                # Interfaces TypeScript
-└── index.ts                # Exports publics
+├── ImageFrame.ts           # Conteneur d'image avec cadre fixe
+├── ImageDropHandler.ts     # Drag & drop d'images
+├── PendingUploadsManager.ts # Lazy upload vers Cloudinary
+├── locking.ts              # Verrouillage des calques
+├── shapes/                 # Formes geometriques
+├── clipping/               # Strategies de clip
+├── controls/               # Controles personnalises
+└── types.ts                # Interfaces TypeScript
 ```
 
-## Utilisation
+### Pattern `#fabric` - Imports conditionnels
+
+La bibliotheque utilise le pattern **subpath imports** de Node.js pour supporter les deux environnements avec le meme code source :
+
+```json
+// package.json
+{
+  "imports": {
+    "#fabric": {
+      "node": "fabric/node",
+      "default": "fabric"
+    }
+  }
+}
+```
+
+Tous les fichiers source importent depuis `#fabric` :
+```typescript
+import { Canvas, FabricImage } from "#fabric";
+```
+
+**Resolution automatique :**
+- En Node.js → `fabric/node` (utilise node-canvas)
+- En Browser → `fabric` (utilise Canvas DOM)
+
+---
+
+## Utilisation Browser
 
 ### Initialisation
 
@@ -76,300 +119,369 @@ editor.layers.addShape({
 // Ajouter une image
 await editor.layers.addImage(url);
 
-// Remplacer la source d'une image existante
-await editor.layers.replaceImageSource(imageObject, newUrl);
-
-// Supprimer la sélection
-editor.deleteSelection();
-
 // Ordonner les calques
 editor.layers.bringForward(obj);
 editor.layers.sendBackward(obj);
 ```
 
-### Sélection
+### Selection et callbacks
 
 ```typescript
-// Objet actuellement sélectionné
-const obj = editor.selection.current;
-
-// Tous les objets sélectionnés
-const objects = editor.selection.selected;
-
-// Callbacks
 editor.selection.onSelect = (obj) => { /* ... */ };
 editor.selection.onDeselect = () => { /* ... */ };
-editor.selection.onTransformStart = () => { /* cacher la barre de contrôles */ };
-editor.selection.onModified = () => { /* réafficher la barre */ };
+editor.selection.onTransformStart = () => { /* cacher les controles */ };
+editor.selection.onModified = () => { /* reafficher les controles */ };
 
-// Contrôles disponibles selon le type d'objet
+// Controles disponibles selon le type
 const controls = editor.selection.getAvailableControls();
 // => ["clip", "color", "font", "outline"]
-```
-
-### Modification d'objets
-
-```typescript
-// Changer la couleur
-editor.changeColor("#ff0000");
-
-// Changer l'opacité (0-100)
-editor.changeOpacity(50);
-
-// Changer la police (texte uniquement)
-editor.changeFont("Roboto", "bold");
-
-// Basculer remplissage/contour
-editor.toggleOutline();
-
-// Changer la forme du clip (images)
-editor.switchClip();
-
-// Changer le type de forme
-editor.switchShape();
-```
-
-### Verrouillage des calques
-
-Le module `locking.ts` permet de verrouiller les calques avec 3 modes :
-
-| Mode | Position | Contenu (image) | Forme/Z-index | Cas d'usage |
-|------|----------|-----------------|---------------|-------------|
-| `free` | Modifiable | Modifiable | Modifiable | Comportement par défaut |
-| `position` | Verrouillée | Modifiable | Verrouillé | Template : l'utilisateur peut changer l'image mais pas la déplacer ni modifier la forme |
-| `full` | Verrouillée | Verrouillé | Verrouillé | Élément fixe non modifiable |
-
-**Restrictions par mode :**
-
-- **`position` et `full`** : bloquent le changement de forme (`switchShape`, `switchClip`) et de z-index (`up`, `down`)
-- **`full` uniquement** : bloque également le repositionnement de l'image dans son cadre (ImageFrame) et le remplacement par drag & drop
-
-```typescript
-import {
-  getLockMode,
-  getNextLockMode,
-  applyLockMode,
-  isContentLocked,
-  isPositionLocked,
-  type LockMode
-} from "@frabr/fabric-editor";
-
-// Récupérer le mode actuel
-const mode = getLockMode(obj); // "free" | "position" | "full"
-
-// Passer au mode suivant (cycle: free → position → full → free)
-const nextMode = getNextLockMode(mode);
-
-// Appliquer un mode
-applyLockMode(obj, "position");
-
-// Vérifications
-if (isContentLocked(obj)) {
-  // Ne pas permettre le remplacement d'image
-}
-if (isPositionLocked(obj)) {
-  // Ne pas permettre le déplacement
-}
-
-// Via LayerManager (méthode wrapper)
-editor.layers.applyLockMode(obj, "full");
-```
-
-**Propriétés Fabric.js affectées :**
-- `lockMovementX`, `lockMovementY` : empêche le déplacement
-- `lockRotation` : empêche la rotation
-- `lockScalingX`, `lockScalingY` : empêche le redimensionnement
-- `hasControls` : masque les poignées de contrôle
-
-**Propriétés custom :**
-- `lockMode` : stocke le mode actuel ("free" | "position" | "full")
-- `lockContent` : `true` si le contenu est verrouillé (bloque le remplacement d'image)
-
-**Sérialisation :**
-
-Les propriétés `lockMode` et `lockContent` sont sérialisées avec les layers et restaurées au chargement.
-
-```typescript
-// Sérialisation automatique
-const layers = editor.layers.serialize();
-// => [{ type: "image", lockMode: "position", lockContent: false, ... }]
-
-// Au chargement, les locks sont automatiquement réappliqués
-await editor.layers.loadLayers(layers);
 ```
 
 ### Persistance
 
 ```typescript
-// Sauvegarder
-const result = await editor.persistence.save({
-  rasterize: true, // Génère un dataUrl PNG
-});
+// Sauvegarder avec rasterisation
+const result = await editor.persistence.save({ rasterize: true });
 // result.layers : LayerData[]
-// result.dataUrl : string (si rasterize=true)
+// result.dataUrl : string (PNG base64)
 
-// Exporter en JSON
+// Export/Import JSON
 const json = editor.persistence.exportLayersJSON();
-
-// Importer du JSON
 await editor.persistence.importLayersJSON(json);
-
-// Compacter autour des calques (mode standalone)
-editor.persistence.compactAroundLayers();
-
-// Réinitialiser
-editor.persistence.reset();
 ```
 
-### Snapping (Aimantage)
+---
 
-Le `SnappingManager` permet aux objets de s'aligner automatiquement sur les bords et le centre du canvas, pendant le déplacement et le redimensionnement.
+## Utilisation Node.js (SSR)
+
+Le point d'entree `@frabr/fabric-editor/node` permet de generer des images cote serveur.
+
+### Exemple complet
 
 ```typescript
-// Activé par défaut, accessible via editor.snapping
-editor.snapping.setEnabled(false); // Désactiver
-editor.snapping.setEnabled(true);  // Réactiver
+import { createNodeEditor, registerFonts } from "@frabr/fabric-editor/node";
+import fs from "fs";
 
-// Vérifier l'état
-if (editor.snapping.isEnabled()) {
-  // ...
+// 1. Enregistrer les polices (avant de creer l'editeur)
+registerFonts([
+  { family: "Roboto", path: "./fonts/Roboto-Regular.ttf" },
+  { family: "Roboto", path: "./fonts/Roboto-Bold.ttf", weight: "bold" },
+]);
+
+// 2. Creer l'editeur
+const editor = createNodeEditor({
+  width: 1080,
+  height: 1080,
+  maxSize: 1000,  // Optionnel: contrainte de taille max
+});
+
+// 3. Charger l'image de fond et les calques
+await editor.initialize("https://example.com/background.jpg", [
+  {
+    type: "Circle",
+    left: 100,
+    top: 100,
+    radius: 50,
+    fill: "#ff0000",
+  },
+  {
+    type: "IText",
+    text: "Hello World",
+    left: 200,
+    top: 200,
+    fontSize: 48,
+    fill: "#ffffff",
+    fontFamily: "Roboto",
+  },
+  {
+    type: "ImageFrame",
+    left: 300,
+    top: 100,
+    frameWidth: 200,
+    frameHeight: 150,
+    clipShape: "heart",
+    image: {
+      src: "https://example.com/photo.jpg",
+      scale: 1,
+      offsetX: 0,
+      offsetY: 0,
+    },
+  },
+]);
+
+// 4. Exporter
+const buffer = editor.toBuffer();  // Buffer PNG
+fs.writeFileSync("output.png", buffer);
+
+// Ou en data URL
+const dataUrl = editor.toDataURL({ format: "png", quality: 1 });
+
+// 5. Liberer les ressources
+editor.dispose();
+```
+
+### API NodeEditor
+
+```typescript
+interface NodeEditorConfig {
+  width: number;      // Largeur originale
+  height: number;     // Hauteur originale
+  maxSize?: number;   // Taille max (defaut: 1000)
+  standAlone?: boolean; // Centre les objets
 }
 
-// Configurer
-editor.snapping.updateConfig({
-  threshold: 15,        // Distance en pixels pour déclencher le snap (défaut: 10)
-  snapToCenter: true,   // Snap au centre du canvas (défaut: true)
-  snapToEdges: true,    // Snap aux bords du canvas (défaut: true)
-  guideColor: "#00ff00" // Couleur des guides visuels (défaut: "#ff00ff")
-});
+class NodeEditor {
+  canvas: StaticCanvas;
+  layers: LayerManager;
+  persistence: PersistenceManager;
+  history: HistoryManager;
+
+  getRatio(): number;
+  initialize(backgroundUrl: string, layers?: LayerData[]): Promise<void>;
+  toDataURL(options?: { format?: "png" | "jpeg"; quality?: number }): string;
+  toBuffer(): Buffer;
+  dispose(): void;
+}
 ```
 
-**Comportement :**
-- **Déplacement** : les objets s'aimantent au centre et aux bords du canvas
-- **Redimensionnement** : les bords de l'objet s'aimantent aux bords et au centre du canvas (ImageFrame uniquement pour l'instant)
-- **Guides visuels** : des lignes pointillées apparaissent pour indiquer l'alignement
-- **Seuil de sortie** : il faut déplacer le curseur de 2× le seuil d'entrée pour "décoller" d'un point de snap
+### Types de calques supportes
 
-### Masques
+| Type | Description |
+|------|-------------|
+| `Circle` | Cercle avec fill/stroke |
+| `Rect` | Rectangle avec fill/stroke |
+| `Path` | Chemin SVG |
+| `IText` | Texte editable |
+| `Image` | Image simple |
+| `ImageFrame` | Image avec cadre et clip (heart, circle, etc.) |
+| `Group` | Groupe d'objets |
+
+### Polices personnalisees
 
 ```typescript
-// Configurer le masque
-await editor.masks.setup(containerElement, maxSize);
+import { registerFonts } from "@frabr/fabric-editor/node";
 
-// Appliquer un masque
-await editor.masks.applyMask(maskUrl);
+// Doit etre appele AVANT createNodeEditor()
+registerFonts([
+  { family: "MyFont", path: "/path/to/font.ttf" },
+  { family: "MyFont", path: "/path/to/font-bold.ttf", weight: "bold" },
+  { family: "MyFont", path: "/path/to/font-italic.ttf", style: "italic" },
+]);
 ```
 
-## Drag & Drop d'images
+---
 
-L'`ImageDropHandler` gère le drag & drop d'images avec deux modes :
+## Verrouillage des calques
+
+Trois modes de verrouillage :
+
+| Mode | Position | Contenu | Forme/Z-index |
+|------|----------|---------|---------------|
+| `free` | Modifiable | Modifiable | Modifiable |
+| `position` | Verrouillee | Modifiable | Verrouille |
+| `full` | Verrouillee | Verrouille | Verrouille |
 
 ```typescript
-import { ImageDropHandler } from "@frabr/fabric-editor";
+import { applyLockMode, getLockMode, isContentLocked } from "@frabr/fabric-editor";
 
-const dropHandler = new ImageDropHandler(editor, {
-  hoverDelay: 1000, // ms avant activation du mode remplacement
-  getImageUrl: (file) => pendingUploads.add(file), // blob URL
-  overlayElement: document.getElementById("replace-overlay"), // optionnel
-  overlayContent: "Remplacer", // texte par défaut si pas d'overlayElement
-  onSuccess: () => console.log("Image ajoutée/remplacée"),
-  onError: (err) => console.error(err),
-});
+// Appliquer un mode
+applyLockMode(obj, "position");
 
-// Attacher à un élément
-dropHandler.attach(containerElement);
-
-// Nettoyer
-dropHandler.detach();
+// Verifier
+if (isContentLocked(obj)) {
+  // Ne pas permettre le remplacement d'image
+}
 ```
 
-**Comportement :**
-- **Drop rapide** (< 1s sur une image) : ajoute une nouvelle image à la position du drop
-- **Drop après attente** (>= 1s sur une image) : remplace l'image survolée
+---
 
-Pendant le survol prolongé, un overlay visuel apparaît sur l'image cible avec le texte "Remplacer".
+## Integration Docker (creatorstudio)
 
-**Note :** Si l'image cible a `lockContent: true` (mode de verrouillage `full`), le mode remplacement ne s'active pas.
+Pour utiliser fabric-editor en SSR dans un environnement Docker :
 
-## Lazy Upload (PendingUploadsManager)
+### 1. Dockerfile - Dependances systeme
 
-Les images sont uploadées vers Cloudinary uniquement à la sauvegarde, pas au moment du drop :
+```dockerfile
+# Dependances pour compiler node-canvas
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    libcairo2-dev \
+    libpango1.0-dev \
+    libjpeg-dev \
+    libgif-dev \
+    librsvg2-dev \
+    libpixman-1-dev
+```
+
+### 2. docker-compose.yml - Volume mount
+
+```yaml
+services:
+  server:
+    volumes:
+      - ../fabric-editor:/fabric-editor
+      - fabric_editor_node_modules:/fabric-editor/node_modules
+
+volumes:
+  fabric_editor_node_modules:  # Isole les node_modules
+```
+
+### 3. Installation dans le container
+
+```bash
+# Installer les deps de fabric-editor (compile canvas)
+docker exec container sh -c "cd /fabric-editor && npm install && npm run build"
+
+# Installer canvas dans l'app principale (pour registerFonts)
+docker exec container npm install canvas
+```
+
+### 4. Utilisation
 
 ```typescript
-import { PendingUploadsManager } from "@frabr/fabric-editor";
+import { createNodeEditor, registerFonts } from "@frabr/fabric-editor/node";
 
-const pendingUploads = new PendingUploadsManager(async (file) => {
-  // Upload vers Cloudinary et retourner l'URL
-  return await cloudinaryUpload(file);
-});
+// Les polices doivent etre dans le container
+registerFonts([
+  { family: "Garet", path: "/app/src/fonts/garet.ttf" },
+]);
 
-// Pendant l'édition : utiliser des blob URLs
-const blobUrl = pendingUploads.add(file);
-await editor.layers.addImage(blobUrl);
-
-// À la sauvegarde : uploader et remplacer les URLs
-const urlMap = await pendingUploads.uploadAll();
-const layers = PendingUploadsManager.replaceUrls(editor.layers.exportData(), urlMap);
-
-// Si l'utilisateur abandonne
-pendingUploads.clear(); // Libère les blob URLs sans uploader
+const editor = createNodeEditor({ width: 1080, height: 1080 });
+await editor.initialize(imageUrl, layers);
+const buffer = editor.toBuffer();
 ```
 
-**Avantages :**
-- UX réactive (pas d'attente à l'ajout d'image)
-- Économie de bande passante (n'upload que si sauvegarde)
-- Gestion propre des ressources (blob URLs libérées)
+---
 
-## Positionnement d'éléments HTML sur le canvas
+## Tests
 
-Pour positionner des contrôles HTML au-dessus d'objets Fabric :
+La bibliotheque a deux suites de tests pour les deux environnements :
+
+```bash
+npm run test:node     # Tests Node.js (rendu reel avec canvas)
+npm run test:browser  # Tests Browser (jsdom)
+npm run test:run      # Les deux
+npm test              # Mode watch
+```
+
+### Structure des tests
+
+```
+src/
+├── __tests__/
+│   ├── node.test.ts              # 18 tests SSR
+│   └── browser.browser.test.ts   # 13 tests jsdom
+├── LayerManager.test.ts          # 14 tests unitaires
+├── clipping/antiScale.test.ts    # 11 tests unitaires
+└── shapes/shapeWheel.test.ts     # 8 tests unitaires
+```
+
+### Ce qui est teste
+
+| Environnement | Fichier config | Tests |
+|--------------|----------------|-------|
+| **Node.js** | `vitest.config.ts` | Rendu PNG reel, export Buffer, chargement layers |
+| **Browser** | `vitest.browser.config.ts` | Canvas interactif, setActiveObject, pas de crash |
+
+---
+
+## API Reference
+
+### FabricEditor (Browser)
 
 ```typescript
-// Positionner un élément centré sur l'objet
-editor.positionElementOverObject(element, fabricObject);
+class FabricEditor {
+  canvas: Canvas;
+  layers: LayerManager;
+  selection: SelectionManager;
+  masks: MaskManager;
+  persistence: PersistenceManager;
+  history: HistoryManager;
+  snapping: SnappingManager;
 
-// Positionner au-dessus avec offset
-editor.positionElementOverObject(element, fabricObject, {
-  anchor: "top",
-  offset: 8,
-  autoFlip: true, // bascule en bas si pas assez d'espace en haut
-});
-
-// Options d'ancrage : "center" | "top" | "bottom"
+  initialize(imageUrl: string, layers?: LayerData[]): Promise<void>;
+  changeColor(color: string): void;
+  changeOpacity(opacity: number): void;
+  changeFont(family: string, weight?: string): void;
+  toggleOutline(): void;
+  switchClip(): void;
+  switchShape(): void;
+  deleteSelection(): void;
+  dispose(): void;
+}
 ```
 
-Le contrôle de rotation a été déplacé sur le côté droit de l'objet pour éviter les conflits avec la barre de contrôles positionnée au-dessus.
+### LayerManager
 
-## Types de formes
+```typescript
+class LayerManager {
+  add(obj: FabricObject): FabricObject;
+  remove(obj: FabricObject): void;
+  addText(options: TextLayerOptions): Promise<CustomTextbox>;
+  addShape(options: ShapeLayerOptions): Promise<FabricObject>;
+  addImage(url: string): Promise<FabricObject>;
+  loadLayers(layers: LayerData[]): Promise<FabricObject[]>;
+  loadBackgroundImage(url: string, ratio: number): Promise<FabricImage>;
+  serialize(): LayerData[];
+  bringForward(obj: FabricObject): void;
+  sendBackward(obj: FabricObject): void;
+  applyLockMode(obj: FabricObject, mode: LockMode): void;
+}
+```
 
-Le cycle des formes (`shapeWheel`) :
+### Types de layers (LayerData)
+
+```typescript
+// Format serialise des calques
+interface LayerData {
+  type: "Circle" | "Rect" | "Path" | "IText" | "Image" | "ImageFrame" | "Group";
+  left?: number;
+  top?: number;
+  scaleX?: number;
+  scaleY?: number;
+  angle?: number;
+  opacity?: number;
+  fill?: string;
+  stroke?: string;
+  layerId?: string;
+  lockMode?: "free" | "position" | "full";
+  lockContent?: boolean;
+  // ... autres proprietes Fabric.js
+}
+```
+
+---
+
+## Cycle des formes
 
 ```
 rect → rounded → circle → heart → hexagon → rect → ...
 ```
 
-Chaque forme peut être utilisée comme :
-- Objet indépendant (`addShape`)
+Utilisable comme :
+- Objet independant (`addShape`)
 - Clip sur une image (`switchClip`)
 
-## Tests
-
-Les tests sont colocalisés avec le code source :
-
-```bash
-npm test        # Mode watch
-npm run test:run    # Exécution unique
-```
-
-Fichiers de test :
-- `shapes/shapeWheel.test.ts`
-- `clipping/antiScale.test.ts`
-- `LayerManager.test.ts`
+---
 
 ## Development
 
 ```bash
 npm install
-npm run build
-npm test
+npm run build    # Build CJS + ESM + types
+npm run dev      # Watch mode
+npm test         # Tests en watch
+npm run test:run # Tests une fois
+```
+
+### Build outputs
+
+```
+dist/
+├── index.js       # CJS Browser
+├── index.mjs      # ESM Browser
+├── index.d.ts     # Types Browser
+├── node.js        # CJS Node.js
+├── node.mjs       # ESM Node.js
+└── node.d.ts      # Types Node.js
 ```

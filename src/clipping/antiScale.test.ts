@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { antiScale } from "./antiScale";
-import type { FabricObject } from "fabric";
+import type { FabricObject } from "#fabric";
 
 // Helper pour créer un mock d'objet Fabric
 function createMockObject(scaleX: number, scaleY: number): FabricObject {

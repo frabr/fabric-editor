@@ -1,4 +1,4 @@
-import type { FabricObject } from "fabric";
+import type { FabricObject } from "#fabric";
 import { antiScale } from "./antiScale";
 import {
   createCircle,

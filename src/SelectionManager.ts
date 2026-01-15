@@ -1,4 +1,4 @@
-import { ActiveSelection, type Canvas, type FabricObject } from "fabric";
+import { ActiveSelection, type Canvas, type FabricObject } from "#fabric";
 import { isPositionLocked } from "./locking";
 import type { SelectionCallbacks, ControlOption } from "./types";
 

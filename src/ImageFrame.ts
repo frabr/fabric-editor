@@ -8,7 +8,7 @@ import {
   type Canvas,
   LayoutManager,
   FixedLayout,
-} from "fabric";
+} from "#fabric";
 import type { ShapeType, LockMode } from "./types";
 import {
   createCircle,

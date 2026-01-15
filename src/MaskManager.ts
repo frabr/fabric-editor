@@ -1,4 +1,4 @@
-import { Canvas, FabricImage, FabricObject } from "fabric";
+import { Canvas, FabricImage, FabricObject } from "#fabric";
 
 const MASK_LAYER_ID = "mask";
 const BACKGROUND_LAYER_ID = "originalImage";
@@ -153,10 +153,18 @@ export class MaskManager {
    * Version synchrone du redimensionnement
    */
   private resizeCanvasToFitSync(maxSize: number, container?: HTMLElement): void {
-    const vw = Math.min(maxSize, window?.innerWidth || document?.documentElement?.clientWidth);
-    const vh = Math.min(maxSize, window?.innerHeight || document?.documentElement?.clientHeight);
+    // Guards pour compatibilité Node.js
+    const hasWindow = typeof window !== "undefined";
+    const vw = Math.min(
+      maxSize,
+      hasWindow ? (window.innerWidth || document.documentElement.clientWidth) : maxSize
+    );
+    const vh = Math.min(
+      maxSize,
+      hasWindow ? (window.innerHeight || document.documentElement.clientHeight) : maxSize
+    );
 
-    const xPadding = window.innerWidth >= 768 ? 80 : 20;
+    const xPadding = hasWindow && window.innerWidth >= 768 ? 80 : 20;
     const scaleX = (vw - xPadding) / this.canvas.width;
     const scaleY = (vh - 138) / this.canvas.height; // 138 = hauteur de la barre d'insertion
 

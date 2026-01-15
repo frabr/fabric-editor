@@ -6,7 +6,7 @@ import {
   Rect,
   Path,
   Circle,
-} from "fabric";
+} from "#fabric";
 import { CustomTextbox } from "./controls/CustomTextbox";
 import { createRect, createImage } from "./shapes/factories";
 import { applyLockMode, getLockMode, type LockMode } from "./locking";
@@ -78,11 +78,14 @@ export class LayerManager {
   }
 
   /**
-   * Ajoute un objet au canvas et le sélectionne
+   * Ajoute un objet au canvas et le sélectionne (si interactif)
    */
   add(obj: FabricObject): FabricObject {
     this.canvas.add(obj);
-    this.canvas.setActiveObject(obj);
+    // setActiveObject n'existe que sur Canvas interactif (pas StaticCanvas)
+    if (typeof this.canvas.setActiveObject === "function") {
+      this.canvas.setActiveObject(obj);
+    }
     return obj;
   }
 
@@ -415,7 +418,6 @@ export class LayerManager {
       applyLockMode(obj, layer.lockMode as LockMode);
     }
 
-    console.log(obj)
     return obj;
   }
 

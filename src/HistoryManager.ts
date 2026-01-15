@@ -1,4 +1,4 @@
-import type { Canvas } from "fabric";
+import type { Canvas } from "#fabric";
 import type { LayerManager } from "./LayerManager";
 import type { LayerData } from "./types";
 
