@@ -37,15 +37,15 @@
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
-    "canvas": "^2.11.2",
-    "fabric": "^6.5.4"
+    "canvas": "^3.2.1",
+    "fabric": "^7.1.0"
   },
   "devDependencies": {
     "@types/node": "^25.0.8",
-    "jsdom": "^24.0.0",
+    "jsdom": "^27.4.0",
     "tsup": "^8.0.0",
     "typescript": "^5.3.0",
-    "vitest": "^2.0.0"
+    "vitest": "^4.0.17"
   },
   "repository": {
     "type": "git",
