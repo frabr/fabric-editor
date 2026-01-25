@@ -62,6 +62,10 @@ export {
 // Controls
 export { addCropControls, removeCropControls, CustomTextbox } from "./controls";
 
+// HTML Renderer
+export { fabricToHtml, layerToHtmlStandalone } from "./html";
+export type { HtmlRenderOptions, HtmlLayerOutput } from "./html";
+
 // Types
 export type {
   EditorConfig,
