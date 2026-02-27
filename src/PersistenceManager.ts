@@ -1,4 +1,4 @@
-import { Canvas, Group } from "#fabric";
+import { Canvas } from "#fabric";
 import type { LayerManager } from "./LayerManager";
 import type { PendingUploadsManager } from "./PendingUploadsManager";
 import type { SaveOptions, SaveResult, LayerData } from "./types";
@@ -91,36 +91,44 @@ export class PersistenceManager {
   /**
    * Compacte le canvas autour des calques (pour le mode standalone)
    *
-   * En Fabric.js 7, Group transforme les coordonnées des enfants en relatif
-   * au centre du groupe. On utilise group.remove() pour restaurer les
-   * positions absolues via exitGroup avant de les ré-ajouter au canvas.
+   * Calcule le bounding box manuellement sans Group, car Fabric.js 7
+   * transforme les coordonnées des enfants en relatif au centre du groupe.
    */
   compactAroundLayers(): void {
     const layerObjects = this.layers.all;
     if (layerObjects.length === 0) return;
 
-    const group = new Group(layerObjects);
+    // Calculer le bounding box de tous les calques
+    let minX = Infinity, minY = Infinity;
+    let maxX = -Infinity, maxY = -Infinity;
 
-    // Vider le canvas
+    for (const obj of layerObjects) {
+      const rect = obj.getBoundingRect();
+      minX = Math.min(minX, rect.left);
+      minY = Math.min(minY, rect.top);
+      maxX = Math.max(maxX, rect.left + rect.width);
+      maxY = Math.max(maxY, rect.top + rect.height);
+    }
+
+    // Décaler tous les objets pour que le contenu démarre à (0, 0)
+    for (const obj of layerObjects) {
+      obj.set({
+        left: obj.left - minX,
+        top: obj.top - minY,
+      });
+      obj.setCoords();
+    }
+
+    // Vider le canvas et ré-ajouter les calques repositionnés
     this.canvas.clear();
-
-    // Repositionner le groupe en haut à gauche
-    group.left = 0;
-    group.top = 0;
-
-    // Extraire les objets du groupe en restaurant leurs positions absolues
-    // (group.remove appelle exitGroup qui applique la matrice de transformation)
-    const objects = [...group.getObjects()];
-    group.remove(...objects);
-
-    objects.forEach((obj) => {
+    for (const obj of layerObjects) {
       this.canvas.add(obj);
-    });
+    }
 
-    // Ajuster la taille du canvas
+    // Ajuster la taille du canvas au bounding box
     this.canvas.setDimensions({
-      width: group.width,
-      height: group.height,
+      width: maxX - minX,
+      height: maxY - minY,
     });
   }
 

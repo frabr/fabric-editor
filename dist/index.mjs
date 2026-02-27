@@ -115,7 +115,7 @@ var init_PendingUploadsManager = __esm({
 });
 
 // src/FabricEditor.ts
-import { Canvas as Canvas5, FabricObject as FabricObject6, FabricImage as FabricImage6, Point as Point2, Control as Control2, controlsUtils } from "#fabric";
+import { Canvas as Canvas4, FabricObject as FabricObject6, FabricImage as FabricImage6, Point as Point2, Control as Control2, controlsUtils } from "#fabric";
 
 // src/LayerManager.ts
 import {
@@ -1675,7 +1675,6 @@ var MaskManager = class {
 };
 
 // src/PersistenceManager.ts
-import { Group as Group3 } from "#fabric";
 var PersistenceManager = class {
   constructor(canvas, layers) {
     this.canvas = canvas;
@@ -1740,25 +1739,35 @@ var PersistenceManager = class {
   /**
    * Compacte le canvas autour des calques (pour le mode standalone)
    *
-   * En Fabric.js 7, Group transforme les coordonnées des enfants en relatif
-   * au centre du groupe. On utilise group.remove() pour restaurer les
-   * positions absolues via exitGroup avant de les ré-ajouter au canvas.
+   * Calcule le bounding box manuellement sans Group, car Fabric.js 7
+   * transforme les coordonnées des enfants en relatif au centre du groupe.
    */
   compactAroundLayers() {
     const layerObjects = this.layers.all;
     if (layerObjects.length === 0) return;
-    const group = new Group3(layerObjects);
+    let minX = Infinity, minY = Infinity;
+    let maxX = -Infinity, maxY = -Infinity;
+    for (const obj of layerObjects) {
+      const rect = obj.getBoundingRect();
+      minX = Math.min(minX, rect.left);
+      minY = Math.min(minY, rect.top);
+      maxX = Math.max(maxX, rect.left + rect.width);
+      maxY = Math.max(maxY, rect.top + rect.height);
+    }
+    for (const obj of layerObjects) {
+      obj.set({
+        left: obj.left - minX,
+        top: obj.top - minY
+      });
+      obj.setCoords();
+    }
     this.canvas.clear();
-    group.left = 0;
-    group.top = 0;
-    const objects = [...group.getObjects()];
-    group.remove(...objects);
-    objects.forEach((obj) => {
+    for (const obj of layerObjects) {
       this.canvas.add(obj);
-    });
+    }
     this.canvas.setDimensions({
-      width: group.width,
-      height: group.height
+      width: maxX - minX,
+      height: maxY - minY
     });
   }
   /**
@@ -2780,7 +2789,7 @@ var FabricEditor = class {
       this.state.maxSize
     );
     this.state.ratio = ratio;
-    return new Canvas5(canvasElement, {
+    return new Canvas4(canvasElement, {
       width,
       height,
       preserveObjectStacking: true

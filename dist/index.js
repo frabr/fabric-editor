@@ -172,7 +172,7 @@ __export(index_exports, {
 module.exports = __toCommonJS(index_exports);
 
 // src/FabricEditor.ts
-var import_fabric10 = require("#fabric");
+var import_fabric9 = require("#fabric");
 
 // src/LayerManager.ts
 var import_fabric5 = require("#fabric");
@@ -1712,7 +1712,6 @@ var MaskManager = class {
 };
 
 // src/PersistenceManager.ts
-var import_fabric8 = require("#fabric");
 var PersistenceManager = class {
   constructor(canvas, layers) {
     this.canvas = canvas;
@@ -1777,25 +1776,35 @@ var PersistenceManager = class {
   /**
    * Compacte le canvas autour des calques (pour le mode standalone)
    *
-   * En Fabric.js 7, Group transforme les coordonnées des enfants en relatif
-   * au centre du groupe. On utilise group.remove() pour restaurer les
-   * positions absolues via exitGroup avant de les ré-ajouter au canvas.
+   * Calcule le bounding box manuellement sans Group, car Fabric.js 7
+   * transforme les coordonnées des enfants en relatif au centre du groupe.
    */
   compactAroundLayers() {
     const layerObjects = this.layers.all;
     if (layerObjects.length === 0) return;
-    const group = new import_fabric8.Group(layerObjects);
+    let minX = Infinity, minY = Infinity;
+    let maxX = -Infinity, maxY = -Infinity;
+    for (const obj of layerObjects) {
+      const rect = obj.getBoundingRect();
+      minX = Math.min(minX, rect.left);
+      minY = Math.min(minY, rect.top);
+      maxX = Math.max(maxX, rect.left + rect.width);
+      maxY = Math.max(maxY, rect.top + rect.height);
+    }
+    for (const obj of layerObjects) {
+      obj.set({
+        left: obj.left - minX,
+        top: obj.top - minY
+      });
+      obj.setCoords();
+    }
     this.canvas.clear();
-    group.left = 0;
-    group.top = 0;
-    const objects = [...group.getObjects()];
-    group.remove(...objects);
-    objects.forEach((obj) => {
+    for (const obj of layerObjects) {
       this.canvas.add(obj);
-    });
+    }
     this.canvas.setDimensions({
-      width: group.width,
-      height: group.height
+      width: maxX - minX,
+      height: maxY - minY
     });
   }
   /**
@@ -1959,7 +1968,7 @@ var HistoryManager = class {
 };
 
 // src/SnappingManager.ts
-var import_fabric9 = require("#fabric");
+var import_fabric8 = require("#fabric");
 var SnappingManager = class {
   constructor(canvas, config = {}) {
     this.guides = [];
@@ -2179,7 +2188,7 @@ var SnappingManager = class {
   }
   createGuideLine(guide) {
     const coords = guide.orientation === "vertical" ? [guide.position, 0, guide.position, this.canvas.height] : [0, guide.position, this.canvas.width, guide.position];
-    return new import_fabric9.Line(coords, {
+    return new import_fabric8.Line(coords, {
       stroke: this.config.guideColor,
       strokeWidth: 1,
       strokeDashArray: [5, 5],
@@ -2705,7 +2714,7 @@ var FabricEditor = class {
       obj.nextClipShape();
       obj.dirty = true;
       this.canvas.requestRenderAll();
-    } else if (obj instanceof import_fabric10.FabricImage) {
+    } else if (obj instanceof import_fabric9.FabricImage) {
       switchClip(obj);
       obj.dirty = true;
       this.canvas.remove(obj);
@@ -2717,7 +2726,7 @@ var FabricEditor = class {
    */
   switchShape() {
     const obj = this.selection.current;
-    if (!obj || obj instanceof import_fabric10.FabricImage) return;
+    if (!obj || obj instanceof import_fabric9.FabricImage) return;
     const currentShapeId = obj.id;
     const nextShapeType = nextShape(currentShapeId);
     const newObj = switchShape(obj, nextShapeType);
@@ -2785,7 +2794,7 @@ var FabricEditor = class {
    * Retourne null si aucune image n'est trouvée
    */
   findImageAtPoint(x, y) {
-    const point = new import_fabric10.Point(x, y);
+    const point = new import_fabric9.Point(x, y);
     const objects = this.canvas.getObjects().slice().reverse();
     for (const obj of objects) {
       if (obj.get("layerId") === "originalImage") continue;
@@ -2793,7 +2802,7 @@ var FabricEditor = class {
       if (layerType === "imageFrame" && obj.containsPoint(point)) {
         return obj;
       }
-      if (obj instanceof import_fabric10.FabricImage && obj.containsPoint(point)) {
+      if (obj instanceof import_fabric9.FabricImage && obj.containsPoint(point)) {
         return obj;
       }
     }
@@ -2817,7 +2826,7 @@ var FabricEditor = class {
       this.state.maxSize
     );
     this.state.ratio = ratio;
-    return new import_fabric10.Canvas(canvasElement, {
+    return new import_fabric9.Canvas(canvasElement, {
       width,
       height,
       preserveObjectStacking: true
@@ -2854,8 +2863,8 @@ var FabricEditor = class {
    * Étend FabricObject pour inclure layerId dans la sérialisation
    */
   extendFabricObject() {
-    const originalToObject = import_fabric10.FabricObject.prototype.toObject;
-    import_fabric10.FabricObject.prototype.toObject = function(propertiesToInclude) {
+    const originalToObject = import_fabric9.FabricObject.prototype.toObject;
+    import_fabric9.FabricObject.prototype.toObject = function(propertiesToInclude) {
       return originalToObject.call(
         this,
         ["layerId"].concat(propertiesToInclude || [])
@@ -2870,13 +2879,13 @@ var FabricEditor = class {
    * l'événement object:added pour modifier chaque nouvel objet.
    */
   configureRotationControl() {
-    const createSideRotationControl = () => new import_fabric10.Control({
+    const createSideRotationControl = () => new import_fabric9.Control({
       x: 0.5,
       y: 0,
       offsetX: 30,
       offsetY: 0,
-      actionHandler: import_fabric10.controlsUtils.rotationWithSnapping,
-      cursorStyleHandler: import_fabric10.controlsUtils.rotationStyleHandler,
+      actionHandler: import_fabric9.controlsUtils.rotationWithSnapping,
+      cursorStyleHandler: import_fabric9.controlsUtils.rotationStyleHandler,
       withConnection: true,
       actionName: "rotate"
     });
@@ -2889,7 +2898,7 @@ var FabricEditor = class {
 };
 
 // src/ImageDropHandler.ts
-var import_fabric11 = require("#fabric");
+var import_fabric10 = require("#fabric");
 var HIGHLIGHT_COLOR = "#3b82f6";
 var ImageDropHandler = class {
   constructor(editor, config) {
@@ -3049,7 +3058,7 @@ var ImageDropHandler = class {
       height = target.height;
       clipPath = target.clipPath;
     }
-    const fabricOverlay = new import_fabric11.Rect({
+    const fabricOverlay = new import_fabric10.Rect({
       left: target.left,
       top: target.top,
       width,

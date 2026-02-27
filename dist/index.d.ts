@@ -594,9 +594,8 @@ declare class PersistenceManager {
     /**
      * Compacte le canvas autour des calques (pour le mode standalone)
      *
-     * En Fabric.js 7, Group transforme les coordonnées des enfants en relatif
-     * au centre du groupe. On utilise group.remove() pour restaurer les
-     * positions absolues via exitGroup avant de les ré-ajouter au canvas.
+     * Calcule le bounding box manuellement sans Group, car Fabric.js 7
+     * transforme les coordonnées des enfants en relatif au centre du groupe.
      */
     compactAroundLayers(): void;
     /**
