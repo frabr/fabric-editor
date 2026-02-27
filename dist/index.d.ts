@@ -593,6 +593,10 @@ declare class PersistenceManager {
     rasterize(): Promise<string>;
     /**
      * Compacte le canvas autour des calques (pour le mode standalone)
+     *
+     * En Fabric.js 7, Group transforme les coordonnées des enfants en relatif
+     * au centre du groupe. On utilise group.remove() pour restaurer les
+     * positions absolues via exitGroup avant de les ré-ajouter au canvas.
      */
     compactAroundLayers(): void;
     /**

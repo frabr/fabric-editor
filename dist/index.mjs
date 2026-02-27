@@ -1739,6 +1739,10 @@ var PersistenceManager = class {
   }
   /**
    * Compacte le canvas autour des calques (pour le mode standalone)
+   *
+   * En Fabric.js 7, Group transforme les coordonnées des enfants en relatif
+   * au centre du groupe. On utilise group.remove() pour restaurer les
+   * positions absolues via exitGroup avant de les ré-ajouter au canvas.
    */
   compactAroundLayers() {
     const layerObjects = this.layers.all;
@@ -1747,7 +1751,9 @@ var PersistenceManager = class {
     this.canvas.clear();
     group.left = 0;
     group.top = 0;
-    group.getObjects().forEach((obj) => {
+    const objects = [...group.getObjects()];
+    group.remove(...objects);
+    objects.forEach((obj) => {
       this.canvas.add(obj);
     });
     this.canvas.setDimensions({
