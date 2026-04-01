@@ -890,6 +890,7 @@ declare class FabricEditor {
     /**
      * Étend FabricObject pour inclure layerId dans la sérialisation
      */
+    private static _toObjectExtended;
     private extendFabricObject;
     /**
      * Déplace le contrôle de rotation (mtr) sur le côté droit de l'objet

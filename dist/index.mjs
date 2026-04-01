@@ -2443,7 +2443,7 @@ function computeDimensions(width, height, constraint) {
     return [width * ratio, constraint, ratio];
   }
 }
-var FabricEditor = class {
+var _FabricEditor = class _FabricEditor {
   constructor(canvasElement, config) {
     this.config = config;
     this.state = {
@@ -2822,10 +2822,9 @@ var FabricEditor = class {
     });
     this.canvas.renderAll();
   }
-  /**
-   * Étend FabricObject pour inclure layerId dans la sérialisation
-   */
   extendFabricObject() {
+    if (_FabricEditor._toObjectExtended) return;
+    _FabricEditor._toObjectExtended = true;
     const originalToObject = FabricObject6.prototype.toObject;
     FabricObject6.prototype.toObject = function(propertiesToInclude) {
       return originalToObject.call(
@@ -2859,6 +2858,11 @@ var FabricEditor = class {
     });
   }
 };
+/**
+ * Étend FabricObject pour inclure layerId dans la sérialisation
+ */
+_FabricEditor._toObjectExtended = false;
+var FabricEditor = _FabricEditor;
 
 // src/ImageDropHandler.ts
 import { Rect as Rect4 } from "#fabric";

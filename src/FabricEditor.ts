@@ -531,7 +531,12 @@ export class FabricEditor {
   /**
    * Étend FabricObject pour inclure layerId dans la sérialisation
    */
+  private static _toObjectExtended = false;
+
   private extendFabricObject(): void {
+    if (FabricEditor._toObjectExtended) return;
+    FabricEditor._toObjectExtended = true;
+
     const originalToObject = FabricObject.prototype.toObject;
     FabricObject.prototype.toObject = function (propertiesToInclude) {
       return originalToObject.call(

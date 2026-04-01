@@ -210,7 +210,12 @@ export class NodeEditor {
   /**
    * Étend FabricObject pour inclure layerId dans la sérialisation
    */
+  private static _toObjectExtended = false;
+
   private extendFabricObject(): void {
+    if (NodeEditor._toObjectExtended) return;
+    NodeEditor._toObjectExtended = true;
+
     const originalToObject = FabricObject.prototype.toObject;
     FabricObject.prototype.toObject = function (propertiesToInclude) {
       return originalToObject.call(

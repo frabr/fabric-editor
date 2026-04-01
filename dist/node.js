@@ -1505,7 +1505,7 @@ function computeDimensions(width, height, constraint) {
     return [width * ratio, constraint, ratio];
   }
 }
-var NodeEditor = class {
+var _NodeEditor = class _NodeEditor {
   constructor(config) {
     this.config = config;
     const maxSize = config.maxSize ?? 1e3;
@@ -1606,10 +1606,9 @@ var NodeEditor = class {
     });
     this.canvas.renderAll();
   }
-  /**
-   * Étend FabricObject pour inclure layerId dans la sérialisation
-   */
   extendFabricObject() {
+    if (_NodeEditor._toObjectExtended) return;
+    _NodeEditor._toObjectExtended = true;
     const originalToObject = import_fabric6.FabricObject.prototype.toObject;
     import_fabric6.FabricObject.prototype.toObject = function(propertiesToInclude) {
       return originalToObject.call(
@@ -1619,6 +1618,11 @@ var NodeEditor = class {
     };
   }
 };
+/**
+ * Étend FabricObject pour inclure layerId dans la sérialisation
+ */
+_NodeEditor._toObjectExtended = false;
+var NodeEditor = _NodeEditor;
 function registerFonts(fonts) {
   try {
     const { registerFont } = require2("canvas");

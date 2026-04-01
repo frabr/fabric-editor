@@ -582,6 +582,7 @@ declare class NodeEditor {
     /**
      * Étend FabricObject pour inclure layerId dans la sérialisation
      */
+    private static _toObjectExtended;
     private extendFabricObject;
 }
 /**

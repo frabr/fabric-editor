@@ -1,6 +1,6 @@
 {
   "name": "@frabr/fabric-editor",
-  "version": "1.3.0",
+  "version": "1.5.0",
   "description": "Fabric.js-based image editor with layers, clipping, and frame support",
   "imports": {
     "#fabric": {
