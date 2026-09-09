@@ -69,7 +69,6 @@ export type { HtmlRenderOptions, HtmlLayerOutput } from "./html";
 // Types
 export type {
   EditorConfig,
-  EditorState,
   FontsConfig,
   FontConfig,
   LayerData,

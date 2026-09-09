@@ -9,24 +9,7 @@ import { switchClip } from "./clipping";
 import { switchShape, nextShape } from "./shapes";
 import { ImageFrame } from "./ImageFrame";
 import { isPositionLocked } from "./locking";
-import type { EditorConfig, EditorState, LayerData, FontsConfig, ShapeType } from "./types";
-
-/**
- * Calcule les dimensions du canvas en respectant une contrainte maximale
- */
-function computeDimensions(
-  width: number,
-  height: number,
-  constraint: number
-): [number, number, number] {
-  if (width > height) {
-    const ratio = constraint / width;
-    return [constraint, height * ratio, ratio];
-  } else {
-    const ratio = constraint / height;
-    return [width * ratio, constraint, ratio];
-  }
-}
+import type { EditorConfig, LayerData, FontsConfig, ShapeType } from "./types";
 
 /**
  * Éditeur d'images basé sur Fabric.js
@@ -43,17 +26,20 @@ export class FabricEditor {
   readonly history: HistoryManager;
   readonly snapping: SnappingManager;
 
-  private state: EditorState;
   private config: EditorConfig;
+  private _displayScale = 1;
+  private _userZoom = 1;
+  private _resizeObserver: ResizeObserver | null = null;
+  private _resizeCallbacks: Array<() => void> = [];
 
   constructor(canvasElement: HTMLCanvasElement, config: EditorConfig) {
     this.config = config;
-    this.state = {
-      ratio: 1,
-      maxSize: config.standAlone ? 500 : 1000,
-    };
 
-    this.canvas = this.initCanvas(canvasElement);
+    this.canvas = new Canvas(canvasElement, {
+      width: config.width,
+      height: config.height,
+      preserveObjectStacking: true,
+    });
 
     // Initialiser les managers
     this.layers = new LayerManager(this.canvas);
@@ -71,21 +57,156 @@ export class FabricEditor {
 
     // Déplacer le contrôle de rotation sur le côté droit
     this.configureRotationControl();
+
+    if (config.transparent) {
+      this.canvas.backgroundColor = "transparent";
+    }
+  }
+
+  private _initialized = false;
+
+  /**
+   * Async initialization: loads fonts from config if present.
+   * Idempotent — safe to call multiple times.
+   */
+  async init(): Promise<void> {
+    if (this._initialized) return;
+    this._initialized = true;
+    if (this.config.fonts && Object.keys(this.config.fonts).length > 0) {
+      await this.loadFonts(this.config.fonts);
+    }
+    if (this.config.container) {
+      this.observeResize();
+    }
   }
 
   /**
-   * Le ratio de redimensionnement appliqué à l'image de fond
+   * Register a callback to be called after each container resize (and initial fit).
    */
-  get ratio(): number {
-    return this.state.ratio;
+  onResize(callback: () => void): void {
+    this._resizeCallbacks.push(callback);
+  }
+
+  /**
+   * Clear all layers, ensure fonts are loaded, load new layers, and render.
+   * Single entry point for both initial load and undo/redo restore.
+   */
+  async replaceAllLayers(layers: LayerData[]): Promise<void> {
+    await this.init();
+    this.layers.all.forEach((obj) => this.layers.remove(obj));
+    await this.layers.loadLayers(layers);
+    this.canvas.discardActiveObject();
+    this.canvas.renderAll();
+  }
+
+  /**
+   * Current CSS scale applied by fitToContainer.
+   */
+  get displayScale(): number {
+    return this._displayScale;
+  }
+
+  /**
+   * CSS-scale the canvas to fit inside its container.
+   *
+   * The canvas stays at native resolution (config.width × config.height);
+   * a CSS `transform: scale()` on the .canvas-container wrapper makes it
+   * fit the container element.  Returns the computed scale factor.
+   */
+  fitToContainer(): number {
+    const container = this.config.container;
+    if (!container) return 1;
+
+    const compW = this.config.width;
+    const compH = this.config.height;
+    const boxW = container.clientWidth;
+    const boxH = container.clientHeight;
+    const fitScale = Math.min(boxW / compW, boxH / compH);
+    const scale = fitScale * this._userZoom;
+
+    this.canvas.setDimensions({ width: compW, height: compH });
+
+    const canvasEl = container.querySelector<HTMLElement>(".canvas-container") || container;
+    canvasEl.style.transformOrigin = "top left";
+    canvasEl.style.transform = `scale(${scale})`;
+
+    // Center the scaled canvas within the container
+    const scaledW = compW * scale;
+    const scaledH = compH * scale;
+    const offsetX = Math.max(0, (boxW - scaledW) / 2);
+    const offsetY = Math.max(0, (boxH - scaledH) / 2);
+    canvasEl.style.marginLeft = `${offsetX}px`;
+    canvasEl.style.marginTop = `${offsetY}px`;
+
+    // Allow scrolling when zoomed in
+    container.style.overflow = this._userZoom > 1 ? "auto" : "hidden";
+
+    this._displayScale = scale;
+    return scale;
+  }
+
+  /**
+   * Set user zoom level (1 = fit to container, >1 = zoom in).
+   * Re-runs fitToContainer to apply the new scale.
+   */
+  setUserZoom(zoom: number): void {
+    this._userZoom = Math.max(0.1, zoom);
+    this.fitToContainer();
+    this._resizeCallbacks.forEach((cb) => cb());
+  }
+
+  get userZoom(): number {
+    return this._userZoom;
+  }
+
+  /**
+   * Observe the container for size changes and automatically re-fit.
+   * Called automatically by init() when a container is configured.
+   */
+  private observeResize(): void {
+    const container = this.config.container;
+    if (!container) return;
+
+    this._resizeObserver?.disconnect();
+    this._resizeObserver = new ResizeObserver(() => {
+      this.fitToContainer();
+      this._resizeCallbacks.forEach((cb) => cb());
+    });
+    this._resizeObserver.observe(container);
+    this.fitToContainer();
+  }
+
+  /**
+   * Returns positioning config for external controls (e.g. FabricControls).
+   *
+   * @param anchorEl - The positioned ancestor in which controls live.
+   *                   Typically the flex-centering wrapper around the canvas box.
+   */
+  getControlsConfig(anchorEl: HTMLElement): {
+    getContainer: () => HTMLElement;
+    getDisplayScale: () => number;
+    getCanvasOffset: () => { left: number; top: number };
+  } {
+    return {
+      getContainer: () => anchorEl,
+      getDisplayScale: () => this._displayScale,
+      getCanvasOffset: () => {
+        const container = this.config.container;
+        if (!container) return { left: 0, top: 0 };
+        const canvasEl = container.querySelector<HTMLElement>(".canvas-container") || container;
+        const anchorRect = anchorEl.getBoundingClientRect();
+        const canvasRect = canvasEl.getBoundingClientRect();
+        return {
+          left: canvasRect.left - anchorRect.left,
+          top: canvasRect.top - anchorRect.top,
+        };
+      },
+    };
   }
 
   /**
    * Convertit des coordonnées du canvas Fabric vers des coordonnées CSS affichées.
-   *
-   * Le canvas Fabric a une taille "interne" (ex: 1000x800) utilisée pour les calculs,
-   * mais il est affiché dans le container avec une taille CSS différente via zoom.
-   * Cette méthode applique le ratio pour positionner des éléments HTML par-dessus le canvas.
+   * Utilise le displayScale mis à jour par fitToContainer.
    */
   canvasToDisplayCoords(rect: { left: number; top: number; width: number; height: number }): {
     left: number;
@@ -93,19 +214,12 @@ export class FabricEditor {
     width: number;
     height: number;
   } {
-    const container = this.config.container;
-    if (!container) {
-      return rect;
-    }
-
-    const ratioX = container.clientWidth / this.canvas.width;
-    const ratioY = container.clientHeight / this.canvas.height;
-
+    const s = this._displayScale;
     return {
-      left: rect.left * ratioX,
-      top: rect.top * ratioY,
-      width: rect.width * ratioX,
-      height: rect.height * ratioY,
+      left: rect.left * s,
+      top: rect.top * s,
+      width: rect.width * s,
+      height: rect.height * s,
     };
   }
 
@@ -132,8 +246,9 @@ export class FabricEditor {
   ): void {
     const { anchor = "center", offset = 0, autoFlip = false, clampToContainer = false } = options;
     const displayRect = this.canvasToDisplayCoords(obj.getBoundingRect());
-    const containerWidth = this.config.container?.clientWidth || this.canvas.width;
-    const containerHeight = this.config.container?.clientHeight || this.canvas.height;
+    const s = this._displayScale;
+    const containerWidth = this.config.width * s;
+    const containerHeight = this.config.height * s;
     const elementWidth = element.offsetWidth || 100;
     const elementHeight = element.offsetHeight || 40;
 
@@ -284,28 +399,50 @@ export class FabricEditor {
   }
 
   /**
+   * Returns the bounding rect of a Fabric object as rounded pixel coordinates.
+   */
+  getObjectBounds(obj: FabricObject): { x: number; y: number; width: number; height: number } {
+    const bound = obj.getBoundingRect();
+    return {
+      x: Math.round(bound.left),
+      y: Math.round(bound.top),
+      width: Math.round(bound.width),
+      height: Math.round(bound.height),
+    };
+  }
+
+  /**
+   * Enable or disable canvas interactivity.
+   * When disabled, discards selection and marks the canvas as non-interactive.
+   * When enabled, discards selection (clean state) and optionally syncs visibility.
+   */
+  setInteractive(enabled: boolean): void {
+    if (enabled) {
+      this.canvas.discardActiveObject();
+    } else {
+      this.canvas.discardActiveObject();
+    }
+    this.canvas.renderAll();
+  }
+
+  /**
    * Initialise l'éditeur avec une image de fond et des calques optionnels
    */
   async initialize(
     backgroundImageUrl: string,
     layers: LayerData[] = []
   ): Promise<void> {
-    // Charger l'image de fond
-    await this.layers.loadBackgroundImage(backgroundImageUrl, this.state.ratio);
+    // Charger l'image de fond (taille native, scaling 1:1)
+    await this.layers.loadBackgroundImage(backgroundImageUrl);
 
     // Charger les calques existants
     if (layers.length > 0) {
       await this.layers.loadLayers(layers);
     }
 
-    // Si mode standalone, centrer les objets
-    if (this.config.standAlone) {
-      this.centerAllObjects();
-    }
-
     // Configurer le masque si présent
     if (this.config.container) {
-      await this.masks.setup(this.config.container, this.state.maxSize);
+      await this.masks.setup(this.config.container);
     }
 
     this.canvas.renderAll();
@@ -361,10 +498,44 @@ export class FabricEditor {
 
     const currentShapeId = (obj as FabricObject & { id?: string }).id as ShapeType | undefined;
     const nextShapeType = nextShape(currentShapeId);
-    const newObj = switchShape(obj, nextShapeType);
+    this.changeShape(nextShapeType);
+  }
 
-    this.layers.add(newObj);
-    this.canvas.remove(obj);
+  /**
+   * Change la forme de l'objet sélectionné vers un type précis.
+   * Pour les shapes : remplace l'objet. Pour les ImageFrames : change le clipShape.
+   */
+  changeShape(shapeType: ShapeType): void {
+    const obj = this.selection.current;
+    if (!obj) return;
+
+    if (obj instanceof ImageFrame) {
+      obj.applyClipShape(shapeType);
+      obj.dirty = true;
+      this.canvas.requestRenderAll();
+    } else if (!(obj instanceof FabricImage)) {
+      const newObj = switchShape(obj, shapeType);
+      // Préserver le layerId et layerType
+      const layerId = obj.get("layerId");
+      const layerType = obj.get("layerType");
+      if (layerId) newObj.set("layerId", layerId);
+      if (layerType) newObj.set("layerType", layerType);
+
+      // Le remove+add déclenche des événements de sélection parasites.
+      // On mute les callbacks le temps du swap.
+      this.selection.silenceCallbacks();
+
+      const zIndex = this.canvas._objects.indexOf(obj);
+      this.canvas.remove(obj);
+      this.canvas.add(newObj);
+      if (zIndex >= 0 && zIndex < this.canvas._objects.length) {
+        this.canvas.moveObjectTo(newObj, zIndex);
+      }
+      this.canvas.setActiveObject(newObj);
+      this.canvas.requestRenderAll();
+
+      this.selection.restoreCallbacks();
+    }
   }
 
   /**
@@ -441,6 +612,16 @@ export class FabricEditor {
    * Retourne null si aucune image n'est trouvée
    */
   findImageAtPoint(x: number, y: number): FabricImage | ImageFrame | null {
+    const target = this.findDropTargetAtPoint(x, y);
+    if (!target || target.layerType === "shape") return null;
+    return target as FabricImage | ImageFrame;
+  }
+
+  /**
+   * Trouve l'objet "droppable" sous un point : ImageFrame, FabricImage, ou shape.
+   * Utilisé par ImageDropHandler pour le drop d'images sur images ET sur formes.
+   */
+  findDropTargetAtPoint(x: number, y: number): FabricObject | null {
     const point = new Point(x, y);
 
     // Parcourir les objets du dessus vers le dessous
@@ -450,13 +631,19 @@ export class FabricEditor {
       // Ignorer l'image de fond
       if (obj.get("layerId") === "originalImage") continue;
 
-      // Vérifier si c'est un ImageFrame (via layerType)
       const layerType = (obj as { layerType?: string }).layerType;
+
+      // ImageFrame
       if (layerType === "imageFrame" && obj.containsPoint(point)) {
-        return obj as ImageFrame;
+        return obj;
       }
 
-      // Vérifier si c'est une image legacy
+      // Shape (rect, circle, heart, hexagon, rounded)
+      if (layerType === "shape" && obj.containsPoint(point)) {
+        return obj;
+      }
+
+      // Image legacy
       if (obj instanceof FabricImage && obj.containsPoint(point)) {
         return obj;
       }
@@ -469,63 +656,12 @@ export class FabricEditor {
    * Nettoie les ressources
    */
   dispose(): void {
+    this._resizeObserver?.disconnect();
+    this._resizeObserver = null;
+    this._resizeCallbacks = [];
     this.snapping.dispose();
     this.selection.dispose();
     this.canvas.dispose();
-  }
-
-  /**
-   * Initialise le canvas Fabric
-   */
-  private initCanvas(canvasElement: HTMLCanvasElement): Canvas {
-    const [width, height, ratio] = computeDimensions(
-      this.config.width,
-      this.config.height,
-      this.state.maxSize
-    );
-
-    this.state.ratio = ratio;
-
-    return new Canvas(canvasElement, {
-      width,
-      height,
-      preserveObjectStacking: true,
-    });
-  }
-
-  /**
-   * Centre tous les objets sur le canvas (mode standalone)
-   */
-  private centerAllObjects(): void {
-    let minX = Infinity,
-      minY = Infinity,
-      maxX = -Infinity,
-      maxY = -Infinity;
-
-    this.canvas.forEachObject((obj) => {
-      const bound = obj.getBoundingRect();
-      minX = Math.min(minX, bound.left);
-      minY = Math.min(minY, bound.top);
-      maxX = Math.max(maxX, bound.left + bound.width);
-      maxY = Math.max(maxY, bound.top + bound.height);
-    });
-
-    const groupCenterX = (minX + maxX) / 2;
-    const groupCenterY = (minY + maxY) / 2;
-    const canvasCenterX = this.canvas.width / 2;
-    const canvasCenterY = this.canvas.height / 2;
-    const deltaX = canvasCenterX - groupCenterX;
-    const deltaY = canvasCenterY - groupCenterY;
-
-    this.canvas.forEachObject((obj) => {
-      obj.set({
-        left: obj.left + deltaX,
-        top: obj.top + deltaY,
-      });
-      obj.setCoords();
-    });
-
-    this.canvas.renderAll();
   }
 
   /**

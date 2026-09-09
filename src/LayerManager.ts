@@ -8,7 +8,8 @@ import {
   Circle,
 } from "#fabric";
 import { CustomTextbox } from "./controls/CustomTextbox";
-import { createRect, createImage } from "./shapes/factories";
+import { createRect, createShape, createImage } from "./shapes/factories";
+import { isValidShape } from "./shapes";
 import { applyLockMode, getLockMode, type LockMode } from "./locking";
 import { ImageFrame, type ImageFrameData } from "./ImageFrame";
 import type { LayerData, TextLayerOptions, ImageLayerOptions, ShapeLayerOptions, ShapeType } from "./types";
@@ -50,16 +51,21 @@ export class LayerManager {
   /**
    * Charge l'image de fond
    */
-  async loadBackgroundImage(url: string, ratio: number): Promise<FabricImage> {
+  async loadBackgroundImage(url: string): Promise<FabricImage> {
     const img = await FabricImage.fromURL(url, { crossOrigin: "anonymous" });
+    // Scale image to fill the canvas (cover)
+    const scaleX = this.canvas.width / img.width;
+    const scaleY = this.canvas.height / img.height;
+    const scale = Math.max(scaleX, scaleY);
     img.set({
       originX: "center",
       originY: "center",
-      scaleX: ratio,
-      scaleY: ratio,
+      scaleX: scale,
+      scaleY: scale,
       left: this.canvas.width / 2,
       top: this.canvas.height / 2,
       selectable: false,
+      evented: false,
       layerId: BACKGROUND_LAYER_ID,
     });
     this.canvas.add(img);
@@ -71,8 +77,13 @@ export class LayerManager {
    */
   async loadLayers(layers: LayerData[]): Promise<FabricObject[]> {
     const objects = await Promise.all(layers.map((l) => this.deserialize(l)));
-    objects.forEach((obj) => {
-      if (obj) this.add(obj);
+    objects.forEach((obj, i) => {
+      if (!obj) return;
+      // Restaurer selectable/evented depuis le JSON (non gérés par fromObject)
+      const data = layers[i];
+      if ((data as any).selectable === false) obj.selectable = false;
+      if ((data as any).evented === false) obj.evented = false;
+      this.add(obj);
     });
     return objects.filter(Boolean) as FabricObject[];
   }
@@ -83,7 +94,8 @@ export class LayerManager {
   add(obj: FabricObject): FabricObject {
     this.canvas.add(obj);
     // setActiveObject n'existe que sur Canvas interactif (pas StaticCanvas)
-    if (typeof this.canvas.setActiveObject === "function") {
+    // Ne pas auto-sélectionner les objets non-sélectionnables (ex: fond)
+    if (obj.selectable !== false && typeof this.canvas.setActiveObject === "function") {
       this.canvas.setActiveObject(obj);
     }
     return obj;
@@ -296,30 +308,72 @@ export class LayerManager {
   }
 
   /**
+   * Remplace une forme (shape) par un ImageFrame contenant l'image donnée.
+   * La forme sert de masque : l'image épouse ses dimensions et son clipShape.
+   * L'ImageFrame est inséré au même z-index que la forme d'origine.
+   */
+  async replaceShapeWithImage(
+    shape: FabricObject,
+    imageUrl: string
+  ): Promise<ImageFrame> {
+    // Déterminer le clipShape depuis l'id de la shape (les factories le positionnent)
+    const shapeId = (shape as { id?: string }).id || "";
+    const clipShape = isValidShape(shapeId) ? shapeId : "rect";
+
+    // Récupérer les dimensions affichées (scaled)
+    const displayedWidth = shape.width * (shape.scaleX || 1);
+    const displayedHeight = shape.height * (shape.scaleY || 1);
+    const center = shape.getCenterPoint();
+
+    // Sauvegarder le z-index
+    const zIndex = this.canvas._objects.indexOf(shape);
+
+    // Charger l'image
+    const img = await FabricImage.fromURL(imageUrl, { crossOrigin: "anonymous" });
+
+    // Créer l'ImageFrame aux dimensions de la shape
+    const frame = new ImageFrame(img, {
+      left: center.x,
+      top: center.y,
+      angle: shape.angle,
+      layerId: (shape as { layerId?: string }).layerId || this.generateId(),
+      clipShape,
+      frameWidth: displayedWidth,
+      frameHeight: displayedHeight,
+    });
+
+    // Supprimer la shape et insérer l'ImageFrame au même z-index
+    this.canvas.remove(shape);
+    this.canvas.add(frame);
+    if (zIndex >= 0 && zIndex < this.canvas._objects.length) {
+      this.canvas.moveObjectTo(frame, zIndex);
+    }
+
+    this.canvas.setActiveObject(frame);
+    this.canvas.renderAll();
+
+    return frame;
+  }
+
+  /**
    * Crée et ajoute un calque forme (rectangle par défaut)
    */
-  addShape(options: ShapeLayerOptions = {}): Rect {
+  addShape(options: ShapeLayerOptions = {}): FabricObject {
     const {
       left = 100,
       top = 100,
       width = 300,
       height = 300,
       fill = "#ffffff",
+      shapeType = "rect",
       layerId = this.generateId(),
     } = options;
 
-    const rect = createRect({
-      left,
-      top,
-      width,
-      height,
-      fill,
-      layerId,
-      layerType: "shape",
-    });
+    const shape = createShape(shapeType, { fill, left, top, width, height, radius: Math.min(width, height) / 2 });
+    shape.set({ layerId, layerType: "shape" });
 
-    this.add(rect);
-    return rect;
+    this.add(shape);
+    return shape;
   }
 
   /**
