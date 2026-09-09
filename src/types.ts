@@ -4,10 +4,10 @@ import type { FabricObject, Canvas } from "#fabric";
 export interface EditorConfig {
   width: number;
   height: number;
-  standAlone?: boolean;
   fonts?: FontsConfig;
   defaultColor?: string;
   container?: HTMLElement;
+  transparent?: boolean;
 }
 
 // Configuration des polices
@@ -17,12 +17,6 @@ export interface FontConfig {
   family: string;
   url: string;
   weight?: string;
-}
-
-// État interne de l'éditeur
-export interface EditorState {
-  ratio: number;
-  maxSize: number;
 }
 
 // Ré-export depuis locking.ts pour rétrocompatibilité
@@ -81,6 +75,7 @@ export interface ShapeLayerOptions {
   stroke?: string;
   strokeWidth?: number;
   layerId?: string;
+  shapeType?: ShapeType;
 }
 
 // Types de formes disponibles

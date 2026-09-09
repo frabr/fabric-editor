@@ -37,7 +37,7 @@ export class MaskManager {
   /**
    * Configure le masque existant (au chargement)
    */
-  async setup(container: HTMLElement, maxSize: number): Promise<void> {
+  async setup(container: HTMLElement): Promise<void> {
     const mask = this.findMask();
     const bgImage = this.findBackground();
 
@@ -45,8 +45,6 @@ export class MaskManager {
       this.cropCanvasToMask(mask, bgImage.height);
       mask.set({ selectable: false, evented: false });
       this.canvas.discardActiveObject();
-    } else {
-      await this.resizeCanvasToFit(container, maxSize);
     }
   }
 
@@ -105,12 +103,6 @@ export class MaskManager {
     const newWidth = mask.width;
     const newHeight = mask.height;
 
-    // Ordre important :
-    // 1. Redimensionner le canvas
-    // 2. Appliquer le zoom
-    // 3. Re-redimensionner (pour le zoom)
-    this.canvas.setDimensions({ width: newWidth, height: newHeight });
-    this.resizeCanvasToFitSync(minimalSize);
     this.canvas.setDimensions({ width: newWidth, height: newHeight });
 
     // Redimensionner l'image de fond pour couvrir le masque
@@ -128,53 +120,6 @@ export class MaskManager {
         obj.setCoords();
       }
     });
-
-    this.canvas.renderAll();
-  }
-
-  /**
-   * Redimensionne le canvas pour s'adapter au viewport
-   */
-  async resizeCanvasToFit(container: HTMLElement, maxSize: number): Promise<void> {
-    // Attendre que le container ait des dimensions
-    let counter = 1;
-    while (
-      Math.min(container.clientHeight, container.clientWidth) <= 0 &&
-      counter < 20
-    ) {
-      counter += 1;
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
-
-    this.resizeCanvasToFitSync(maxSize, container);
-  }
-
-  /**
-   * Version synchrone du redimensionnement
-   */
-  private resizeCanvasToFitSync(maxSize: number, container?: HTMLElement): void {
-    // Guards pour compatibilité Node.js
-    const hasWindow = typeof window !== "undefined";
-    const vw = Math.min(
-      maxSize,
-      hasWindow ? (window.innerWidth || document.documentElement.clientWidth) : maxSize
-    );
-    const vh = Math.min(
-      maxSize,
-      hasWindow ? (window.innerHeight || document.documentElement.clientHeight) : maxSize
-    );
-
-    const xPadding = hasWindow && window.innerWidth >= 768 ? 80 : 20;
-    const scaleX = (vw - xPadding) / this.canvas.width;
-    const scaleY = (vh - 138) / this.canvas.height; // 138 = hauteur de la barre d'insertion
-
-    const zoom = Math.min(scaleX, scaleY);
-    this.canvas.setZoom(zoom);
-
-    if (container) {
-      container.style.width = `${this.canvas.width * zoom}px`;
-      container.style.height = `${this.canvas.height * zoom}px`;
-    }
 
     this.canvas.renderAll();
   }

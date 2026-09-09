@@ -25,6 +25,7 @@ export class SelectionManager {
   private _current: FabricObject | FabricObject[] | null = null;
   private callbacks: SelectionCallbacks = {};
   private isTransforming = false;
+  private _silenced = false;
 
   constructor(private canvas: Canvas) {
     this.setupListeners();
@@ -119,11 +120,29 @@ export class SelectionManager {
   }
 
   /**
-   * Désélectionne tout
+   * Désélectionne tout et re-rend le canvas
    */
   clear(): void {
     this.canvas.discardActiveObject();
+    this.canvas.renderAll();
     this._current = null;
+  }
+
+  /**
+   * Suspend tous les callbacks de sélection (onSelect, onDeselect, etc.).
+   * Utilisé par changeShape() qui fait un remove+add synchrone : sans suppression,
+   * les contrôleurs externes (toolbox) interpréteraient les événements intermédiaires
+   * comme de vraies actions utilisateur.
+   */
+  silenceCallbacks(): void {
+    this._silenced = true;
+  }
+
+  /**
+   * Réactive les callbacks de sélection après une suppression.
+   */
+  restoreCallbacks(): void {
+    this._silenced = false;
   }
 
   /**
@@ -132,6 +151,19 @@ export class SelectionManager {
   select(obj: FabricObject): void {
     this.canvas.setActiveObject(obj);
     this._current = obj;
+    this.canvas.renderAll();
+  }
+
+  /**
+   * Sélectionne un objet par son layerId
+   */
+  selectByLayerId(layerId: string): boolean {
+    const obj = this.canvas.getObjects().find(
+      (o) => o.get("layerId") === layerId,
+    );
+    if (!obj) return false;
+    this.select(obj);
+    return true;
   }
 
   /**
@@ -152,6 +184,8 @@ export class SelectionManager {
    * Les objets verrouillés sont exclus des sélections multiples
    */
   private handleSelection(e: { selected?: FabricObject[] }): void {
+    if (this._silenced) return;
+
     const activeObject = this.canvas.getActiveObject();
 
     if (!activeObject) return;
@@ -214,6 +248,7 @@ export class SelectionManager {
    */
   private handleDeselection(): void {
     this._current = null;
+    if (this._silenced) return;
     if (this.callbacks.onDeselect) {
       this.callbacks.onDeselect();
     }

@@ -379,6 +379,56 @@ async function createImage(url, options) {
   addCropControls(img);
   return img;
 }
+function createShape(shapeType, options) {
+  const { fill, stroke, left, top, height, width, radius } = options;
+  const strokeWidth = stroke ? 4 : 0;
+  switch (shapeType) {
+    case "rect":
+      return createRect({ fill, stroke, left, top, height, width, strokeWidth });
+    case "rounded":
+      return createRoundedRect({ fill, stroke, left, top, height, width, strokeWidth });
+    case "circle":
+      return createCircle({ radius, fill, stroke, left, top, strokeWidth });
+    case "heart":
+      return createHeart({
+        fill,
+        stroke,
+        left,
+        top,
+        height,
+        width,
+        strokeWidth: radius ? strokeWidth / (radius / 14) : strokeWidth,
+        scaleY: radius ? radius / 14 : 1,
+        scaleX: radius ? radius / 14 : 1
+      });
+    case "hexagon":
+      return createHexagon({
+        fill,
+        stroke,
+        left,
+        top,
+        height,
+        width,
+        strokeWidth: radius ? strokeWidth / (radius / 24) : strokeWidth,
+        scaleY: radius ? radius / 24 : 1,
+        scaleX: radius ? radius / 24 : 1
+      });
+    default:
+      return createRect({ fill, stroke, left, top, height, width, strokeWidth });
+  }
+}
+
+// src/shapes/shapeWheel.ts
+var SHAPE_WHEEL = [
+  "rect",
+  "rounded",
+  "circle",
+  "heart",
+  "hexagon"
+];
+function isValidShape(id) {
+  return SHAPE_WHEEL.includes(id);
+}
 
 // src/locking.ts
 function getLockMode(obj) {
@@ -885,16 +935,20 @@ var LayerManager = class {
   /**
    * Charge l'image de fond
    */
-  async loadBackgroundImage(url, ratio) {
+  async loadBackgroundImage(url) {
     const img = await FabricImage4.fromURL(url, { crossOrigin: "anonymous" });
+    const scaleX = this.canvas.width / img.width;
+    const scaleY = this.canvas.height / img.height;
+    const scale = Math.max(scaleX, scaleY);
     img.set({
       originX: "center",
       originY: "center",
-      scaleX: ratio,
-      scaleY: ratio,
+      scaleX: scale,
+      scaleY: scale,
       left: this.canvas.width / 2,
       top: this.canvas.height / 2,
       selectable: false,
+      evented: false,
       layerId: BACKGROUND_LAYER_ID
     });
     this.canvas.add(img);
@@ -905,8 +959,12 @@ var LayerManager = class {
    */
   async loadLayers(layers) {
     const objects = await Promise.all(layers.map((l) => this.deserialize(l)));
-    objects.forEach((obj) => {
-      if (obj) this.add(obj);
+    objects.forEach((obj, i) => {
+      if (!obj) return;
+      const data = layers[i];
+      if (data.selectable === false) obj.selectable = false;
+      if (data.evented === false) obj.evented = false;
+      this.add(obj);
     });
     return objects.filter(Boolean);
   }
@@ -915,7 +973,7 @@ var LayerManager = class {
    */
   add(obj) {
     this.canvas.add(obj);
-    if (typeof this.canvas.setActiveObject === "function") {
+    if (obj.selectable !== false && typeof this.canvas.setActiveObject === "function") {
       this.canvas.setActiveObject(obj);
     }
     return obj;
@@ -1069,6 +1127,37 @@ var LayerManager = class {
     return newImg;
   }
   /**
+   * Remplace une forme (shape) par un ImageFrame contenant l'image donnée.
+   * La forme sert de masque : l'image épouse ses dimensions et son clipShape.
+   * L'ImageFrame est inséré au même z-index que la forme d'origine.
+   */
+  async replaceShapeWithImage(shape, imageUrl) {
+    const shapeId = shape.id || "";
+    const clipShape = isValidShape(shapeId) ? shapeId : "rect";
+    const displayedWidth = shape.width * (shape.scaleX || 1);
+    const displayedHeight = shape.height * (shape.scaleY || 1);
+    const center = shape.getCenterPoint();
+    const zIndex = this.canvas._objects.indexOf(shape);
+    const img = await FabricImage4.fromURL(imageUrl, { crossOrigin: "anonymous" });
+    const frame = new ImageFrame(img, {
+      left: center.x,
+      top: center.y,
+      angle: shape.angle,
+      layerId: shape.layerId || this.generateId(),
+      clipShape,
+      frameWidth: displayedWidth,
+      frameHeight: displayedHeight
+    });
+    this.canvas.remove(shape);
+    this.canvas.add(frame);
+    if (zIndex >= 0 && zIndex < this.canvas._objects.length) {
+      this.canvas.moveObjectTo(frame, zIndex);
+    }
+    this.canvas.setActiveObject(frame);
+    this.canvas.renderAll();
+    return frame;
+  }
+  /**
    * Crée et ajoute un calque forme (rectangle par défaut)
    */
   addShape(options = {}) {
@@ -1078,19 +1167,13 @@ var LayerManager = class {
       width = 300,
       height = 300,
       fill = "#ffffff",
+      shapeType = "rect",
       layerId = this.generateId()
     } = options;
-    const rect = createRect({
-      left,
-      top,
-      width,
-      height,
-      fill,
-      layerId,
-      layerType: "shape"
-    });
-    this.add(rect);
-    return rect;
+    const shape = createShape(shapeType, { fill, left, top, width, height, radius: Math.min(width, height) / 2 });
+    shape.set({ layerId, layerType: "shape" });
+    this.add(shape);
+    return shape;
   }
   /**
    * Groupe plusieurs objets ensemble
@@ -1492,28 +1575,12 @@ var HistoryManager = class {
 
 // src/node.ts
 var require2 = createRequire(import.meta.url);
-function computeDimensions(width, height, constraint) {
-  if (width > height) {
-    const ratio = constraint / width;
-    return [constraint, height * ratio, ratio];
-  } else {
-    const ratio = constraint / height;
-    return [width * ratio, constraint, ratio];
-  }
-}
 var _NodeEditor = class _NodeEditor {
   constructor(config) {
     this.config = config;
-    const maxSize = config.maxSize ?? 1e3;
-    const [width, height, ratio] = computeDimensions(
-      config.width,
-      config.height,
-      maxSize
-    );
-    this.ratio = ratio;
     this.canvas = new StaticCanvas(void 0, {
-      width,
-      height
+      width: config.width,
+      height: config.height
     });
     this.layers = new LayerManager(this.canvas);
     this.persistence = new PersistenceManager(
@@ -1527,21 +1594,12 @@ var _NodeEditor = class _NodeEditor {
     this.extendFabricObject();
   }
   /**
-   * Le ratio de redimensionnement appliqué
-   */
-  getRatio() {
-    return this.ratio;
-  }
-  /**
    * Initialise l'éditeur avec une image de fond et des calques optionnels
    */
   async initialize(backgroundImageUrl, layers = []) {
-    await this.layers.loadBackgroundImage(backgroundImageUrl, this.ratio);
+    await this.layers.loadBackgroundImage(backgroundImageUrl);
     if (layers.length > 0) {
       await this.layers.loadLayers(layers);
-    }
-    if (this.config.standAlone) {
-      this.centerAllObjects();
     }
     this.canvas.renderAll();
     this.history.initialize();
@@ -1574,33 +1632,6 @@ var _NodeEditor = class _NodeEditor {
    */
   dispose() {
     this.canvas.dispose();
-  }
-  /**
-   * Centre tous les objets sur le canvas (mode standalone)
-   */
-  centerAllObjects() {
-    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-    this.canvas.forEachObject((obj) => {
-      const bound = obj.getBoundingRect();
-      minX = Math.min(minX, bound.left);
-      minY = Math.min(minY, bound.top);
-      maxX = Math.max(maxX, bound.left + bound.width);
-      maxY = Math.max(maxY, bound.top + bound.height);
-    });
-    const groupCenterX = (minX + maxX) / 2;
-    const groupCenterY = (minY + maxY) / 2;
-    const canvasCenterX = this.canvas.width / 2;
-    const canvasCenterY = this.canvas.height / 2;
-    const deltaX = canvasCenterX - groupCenterX;
-    const deltaY = canvasCenterY - groupCenterY;
-    this.canvas.forEachObject((obj) => {
-      obj.set({
-        left: obj.left + deltaX,
-        top: obj.top + deltaY
-      });
-      obj.setCoords();
-    });
-    this.canvas.renderAll();
   }
   extendFabricObject() {
     if (_NodeEditor._toObjectExtended) return;

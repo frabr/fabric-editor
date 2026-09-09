@@ -25,10 +25,6 @@ export interface NodeEditorConfig {
   width: number;
   /** Hauteur du canvas */
   height: number;
-  /** Taille maximale (le canvas sera redimensionné proportionnellement) */
-  maxSize?: number;
-  /** Mode standalone (centre les objets) */
-  standAlone?: boolean;
 }
 
 /**
@@ -44,23 +40,6 @@ export interface NodeFontConfig {
 }
 
 /**
- * Calcule les dimensions du canvas en respectant une contrainte maximale
- */
-function computeDimensions(
-  width: number,
-  height: number,
-  constraint: number
-): [number, number, number] {
-  if (width > height) {
-    const ratio = constraint / width;
-    return [constraint, height * ratio, ratio];
-  } else {
-    const ratio = constraint / height;
-    return [width * ratio, constraint, ratio];
-  }
-}
-
-/**
  * Éditeur Node.js pour le rendu côté serveur
  *
  * Fournit une API similaire à FabricEditor mais sans les fonctionnalités
@@ -72,24 +51,14 @@ export class NodeEditor {
   readonly persistence: PersistenceManager;
   readonly history: HistoryManager;
 
-  private ratio: number;
   private config: NodeEditorConfig;
 
   constructor(config: NodeEditorConfig) {
     this.config = config;
-    const maxSize = config.maxSize ?? 1000;
 
-    const [width, height, ratio] = computeDimensions(
-      config.width,
-      config.height,
-      maxSize
-    );
-    this.ratio = ratio;
-
-    // Créer un StaticCanvas (pas besoin d'interactivité côté serveur)
     this.canvas = new StaticCanvas(undefined, {
-      width,
-      height,
+      width: config.width,
+      height: config.height,
     });
 
     // Initialiser les managers compatibles
@@ -108,30 +77,16 @@ export class NodeEditor {
   }
 
   /**
-   * Le ratio de redimensionnement appliqué
-   */
-  getRatio(): number {
-    return this.ratio;
-  }
-
-  /**
    * Initialise l'éditeur avec une image de fond et des calques optionnels
    */
   async initialize(
     backgroundImageUrl: string,
     layers: LayerData[] = []
   ): Promise<void> {
-    // Charger l'image de fond
-    await this.layers.loadBackgroundImage(backgroundImageUrl, this.ratio);
+    await this.layers.loadBackgroundImage(backgroundImageUrl);
 
-    // Charger les calques existants
     if (layers.length > 0) {
       await this.layers.loadLayers(layers);
-    }
-
-    // Si mode standalone, centrer les objets
-    if (this.config.standAlone) {
-      this.centerAllObjects();
     }
 
     this.canvas.renderAll();
@@ -170,41 +125,6 @@ export class NodeEditor {
    */
   dispose(): void {
     this.canvas.dispose();
-  }
-
-  /**
-   * Centre tous les objets sur le canvas (mode standalone)
-   */
-  private centerAllObjects(): void {
-    let minX = Infinity,
-      minY = Infinity,
-      maxX = -Infinity,
-      maxY = -Infinity;
-
-    this.canvas.forEachObject((obj) => {
-      const bound = obj.getBoundingRect();
-      minX = Math.min(minX, bound.left);
-      minY = Math.min(minY, bound.top);
-      maxX = Math.max(maxX, bound.left + bound.width);
-      maxY = Math.max(maxY, bound.top + bound.height);
-    });
-
-    const groupCenterX = (minX + maxX) / 2;
-    const groupCenterY = (minY + maxY) / 2;
-    const canvasCenterX = this.canvas.width / 2;
-    const canvasCenterY = this.canvas.height / 2;
-    const deltaX = canvasCenterX - groupCenterX;
-    const deltaY = canvasCenterY - groupCenterY;
-
-    this.canvas.forEachObject((obj) => {
-      obj.set({
-        left: obj.left + deltaX,
-        top: obj.top + deltaY,
-      });
-      obj.setCoords();
-    });
-
-    this.canvas.renderAll();
   }
 
   /**

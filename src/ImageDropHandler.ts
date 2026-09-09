@@ -1,17 +1,18 @@
 import { FabricImage, Rect, type FabricObject } from "#fabric";
 import type { FabricEditor } from "./FabricEditor";
+import type { ImageLayerOptions } from "./types";
 import { isContentLocked } from "./locking";
 import { ImageFrame } from "./ImageFrame";
 
 /** Couleur pour le feedback drag & drop via les contrôles de sélection */
 const HIGHLIGHT_COLOR = "#3b82f6";
 
-/** Type pour les cibles de remplacement d'image */
-type ImageTarget = FabricImage | ImageFrame;
+/** Type pour les cibles de drop : images, ImageFrames, ou shapes */
+type DropTarget = FabricImage | ImageFrame | FabricObject;
 
 interface DropState {
-  hoveredImage: ImageTarget | null;
-  pendingImage: ImageTarget | null;
+  hoveredImage: DropTarget | null;
+  pendingImage: DropTarget | null;
   timer: ReturnType<typeof setTimeout> | null;
   replaceMode: boolean;
   /** Couleurs originales des contrôles */
@@ -109,39 +110,108 @@ export class ImageDropHandler {
     this.reset();
   }
 
+  // ==================== Public API (for external drag sources) ====================
+
   /**
-   * Réinitialise l'état complet
+   * Track the pointer during an external drag (e.g. from a toolbox panel).
+   * Manages the hover timer and replace overlay — same behaviour as native file drag.
+   * The caller is responsible for calling preventDefault() on the event.
    */
+  trackPointer(e: DragEvent): void {
+    this._trackPointer(e);
+  }
+
+  /**
+   * Drop an image by URL. Replaces the hovered image if the timer has armed,
+   * otherwise adds a new image at the drop position.
+   *
+   * Returns the result so the caller can act on it (e.g. register the new object).
+   */
+  async dropUrl(url: string, e?: DragEvent): Promise<{ kind: "add"; object: ImageFrame } | { kind: "replace"; object?: ImageFrame } | null> {
+    const shouldReplace = this.state.replaceMode && this.state.hoveredImage;
+    const target = this.state.hoveredImage;
+
+    this.clearTimer();
+    this.state.pendingImage = null;
+
+    if (shouldReplace && target) {
+      this.clearHighlight();
+      const isShape = (target as { layerType?: string }).layerType === "shape";
+
+      try {
+        if (isShape) {
+          // Drop sur une forme → convertir en ImageFrame avec la forme comme masque
+          const frame = await this.editor.layers.replaceShapeWithImage(target, url);
+          this.config.onSuccess();
+          return { kind: "replace", object: frame };
+        } else {
+          // Drop sur une image/ImageFrame → remplacement classique
+          await this.editor.layers.replaceImageSource(target as ImageFrame | FabricImage, url);
+          this.config.onSuccess();
+          return { kind: "replace" };
+        }
+      } catch (error) {
+        this.config.onError(error);
+        return null;
+      }
+    } else {
+      this.clearHighlight();
+      const opts: ImageLayerOptions = {};
+      if (e) {
+        const pointer = this.editor.canvas.getScenePoint(e);
+        opts.left = pointer.x;
+        opts.top = pointer.y;
+        opts.originX = "center";
+        opts.originY = "center";
+      }
+      try {
+        const object = await this.editor.layers.addImage(url, opts);
+        this.config.onSuccess();
+        return { kind: "add", object };
+      } catch (error) {
+        this.config.onError(error);
+        return null;
+      }
+    }
+  }
+
+  /**
+   * Cancel an in-progress external drag. Resets timer, overlay, and state.
+   */
+  cancelDrag(): void {
+    this.reset();
+  }
+
+  // ==================== Internal ====================
+
   private reset(): void {
     this.clearTimer();
     this.clearHighlight();
     this.state.pendingImage = null;
   }
 
-  private handleDragOver(e: DragEvent): void {
-    e.preventDefault();
-    e.stopPropagation();
-
-    // Le drop est toujours possible (ajout ou remplacement)
-    e.dataTransfer!.dropEffect = "copy";
-
-    // Obtenir les coordonnées dans le canvas
+  private _trackPointer(e: DragEvent): void {
     const pointer = this.editor.canvas.getScenePoint(e);
-    const imageAtPoint = this.editor.findImageAtPoint(pointer.x, pointer.y);
+    const imageAtPoint = this.editor.findDropTargetAtPoint(pointer.x, pointer.y);
 
-    // Si on change d'image survolée, reset le timer
     if (imageAtPoint !== this.state.pendingImage) {
       this.clearTimer();
       this.clearHighlight();
       this.state.pendingImage = imageAtPoint;
 
-      // Démarrer le timer si on survole une image
       if (imageAtPoint) {
         this.state.timer = setTimeout(() => {
           this.activateReplaceMode(imageAtPoint);
         }, this.config.hoverDelay);
       }
     }
+  }
+
+  private handleDragOver(e: DragEvent): void {
+    e.preventDefault();
+    e.stopPropagation();
+    e.dataTransfer!.dropEffect = "copy";
+    this._trackPointer(e);
   }
 
   private handleDragLeave(e: DragEvent): void {
@@ -160,11 +230,9 @@ export class ImageDropHandler {
       return;
     }
 
-    // Sauvegarder l'état avant de reset
     const shouldReplace = this.state.replaceMode && this.state.hoveredImage;
     const targetImage = this.state.hoveredImage;
 
-    // Reset le timer et pending
     this.clearTimer();
     this.state.pendingImage = null;
 
@@ -187,7 +255,7 @@ export class ImageDropHandler {
     return file;
   }
 
-  private activateReplaceMode(image: ImageTarget): void {
+  private activateReplaceMode(image: DropTarget): void {
     // Si le contenu est verrouillé, ne pas activer le mode remplacement
     if (isContentLocked(image as FabricObject)) {
       return;
@@ -217,7 +285,7 @@ export class ImageDropHandler {
    * Met en surbrillance une image via les contrôles de sélection Fabric
    * et un overlay HTML sombre avec texte personnalisable
    */
-  private highlightImage(target: ImageTarget): void {
+  private highlightImage(target: DropTarget): void {
     // Sauvegarder les couleurs originales
     this.state.originalColors = {
       border: target.borderColor as string,
@@ -241,7 +309,7 @@ export class ImageDropHandler {
   /**
    * Crée les overlays : un Rect Fabric (pour épouser le clipPath) + un élément HTML (pour le texte)
    */
-  private createOverlay(target: ImageTarget): void {
+  private createOverlay(target: DropTarget): void {
     // Extraire les dimensions selon le type
     let width: number;
     let height: number;
@@ -315,7 +383,7 @@ export class ImageDropHandler {
   /**
    * Restaure le style original d'une image/frame et supprime l'overlay
    */
-  private restoreImageStyle(target: ImageTarget): void {
+  private restoreImageStyle(target: DropTarget): void {
     // Restaurer les couleurs originales
     if (this.state.originalColors) {
       target.set({
@@ -346,13 +414,19 @@ export class ImageDropHandler {
     }
   }
 
-  private async replaceImage(file: File, target: ImageTarget): Promise<void> {
+  private async replaceImage(file: File, target: DropTarget): Promise<void> {
     // Nettoyer l'overlay avant le remplacement
     this.clearHighlight();
 
     try {
       const imageUrl = this.config.getImageUrl(file);
-      await this.editor.layers.replaceImageSource(target, imageUrl);
+      const isShape = (target as { layerType?: string }).layerType === "shape";
+
+      if (isShape) {
+        await this.editor.layers.replaceShapeWithImage(target, imageUrl);
+      } else {
+        await this.editor.layers.replaceImageSource(target as ImageFrame | FabricImage, imageUrl);
+      }
       this.config.onSuccess();
     } catch (error) {
       this.config.onError(error);
