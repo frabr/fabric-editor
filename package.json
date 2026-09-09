@@ -52,8 +52,6 @@
     "url": "git+ssh://git@github.com/frabr/fabric-editor.git"
   },
   "author": "Apibots",
-  "license": "MIT",
-  "publishConfig": {
-    "access": "public"
-  }
+  "license": "UNLICENSED",
+  "private": true
 }

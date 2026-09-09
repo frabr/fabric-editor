@@ -115,7 +115,7 @@ var init_PendingUploadsManager = __esm({
 });
 
 // src/FabricEditor.ts
-import { Canvas as Canvas5, FabricObject as FabricObject6, FabricImage as FabricImage6, Point as Point2, Control as Control2, controlsUtils } from "#fabric";
+import { Canvas as Canvas4, FabricObject as FabricObject6, FabricImage as FabricImage6, Point as Point2, Control as Control2, controlsUtils } from "#fabric";
 
 // src/LayerManager.ts
 import {
@@ -1722,7 +1722,6 @@ var MaskManager = class {
 };
 
 // src/PersistenceManager.ts
-import { Group as Group3 } from "#fabric";
 var PersistenceManager = class {
   constructor(canvas, layers) {
     this.canvas = canvas;
@@ -1786,20 +1785,36 @@ var PersistenceManager = class {
   }
   /**
    * Compacte le canvas autour des calques (pour le mode standalone)
+   *
+   * Calcule le bounding box manuellement sans Group, car Fabric.js 7
+   * transforme les coordonnées des enfants en relatif au centre du groupe.
    */
   compactAroundLayers() {
     const layerObjects = this.layers.all;
     if (layerObjects.length === 0) return;
-    const group = new Group3(layerObjects);
+    let minX = Infinity, minY = Infinity;
+    let maxX = -Infinity, maxY = -Infinity;
+    for (const obj of layerObjects) {
+      const rect = obj.getBoundingRect();
+      minX = Math.min(minX, rect.left);
+      minY = Math.min(minY, rect.top);
+      maxX = Math.max(maxX, rect.left + rect.width);
+      maxY = Math.max(maxY, rect.top + rect.height);
+    }
+    for (const obj of layerObjects) {
+      obj.set({
+        left: obj.left - minX,
+        top: obj.top - minY
+      });
+      obj.setCoords();
+    }
     this.canvas.clear();
-    group.left = 0;
-    group.top = 0;
-    group.getObjects().forEach((obj) => {
+    for (const obj of layerObjects) {
       this.canvas.add(obj);
-    });
+    }
     this.canvas.setDimensions({
-      width: group.width,
-      height: group.height
+      width: maxX - minX,
+      height: maxY - minY
     });
   }
   /**
@@ -2444,7 +2459,7 @@ function applyClip(obj, shapeType) {
 }
 
 // src/FabricEditor.ts
-var FabricEditor = class {
+var _FabricEditor = class _FabricEditor {
   constructor(canvasElement, config) {
     this._displayScale = 1;
     this._userZoom = 1;
@@ -2452,7 +2467,7 @@ var FabricEditor = class {
     this._resizeCallbacks = [];
     this._initialized = false;
     this.config = config;
-    this.canvas = new Canvas5(canvasElement, {
+    this.canvas = new Canvas4(canvasElement, {
       width: config.width,
       height: config.height,
       preserveObjectStacking: true
@@ -2956,10 +2971,9 @@ var FabricEditor = class {
     this.selection.dispose();
     this.canvas.dispose();
   }
-  /**
-   * Étend FabricObject pour inclure layerId dans la sérialisation
-   */
   extendFabricObject() {
+    if (_FabricEditor._toObjectExtended) return;
+    _FabricEditor._toObjectExtended = true;
     const originalToObject = FabricObject6.prototype.toObject;
     FabricObject6.prototype.toObject = function(propertiesToInclude) {
       return originalToObject.call(
@@ -2993,7 +3007,11 @@ var FabricEditor = class {
     });
   }
 };
-console.log("[fabric-editor] \u2713 linked local build");
+/**
+ * Étend FabricObject pour inclure layerId dans la sérialisation
+ */
+_FabricEditor._toObjectExtended = false;
+var FabricEditor = _FabricEditor;
 
 // src/ImageDropHandler.ts
 import { Rect as Rect4 } from "#fabric";

@@ -604,6 +604,9 @@ declare class PersistenceManager {
     rasterize(): Promise<string>;
     /**
      * Compacte le canvas autour des calques (pour le mode standalone)
+     *
+     * Calcule le bounding box manuellement sans Group, car Fabric.js 7
+     * transforme les coordonnées des enfants en relatif au centre du groupe.
      */
     compactAroundLayers(): void;
     /**
@@ -963,6 +966,7 @@ declare class FabricEditor {
     /**
      * Étend FabricObject pour inclure layerId dans la sérialisation
      */
+    private static _toObjectExtended;
     private extendFabricObject;
     /**
      * Déplace le contrôle de rotation (mtr) sur le côté droit de l'objet

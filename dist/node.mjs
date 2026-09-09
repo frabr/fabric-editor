@@ -1318,7 +1318,6 @@ var LayerManager = class {
 };
 
 // src/PersistenceManager.ts
-import { Group as Group3 } from "#fabric";
 var PersistenceManager = class {
   constructor(canvas, layers) {
     this.canvas = canvas;
@@ -1382,20 +1381,36 @@ var PersistenceManager = class {
   }
   /**
    * Compacte le canvas autour des calques (pour le mode standalone)
+   *
+   * Calcule le bounding box manuellement sans Group, car Fabric.js 7
+   * transforme les coordonnées des enfants en relatif au centre du groupe.
    */
   compactAroundLayers() {
     const layerObjects = this.layers.all;
     if (layerObjects.length === 0) return;
-    const group = new Group3(layerObjects);
+    let minX = Infinity, minY = Infinity;
+    let maxX = -Infinity, maxY = -Infinity;
+    for (const obj of layerObjects) {
+      const rect = obj.getBoundingRect();
+      minX = Math.min(minX, rect.left);
+      minY = Math.min(minY, rect.top);
+      maxX = Math.max(maxX, rect.left + rect.width);
+      maxY = Math.max(maxY, rect.top + rect.height);
+    }
+    for (const obj of layerObjects) {
+      obj.set({
+        left: obj.left - minX,
+        top: obj.top - minY
+      });
+      obj.setCoords();
+    }
     this.canvas.clear();
-    group.left = 0;
-    group.top = 0;
-    group.getObjects().forEach((obj) => {
+    for (const obj of layerObjects) {
       this.canvas.add(obj);
-    });
+    }
     this.canvas.setDimensions({
-      width: group.width,
-      height: group.height
+      width: maxX - minX,
+      height: maxY - minY
     });
   }
   /**
@@ -1560,7 +1575,7 @@ var HistoryManager = class {
 
 // src/node.ts
 var require2 = createRequire(import.meta.url);
-var NodeEditor = class {
+var _NodeEditor = class _NodeEditor {
   constructor(config) {
     this.config = config;
     this.canvas = new StaticCanvas(void 0, {
@@ -1618,10 +1633,9 @@ var NodeEditor = class {
   dispose() {
     this.canvas.dispose();
   }
-  /**
-   * Étend FabricObject pour inclure layerId dans la sérialisation
-   */
   extendFabricObject() {
+    if (_NodeEditor._toObjectExtended) return;
+    _NodeEditor._toObjectExtended = true;
     const originalToObject = FabricObject4.prototype.toObject;
     FabricObject4.prototype.toObject = function(propertiesToInclude) {
       return originalToObject.call(
@@ -1631,6 +1645,11 @@ var NodeEditor = class {
     };
   }
 };
+/**
+ * Étend FabricObject pour inclure layerId dans la sérialisation
+ */
+_NodeEditor._toObjectExtended = false;
+var NodeEditor = _NodeEditor;
 function registerFonts(fonts) {
   try {
     const { registerFont } = require2("canvas");
