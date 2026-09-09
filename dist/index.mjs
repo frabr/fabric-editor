@@ -447,6 +447,28 @@ function switchShape(obj, nextShapeType) {
   });
 }
 
+// src/shapes/shapeWheel.ts
+var SHAPE_WHEEL = [
+  "rect",
+  "rounded",
+  "circle",
+  "heart",
+  "hexagon"
+];
+function nextShape(currentId) {
+  if (!currentId) return "rounded";
+  const currentIndex = SHAPE_WHEEL.indexOf(currentId);
+  if (currentIndex === -1) return "rounded";
+  const nextIndex = (currentIndex + 1) % SHAPE_WHEEL.length;
+  return SHAPE_WHEEL[nextIndex];
+}
+function isValidShape(id) {
+  return SHAPE_WHEEL.includes(id);
+}
+function getAvailableShapes() {
+  return SHAPE_WHEEL;
+}
+
 // src/locking.ts
 var LOCK_MODES = ["free", "position", "full"];
 function getLockMode(obj) {
@@ -969,16 +991,20 @@ var LayerManager = class {
   /**
    * Charge l'image de fond
    */
-  async loadBackgroundImage(url, ratio) {
+  async loadBackgroundImage(url) {
     const img = await FabricImage4.fromURL(url, { crossOrigin: "anonymous" });
+    const scaleX = this.canvas.width / img.width;
+    const scaleY = this.canvas.height / img.height;
+    const scale = Math.max(scaleX, scaleY);
     img.set({
       originX: "center",
       originY: "center",
-      scaleX: ratio,
-      scaleY: ratio,
+      scaleX: scale,
+      scaleY: scale,
       left: this.canvas.width / 2,
       top: this.canvas.height / 2,
       selectable: false,
+      evented: false,
       layerId: BACKGROUND_LAYER_ID
     });
     this.canvas.add(img);
@@ -989,8 +1015,12 @@ var LayerManager = class {
    */
   async loadLayers(layers) {
     const objects = await Promise.all(layers.map((l) => this.deserialize(l)));
-    objects.forEach((obj) => {
-      if (obj) this.add(obj);
+    objects.forEach((obj, i) => {
+      if (!obj) return;
+      const data = layers[i];
+      if (data.selectable === false) obj.selectable = false;
+      if (data.evented === false) obj.evented = false;
+      this.add(obj);
     });
     return objects.filter(Boolean);
   }
@@ -999,7 +1029,7 @@ var LayerManager = class {
    */
   add(obj) {
     this.canvas.add(obj);
-    if (typeof this.canvas.setActiveObject === "function") {
+    if (obj.selectable !== false && typeof this.canvas.setActiveObject === "function") {
       this.canvas.setActiveObject(obj);
     }
     return obj;
@@ -1153,6 +1183,37 @@ var LayerManager = class {
     return newImg;
   }
   /**
+   * Remplace une forme (shape) par un ImageFrame contenant l'image donnée.
+   * La forme sert de masque : l'image épouse ses dimensions et son clipShape.
+   * L'ImageFrame est inséré au même z-index que la forme d'origine.
+   */
+  async replaceShapeWithImage(shape, imageUrl) {
+    const shapeId = shape.id || "";
+    const clipShape = isValidShape(shapeId) ? shapeId : "rect";
+    const displayedWidth = shape.width * (shape.scaleX || 1);
+    const displayedHeight = shape.height * (shape.scaleY || 1);
+    const center = shape.getCenterPoint();
+    const zIndex = this.canvas._objects.indexOf(shape);
+    const img = await FabricImage4.fromURL(imageUrl, { crossOrigin: "anonymous" });
+    const frame = new ImageFrame(img, {
+      left: center.x,
+      top: center.y,
+      angle: shape.angle,
+      layerId: shape.layerId || this.generateId(),
+      clipShape,
+      frameWidth: displayedWidth,
+      frameHeight: displayedHeight
+    });
+    this.canvas.remove(shape);
+    this.canvas.add(frame);
+    if (zIndex >= 0 && zIndex < this.canvas._objects.length) {
+      this.canvas.moveObjectTo(frame, zIndex);
+    }
+    this.canvas.setActiveObject(frame);
+    this.canvas.renderAll();
+    return frame;
+  }
+  /**
    * Crée et ajoute un calque forme (rectangle par défaut)
    */
   addShape(options = {}) {
@@ -1162,19 +1223,13 @@ var LayerManager = class {
       width = 300,
       height = 300,
       fill = "#ffffff",
+      shapeType = "rect",
       layerId = this.generateId()
     } = options;
-    const rect = createRect({
-      left,
-      top,
-      width,
-      height,
-      fill,
-      layerId,
-      layerType: "shape"
-    });
-    this.add(rect);
-    return rect;
+    const shape = createShape(shapeType, { fill, left, top, width, height, radius: Math.min(width, height) / 2 });
+    shape.set({ layerId, layerType: "shape" });
+    this.add(shape);
+    return shape;
   }
   /**
    * Groupe plusieurs objets ensemble
@@ -1339,6 +1394,7 @@ var SelectionManager = class {
     this._current = null;
     this.callbacks = {};
     this.isTransforming = false;
+    this._silenced = false;
     this.setupListeners();
   }
   /**
@@ -1417,11 +1473,27 @@ var SelectionManager = class {
     return this.getAvailableControls().includes(control);
   }
   /**
-   * Désélectionne tout
+   * Désélectionne tout et re-rend le canvas
    */
   clear() {
     this.canvas.discardActiveObject();
+    this.canvas.renderAll();
     this._current = null;
+  }
+  /**
+   * Suspend tous les callbacks de sélection (onSelect, onDeselect, etc.).
+   * Utilisé par changeShape() qui fait un remove+add synchrone : sans suppression,
+   * les contrôleurs externes (toolbox) interpréteraient les événements intermédiaires
+   * comme de vraies actions utilisateur.
+   */
+  silenceCallbacks() {
+    this._silenced = true;
+  }
+  /**
+   * Réactive les callbacks de sélection après une suppression.
+   */
+  restoreCallbacks() {
+    this._silenced = false;
   }
   /**
    * Sélectionne un objet
@@ -1429,6 +1501,18 @@ var SelectionManager = class {
   select(obj) {
     this.canvas.setActiveObject(obj);
     this._current = obj;
+    this.canvas.renderAll();
+  }
+  /**
+   * Sélectionne un objet par son layerId
+   */
+  selectByLayerId(layerId) {
+    const obj = this.canvas.getObjects().find(
+      (o) => o.get("layerId") === layerId
+    );
+    if (!obj) return false;
+    this.select(obj);
+    return true;
   }
   /**
    * Configure les écouteurs d'événements du canvas
@@ -1447,6 +1531,7 @@ var SelectionManager = class {
    * Les objets verrouillés sont exclus des sélections multiples
    */
   handleSelection(e) {
+    if (this._silenced) return;
     const activeObject = this.canvas.getActiveObject();
     if (!activeObject) return;
     if (activeObject.type === "activeselection" && e.selected) {
@@ -1494,6 +1579,7 @@ var SelectionManager = class {
    */
   handleDeselection() {
     this._current = null;
+    if (this._silenced) return;
     if (this.callbacks.onDeselect) {
       this.callbacks.onDeselect();
     }
@@ -1561,15 +1647,13 @@ var MaskManager = class {
   /**
    * Configure le masque existant (au chargement)
    */
-  async setup(container, maxSize) {
+  async setup(container) {
     const mask = this.findMask();
     const bgImage = this.findBackground();
     if (mask && bgImage) {
       this.cropCanvasToMask(mask, bgImage.height);
       mask.set({ selectable: false, evented: false });
       this.canvas.discardActiveObject();
-    } else {
-      await this.resizeCanvasToFit(container, maxSize);
     }
   }
   /**
@@ -1619,8 +1703,6 @@ var MaskManager = class {
     const newWidth = mask.width;
     const newHeight = mask.height;
     this.canvas.setDimensions({ width: newWidth, height: newHeight });
-    this.resizeCanvasToFitSync(minimalSize);
-    this.canvas.setDimensions({ width: newWidth, height: newHeight });
     this.canvas.getObjects().forEach((obj) => {
       if (obj.get("layerId") === BACKGROUND_LAYER_ID2) {
         const scale = Math.max(newWidth / obj.width, newHeight / obj.height);
@@ -1635,41 +1717,6 @@ var MaskManager = class {
         obj.setCoords();
       }
     });
-    this.canvas.renderAll();
-  }
-  /**
-   * Redimensionne le canvas pour s'adapter au viewport
-   */
-  async resizeCanvasToFit(container, maxSize) {
-    let counter = 1;
-    while (Math.min(container.clientHeight, container.clientWidth) <= 0 && counter < 20) {
-      counter += 1;
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
-    this.resizeCanvasToFitSync(maxSize, container);
-  }
-  /**
-   * Version synchrone du redimensionnement
-   */
-  resizeCanvasToFitSync(maxSize, container) {
-    const hasWindow = typeof window !== "undefined";
-    const vw = Math.min(
-      maxSize,
-      hasWindow ? window.innerWidth || document.documentElement.clientWidth : maxSize
-    );
-    const vh = Math.min(
-      maxSize,
-      hasWindow ? window.innerHeight || document.documentElement.clientHeight : maxSize
-    );
-    const xPadding = hasWindow && window.innerWidth >= 768 ? 80 : 20;
-    const scaleX = (vw - xPadding) / this.canvas.width;
-    const scaleY = (vh - 138) / this.canvas.height;
-    const zoom = Math.min(scaleX, scaleY);
-    this.canvas.setZoom(zoom);
-    if (container) {
-      container.style.width = `${this.canvas.width * zoom}px`;
-      container.style.height = `${this.canvas.height * zoom}px`;
-    }
     this.canvas.renderAll();
   }
 };
@@ -2301,28 +2348,6 @@ function antiScale(obj) {
   }
 }
 
-// src/shapes/shapeWheel.ts
-var SHAPE_WHEEL = [
-  "rect",
-  "rounded",
-  "circle",
-  "heart",
-  "hexagon"
-];
-function nextShape(currentId) {
-  if (!currentId) return "rounded";
-  const currentIndex = SHAPE_WHEEL.indexOf(currentId);
-  if (currentIndex === -1) return "rounded";
-  const nextIndex = (currentIndex + 1) % SHAPE_WHEEL.length;
-  return SHAPE_WHEEL[nextIndex];
-}
-function isValidShape(id) {
-  return SHAPE_WHEEL.includes(id);
-}
-function getAvailableShapes() {
-  return SHAPE_WHEEL;
-}
-
 // src/clipping/clipStrategies.ts
 function addCircleClip(obj) {
   obj.noScaleCache = false;
@@ -2419,23 +2444,19 @@ function applyClip(obj, shapeType) {
 }
 
 // src/FabricEditor.ts
-function computeDimensions(width, height, constraint) {
-  if (width > height) {
-    const ratio = constraint / width;
-    return [constraint, height * ratio, ratio];
-  } else {
-    const ratio = constraint / height;
-    return [width * ratio, constraint, ratio];
-  }
-}
 var FabricEditor = class {
   constructor(canvasElement, config) {
+    this._displayScale = 1;
+    this._userZoom = 1;
+    this._resizeObserver = null;
+    this._resizeCallbacks = [];
+    this._initialized = false;
     this.config = config;
-    this.state = {
-      ratio: 1,
-      maxSize: config.standAlone ? 500 : 1e3
-    };
-    this.canvas = this.initCanvas(canvasElement);
+    this.canvas = new Canvas5(canvasElement, {
+      width: config.width,
+      height: config.height,
+      preserveObjectStacking: true
+    });
     this.layers = new LayerManager(this.canvas);
     this.selection = new SelectionManager(this.canvas);
     this.masks = new MaskManager(this.canvas);
@@ -2445,32 +2466,138 @@ var FabricEditor = class {
     this.canvas.snappingManager = this.snapping;
     this.extendFabricObject();
     this.configureRotationControl();
+    if (config.transparent) {
+      this.canvas.backgroundColor = "transparent";
+    }
   }
   /**
-   * Le ratio de redimensionnement appliqué à l'image de fond
+   * Async initialization: loads fonts from config if present.
+   * Idempotent — safe to call multiple times.
    */
-  get ratio() {
-    return this.state.ratio;
+  async init() {
+    if (this._initialized) return;
+    this._initialized = true;
+    if (this.config.fonts && Object.keys(this.config.fonts).length > 0) {
+      await this.loadFonts(this.config.fonts);
+    }
+    if (this.config.container) {
+      this.observeResize();
+    }
+  }
+  /**
+   * Register a callback to be called after each container resize (and initial fit).
+   */
+  onResize(callback) {
+    this._resizeCallbacks.push(callback);
+  }
+  /**
+   * Clear all layers, ensure fonts are loaded, load new layers, and render.
+   * Single entry point for both initial load and undo/redo restore.
+   */
+  async replaceAllLayers(layers) {
+    await this.init();
+    this.layers.all.forEach((obj) => this.layers.remove(obj));
+    await this.layers.loadLayers(layers);
+    this.canvas.discardActiveObject();
+    this.canvas.renderAll();
+  }
+  /**
+   * Current CSS scale applied by fitToContainer.
+   */
+  get displayScale() {
+    return this._displayScale;
+  }
+  /**
+   * CSS-scale the canvas to fit inside its container.
+   *
+   * The canvas stays at native resolution (config.width × config.height);
+   * a CSS `transform: scale()` on the .canvas-container wrapper makes it
+   * fit the container element.  Returns the computed scale factor.
+   */
+  fitToContainer() {
+    const container = this.config.container;
+    if (!container) return 1;
+    const compW = this.config.width;
+    const compH = this.config.height;
+    const boxW = container.clientWidth;
+    const boxH = container.clientHeight;
+    const fitScale = Math.min(boxW / compW, boxH / compH);
+    const scale = fitScale * this._userZoom;
+    this.canvas.setDimensions({ width: compW, height: compH });
+    const canvasEl = container.querySelector(".canvas-container") || container;
+    canvasEl.style.transformOrigin = "top left";
+    canvasEl.style.transform = `scale(${scale})`;
+    const scaledW = compW * scale;
+    const scaledH = compH * scale;
+    const offsetX = Math.max(0, (boxW - scaledW) / 2);
+    const offsetY = Math.max(0, (boxH - scaledH) / 2);
+    canvasEl.style.marginLeft = `${offsetX}px`;
+    canvasEl.style.marginTop = `${offsetY}px`;
+    container.style.overflow = this._userZoom > 1 ? "auto" : "hidden";
+    this._displayScale = scale;
+    return scale;
+  }
+  /**
+   * Set user zoom level (1 = fit to container, >1 = zoom in).
+   * Re-runs fitToContainer to apply the new scale.
+   */
+  setUserZoom(zoom) {
+    this._userZoom = Math.max(0.1, zoom);
+    this.fitToContainer();
+    this._resizeCallbacks.forEach((cb) => cb());
+  }
+  get userZoom() {
+    return this._userZoom;
+  }
+  /**
+   * Observe the container for size changes and automatically re-fit.
+   * Called automatically by init() when a container is configured.
+   */
+  observeResize() {
+    const container = this.config.container;
+    if (!container) return;
+    this._resizeObserver?.disconnect();
+    this._resizeObserver = new ResizeObserver(() => {
+      this.fitToContainer();
+      this._resizeCallbacks.forEach((cb) => cb());
+    });
+    this._resizeObserver.observe(container);
+    this.fitToContainer();
+  }
+  /**
+   * Returns positioning config for external controls (e.g. FabricControls).
+   *
+   * @param anchorEl - The positioned ancestor in which controls live.
+   *                   Typically the flex-centering wrapper around the canvas box.
+   */
+  getControlsConfig(anchorEl) {
+    return {
+      getContainer: () => anchorEl,
+      getDisplayScale: () => this._displayScale,
+      getCanvasOffset: () => {
+        const container = this.config.container;
+        if (!container) return { left: 0, top: 0 };
+        const canvasEl = container.querySelector(".canvas-container") || container;
+        const anchorRect = anchorEl.getBoundingClientRect();
+        const canvasRect = canvasEl.getBoundingClientRect();
+        return {
+          left: canvasRect.left - anchorRect.left,
+          top: canvasRect.top - anchorRect.top
+        };
+      }
+    };
   }
   /**
    * Convertit des coordonnées du canvas Fabric vers des coordonnées CSS affichées.
-   *
-   * Le canvas Fabric a une taille "interne" (ex: 1000x800) utilisée pour les calculs,
-   * mais il est affiché dans le container avec une taille CSS différente via zoom.
-   * Cette méthode applique le ratio pour positionner des éléments HTML par-dessus le canvas.
+   * Utilise le displayScale mis à jour par fitToContainer.
    */
   canvasToDisplayCoords(rect) {
-    const container = this.config.container;
-    if (!container) {
-      return rect;
-    }
-    const ratioX = container.clientWidth / this.canvas.width;
-    const ratioY = container.clientHeight / this.canvas.height;
+    const s = this._displayScale;
     return {
-      left: rect.left * ratioX,
-      top: rect.top * ratioY,
-      width: rect.width * ratioX,
-      height: rect.height * ratioY
+      left: rect.left * s,
+      top: rect.top * s,
+      width: rect.width * s,
+      height: rect.height * s
     };
   }
   /**
@@ -2487,8 +2614,9 @@ var FabricEditor = class {
   positionElementOverObject(element, obj, options = {}) {
     const { anchor = "center", offset = 0, autoFlip = false, clampToContainer = false } = options;
     const displayRect = this.canvasToDisplayCoords(obj.getBoundingRect());
-    const containerWidth = this.config.container?.clientWidth || this.canvas.width;
-    const containerHeight = this.config.container?.clientHeight || this.canvas.height;
+    const s = this._displayScale;
+    const containerWidth = this.config.width * s;
+    const containerHeight = this.config.height * s;
     const elementWidth = element.offsetWidth || 100;
     const elementHeight = element.offsetHeight || 40;
     let effectiveAnchor = anchor;
@@ -2622,18 +2750,40 @@ var FabricEditor = class {
     element.style.transform = `translate(${transformX}, ${transformY})`;
   }
   /**
+   * Returns the bounding rect of a Fabric object as rounded pixel coordinates.
+   */
+  getObjectBounds(obj) {
+    const bound = obj.getBoundingRect();
+    return {
+      x: Math.round(bound.left),
+      y: Math.round(bound.top),
+      width: Math.round(bound.width),
+      height: Math.round(bound.height)
+    };
+  }
+  /**
+   * Enable or disable canvas interactivity.
+   * When disabled, discards selection and marks the canvas as non-interactive.
+   * When enabled, discards selection (clean state) and optionally syncs visibility.
+   */
+  setInteractive(enabled) {
+    if (enabled) {
+      this.canvas.discardActiveObject();
+    } else {
+      this.canvas.discardActiveObject();
+    }
+    this.canvas.renderAll();
+  }
+  /**
    * Initialise l'éditeur avec une image de fond et des calques optionnels
    */
   async initialize(backgroundImageUrl, layers = []) {
-    await this.layers.loadBackgroundImage(backgroundImageUrl, this.state.ratio);
+    await this.layers.loadBackgroundImage(backgroundImageUrl);
     if (layers.length > 0) {
       await this.layers.loadLayers(layers);
     }
-    if (this.config.standAlone) {
-      this.centerAllObjects();
-    }
     if (this.config.container) {
-      await this.masks.setup(this.config.container, this.state.maxSize);
+      await this.masks.setup(this.config.container);
     }
     this.canvas.renderAll();
     this.history.initialize();
@@ -2677,9 +2827,36 @@ var FabricEditor = class {
     if (!obj || obj instanceof FabricImage6) return;
     const currentShapeId = obj.id;
     const nextShapeType = nextShape(currentShapeId);
-    const newObj = switchShape(obj, nextShapeType);
-    this.layers.add(newObj);
-    this.canvas.remove(obj);
+    this.changeShape(nextShapeType);
+  }
+  /**
+   * Change la forme de l'objet sélectionné vers un type précis.
+   * Pour les shapes : remplace l'objet. Pour les ImageFrames : change le clipShape.
+   */
+  changeShape(shapeType) {
+    const obj = this.selection.current;
+    if (!obj) return;
+    if (obj instanceof ImageFrame) {
+      obj.applyClipShape(shapeType);
+      obj.dirty = true;
+      this.canvas.requestRenderAll();
+    } else if (!(obj instanceof FabricImage6)) {
+      const newObj = switchShape(obj, shapeType);
+      const layerId = obj.get("layerId");
+      const layerType = obj.get("layerType");
+      if (layerId) newObj.set("layerId", layerId);
+      if (layerType) newObj.set("layerType", layerType);
+      this.selection.silenceCallbacks();
+      const zIndex = this.canvas._objects.indexOf(obj);
+      this.canvas.remove(obj);
+      this.canvas.add(newObj);
+      if (zIndex >= 0 && zIndex < this.canvas._objects.length) {
+        this.canvas.moveObjectTo(newObj, zIndex);
+      }
+      this.canvas.setActiveObject(newObj);
+      this.canvas.requestRenderAll();
+      this.selection.restoreCallbacks();
+    }
   }
   /**
    * Bascule entre remplissage et contour pour l'objet sélectionné
@@ -2742,12 +2919,24 @@ var FabricEditor = class {
    * Retourne null si aucune image n'est trouvée
    */
   findImageAtPoint(x, y) {
+    const target = this.findDropTargetAtPoint(x, y);
+    if (!target || target.layerType === "shape") return null;
+    return target;
+  }
+  /**
+   * Trouve l'objet "droppable" sous un point : ImageFrame, FabricImage, ou shape.
+   * Utilisé par ImageDropHandler pour le drop d'images sur images ET sur formes.
+   */
+  findDropTargetAtPoint(x, y) {
     const point = new Point2(x, y);
     const objects = this.canvas.getObjects().slice().reverse();
     for (const obj of objects) {
       if (obj.get("layerId") === "originalImage") continue;
       const layerType = obj.layerType;
       if (layerType === "imageFrame" && obj.containsPoint(point)) {
+        return obj;
+      }
+      if (layerType === "shape" && obj.containsPoint(point)) {
         return obj;
       }
       if (obj instanceof FabricImage6 && obj.containsPoint(point)) {
@@ -2760,52 +2949,12 @@ var FabricEditor = class {
    * Nettoie les ressources
    */
   dispose() {
+    this._resizeObserver?.disconnect();
+    this._resizeObserver = null;
+    this._resizeCallbacks = [];
     this.snapping.dispose();
     this.selection.dispose();
     this.canvas.dispose();
-  }
-  /**
-   * Initialise le canvas Fabric
-   */
-  initCanvas(canvasElement) {
-    const [width, height, ratio] = computeDimensions(
-      this.config.width,
-      this.config.height,
-      this.state.maxSize
-    );
-    this.state.ratio = ratio;
-    return new Canvas5(canvasElement, {
-      width,
-      height,
-      preserveObjectStacking: true
-    });
-  }
-  /**
-   * Centre tous les objets sur le canvas (mode standalone)
-   */
-  centerAllObjects() {
-    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-    this.canvas.forEachObject((obj) => {
-      const bound = obj.getBoundingRect();
-      minX = Math.min(minX, bound.left);
-      minY = Math.min(minY, bound.top);
-      maxX = Math.max(maxX, bound.left + bound.width);
-      maxY = Math.max(maxY, bound.top + bound.height);
-    });
-    const groupCenterX = (minX + maxX) / 2;
-    const groupCenterY = (minY + maxY) / 2;
-    const canvasCenterX = this.canvas.width / 2;
-    const canvasCenterY = this.canvas.height / 2;
-    const deltaX = canvasCenterX - groupCenterX;
-    const deltaY = canvasCenterY - groupCenterY;
-    this.canvas.forEachObject((obj) => {
-      obj.set({
-        left: obj.left + deltaX,
-        top: obj.top + deltaY
-      });
-      obj.setCoords();
-    });
-    this.canvas.renderAll();
   }
   /**
    * Étend FabricObject pour inclure layerId dans la sérialisation
@@ -2844,6 +2993,7 @@ var FabricEditor = class {
     });
   }
 };
+console.log("[fabric-editor] \u2713 linked local build");
 
 // src/ImageDropHandler.ts
 import { Rect as Rect4 } from "#fabric";
@@ -2895,20 +3045,78 @@ var ImageDropHandler = class {
     }
     this.reset();
   }
+  // ==================== Public API (for external drag sources) ====================
   /**
-   * Réinitialise l'état complet
+   * Track the pointer during an external drag (e.g. from a toolbox panel).
+   * Manages the hover timer and replace overlay — same behaviour as native file drag.
+   * The caller is responsible for calling preventDefault() on the event.
    */
+  trackPointer(e) {
+    this._trackPointer(e);
+  }
+  /**
+   * Drop an image by URL. Replaces the hovered image if the timer has armed,
+   * otherwise adds a new image at the drop position.
+   *
+   * Returns the result so the caller can act on it (e.g. register the new object).
+   */
+  async dropUrl(url, e) {
+    const shouldReplace = this.state.replaceMode && this.state.hoveredImage;
+    const target = this.state.hoveredImage;
+    this.clearTimer();
+    this.state.pendingImage = null;
+    if (shouldReplace && target) {
+      this.clearHighlight();
+      const isShape = target.layerType === "shape";
+      try {
+        if (isShape) {
+          const frame = await this.editor.layers.replaceShapeWithImage(target, url);
+          this.config.onSuccess();
+          return { kind: "replace", object: frame };
+        } else {
+          await this.editor.layers.replaceImageSource(target, url);
+          this.config.onSuccess();
+          return { kind: "replace" };
+        }
+      } catch (error) {
+        this.config.onError(error);
+        return null;
+      }
+    } else {
+      this.clearHighlight();
+      const opts = {};
+      if (e) {
+        const pointer = this.editor.canvas.getScenePoint(e);
+        opts.left = pointer.x;
+        opts.top = pointer.y;
+        opts.originX = "center";
+        opts.originY = "center";
+      }
+      try {
+        const object = await this.editor.layers.addImage(url, opts);
+        this.config.onSuccess();
+        return { kind: "add", object };
+      } catch (error) {
+        this.config.onError(error);
+        return null;
+      }
+    }
+  }
+  /**
+   * Cancel an in-progress external drag. Resets timer, overlay, and state.
+   */
+  cancelDrag() {
+    this.reset();
+  }
+  // ==================== Internal ====================
   reset() {
     this.clearTimer();
     this.clearHighlight();
     this.state.pendingImage = null;
   }
-  handleDragOver(e) {
-    e.preventDefault();
-    e.stopPropagation();
-    e.dataTransfer.dropEffect = "copy";
+  _trackPointer(e) {
     const pointer = this.editor.canvas.getScenePoint(e);
-    const imageAtPoint = this.editor.findImageAtPoint(pointer.x, pointer.y);
+    const imageAtPoint = this.editor.findDropTargetAtPoint(pointer.x, pointer.y);
     if (imageAtPoint !== this.state.pendingImage) {
       this.clearTimer();
       this.clearHighlight();
@@ -2919,6 +3127,12 @@ var ImageDropHandler = class {
         }, this.config.hoverDelay);
       }
     }
+  }
+  handleDragOver(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    e.dataTransfer.dropEffect = "copy";
+    this._trackPointer(e);
   }
   handleDragLeave(e) {
     e.preventDefault();
@@ -3080,7 +3294,12 @@ var ImageDropHandler = class {
     this.clearHighlight();
     try {
       const imageUrl = this.config.getImageUrl(file);
-      await this.editor.layers.replaceImageSource(target, imageUrl);
+      const isShape = target.layerType === "shape";
+      if (isShape) {
+        await this.editor.layers.replaceShapeWithImage(target, imageUrl);
+      } else {
+        await this.editor.layers.replaceImageSource(target, imageUrl);
+      }
       this.config.onSuccess();
     } catch (error) {
       this.config.onError(error);
@@ -3104,6 +3323,508 @@ var ImageDropHandler = class {
 
 // src/index.ts
 init_PendingUploadsManager();
+
+// src/html/cssUtils.ts
+function originXToCss(originX) {
+  switch (originX) {
+    case "center":
+      return "center";
+    case "right":
+      return "right";
+    case "left":
+    default:
+      return "left";
+  }
+}
+function originYToCss(originY) {
+  switch (originY) {
+    case "center":
+      return "center";
+    case "bottom":
+      return "bottom";
+    case "top":
+    default:
+      return "top";
+  }
+}
+function getTransformOrigin(originX, originY) {
+  return `${originXToCss(originX)} ${originYToCss(originY)}`;
+}
+function calculatePositionOffset(width, height, originX, originY) {
+  let offsetX = 0;
+  let offsetY = 0;
+  if (originX === "center") {
+    offsetX = -width / 2;
+  } else if (originX === "right") {
+    offsetX = -width;
+  }
+  if (originY === "center") {
+    offsetY = -height / 2;
+  } else if (originY === "bottom") {
+    offsetY = -height;
+  }
+  return { offsetX, offsetY };
+}
+function buildTransform(options) {
+  const transforms = [];
+  const scaleX = options.scaleX ?? 1;
+  const scaleY = options.scaleY ?? 1;
+  const angle = options.angle ?? 0;
+  if (angle !== 0) {
+    transforms.push(`rotate(${angle}deg)`);
+  }
+  if (scaleX !== 1 || scaleY !== 1) {
+    transforms.push(`scale(${scaleX}, ${scaleY})`);
+  }
+  return transforms.length > 0 ? transforms.join(" ") : "none";
+}
+function buildPositionStyles(left, top, zIndex, options) {
+  const styles = {
+    position: "absolute",
+    "z-index": String(zIndex)
+  };
+  if (options?.width && options?.height) {
+    const { offsetX, offsetY } = calculatePositionOffset(
+      options.width,
+      options.height,
+      options.originX,
+      options.originY
+    );
+    styles.left = `${left + offsetX}px`;
+    styles.top = `${top + offsetY}px`;
+  } else {
+    styles.left = `${left}px`;
+    styles.top = `${top}px`;
+  }
+  return styles;
+}
+function stylesToString(styles) {
+  return Object.entries(styles).map(([key, value]) => `${key}: ${value}`).join("; ");
+}
+function escapeHtml(text) {
+  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
+}
+function buildGoogleFontsUrl(fonts) {
+  if (fonts.length === 0) return "";
+  const families = fonts.map((font) => font.replace(/ /g, "+")).map((font) => `family=${font}:wght@400;700`).join("&");
+  return `https://fonts.googleapis.com/css2?${families}&display=swap`;
+}
+
+// src/html/converters/textConverter.ts
+function textToHtml(layer, zIndex) {
+  const {
+    text,
+    left = 0,
+    top = 0,
+    scaleX = 1,
+    scaleY = 1,
+    angle = 0,
+    opacity = 1,
+    fill = "#000000",
+    fontFamily = "Arial",
+    fontSize = 16,
+    fontWeight = "normal",
+    fontStyle = "normal",
+    textAlign = "left",
+    lineHeight = 1.16,
+    charSpacing = 0,
+    underline = false,
+    linethrough = false,
+    overline = false,
+    originX = "left",
+    originY = "top",
+    width,
+    height
+  } = layer;
+  const styles = buildPositionStyles(left, top, zIndex, {
+    width,
+    height,
+    originX,
+    originY
+  });
+  const transform = buildTransform({ scaleX, scaleY, angle });
+  if (transform !== "none") {
+    styles.transform = transform;
+    styles["transform-origin"] = getTransformOrigin(originX, originY);
+  }
+  styles.color = fill;
+  styles["font-family"] = `'${fontFamily}', sans-serif`;
+  styles["font-size"] = `${fontSize}px`;
+  styles["font-weight"] = fontWeight;
+  styles["font-style"] = fontStyle;
+  styles["text-align"] = textAlign;
+  styles["line-height"] = String(lineHeight);
+  styles["white-space"] = "nowrap";
+  if (opacity !== 1) {
+    styles.opacity = String(opacity);
+  }
+  if (charSpacing !== 0) {
+    styles["letter-spacing"] = `${charSpacing / 1e3}em`;
+  }
+  const decorations = [];
+  if (underline) decorations.push("underline");
+  if (linethrough) decorations.push("line-through");
+  if (overline) decorations.push("overline");
+  if (decorations.length > 0) {
+    styles["text-decoration"] = decorations.join(" ");
+  }
+  const htmlText = escapeHtml(text).replace(/\n/g, "<br>");
+  const html = `<div style="${stylesToString(styles)}">${htmlText}</div>`;
+  return {
+    html,
+    fonts: [fontFamily]
+  };
+}
+
+// src/html/converters/rectConverter.ts
+function rectToHtml(layer, zIndex) {
+  const {
+    left = 0,
+    top = 0,
+    width,
+    height,
+    scaleX = 1,
+    scaleY = 1,
+    angle = 0,
+    opacity = 1,
+    fill = "transparent",
+    stroke,
+    strokeWidth = 0,
+    rx = 0,
+    ry = 0,
+    originX = "left",
+    originY = "top"
+  } = layer;
+  const styles = buildPositionStyles(left, top, zIndex, {
+    width,
+    height,
+    originX,
+    originY
+  });
+  styles.width = `${width}px`;
+  styles.height = `${height}px`;
+  const transform = buildTransform({ scaleX, scaleY, angle });
+  if (transform !== "none") {
+    styles.transform = transform;
+    styles["transform-origin"] = getTransformOrigin(originX, originY);
+  }
+  styles.background = fill || "transparent";
+  if (opacity !== 1) {
+    styles.opacity = String(opacity);
+  }
+  if (rx > 0 || ry > 0) {
+    styles["border-radius"] = rx === ry ? `${rx}px` : `${rx}px / ${ry}px`;
+  }
+  if (stroke && strokeWidth > 0) {
+    styles.border = `${strokeWidth}px solid ${stroke}`;
+    styles["box-sizing"] = "border-box";
+  }
+  const html = `<div style="${stylesToString(styles)}"></div>`;
+  return { html };
+}
+
+// src/html/converters/circleConverter.ts
+function circleToHtml(layer, zIndex) {
+  const {
+    left = 0,
+    top = 0,
+    radius,
+    scaleX = 1,
+    scaleY = 1,
+    angle = 0,
+    opacity = 1,
+    fill = "transparent",
+    stroke,
+    strokeWidth = 0,
+    originX = "center",
+    originY = "center"
+  } = layer;
+  const diameter = radius * 2;
+  const styles = buildPositionStyles(left, top, zIndex, {
+    width: diameter,
+    height: diameter,
+    originX,
+    originY
+  });
+  styles.width = `${diameter}px`;
+  styles.height = `${diameter}px`;
+  const transform = buildTransform({ scaleX, scaleY, angle });
+  if (transform !== "none") {
+    styles.transform = transform;
+    styles["transform-origin"] = getTransformOrigin(originX, originY);
+  }
+  styles["border-radius"] = "50%";
+  styles.background = fill || "transparent";
+  if (opacity !== 1) {
+    styles.opacity = String(opacity);
+  }
+  if (stroke && strokeWidth > 0) {
+    styles.border = `${strokeWidth}px solid ${stroke}`;
+    styles["box-sizing"] = "border-box";
+  }
+  const html = `<div style="${stylesToString(styles)}"></div>`;
+  return { html };
+}
+
+// src/html/converters/pathConverter.ts
+function pathArrayToString(path) {
+  return path.map((segment) => {
+    if (Array.isArray(segment)) {
+      return segment.join(" ");
+    }
+    return String(segment);
+  }).join(" ");
+}
+function pathToHtml(layer, zIndex) {
+  const {
+    left = 0,
+    top = 0,
+    path,
+    width = 100,
+    height = 100,
+    scaleX = 1,
+    scaleY = 1,
+    angle = 0,
+    opacity = 1,
+    fill = "transparent",
+    stroke,
+    strokeWidth = 1,
+    originX = "center",
+    originY = "center",
+    pathCenterY = 0
+  } = layer;
+  const pathString = Array.isArray(path) ? pathArrayToString(path) : path;
+  const containerStyles = buildPositionStyles(left, top, zIndex, {
+    width,
+    height,
+    originX,
+    originY
+  });
+  const transform = buildTransform({ scaleX, scaleY, angle });
+  if (transform !== "none") {
+    containerStyles.transform = transform;
+    containerStyles["transform-origin"] = getTransformOrigin(originX, originY);
+  }
+  if (opacity !== 1) {
+    containerStyles.opacity = String(opacity);
+  }
+  const halfWidth = width / 2;
+  const halfHeight = height / 2;
+  const html = `<div style="${stylesToString(containerStyles)}">
+  <svg width="${width}" height="${height}" viewBox="${-halfWidth} ${-halfHeight + pathCenterY} ${width} ${height}" xmlns="http://www.w3.org/2000/svg">
+    <path d="${pathString}" fill="${fill || "none"}" stroke="${stroke || "none"}" stroke-width="${strokeWidth}" />
+  </svg>
+</div>`;
+  return { html };
+}
+
+// src/html/clipPaths.ts
+function getClipPathCss(shapeType, width, height) {
+  if (!shapeType || shapeType === "rect") {
+    return void 0;
+  }
+  const w = width ?? 100;
+  const h = height ?? 100;
+  const minSize = Math.min(w, h);
+  switch (shapeType) {
+    case "circle": {
+      const radius = minSize / 2;
+      return `circle(${radius}px at ${w / 2}px ${h / 2}px)`;
+    }
+    case "rounded": {
+      const radius = minSize * 0.15;
+      return `inset(0 round ${radius}px)`;
+    }
+    case "heart":
+    case "hexagon":
+      return void 0;
+    default:
+      return void 0;
+  }
+}
+var SVG_PATH_INFO = {
+  heart: {
+    path: HEART_PATH,
+    // Dans Fabric: scaleX = minSize / 28, donc la taille de référence est 28
+    // Le path est carré (28x28) pour le scaling
+    width: 28,
+    height: 28,
+    centerX: 0,
+    centerY: -0.5
+    // (13 + -14) / 2 = -0.5
+  },
+  hexagon: {
+    path: HEXAGON_PATH,
+    // Dans Fabric: scaleX = minSize / 48, donc la taille de référence est 48
+    width: 48,
+    height: 48,
+    centerX: 0,
+    centerY: 0
+  }
+};
+function getInlineSvgClip(shapeType, frameWidth, frameHeight, clipId) {
+  const pathInfo = SVG_PATH_INFO[shapeType];
+  if (!pathInfo) return void 0;
+  const scaleX = frameWidth / pathInfo.width;
+  const scaleY = frameHeight / pathInfo.height;
+  const scaleFactor = Math.min(scaleX, scaleY);
+  const frameCenterX = frameWidth / 2;
+  const frameCenterY = frameHeight / 2;
+  const transform = `translate(${frameCenterX}, ${frameCenterY}) scale(${scaleFactor}) translate(${-pathInfo.centerX}, ${-pathInfo.centerY})`;
+  return `<svg width="${frameWidth}" height="${frameHeight}" style="position: absolute; top: 0; left: 0; pointer-events: none;">
+  <defs>
+    <clipPath id="${clipId}">
+      <path d="${pathInfo.path}" transform="${transform}" />
+    </clipPath>
+  </defs>
+</svg>`;
+}
+
+// src/html/converters/imageFrameConverter.ts
+function imageFrameToHtml(layer, zIndex) {
+  const {
+    left = 0,
+    top = 0,
+    frameWidth,
+    frameHeight,
+    scaleX = 1,
+    scaleY = 1,
+    angle = 0,
+    opacity = 1,
+    clipShape,
+    image,
+    layerId
+  } = layer;
+  const scaledWidth = frameWidth * scaleX;
+  const scaledHeight = frameHeight * scaleY;
+  const adjustedLeft = left - scaledWidth / 2;
+  const adjustedTop = top - scaledHeight / 2;
+  const containerStyles = buildPositionStyles(adjustedLeft, adjustedTop, zIndex);
+  containerStyles.width = `${frameWidth}px`;
+  containerStyles.height = `${frameHeight}px`;
+  const transform = buildTransform({ scaleX, scaleY, angle });
+  if (transform !== "none") {
+    containerStyles.transform = transform;
+    containerStyles["transform-origin"] = "center center";
+  }
+  if (opacity !== 1) {
+    containerStyles.opacity = String(opacity);
+  }
+  let inlineSvgClip = "";
+  const clipId = `clip-${layerId || Math.random().toString(36).substr(2, 9)}`;
+  let useOverflowHidden = true;
+  const clipPathCss = getClipPathCss(clipShape, frameWidth, frameHeight);
+  if (clipPathCss) {
+    containerStyles["clip-path"] = clipPathCss;
+    useOverflowHidden = false;
+  } else if (clipShape === "heart" || clipShape === "hexagon") {
+    inlineSvgClip = getInlineSvgClip(clipShape, frameWidth, frameHeight, clipId) || "";
+    if (inlineSvgClip) {
+      containerStyles["clip-path"] = `url(#${clipId})`;
+      useOverflowHidden = false;
+    }
+  }
+  if (useOverflowHidden) {
+    containerStyles.overflow = "hidden";
+  }
+  const { offsetX = 0, offsetY = 0, scale: imageScale = 1 } = image;
+  const imageStyles = {
+    position: "absolute",
+    width: "100%",
+    height: "100%",
+    "object-fit": "cover",
+    top: `${offsetY}px`,
+    left: `${offsetX}px`
+  };
+  if (imageScale !== 1) {
+    imageStyles.width = `${imageScale * 100}%`;
+    imageStyles.height = `${imageScale * 100}%`;
+    const offsetFromScale = (1 - imageScale) * 50;
+    imageStyles.left = `calc(${offsetFromScale}% + ${offsetX}px)`;
+    imageStyles.top = `calc(${offsetFromScale}% + ${offsetY}px)`;
+  }
+  const html = `<div style="${stylesToString(containerStyles)}">
+  ${inlineSvgClip}
+  <img src="${image.src}" style="${stylesToString(imageStyles)}" alt="" />
+</div>`;
+  return {
+    html
+    // Plus besoin de clipPathDefs globaux, on utilise des SVG inline
+  };
+}
+
+// src/html/htmlRenderer.ts
+function layerToHtml(layer, zIndex) {
+  switch (layer.type) {
+    case "IText":
+      return textToHtml(layer, zIndex);
+    case "Rect":
+      return rectToHtml(layer, zIndex);
+    case "Circle":
+      return circleToHtml(layer, zIndex);
+    case "Path":
+      return pathToHtml(layer, zIndex);
+    case "ImageFrame":
+      return imageFrameToHtml(layer, zIndex);
+    default:
+      console.warn(`Unknown layer type: ${layer.type}`);
+      return { html: `<!-- Unknown layer type: ${layer.type} -->` };
+  }
+}
+function renderBackgroundImage(backgroundImage, width, height) {
+  const styles = {
+    position: "absolute",
+    top: "0",
+    left: "0",
+    width: "100%",
+    height: "100%",
+    "object-fit": "cover",
+    "z-index": "0"
+  };
+  return `<img src="${backgroundImage}" style="${stylesToString(styles)}" alt="" />`;
+}
+function renderFontImports(fonts, includeGoogleFonts) {
+  if (!includeGoogleFonts || fonts.size === 0) {
+    return "";
+  }
+  const url = buildGoogleFontsUrl(Array.from(fonts));
+  return `<link rel="stylesheet" href="${url}" />`;
+}
+function fabricToHtml(layers, options) {
+  const {
+    width,
+    height,
+    backgroundImage,
+    containerClass = "",
+    includeGoogleFonts = true
+  } = options;
+  const allFonts = /* @__PURE__ */ new Set();
+  const htmlParts = [];
+  layers.forEach((layer, index) => {
+    const output = layerToHtml(layer, index + 1);
+    htmlParts.push(output.html);
+    output.fonts?.forEach((font) => {
+      allFonts.add(font);
+    });
+  });
+  const fontImports = renderFontImports(allFonts, includeGoogleFonts);
+  const containerStyles = {
+    position: "relative",
+    width: `${width}px`,
+    height: `${height}px`,
+    overflow: "hidden"
+  };
+  const backgroundHtml = backgroundImage ? renderBackgroundImage(backgroundImage, width, height) : "";
+  const classAttr = containerClass ? ` class="${containerClass}"` : "";
+  return `${fontImports}
+<div${classAttr} style="${stylesToString(containerStyles)}">
+  ${backgroundHtml}
+  ${htmlParts.join("\n  ")}
+</div>`.trim();
+}
+function layerToHtmlStandalone(layer, zIndex) {
+  return layerToHtml(layer, zIndex);
+}
 export {
   CustomTextbox,
   FabricEditor,
@@ -3133,6 +3854,7 @@ export {
   createRect,
   createRoundedRect,
   createShape,
+  fabricToHtml,
   getAvailableShapes,
   getLockMode,
   getNextLockMode,
@@ -3140,6 +3862,7 @@ export {
   isPositionLocked,
   isStyleLocked,
   isValidShape,
+  layerToHtmlStandalone,
   nextShape,
   removeCropControls,
   switchClip,

@@ -1,4 +1,4 @@
-import { IText, Group, FabricImage, Canvas, FabricObject, Rect, StaticCanvas } from '#fabric';
+import { IText, Group, FabricImage, Canvas, FabricObject, StaticCanvas } from '#fabric';
 
 /**
  * Textbox personnalisé qui :
@@ -42,6 +42,7 @@ interface FontConfig {
     url: string;
     weight?: string;
 }
+
 interface LayerData {
     type: string;
     layerId?: string;
@@ -88,6 +89,7 @@ interface ShapeLayerOptions {
     stroke?: string;
     strokeWidth?: number;
     layerId?: string;
+    shapeType?: ShapeType;
 }
 type ShapeType = "rect" | "rounded" | "circle" | "heart" | "hexagon";
 interface SaveOptions {
@@ -238,7 +240,7 @@ declare class LayerManager {
     /**
      * Charge l'image de fond
      */
-    loadBackgroundImage(url: string, ratio: number): Promise<FabricImage>;
+    loadBackgroundImage(url: string): Promise<FabricImage>;
     /**
      * Charge plusieurs calques depuis leurs données JSON
      */
@@ -292,9 +294,15 @@ declare class LayerManager {
      */
     private _replaceImageSourceLegacy;
     /**
+     * Remplace une forme (shape) par un ImageFrame contenant l'image donnée.
+     * La forme sert de masque : l'image épouse ses dimensions et son clipShape.
+     * L'ImageFrame est inséré au même z-index que la forme d'origine.
+     */
+    replaceShapeWithImage(shape: FabricObject, imageUrl: string): Promise<ImageFrame>;
+    /**
      * Crée et ajoute un calque forme (rectangle par défaut)
      */
-    addShape(options?: ShapeLayerOptions): Rect;
+    addShape(options?: ShapeLayerOptions): FabricObject;
     /**
      * Groupe plusieurs objets ensemble
      */
@@ -517,10 +525,6 @@ interface NodeEditorConfig {
     width: number;
     /** Hauteur du canvas */
     height: number;
-    /** Taille maximale (le canvas sera redimensionné proportionnellement) */
-    maxSize?: number;
-    /** Mode standalone (centre les objets) */
-    standAlone?: boolean;
 }
 /**
  * Configuration des polices pour Node.js
@@ -544,13 +548,8 @@ declare class NodeEditor {
     readonly layers: LayerManager;
     readonly persistence: PersistenceManager;
     readonly history: HistoryManager;
-    private ratio;
     private config;
     constructor(config: NodeEditorConfig);
-    /**
-     * Le ratio de redimensionnement appliqué
-     */
-    getRatio(): number;
     /**
      * Initialise l'éditeur avec une image de fond et des calques optionnels
      */
@@ -572,10 +571,6 @@ declare class NodeEditor {
      * Nettoie les ressources
      */
     dispose(): void;
-    /**
-     * Centre tous les objets sur le canvas (mode standalone)
-     */
-    private centerAllObjects;
     /**
      * Étend FabricObject pour inclure layerId dans la sérialisation
      */

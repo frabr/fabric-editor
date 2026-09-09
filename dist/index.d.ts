@@ -1,4 +1,4 @@
-import { IText, FabricObject, Group, FabricImage, Canvas, Rect, TOptions, RectProps, CircleProps, Circle, PathProps, Path } from '#fabric';
+import { IText, FabricObject, Group, FabricImage, Canvas, TOptions, RectProps, Rect, CircleProps, Circle, PathProps, Path } from '#fabric';
 
 /**
  * Textbox personnalisé qui :
@@ -69,20 +69,16 @@ declare function isPositionLocked(obj: FabricObject): boolean;
 interface EditorConfig {
     width: number;
     height: number;
-    standAlone?: boolean;
     fonts?: FontsConfig;
     defaultColor?: string;
     container?: HTMLElement;
+    transparent?: boolean;
 }
 type FontsConfig = Record<string, FontConfig>;
 interface FontConfig {
     family: string;
     url: string;
     weight?: string;
-}
-interface EditorState {
-    ratio: number;
-    maxSize: number;
 }
 
 interface LayerData {
@@ -131,6 +127,7 @@ interface ShapeLayerOptions {
     stroke?: string;
     strokeWidth?: number;
     layerId?: string;
+    shapeType?: ShapeType;
 }
 type ShapeType = "rect" | "rounded" | "circle" | "heart" | "hexagon";
 interface ObjectControlsConfig {
@@ -294,7 +291,7 @@ declare class LayerManager {
     /**
      * Charge l'image de fond
      */
-    loadBackgroundImage(url: string, ratio: number): Promise<FabricImage>;
+    loadBackgroundImage(url: string): Promise<FabricImage>;
     /**
      * Charge plusieurs calques depuis leurs données JSON
      */
@@ -348,9 +345,15 @@ declare class LayerManager {
      */
     private _replaceImageSourceLegacy;
     /**
+     * Remplace une forme (shape) par un ImageFrame contenant l'image donnée.
+     * La forme sert de masque : l'image épouse ses dimensions et son clipShape.
+     * L'ImageFrame est inséré au même z-index que la forme d'origine.
+     */
+    replaceShapeWithImage(shape: FabricObject, imageUrl: string): Promise<ImageFrame>;
+    /**
      * Crée et ajoute un calque forme (rectangle par défaut)
      */
-    addShape(options?: ShapeLayerOptions): Rect;
+    addShape(options?: ShapeLayerOptions): FabricObject;
     /**
      * Groupe plusieurs objets ensemble
      */
@@ -389,6 +392,7 @@ declare class SelectionManager {
     private _current;
     private callbacks;
     private isTransforming;
+    private _silenced;
     constructor(canvas: Canvas);
     /**
      * L'objet actuellement sélectionné (ou tableau si sélection multiple)
@@ -435,13 +439,28 @@ declare class SelectionManager {
      */
     hasControl(control: ControlOption): boolean;
     /**
-     * Désélectionne tout
+     * Désélectionne tout et re-rend le canvas
      */
     clear(): void;
+    /**
+     * Suspend tous les callbacks de sélection (onSelect, onDeselect, etc.).
+     * Utilisé par changeShape() qui fait un remove+add synchrone : sans suppression,
+     * les contrôleurs externes (toolbox) interpréteraient les événements intermédiaires
+     * comme de vraies actions utilisateur.
+     */
+    silenceCallbacks(): void;
+    /**
+     * Réactive les callbacks de sélection après une suppression.
+     */
+    restoreCallbacks(): void;
     /**
      * Sélectionne un objet
      */
     select(obj: FabricObject): void;
+    /**
+     * Sélectionne un objet par son layerId
+     */
+    selectByLayerId(layerId: string): boolean;
     /**
      * Configure les écouteurs d'événements du canvas
      */
@@ -491,7 +510,7 @@ declare class MaskManager {
     /**
      * Configure le masque existant (au chargement)
      */
-    setup(container: HTMLElement, maxSize: number): Promise<void>;
+    setup(container: HTMLElement): Promise<void>;
     /**
      * Applique un nouveau masque depuis une URL
      */
@@ -504,14 +523,6 @@ declare class MaskManager {
      * Redimensionne le canvas et l'image de fond pour correspondre au masque
      */
     private cropCanvasToMask;
-    /**
-     * Redimensionne le canvas pour s'adapter au viewport
-     */
-    resizeCanvasToFit(container: HTMLElement, maxSize: number): Promise<void>;
-    /**
-     * Version synchrone du redimensionnement
-     */
-    private resizeCanvasToFitSync;
 }
 
 /**
@@ -788,19 +799,67 @@ declare class FabricEditor {
     readonly persistence: PersistenceManager;
     readonly history: HistoryManager;
     readonly snapping: SnappingManager;
-    private state;
     private config;
+    private _displayScale;
+    private _userZoom;
+    private _resizeObserver;
+    private _resizeCallbacks;
     constructor(canvasElement: HTMLCanvasElement, config: EditorConfig);
+    private _initialized;
     /**
-     * Le ratio de redimensionnement appliqué à l'image de fond
+     * Async initialization: loads fonts from config if present.
+     * Idempotent — safe to call multiple times.
      */
-    get ratio(): number;
+    init(): Promise<void>;
+    /**
+     * Register a callback to be called after each container resize (and initial fit).
+     */
+    onResize(callback: () => void): void;
+    /**
+     * Clear all layers, ensure fonts are loaded, load new layers, and render.
+     * Single entry point for both initial load and undo/redo restore.
+     */
+    replaceAllLayers(layers: LayerData[]): Promise<void>;
+    /**
+     * Current CSS scale applied by fitToContainer.
+     */
+    get displayScale(): number;
+    /**
+     * CSS-scale the canvas to fit inside its container.
+     *
+     * The canvas stays at native resolution (config.width × config.height);
+     * a CSS `transform: scale()` on the .canvas-container wrapper makes it
+     * fit the container element.  Returns the computed scale factor.
+     */
+    fitToContainer(): number;
+    /**
+     * Set user zoom level (1 = fit to container, >1 = zoom in).
+     * Re-runs fitToContainer to apply the new scale.
+     */
+    setUserZoom(zoom: number): void;
+    get userZoom(): number;
+    /**
+     * Observe the container for size changes and automatically re-fit.
+     * Called automatically by init() when a container is configured.
+     */
+    private observeResize;
+    /**
+     * Returns positioning config for external controls (e.g. FabricControls).
+     *
+     * @param anchorEl - The positioned ancestor in which controls live.
+     *                   Typically the flex-centering wrapper around the canvas box.
+     */
+    getControlsConfig(anchorEl: HTMLElement): {
+        getContainer: () => HTMLElement;
+        getDisplayScale: () => number;
+        getCanvasOffset: () => {
+            left: number;
+            top: number;
+        };
+    };
     /**
      * Convertit des coordonnées du canvas Fabric vers des coordonnées CSS affichées.
-     *
-     * Le canvas Fabric a une taille "interne" (ex: 1000x800) utilisée pour les calculs,
-     * mais il est affiché dans le container avec une taille CSS différente via zoom.
-     * Cette méthode applique le ratio pour positionner des éléments HTML par-dessus le canvas.
+     * Utilise le displayScale mis à jour par fitToContainer.
      */
     canvasToDisplayCoords(rect: {
         left: number;
@@ -831,6 +890,21 @@ declare class FabricEditor {
         clampToContainer?: boolean;
     }): void;
     /**
+     * Returns the bounding rect of a Fabric object as rounded pixel coordinates.
+     */
+    getObjectBounds(obj: FabricObject): {
+        x: number;
+        y: number;
+        width: number;
+        height: number;
+    };
+    /**
+     * Enable or disable canvas interactivity.
+     * When disabled, discards selection and marks the canvas as non-interactive.
+     * When enabled, discards selection (clean state) and optionally syncs visibility.
+     */
+    setInteractive(enabled: boolean): void;
+    /**
      * Initialise l'éditeur avec une image de fond et des calques optionnels
      */
     initialize(backgroundImageUrl: string, layers?: LayerData[]): Promise<void>;
@@ -846,6 +920,11 @@ declare class FabricEditor {
      * Bascule la forme de l'objet sélectionné vers la forme suivante
      */
     switchShape(): void;
+    /**
+     * Change la forme de l'objet sélectionné vers un type précis.
+     * Pour les shapes : remplace l'objet. Pour les ImageFrames : change le clipShape.
+     */
+    changeShape(shapeType: ShapeType): void;
     /**
      * Bascule entre remplissage et contour pour l'objet sélectionné
      */
@@ -873,17 +952,14 @@ declare class FabricEditor {
      */
     findImageAtPoint(x: number, y: number): FabricImage | ImageFrame | null;
     /**
+     * Trouve l'objet "droppable" sous un point : ImageFrame, FabricImage, ou shape.
+     * Utilisé par ImageDropHandler pour le drop d'images sur images ET sur formes.
+     */
+    findDropTargetAtPoint(x: number, y: number): FabricObject | null;
+    /**
      * Nettoie les ressources
      */
     dispose(): void;
-    /**
-     * Initialise le canvas Fabric
-     */
-    private initCanvas;
-    /**
-     * Centre tous les objets sur le canvas (mode standalone)
-     */
-    private centerAllObjects;
     /**
      * Étend FabricObject pour inclure layerId dans la sérialisation
      */
@@ -937,9 +1013,30 @@ declare class ImageDropHandler {
      */
     detach(): void;
     /**
-     * Réinitialise l'état complet
+     * Track the pointer during an external drag (e.g. from a toolbox panel).
+     * Manages the hover timer and replace overlay — same behaviour as native file drag.
+     * The caller is responsible for calling preventDefault() on the event.
      */
+    trackPointer(e: DragEvent): void;
+    /**
+     * Drop an image by URL. Replaces the hovered image if the timer has armed,
+     * otherwise adds a new image at the drop position.
+     *
+     * Returns the result so the caller can act on it (e.g. register the new object).
+     */
+    dropUrl(url: string, e?: DragEvent): Promise<{
+        kind: "add";
+        object: ImageFrame;
+    } | {
+        kind: "replace";
+        object?: ImageFrame;
+    } | null>;
+    /**
+     * Cancel an in-progress external drag. Resets timer, overlay, and state.
+     */
+    cancelDrag(): void;
     private reset;
+    private _trackPointer;
     private handleDragOver;
     private handleDragLeave;
     private handleDrop;
@@ -1084,4 +1181,52 @@ declare function addCropControls(obj: FabricObject): FabricObject;
  */
 declare function removeCropControls(obj: FabricObject): void;
 
-export { type ControlOption, CustomTextbox, type EditorConfig, type EditorState, FabricEditor, type FontConfig, type FontsConfig, HEART_PATH, HEXAGON_PATH, type HistoryCallbacks, HistoryManager, type HistoryState, ImageDropHandler, ImageFrame, type ImageLayerOptions, type LayerData, LayerManager, type LockMode$1 as LockMode, MaskManager, type ObjectControlsConfig, PendingUploadsManager, PersistenceManager, type ResizeSnapResult, type SaveOptions, type SaveResult, type SelectionCallbacks, SelectionManager, type ShapeLayerOptions, type ShapeType, type SnappingConfig, SnappingManager, type TextLayerOptions, addCircleClip, addCropControls, addHeartClip, addHexagonClip, addRoundedClip, antiScale, applyClip, applyLockMode, createCircle, createHeart, createHexagon, createImage, createRect, createRoundedRect, createShape, getAvailableShapes, getLockMode, getNextLockMode, isContentLocked, isPositionLocked, isStyleLocked, isValidShape, nextShape, removeCropControls, switchClip, switchShape };
+/**
+ * Résultat de la conversion d'un layer en HTML
+ */
+interface HtmlLayerOutput {
+    /** Le HTML du layer */
+    html: string;
+    /** Les fonts requises (noms de famille) */
+    fonts?: string[];
+}
+/**
+ * Options pour le rendu HTML global
+ */
+interface HtmlRenderOptions {
+    /** Largeur du canvas */
+    width: number;
+    /** Hauteur du canvas */
+    height: number;
+    /** URL de l'image de fond */
+    backgroundImage?: string;
+    /** Classe CSS à ajouter au container */
+    containerClass?: string;
+    /** Générer les imports Google Fonts */
+    includeGoogleFonts?: boolean;
+}
+
+/**
+ * Convertit un tableau de layers Fabric en HTML
+ *
+ * @param layers Les données des layers (telles que retournées par serialize())
+ * @param options Options de rendu (dimensions, background, etc.)
+ * @returns Le HTML complet prêt à être affiché
+ *
+ * @example
+ * ```typescript
+ * const html = fabricToHtml(layers, {
+ *   width: 800,
+ *   height: 600,
+ *   backgroundImage: 'https://example.com/bg.jpg',
+ *   includeGoogleFonts: true
+ * });
+ * ```
+ */
+declare function fabricToHtml(layers: LayerData[], options: HtmlRenderOptions): string;
+/**
+ * Convertit un seul layer en HTML (utile pour des updates partiels)
+ */
+declare function layerToHtmlStandalone(layer: LayerData, zIndex: number): HtmlLayerOutput;
+
+export { type ControlOption, CustomTextbox, type EditorConfig, FabricEditor, type FontConfig, type FontsConfig, HEART_PATH, HEXAGON_PATH, type HistoryCallbacks, HistoryManager, type HistoryState, type HtmlLayerOutput, type HtmlRenderOptions, ImageDropHandler, ImageFrame, type ImageLayerOptions, type LayerData, LayerManager, type LockMode$1 as LockMode, MaskManager, type ObjectControlsConfig, PendingUploadsManager, PersistenceManager, type ResizeSnapResult, type SaveOptions, type SaveResult, type SelectionCallbacks, SelectionManager, type ShapeLayerOptions, type ShapeType, type SnappingConfig, SnappingManager, type TextLayerOptions, addCircleClip, addCropControls, addHeartClip, addHexagonClip, addRoundedClip, antiScale, applyClip, applyLockMode, createCircle, createHeart, createHexagon, createImage, createRect, createRoundedRect, createShape, fabricToHtml, getAvailableShapes, getLockMode, getNextLockMode, isContentLocked, isPositionLocked, isStyleLocked, isValidShape, layerToHtmlStandalone, nextShape, removeCropControls, switchClip, switchShape };
