@@ -39,6 +39,8 @@ export interface LayerData {
   lockMode?: LockMode;
   /** Indique si le contenu (image) est verrouillé */
   lockContent?: boolean;
+  /** Layout data (container or child) — see layout/types.ts */
+  layout?: import("./layout").LayoutData;
   [key: string]: unknown;
 }
 
@@ -114,11 +116,12 @@ export interface SaveResult {
   uploadedAssets?: string[];
 }
 
-// Extension du type FabricObject pour inclure layerId
+// Extension du type FabricObject pour inclure layerId et layout
 declare module "fabric" {
   interface FabricObject {
     layerId?: string;
     layerType?: string;
+    layout?: import("./layout").LayoutData;
   }
 }
 

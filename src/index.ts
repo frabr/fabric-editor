@@ -62,6 +62,11 @@ export {
 // Controls
 export { addCropControls, removeCropControls, CustomTextbox } from "./controls";
 
+// Layout engine
+export { runLayout } from "./layout";
+export type { LayoutData, ContainerLayout, ChildLayout, SizeMode } from "./layout";
+export { isContainerLayout, isChildLayout } from "./layout";
+
 // HTML Renderer
 export { fabricToHtml, layerToHtmlStandalone } from "./html";
 export type { HtmlRenderOptions, HtmlLayerOutput } from "./html";

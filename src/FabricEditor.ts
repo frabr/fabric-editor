@@ -18,6 +18,11 @@ import type { EditorConfig, LayerData, FontsConfig, ShapeType } from "./types";
  * pour l'édition d'images avec calques.
  */
 export class FabricEditor {
+  // TODO: remove — validation log pour vérifier que le link: est live
+  static {
+    console.log("[fabric-editor] ✓ linked local build");
+  }
+
   readonly canvas: Canvas;
   readonly layers: LayerManager;
   readonly selection: SelectionManager;
@@ -677,7 +682,7 @@ export class FabricEditor {
     FabricObject.prototype.toObject = function (propertiesToInclude) {
       return originalToObject.call(
         this,
-        ["layerId"].concat(propertiesToInclude || [])
+        ["layerId", "layout"].concat(propertiesToInclude || [])
       );
     };
   }

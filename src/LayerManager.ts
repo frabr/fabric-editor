@@ -396,7 +396,7 @@ export class LayerManager {
    * Inclut les propriétés custom : layerId, lockMode, lockContent
    */
   serialize(): LayerData[] {
-    return this.all.map((obj) => obj.toObject(["layerId", "lockMode", "lockContent"]) as LayerData);
+    return this.all.map((obj) => obj.toObject(["layerId", "lockMode", "lockContent", "layout"]) as LayerData);
   }
 
   /**

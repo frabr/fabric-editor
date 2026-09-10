@@ -1,16 +1,46 @@
-import { IText, FabricObject, Group, FabricImage, Canvas, TOptions, RectProps, Rect, CircleProps, Circle, PathProps, Path } from '#fabric';
+import { Textbox, FabricObject, Group, FabricImage, Canvas, TOptions, RectProps, Rect, CircleProps, Circle, PathProps, Path } from '#fabric';
 
 /**
  * Textbox personnalisé qui :
  * 1. Place le textarea caché à l'intérieur du canvas container (pour le focus dans les modales)
  * 2. Force sa position à (0, 0) pour éviter les problèmes de layout/scroll
  *
+ * Hérite de Textbox (et non IText) pour le line-wrapping natif
+ * quand une width fixe est définie (mode layout "largeur fixe").
+ *
  * Nécessaire car les modales (dialog) avec showModal() créent un
  * "focus trap" qui empêche le focus d'aller sur des éléments
  * en dehors du dialog. En plaçant le textarea dans le canvas
  * container (qui est dans le dialog), il peut recevoir le focus.
  */
-declare class CustomTextbox extends IText {
+type WordEntry = {
+    word: string[];
+    width: number;
+    _isChunk?: boolean;
+};
+type GraphemeData = {
+    largestWordWidth: number;
+    wordsData: WordEntry[][];
+};
+declare class CustomTextbox extends Textbox {
+    /**
+     * overflow-wrap: break-word — pré-découpe les mots trop longs
+     * en chunks et les marque pour que _wrapLine ne mette pas
+     * d'espace entre eux.
+     */
+    getGraphemeDataForRender(lines: string[]): GraphemeData;
+    /**
+     * Copie fidèle de Textbox._wrapLine, sauf :
+     * - pas d'espace (infix) entre les chunks d'un même mot (_isChunk)
+     * - pas d'incrément d'offset pour l'espace entre chunks
+     */
+    _wrapLine(lineIndex: number, desiredWidth: number, { largestWordWidth, wordsData }: GraphemeData, reservedSpace?: number): string[][];
+    /**
+     * Fix curseur : missingNewlineOffset retourne toujours 1 en mode
+     * non-splitByGrapheme car Fabric suppose que chaque wrap mange un
+     * espace. Pour les coupures mid-word, il n'y a pas d'espace → 0.
+     */
+    missingNewlineOffset(lineIndex: number, skipWrapping?: boolean): 0 | 1;
     /**
      * Override pour ajouter le textarea au canvas container
      * au lieu du body (comportement par défaut de Fabric.js).
@@ -66,6 +96,65 @@ declare function isContentLocked(obj: FabricObject): boolean;
  */
 declare function isPositionLocked(obj: FabricObject): boolean;
 
+/**
+ * Layout engine — "springs & struts" model.
+ *
+ * Supports two size modes per axis:
+ * - "hug": container adapts to content (bottom-up)
+ * - "fixed": container keeps its size, content adapts
+ *
+ * When X is fixed: text wraps at the available width (Textbox behavior).
+ * When both X and Y are fixed: text also shrinks (fontSize) if it overflows.
+ *
+ * Single pass, deterministic, no solver.
+ */
+
+/**
+ * Run the layout pass on the given set of objects.
+ * Objects are mutated in-place.
+ */
+declare function runLayout(objects: FabricObject[]): void;
+
+/**
+ * Layout system types — "springs & struts" model.
+ *
+ * A container is a regular Fabric object with `layout.role === "container"`.
+ * A child is any Fabric object with `layout.parentId` pointing to a container's layerId.
+ *
+ * The layout block is stored as a custom property on each Fabric object and
+ * survives serialization via toObject(["layout"]).
+ */
+/**
+ * Size mode per axis:
+ * - "hug": container adapts to content
+ * - "fixed": container keeps its size, content must adapt (shrink/clip)
+ */
+type SizeMode = "hug" | "fixed";
+/** Layout block carried by a **container**. */
+interface ContainerLayout {
+    role: "container";
+    sizeMode: {
+        x: SizeMode;
+        y: SizeMode;
+    };
+    /** Overflow behavior when content exceeds fixed size */
+    overflow?: "clip" | "shrink";
+}
+/** Layout block carried by a **child** (element inside a container). */
+interface ChildLayout {
+    parentId: string;
+    margins: {
+        left: number;
+        right: number;
+        top: number;
+        bottom: number;
+    };
+}
+/** Union — the `layout` property on any participating Fabric object. */
+type LayoutData = ContainerLayout | ChildLayout;
+declare function isContainerLayout(l: LayoutData): l is ContainerLayout;
+declare function isChildLayout(l: LayoutData): l is ChildLayout;
+
 interface EditorConfig {
     width: number;
     height: number;
@@ -97,6 +186,8 @@ interface LayerData {
     lockMode?: LockMode;
     /** Indique si le contenu (image) est verrouillé */
     lockContent?: boolean;
+    /** Layout data (container or child) — see layout/types.ts */
+    layout?: LayoutData;
     [key: string]: unknown;
 }
 interface TextLayerOptions {
@@ -158,6 +249,7 @@ declare module "fabric" {
     interface FabricObject {
         layerId?: string;
         layerType?: string;
+        layout?: LayoutData;
     }
 }
 
@@ -1233,4 +1325,4 @@ declare function fabricToHtml(layers: LayerData[], options: HtmlRenderOptions): 
  */
 declare function layerToHtmlStandalone(layer: LayerData, zIndex: number): HtmlLayerOutput;
 
-export { type ControlOption, CustomTextbox, type EditorConfig, FabricEditor, type FontConfig, type FontsConfig, HEART_PATH, HEXAGON_PATH, type HistoryCallbacks, HistoryManager, type HistoryState, type HtmlLayerOutput, type HtmlRenderOptions, ImageDropHandler, ImageFrame, type ImageLayerOptions, type LayerData, LayerManager, type LockMode$1 as LockMode, MaskManager, type ObjectControlsConfig, PendingUploadsManager, PersistenceManager, type ResizeSnapResult, type SaveOptions, type SaveResult, type SelectionCallbacks, SelectionManager, type ShapeLayerOptions, type ShapeType, type SnappingConfig, SnappingManager, type TextLayerOptions, addCircleClip, addCropControls, addHeartClip, addHexagonClip, addRoundedClip, antiScale, applyClip, applyLockMode, createCircle, createHeart, createHexagon, createImage, createRect, createRoundedRect, createShape, fabricToHtml, getAvailableShapes, getLockMode, getNextLockMode, isContentLocked, isPositionLocked, isStyleLocked, isValidShape, layerToHtmlStandalone, nextShape, removeCropControls, switchClip, switchShape };
+export { type ChildLayout, type ContainerLayout, type ControlOption, CustomTextbox, type EditorConfig, FabricEditor, type FontConfig, type FontsConfig, HEART_PATH, HEXAGON_PATH, type HistoryCallbacks, HistoryManager, type HistoryState, type HtmlLayerOutput, type HtmlRenderOptions, ImageDropHandler, ImageFrame, type ImageLayerOptions, type LayerData, LayerManager, type LayoutData, type LockMode$1 as LockMode, MaskManager, type ObjectControlsConfig, PendingUploadsManager, PersistenceManager, type ResizeSnapResult, type SaveOptions, type SaveResult, type SelectionCallbacks, SelectionManager, type ShapeLayerOptions, type ShapeType, type SizeMode, type SnappingConfig, SnappingManager, type TextLayerOptions, addCircleClip, addCropControls, addHeartClip, addHexagonClip, addRoundedClip, antiScale, applyClip, applyLockMode, createCircle, createHeart, createHexagon, createImage, createRect, createRoundedRect, createShape, fabricToHtml, getAvailableShapes, getLockMode, getNextLockMode, isChildLayout, isContainerLayout, isContentLocked, isPositionLocked, isStyleLocked, isValidShape, layerToHtmlStandalone, nextShape, removeCropControls, runLayout, switchClip, switchShape };

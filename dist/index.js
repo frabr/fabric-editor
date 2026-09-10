@@ -161,6 +161,8 @@ __export(index_exports, {
   getAvailableShapes: () => getAvailableShapes,
   getLockMode: () => getLockMode,
   getNextLockMode: () => getNextLockMode,
+  isChildLayout: () => isChildLayout,
+  isContainerLayout: () => isContainerLayout,
   isContentLocked: () => isContentLocked,
   isPositionLocked: () => isPositionLocked,
   isStyleLocked: () => isStyleLocked,
@@ -168,6 +170,7 @@ __export(index_exports, {
   layerToHtmlStandalone: () => layerToHtmlStandalone,
   nextShape: () => nextShape,
   removeCropControls: () => removeCropControls,
+  runLayout: () => runLayout,
   switchClip: () => switchClip,
   switchShape: () => switchShape
 });
@@ -181,7 +184,118 @@ var import_fabric5 = require("#fabric");
 
 // src/controls/CustomTextbox.ts
 var import_fabric = require("#fabric");
-var CustomTextbox = class extends import_fabric.IText {
+var CustomTextbox = class extends import_fabric.Textbox {
+  /**
+   * overflow-wrap: break-word — pré-découpe les mots trop longs
+   * en chunks et les marque pour que _wrapLine ne mette pas
+   * d'espace entre eux.
+   */
+  getGraphemeDataForRender(lines) {
+    const data = super.getGraphemeDataForRender(lines);
+    if (!this.width) return data;
+    const maxWidth = this.width;
+    let newLargest = 0;
+    data.wordsData = data.wordsData.map(
+      (lineWords, lineIndex) => lineWords.flatMap((entry) => {
+        if (entry.width <= maxWidth) {
+          newLargest = Math.max(newLargest, entry.width);
+          return [entry];
+        }
+        const chunks = [];
+        let chunk = [];
+        let chunkWidth = 0;
+        let offset = 0;
+        for (const grapheme of entry.word) {
+          const gWidth = this._measureWord([grapheme], lineIndex, offset);
+          if (chunkWidth + gWidth > maxWidth && chunk.length > 0) {
+            chunks.push({ word: chunk, width: chunkWidth, _isChunk: chunks.length > 0 });
+            newLargest = Math.max(newLargest, chunkWidth);
+            chunk = [];
+            chunkWidth = 0;
+          }
+          chunk.push(grapheme);
+          chunkWidth += gWidth;
+          offset++;
+        }
+        if (chunk.length > 0) {
+          chunks.push({ word: chunk, width: chunkWidth, _isChunk: chunks.length > 0 });
+          newLargest = Math.max(newLargest, chunkWidth);
+        }
+        return chunks;
+      })
+    );
+    data.largestWordWidth = newLargest;
+    return data;
+  }
+  /**
+   * Copie fidèle de Textbox._wrapLine, sauf :
+   * - pas d'espace (infix) entre les chunks d'un même mot (_isChunk)
+   * - pas d'incrément d'offset pour l'espace entre chunks
+   */
+  _wrapLine(lineIndex, desiredWidth, { largestWordWidth, wordsData }, reservedSpace = 0) {
+    const additionalSpace = this._getWidthOfCharSpacing();
+    const graphemeLines = [];
+    let lineWidth = 0;
+    let line = [];
+    let offset = 0;
+    let infixWidth = 0;
+    let lineJustStarted = true;
+    desiredWidth -= reservedSpace;
+    const maxWidth = Math.max(desiredWidth, largestWordWidth, this.dynamicMinWidth);
+    const data = wordsData[lineIndex];
+    offset = 0;
+    let i;
+    for (i = 0; i < data.length; i++) {
+      const entry = data[i];
+      const { word, width: wordWidth } = entry;
+      const isChunk = !!entry._isChunk;
+      offset += word.length;
+      lineWidth += (isChunk ? 0 : infixWidth) + wordWidth - additionalSpace;
+      if (lineWidth > maxWidth && !lineJustStarted) {
+        graphemeLines.push(line);
+        line = [];
+        lineWidth = wordWidth;
+        lineJustStarted = true;
+      } else {
+        lineWidth += additionalSpace;
+      }
+      if (!lineJustStarted && !isChunk) {
+        line.push(" ");
+      }
+      line = line.concat(word);
+      if (isChunk) {
+        infixWidth = 0;
+      } else {
+        infixWidth = this._measureWord([" "], lineIndex, offset);
+        offset++;
+      }
+      lineJustStarted = false;
+    }
+    i && graphemeLines.push(line);
+    if (largestWordWidth + reservedSpace > this.dynamicMinWidth) {
+      this.dynamicMinWidth = largestWordWidth - additionalSpace + reservedSpace;
+    }
+    return graphemeLines;
+  }
+  /**
+   * Fix curseur : missingNewlineOffset retourne toujours 1 en mode
+   * non-splitByGrapheme car Fabric suppose que chaque wrap mange un
+   * espace. Pour les coupures mid-word, il n'y a pas d'espace → 0.
+   */
+  missingNewlineOffset(lineIndex, skipWrapping) {
+    if (skipWrapping) return 1;
+    if (!this._styleMap[lineIndex + 1]) return 1;
+    if (this._styleMap[lineIndex + 1].line !== this._styleMap[lineIndex].line) {
+      return 1;
+    }
+    const currentOffset = this._styleMap[lineIndex].offset;
+    const currentLen = this._textLines[lineIndex].length;
+    const nextOffset = this._styleMap[lineIndex + 1].offset;
+    if (nextOffset === currentOffset + currentLen) {
+      return 0;
+    }
+    return 1;
+  }
   /**
    * Override pour ajouter le textarea au canvas container
    * au lieu du body (comportement par défaut de Fabric.js).
@@ -1286,7 +1400,7 @@ var LayerManager = class {
    * Inclut les propriétés custom : layerId, lockMode, lockContent
    */
   serialize() {
-    return this.all.map((obj) => obj.toObject(["layerId", "lockMode", "lockContent"]));
+    return this.all.map((obj) => obj.toObject(["layerId", "lockMode", "lockContent", "layout"]));
   }
   /**
    * Désérialise un calque depuis ses données JSON
@@ -3017,7 +3131,7 @@ var _FabricEditor = class _FabricEditor {
     import_fabric9.FabricObject.prototype.toObject = function(propertiesToInclude) {
       return originalToObject.call(
         this,
-        ["layerId"].concat(propertiesToInclude || [])
+        ["layerId", "layout"].concat(propertiesToInclude || [])
       );
     };
   }
@@ -3046,6 +3160,7 @@ var _FabricEditor = class _FabricEditor {
     });
   }
 };
+console.log("[fabric-editor] \u2713 linked local build");
 /**
  * Étend FabricObject pour inclure layerId dans la sérialisation
  */
@@ -3380,6 +3495,152 @@ var ImageDropHandler = class {
 
 // src/index.ts
 init_PendingUploadsManager();
+
+// src/layout/types.ts
+function isContainerLayout(l) {
+  return "role" in l && l.role === "container";
+}
+function isChildLayout(l) {
+  return "parentId" in l;
+}
+
+// src/layout/engine.ts
+var TEXT_TYPES = ["i-text", "textbox"];
+function isTextObject(obj) {
+  return TEXT_TYPES.includes(obj.type);
+}
+function resolveChildren(objects, containerId) {
+  const out = [];
+  for (const obj of objects) {
+    const cl = obj.get("layout");
+    if (cl && isChildLayout(cl) && cl.parentId === containerId) {
+      out.push({ obj, cl });
+    }
+  }
+  return out;
+}
+function scaledSize(obj) {
+  return {
+    w: obj.width * (obj.scaleX || 1),
+    h: obj.height * (obj.scaleY || 1)
+  };
+}
+function runLayout(objects) {
+  for (const obj of objects) {
+    const layout = obj.get("layout");
+    if (!layout || !isContainerLayout(layout)) continue;
+    const containerId = obj.get("layerId");
+    const children = resolveChildren(objects, containerId);
+    if (children.length === 0) continue;
+    layoutContainer(obj, layout, children);
+  }
+}
+function layoutContainer(container, layout, children) {
+  const modeX = layout.sizeMode.x;
+  const modeY = layout.sizeMode.y;
+  const { w: currentW, h: currentH } = scaledSize(container);
+  const bothFixed = modeX === "fixed" && modeY === "fixed";
+  if (!bothFixed) restoreTextFontSizes(children);
+  prepareTextChildren(children, modeX, currentW);
+  const { w: requiredW, h: requiredH } = measureChildren(children);
+  const finalW = modeX === "hug" ? requiredW : currentW;
+  const finalH = modeY === "hug" ? requiredH : currentH;
+  applyContainerSize(container, finalW, finalH);
+  if (bothFixed) {
+    shrinkOverflowingText(children, finalW, finalH);
+  }
+  positionChildren(children, container.left, container.top);
+  syncCoords(container, children);
+}
+function prepareTextChildren(children, modeX, containerW) {
+  for (const { obj, cl } of children) {
+    if (!isTextObject(obj)) continue;
+    const t = obj;
+    if (modeX === "fixed") {
+      const availW = containerW - cl.margins.left - cl.margins.right;
+      obj.set({ width: availW / (obj.scaleX || 1) });
+    } else {
+      obj.set({ width: 1e4 });
+    }
+    t.initDimensions();
+    if (modeX === "hug") {
+      const realW = t.calcTextWidth();
+      obj.set({ width: realW });
+      t.initDimensions();
+    }
+  }
+}
+function measureChildren(children) {
+  let w = 0;
+  let h = 0;
+  for (const { obj, cl } of children) {
+    const { w: childW, h: childH } = scaledSize(obj);
+    w = Math.max(w, cl.margins.left + childW + cl.margins.right);
+    h = Math.max(h, cl.margins.top + childH + cl.margins.bottom);
+  }
+  return { w, h };
+}
+function applyContainerSize(container, finalW, finalH) {
+  container.set({
+    width: finalW / (container.scaleX || 1),
+    height: finalH / (container.scaleY || 1)
+  });
+}
+function shrinkOverflowingText(children, containerW, containerH) {
+  for (const { obj, cl } of children) {
+    if (!isTextObject(obj)) continue;
+    const availW = containerW - cl.margins.left - cl.margins.right;
+    const availH = containerH - cl.margins.top - cl.margins.bottom;
+    const { h: childH } = scaledSize(obj);
+    if (childH > availH) {
+      shrinkTextToFit(obj, availW, availH);
+    }
+  }
+}
+function positionChildren(children, containerLeft, containerTop) {
+  for (const { obj, cl } of children) {
+    obj.set({
+      left: containerLeft + cl.margins.left,
+      top: containerTop + cl.margins.top
+    });
+  }
+}
+function syncCoords(container, children) {
+  container.setCoords();
+  for (const { obj } of children) {
+    obj.setCoords();
+  }
+}
+function restoreTextFontSizes(children) {
+  for (const { obj } of children) {
+    if (!isTextObject(obj)) continue;
+    const t = obj;
+    if (t._layoutOriginalFontSize == null) continue;
+    t.fontSize = t._layoutOriginalFontSize;
+    delete t._layoutOriginalFontSize;
+    t.initDimensions();
+  }
+}
+function shrinkTextToFit(obj, availW, availH) {
+  const t = obj;
+  const originalSize = t._layoutOriginalFontSize ?? t.fontSize;
+  t._layoutOriginalFontSize = originalSize;
+  t.fontSize = originalSize;
+  t.initDimensions();
+  const minFontSize = 8;
+  let fontSize = originalSize;
+  for (let i = 0; i < 20; i++) {
+    const { w: textW, h: textH } = scaledSize(obj);
+    if (textW <= availW && textH <= availH) break;
+    if (fontSize <= minFontSize) break;
+    const ratioW = availW / Math.max(textW, 1);
+    const ratioH = availH / Math.max(textH, 1);
+    fontSize = Math.max(minFontSize, Math.floor(fontSize * Math.min(ratioW, ratioH)));
+    t.fontSize = fontSize;
+    obj.set({ width: availW / (obj.scaleX || 1) });
+    t.initDimensions();
+  }
+}
 
 // src/html/cssUtils.ts
 function originXToCss(originX) {
@@ -3916,6 +4177,8 @@ function layerToHtmlStandalone(layer, zIndex) {
   getAvailableShapes,
   getLockMode,
   getNextLockMode,
+  isChildLayout,
+  isContainerLayout,
   isContentLocked,
   isPositionLocked,
   isStyleLocked,
@@ -3923,6 +4186,7 @@ function layerToHtmlStandalone(layer, zIndex) {
   layerToHtmlStandalone,
   nextShape,
   removeCropControls,
+  runLayout,
   switchClip,
   switchShape
 });
