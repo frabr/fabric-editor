@@ -114,8 +114,18 @@ var init_PendingUploadsManager = __esm({
   }
 });
 
+// src/fabric-extensions.ts
+import { Canvas } from "#fabric";
+Canvas.prototype.adjustGrabOffset = function(dx, dy) {
+  if (dx === 0 && dy === 0) return;
+  const transform = this._currentTransform;
+  if (!transform) return;
+  transform.offsetX -= dx;
+  transform.offsetY -= dy;
+};
+
 // src/FabricEditor.ts
-import { Canvas as Canvas4, FabricObject as FabricObject6, FabricImage as FabricImage6, Point as Point2, Control as Control2, controlsUtils } from "#fabric";
+import { Canvas as Canvas6, FabricObject as FabricObject7, FabricImage as FabricImage6, Point as Point2, Control as Control2, controlsUtils } from "#fabric";
 
 // src/LayerManager.ts
 import {
@@ -129,6 +139,50 @@ import {
 // src/controls/CustomTextbox.ts
 import { Textbox, Point } from "#fabric";
 var CustomTextbox = class extends Textbox {
+  constructor(text, options) {
+    const hasExplicitWidth = options?.width != null;
+    super(text, options);
+    /**
+     * Auto-width mode : le textbox s'étend horizontalement au contenu.
+     * Désactivé automatiquement quand l'utilisateur resize manuellement.
+     */
+    this._autoWidth = true;
+    /** Dernière width calculée par le mode auto-width. */
+    this._autoWidthValue = 0;
+    if (hasExplicitWidth) {
+      this._autoWidth = false;
+    } else {
+      this.initDimensions();
+    }
+    this.on("resizing", () => {
+      this._autoWidth = false;
+    });
+    this.on("scaling", () => {
+      this._autoWidth = false;
+    });
+  }
+  /**
+   * Override initDimensions : en mode auto-width, on calcule les dimensions
+   * avec une width infinie puis on ajuste width au résultat.
+   * Si la width entrante diffère de notre dernière valeur auto, c'est un
+   * resize externe → on désactive auto-width.
+   */
+  initDimensions() {
+    if (this._autoWidth) {
+      if (this._autoWidthValue > 0 && Math.abs(this.width - this._autoWidthValue) > 2) {
+        this._autoWidth = false;
+        super.initDimensions();
+        return;
+      }
+      this.width = 1e4;
+      super.initDimensions();
+      const natural = Math.ceil(this.calcTextWidth());
+      this.width = natural;
+      this._autoWidthValue = natural;
+    } else {
+      super.initDimensions();
+    }
+  }
   /**
    * overflow-wrap: break-word — pré-découpe les mots trop longs
    * en chunks et les marque pour que _wrapLine ne mette pas
@@ -2088,11 +2142,186 @@ var HistoryManager = class {
   }
 };
 
+// src/CanvasGuides.ts
+import { Line, Rect as Rect4 } from "#fabric";
+
+// src/layout/types.ts
+function isContainerLayout(l) {
+  return "role" in l && l.role === "container";
+}
+function isChildLayout(l) {
+  return "parentId" in l;
+}
+var MIN_PAD = 8;
+
+// src/layout/geometry.ts
+function scaledSize(obj) {
+  return {
+    w: obj.width * (obj.scaleX || 1),
+    h: obj.height * (obj.scaleY || 1)
+  };
+}
+function topLeft(obj) {
+  const { w, h } = scaledSize(obj);
+  let x = obj.left;
+  let y = obj.top;
+  if (obj.originX === "center") x -= w / 2;
+  else if (obj.originX === "right") x -= w;
+  if (obj.originY === "center") y -= h / 2;
+  else if (obj.originY === "bottom") y -= h;
+  return { x, y };
+}
+function pointInObject(point, obj, margin = 0) {
+  const tl = topLeft(obj);
+  const { w, h } = scaledSize(obj);
+  return point.x >= tl.x - margin && point.x <= tl.x + w + margin && point.y >= tl.y - margin && point.y <= tl.y + h + margin;
+}
+var TEXT_TYPES = ["i-text", "textbox"];
+function isTextObject(obj) {
+  return TEXT_TYPES.includes(obj.type);
+}
+function clampTopLeft(obj, reference, padding) {
+  const tl = topLeft(obj);
+  const refTl = topLeft(reference);
+  return {
+    x: Math.max(refTl.x + padding, tl.x),
+    y: Math.max(refTl.y + padding, tl.y)
+  };
+}
+function hasExceededOffset(current, origin, offsetX, offsetY, margin) {
+  const dx = current.x - origin.x;
+  const dy = current.y - origin.y;
+  return offsetX > 0 && dx < -(offsetX + margin) || offsetX < 0 && dx > -offsetX + margin || offsetY > 0 && dy < -(offsetY + margin) || offsetY < 0 && dy > -offsetY + margin;
+}
+
+// src/CanvasGuides.ts
+var CanvasGuides = class {
+  constructor(canvas) {
+    this.objects = [];
+    this.canvas = canvas;
+  }
+  // ── Low-level primitives ──────────────────────────────────────────
+  /** Add a line guide. */
+  addLine(coords, opts = {}) {
+    const line = new Line(coords, {
+      stroke: opts.stroke ?? "#ff00ff",
+      strokeWidth: opts.strokeWidth ?? 1,
+      strokeDashArray: opts.strokeDashArray ?? [5, 5],
+      selectable: false,
+      evented: false,
+      excludeFromExport: true
+    });
+    this.objects.push(line);
+    this.canvas.add(line);
+  }
+  /** Add a rectangle guide (highlight zone, margin indicator, etc.). */
+  addRect(opts) {
+    const rect = new Rect4({
+      left: opts.left,
+      top: opts.top,
+      originX: "left",
+      originY: "top",
+      width: opts.width,
+      height: opts.height,
+      fill: opts.fill ?? "transparent",
+      stroke: opts.stroke ?? "transparent",
+      strokeWidth: opts.strokeWidth ?? 0,
+      strokeDashArray: opts.strokeDashArray,
+      selectable: false,
+      evented: false,
+      excludeFromExport: true
+    });
+    this.objects.push(rect);
+    this.canvas.add(rect);
+  }
+  /** Remove all guides added by this instance. */
+  clear() {
+    for (const obj of this.objects) {
+      this.canvas.remove(obj);
+    }
+    this.objects = [];
+  }
+  /** Clear + render in one call (common pattern). */
+  clearAndRender() {
+    this.clear();
+    this.canvas.requestRenderAll();
+  }
+  /** Whether this instance currently has guides on the canvas. */
+  get hasGuides() {
+    return this.objects.length > 0;
+  }
+  // ── High-level presets ────────────────────────────────────────────
+  /**
+   * Show a dashed hover hint around a shape (used during PENDING state
+   * in drag-to-layout to signal that anchoring is about to happen).
+   */
+  showHintHighlight(shape) {
+    this.clear();
+    const { w, h } = scaledSize(shape);
+    const tl = topLeft(shape);
+    this.addRect({
+      left: tl.x,
+      top: tl.y,
+      width: w,
+      height: h,
+      fill: "rgba(59, 130, 246, 0.05)",
+      stroke: "rgba(59, 130, 246, 0.4)",
+      strokeWidth: 1.5,
+      strokeDashArray: [6, 4]
+    });
+  }
+  /**
+   * Show layout guides: a dashed outline around the container and
+   * colored overlays for each non-zero margin zone.
+   */
+  showLayoutGuides(container, child) {
+    this.clear();
+    const { w: cw, h: ch } = scaledSize(container);
+    const ctl = topLeft(container);
+    this.addRect({
+      left: ctl.x,
+      top: ctl.y,
+      width: cw,
+      height: ch,
+      fill: "transparent",
+      stroke: "#3b82f6",
+      strokeWidth: 2,
+      strokeDashArray: [6, 4]
+    });
+    const layout = child.get?.("layout");
+    if (!layout || !isChildLayout(layout)) return;
+    const m = layout.margins;
+    const FILL = "rgba(59, 130, 246, 0.08)";
+    const STROKE = "rgba(59, 130, 246, 0.3)";
+    if (m.left > 0)
+      this.addRect({ left: ctl.x, top: ctl.y, width: m.left, height: ch, fill: FILL, stroke: STROKE, strokeWidth: 0.5 });
+    if (m.right > 0)
+      this.addRect({ left: ctl.x + cw - m.right, top: ctl.y, width: m.right, height: ch, fill: FILL, stroke: STROKE, strokeWidth: 0.5 });
+    if (m.top > 0)
+      this.addRect({ left: ctl.x + m.left, top: ctl.y, width: cw - m.left - m.right, height: m.top, fill: FILL, stroke: STROKE, strokeWidth: 0.5 });
+    if (m.bottom > 0)
+      this.addRect({ left: ctl.x + m.left, top: ctl.y + ch - m.bottom, width: cw - m.left - m.right, height: m.bottom, fill: FILL, stroke: STROKE, strokeWidth: 0.5 });
+  }
+  /**
+   * Show snap alignment lines (horizontal/vertical) spanning the full canvas.
+   */
+  showSnapLines(guides, opts = {}) {
+    this.clear();
+    const canvasW = this.canvas.width;
+    const canvasH = this.canvas.height;
+    for (const guide of guides) {
+      const coords = guide.orientation === "vertical" ? [guide.position, 0, guide.position, canvasH] : [0, guide.position, canvasW, guide.position];
+      this.addLine(coords, {
+        stroke: opts.stroke ?? "#ff00ff",
+        strokeDashArray: [5, 5]
+      });
+    }
+  }
+};
+
 // src/SnappingManager.ts
-import { Line } from "#fabric";
 var SnappingManager = class {
   constructor(canvas, config = {}) {
-    this.guides = [];
     this.enabled = true;
     this.snapState = null;
     this.resizeSnapState = null;
@@ -2105,6 +2334,7 @@ var SnappingManager = class {
       snapToEdges: config.snapToEdges ?? true,
       guideColor: config.guideColor ?? "#ff00ff"
     };
+    this.guides = new CanvasGuides(canvas);
     this.setupEventListeners();
   }
   /**
@@ -2113,7 +2343,7 @@ var SnappingManager = class {
   setEnabled(enabled) {
     this.enabled = enabled;
     if (!enabled) {
-      this.clearGuides();
+      this.guides.clearAndRender();
     }
   }
   /**
@@ -2132,11 +2362,11 @@ var SnappingManager = class {
     this.canvas.on("object:moving", (e) => this.handleObjectMoving(e));
     this.canvas.on("object:scaling", (e) => this.handleObjectScaling(e.target));
     this.canvas.on("object:modified", () => {
-      this.clearGuides();
+      this.guides.clearAndRender();
       this.snapState = null;
     });
     this.canvas.on("selection:cleared", () => {
-      this.clearGuides();
+      this.guides.clearAndRender();
       this.snapState = null;
     });
     this.canvas.on("mouse:down", () => {
@@ -2299,30 +2529,8 @@ var SnappingManager = class {
     this.updateGuides(activeGuides);
   }
   updateGuides(activeGuides) {
-    this.clearGuides();
-    for (const guide of activeGuides) {
-      const line = this.createGuideLine(guide);
-      this.guides.push(line);
-      this.canvas.add(line);
-    }
+    this.guides.showSnapLines(activeGuides, { stroke: this.config.guideColor });
     this.canvas.requestRenderAll();
-  }
-  createGuideLine(guide) {
-    const coords = guide.orientation === "vertical" ? [guide.position, 0, guide.position, this.canvas.height] : [0, guide.position, this.canvas.width, guide.position];
-    return new Line(coords, {
-      stroke: this.config.guideColor,
-      strokeWidth: 1,
-      strokeDashArray: [5, 5],
-      selectable: false,
-      evented: false,
-      excludeFromExport: true
-    });
-  }
-  clearGuides() {
-    for (const guide of this.guides) {
-      this.canvas.remove(guide);
-    }
-    this.guides = [];
   }
   /**
    * Calcule le snap pendant le redimensionnement d'un objet
@@ -2450,17 +2658,587 @@ var SnappingManager = class {
    */
   resetResizeSnap() {
     this.resizeSnapState = null;
-    this.clearGuides();
+    this.guides.clearAndRender();
   }
   /**
    * Nettoie les ressources
    */
   dispose() {
-    this.clearGuides();
+    this.guides.clear();
     this.canvas.off("object:moving");
     this.canvas.off("object:scaling");
     this.canvas.off("object:modified");
     this.canvas.off("selection:cleared");
+  }
+};
+
+// src/LayoutManager.ts
+import { Rect as Rect5 } from "#fabric";
+
+// src/layout/reconcile.ts
+function resolveChildren(objects, containerId) {
+  const out = [];
+  for (const obj of objects) {
+    const cl = obj.get("layout");
+    if (cl && isChildLayout(cl) && cl.parentId === containerId) {
+      out.push({ obj, cl });
+    }
+  }
+  return out;
+}
+function normalizeScale(obj, layout) {
+  const sx = obj.scaleX || 1;
+  const sy = obj.scaleY || 1;
+  if (sx === 1 && sy === 1) return;
+  const newW = obj.width * sx;
+  const newH = obj.height * sy;
+  obj.set({ width: newW, height: newH, scaleX: 1, scaleY: 1 });
+  const modeX = layout.sizeMode.x;
+  const modeY = layout.sizeMode.y;
+  if (modeX === "hug" || modeY === "hug") {
+    if (!layout.minSize) layout.minSize = { w: 0, h: 0 };
+    if (modeX === "hug") layout.minSize.w = newW;
+    if (modeY === "hug") layout.minSize.h = newH;
+  }
+}
+function runLayout(objects, preview = false) {
+  for (const obj of objects) {
+    const layout = obj.get("layout");
+    if (!layout || !isContainerLayout(layout)) continue;
+    const containerId = obj.get("layerId");
+    const children = resolveChildren(objects, containerId);
+    if (children.length === 0) continue;
+    layoutContainer(obj, layout, children, preview);
+  }
+}
+function layoutContainer(container, layout, children, preview = false) {
+  if (preview) {
+    const { w, h } = scaledSize(container);
+    positionChildren(children, container.left, container.top, w, h);
+    syncCoords(container, children);
+    return;
+  }
+  const modeX = layout.sizeMode.x;
+  const modeY = layout.sizeMode.y;
+  normalizeScale(container, layout);
+  const { w: rawW, h: rawH } = scaledSize(container);
+  const minW = layout.minSize?.w ?? 0;
+  const minH = layout.minSize?.h ?? 0;
+  const currentW = Math.max(rawW, minW);
+  const currentH = Math.max(rawH, minH);
+  const bothFixed = modeX === "fixed" && modeY === "fixed";
+  if (!bothFixed) restoreTextFontSizes(children);
+  prepareTextChildren(children, modeX, currentW);
+  const { w: requiredW, h: requiredH } = measureChildren(children);
+  const finalW = modeX === "hug" ? Math.max(requiredW, minW) : currentW;
+  const finalH = modeY === "hug" ? Math.max(requiredH, minH) : currentH;
+  applyContainerSize(container, finalW, finalH);
+  if (bothFixed) {
+    shrinkOverflowingText(children, finalW, finalH);
+  }
+  positionChildren(children, container.left, container.top, finalW, finalH);
+  syncCoords(container, children);
+}
+function prepareTextChildren(children, modeX, containerW) {
+  for (const { obj, cl } of children) {
+    if (!isTextObject(obj)) continue;
+    const t = obj;
+    const anchorX = cl.anchorX ?? "left";
+    t.set({ textAlign: anchorX === "right" ? "right" : "left" });
+    if (modeX === "fixed") {
+      const availW = containerW - cl.margins.left - cl.margins.right;
+      obj.set({ width: availW / (obj.scaleX || 1) });
+    } else {
+      obj.set({ width: 1e4 });
+    }
+    t.initDimensions();
+    if (modeX === "hug") {
+      const realW = Math.ceil(t.calcTextWidth());
+      obj.set({ width: realW });
+      t.initDimensions();
+    }
+  }
+}
+function measureChildren(children) {
+  let w = 0;
+  let h = 0;
+  for (const { obj, cl } of children) {
+    const { w: childW, h: childH } = scaledSize(obj);
+    w = Math.max(w, cl.margins.left + childW + cl.margins.right);
+    h = Math.max(h, cl.margins.top + childH + cl.margins.bottom);
+  }
+  return { w, h };
+}
+function applyContainerSize(container, finalW, finalH) {
+  container.set({
+    width: finalW / (container.scaleX || 1),
+    height: finalH / (container.scaleY || 1)
+  });
+}
+function shrinkOverflowingText(children, containerW, containerH) {
+  for (const { obj, cl } of children) {
+    if (!isTextObject(obj)) continue;
+    const availW = containerW - cl.margins.left - cl.margins.right;
+    const availH = containerH - cl.margins.top - cl.margins.bottom;
+    const { h: childH } = scaledSize(obj);
+    if (childH > availH) {
+      shrinkTextToFit(obj, availW, availH);
+    }
+  }
+}
+function positionChildren(children, containerLeft, containerTop, containerW, containerH) {
+  for (const { obj, cl } of children) {
+    const anchorX = cl.anchorX ?? "left";
+    const anchorY = cl.anchorY ?? "top";
+    const { w: childW, h: childH } = scaledSize(obj);
+    const left = anchorX === "left" ? containerLeft + cl.margins.left : containerLeft + containerW - cl.margins.right - childW;
+    const top = anchorY === "top" ? containerTop + cl.margins.top : containerTop + containerH - cl.margins.bottom - childH;
+    obj.set({ left, top });
+  }
+}
+function syncCoords(container, children) {
+  container.setCoords();
+  for (const { obj } of children) {
+    obj.setCoords();
+  }
+}
+function restoreTextFontSizes(children) {
+  for (const { obj } of children) {
+    if (!isTextObject(obj)) continue;
+    const t = obj;
+    if (t._layoutOriginalFontSize == null) continue;
+    t.fontSize = t._layoutOriginalFontSize;
+    delete t._layoutOriginalFontSize;
+    t.initDimensions();
+  }
+}
+function shrinkTextToFit(obj, availW, availH) {
+  const t = obj;
+  const originalSize = t._layoutOriginalFontSize ?? t.fontSize;
+  t._layoutOriginalFontSize = originalSize;
+  t.fontSize = originalSize;
+  t.initDimensions();
+  const minFontSize = 8;
+  let fontSize = originalSize;
+  for (let i = 0; i < 20; i++) {
+    const { w: textW, h: textH } = scaledSize(obj);
+    if (textW <= availW && textH <= availH) break;
+    if (fontSize <= minFontSize) break;
+    const ratioW = availW / Math.max(textW, 1);
+    const ratioH = availH / Math.max(textH, 1);
+    fontSize = Math.max(minFontSize, Math.floor(fontSize * Math.min(ratioW, ratioH)));
+    t.fontSize = fontSize;
+    obj.set({ width: availW / (obj.scaleX || 1) });
+    t.initDimensions();
+  }
+}
+
+// src/layout/attach-session.ts
+var EXIT_MARGIN = 5;
+var AttachSession = class {
+  constructor(canvas, shape, text, cursor) {
+    this.canvas = canvas;
+    this.shape = shape;
+    this.text = text;
+    this.anchorCursor = cursor;
+    this.snapshot = takeSnapshot(shape, text);
+    normalizeShapeOrigin(shape);
+    const { containerLayout, childLayout } = computeInitialLayout(shape, text);
+    shape.set("layout", containerLayout);
+    text.set("layout", childLayout);
+    const clampedPos = clampTopLeft(text, shape, MIN_PAD);
+    const preTL = topLeft(text);
+    this.clampDx = clampedPos.x - preTL.x;
+    this.clampDy = clampedPos.y - preTL.y;
+    canvas.adjustGrabOffset(this.clampDx, this.clampDy);
+    if (this.clampDx !== 0 || this.clampDy !== 0) {
+      text.left += this.clampDx;
+      text.top += this.clampDy;
+      text.setCoords();
+    }
+    wrapContainerAroundChild(text, shape);
+  }
+  /** During drag: clamp text, resize container, check for exit. */
+  handleMoving(cursor) {
+    if (this.shouldExit(cursor)) {
+      this.rollback();
+      return "exited";
+    }
+    const clamped = clampTopLeft(this.text, this.shape, MIN_PAD);
+    const currentTL = topLeft(this.text);
+    const dx = clamped.x - currentTL.x;
+    const dy = clamped.y - currentTL.y;
+    if (dx !== 0 || dy !== 0) {
+      this.text.left += dx;
+      this.text.top += dy;
+      this.text.setCoords();
+    }
+    wrapContainerAroundChild(this.text, this.shape);
+    return "anchored";
+  }
+  /** Finalize the attach. Returns a cleanup function for the "changed" listener. */
+  commit() {
+    const tTL = topLeft(this.text);
+    this.text.set({ left: tTL.x, top: tTL.y, originX: "left", originY: "top" });
+    this.text.setCoords();
+    runLayout(this.canvas.getObjects());
+    const relayout = () => {
+      runLayout(this.canvas.getObjects());
+      this.canvas.renderAll();
+    };
+    this.text.on("changed", relayout);
+    this.canvas.renderAll();
+    return () => this.text.off("changed", relayout);
+  }
+  /** Undo anchor: restore snapshot, reverse grab offset. */
+  rollback() {
+    this.shape.set({
+      left: this.snapshot.shape.left,
+      top: this.snapshot.shape.top,
+      originX: this.snapshot.shape.originX,
+      originY: this.snapshot.shape.originY,
+      width: this.snapshot.shape.width,
+      height: this.snapshot.shape.height,
+      scaleX: this.snapshot.shape.scaleX,
+      scaleY: this.snapshot.shape.scaleY,
+      stroke: this.snapshot.shape.stroke,
+      strokeWidth: this.snapshot.shape.strokeWidth
+    });
+    this.shape.set("layout", this.snapshot.shape.layout ?? void 0);
+    this.text.set({
+      left: this.snapshot.text.left,
+      top: this.snapshot.text.top,
+      originX: this.snapshot.text.originX,
+      originY: this.snapshot.text.originY,
+      width: this.snapshot.text.width,
+      scaleX: this.snapshot.text.scaleX,
+      scaleY: this.snapshot.text.scaleY,
+      textAlign: this.snapshot.text.textAlign
+    });
+    this.text.set("layout", this.snapshot.text.layout ?? void 0);
+    this.canvas.adjustGrabOffset(-this.clampDx, -this.clampDy);
+    this.text.off("changed");
+    this.shape.setCoords();
+    this.text.setCoords();
+    this.canvas.renderAll();
+  }
+  /** The shape this session is attached to (for guide rendering). */
+  get container() {
+    return this.shape;
+  }
+  /** The text being attached (for guide rendering). */
+  get child() {
+    return this.text;
+  }
+  shouldExit(cursor) {
+    if (!pointInObject(cursor, this.shape, EXIT_MARGIN)) return true;
+    return hasExceededOffset(cursor, this.anchorCursor, this.clampDx, this.clampDy, EXIT_MARGIN);
+  }
+};
+function takeSnapshot(shape, text) {
+  return {
+    shape: {
+      left: shape.left,
+      top: shape.top,
+      originX: shape.originX,
+      originY: shape.originY,
+      width: shape.width,
+      height: shape.height,
+      scaleX: shape.scaleX,
+      scaleY: shape.scaleY,
+      stroke: shape.stroke,
+      strokeWidth: shape.strokeWidth,
+      layout: shape.get?.("layout") ?? void 0
+    },
+    text: {
+      left: text.left,
+      top: text.top,
+      originX: text.originX,
+      originY: text.originY,
+      width: text.width,
+      scaleX: text.scaleX,
+      scaleY: text.scaleY,
+      textAlign: text.textAlign,
+      layout: text.get?.("layout") ?? void 0
+    }
+  };
+}
+function normalizeShapeOrigin(shape) {
+  const sTL = topLeft(shape);
+  const sx = shape.scaleX || 1;
+  const sy = shape.scaleY || 1;
+  shape.set({
+    left: sTL.x,
+    top: sTL.y,
+    originX: "left",
+    originY: "top",
+    width: shape.width * sx,
+    height: shape.height * sy,
+    scaleX: 1,
+    scaleY: 1
+  });
+  shape.setCoords();
+}
+function computeInitialLayout(shape, text) {
+  const sTL = topLeft(shape);
+  const tTL = topLeft(text);
+  const shapeW = shape.width;
+  const shapeH = shape.height;
+  const textW = text.width * (text.scaleX || 1);
+  const padX = Math.max(MIN_PAD, Math.round(tTL.x - sTL.x));
+  const padY = Math.max(MIN_PAD, Math.round(tTL.y - sTL.y));
+  const naturalW = text.calcTextWidth ? Math.ceil(text.calcTextWidth()) : textW;
+  const textWraps = textW < naturalW - 2;
+  const modeX = textWraps ? "fixed" : "hug";
+  const containerId = shape.get?.("layerId");
+  return {
+    containerLayout: {
+      role: "container",
+      sizeMode: { x: modeX, y: "hug" },
+      minSize: { w: shapeW, h: shapeH }
+    },
+    childLayout: {
+      parentId: containerId,
+      margins: { left: padX, right: padX, top: padY, bottom: padY },
+      anchorX: "left",
+      anchorY: "top"
+    }
+  };
+}
+function wrapContainerAroundChild(child, container) {
+  const cl = child.get?.("layout");
+  const containerLayout = container.get?.("layout");
+  if (!cl || !containerLayout) return;
+  const { w: childW, h: childH } = scaledSize(child);
+  const sTL = topLeft(container);
+  const tTL = topLeft(child);
+  const padLeft = Math.max(MIN_PAD, Math.round(tTL.x - sTL.x));
+  const padTop = Math.max(MIN_PAD, Math.round(tTL.y - sTL.y));
+  cl.margins = { left: padLeft, right: padLeft, top: padTop, bottom: padTop };
+  cl.anchorX = "left";
+  cl.anchorY = "top";
+  child.set("layout", { ...cl });
+  const minW = containerLayout.minSize?.w ?? 0;
+  const minH = containerLayout.minSize?.h ?? 0;
+  const requiredW = padLeft + childW + padLeft;
+  const requiredH = padTop + childH + padTop;
+  container.set({ width: Math.max(requiredW, minW), height: Math.max(requiredH, minH) });
+  container.setCoords();
+}
+
+// src/LayoutManager.ts
+var ANCHOR_DELAY_MS = 300;
+var LayoutManager2 = class {
+  constructor(canvas, callbacks = {}) {
+    this.dtl = { phase: "idle", cooldownUntil: 0 };
+    // ── Event wiring ──────────────────────────────────────────────────
+    this.onMovingBound = (e) => this.onMoving(e);
+    this.onModifiedBound = (e) => this.onModified(e);
+    this.onScalingBound = (e) => this.onScaling(e);
+    this.canvas = canvas;
+    this.callbacks = callbacks;
+    this.guides = new CanvasGuides(canvas);
+    this.setupEventListeners();
+  }
+  /** Set or update callbacks after construction. */
+  setCallbacks(callbacks) {
+    this.callbacks = callbacks;
+  }
+  // ── Public API ────────────────────────────────────────────────────
+  /** Run layout on all canvas objects. */
+  relayout(preview = false) {
+    runLayout(this.canvas.getObjects(), preview);
+    this.canvas.renderAll();
+  }
+  /** Update layout mode on the currently selected container. */
+  setMode(obj, mode) {
+    const layout = obj.get("layout");
+    if (!layout || !isContainerLayout(layout)) return;
+    switch (mode) {
+      case "hug":
+        layout.sizeMode = { x: "hug", y: "hug" };
+        break;
+      case "hug-y":
+        layout.sizeMode = { x: "fixed", y: "hug" };
+        break;
+      case "fixed":
+        layout.sizeMode = { x: "fixed", y: "fixed" };
+        break;
+    }
+    obj.set("layout", { ...layout });
+    this.relayout();
+    this.callbacks.onLayoutChanged?.();
+  }
+  /** Update a margin on a child layout object. */
+  setMargin(obj, side, value) {
+    const layout = obj.get("layout");
+    if (!layout || !isChildLayout(layout)) return;
+    layout.margins[side] = value;
+    obj.set("layout", { ...layout });
+    this.relayout();
+    this.callbacks.onLayoutChanged?.();
+  }
+  /** Update anchor on a child layout object. */
+  setAnchor(obj, anchorX, anchorY) {
+    const layout = obj.get("layout");
+    if (!layout || !isChildLayout(layout)) return;
+    layout.anchorX = anchorX;
+    layout.anchorY = anchorY;
+    obj.set("layout", { ...layout });
+    this.relayout();
+    this.callbacks.onLayoutChanged?.();
+  }
+  /** Clean up event listeners. */
+  dispose() {
+    this.resetToIdle();
+    this.canvas.off("object:moving", this.onMovingBound);
+    this.canvas.off("object:modified", this.onModifiedBound);
+    this.canvas.off("object:scaling", this.onScalingBound);
+  }
+  setupEventListeners() {
+    this.canvas.on("object:moving", this.onMovingBound);
+    this.canvas.on("object:modified", this.onModifiedBound);
+    this.canvas.on("object:scaling", this.onScalingBound);
+  }
+  // ── Canvas event handlers ─────────────────────────────────────────
+  onMoving(e) {
+    const textObj = e.target;
+    if (!isTextObject(textObj)) return;
+    const textLayout = textObj.get?.("layout");
+    if (textLayout && "parentId" in textLayout && this.dtl.phase !== "anchored") return;
+    const cursor = this.canvas.getScenePoint(e.e);
+    switch (this.dtl.phase) {
+      case "anchored":
+        this.handleAnchoredMoving(cursor);
+        break;
+      case "pending":
+        this.handlePendingMoving(textObj, cursor);
+        break;
+      case "idle":
+        this.handleIdleMoving(textObj, cursor);
+        break;
+    }
+  }
+  onModified(e) {
+    const textObj = e.target;
+    if (!isTextObject(textObj)) return;
+    if (this.dtl.phase === "anchored") {
+      this.doCommit();
+      return;
+    }
+    if (this.dtl.phase === "pending") {
+      const cursor = this.canvas.getScenePoint(e.e);
+      if (pointInObject(cursor, this.dtl.target)) {
+        clearTimeout(this.dtl.timer);
+        this.dtl = { ...this.dtl, source: textObj, cursor };
+        this.guides.clear();
+        this.doAnchor();
+        this.doCommit();
+        return;
+      }
+    }
+    const layout = textObj.get?.("layout");
+    if (layout && isContainerLayout(layout)) {
+      this.relayout();
+      this.callbacks.onLayoutChanged?.();
+      return;
+    }
+    this.resetToIdle();
+  }
+  onScaling(e) {
+    const layout = e.target?.get?.("layout");
+    if (layout && isContainerLayout(layout)) {
+      this.relayout(true);
+    }
+  }
+  // ── State machine: IDLE → PENDING ─────────────────────────────────
+  handleIdleMoving(textObj, cursor) {
+    if (Date.now() < this.dtl.cooldownUntil) return;
+    const shape = this.findShapeUnderPoint(cursor);
+    if (shape) {
+      this.startPending(textObj, shape, cursor);
+    }
+  }
+  // ── State machine: PENDING ────────────────────────────────────────
+  handlePendingMoving(_textObj, cursor) {
+    if (this.dtl.phase !== "pending") return;
+    const shape = this.findShapeUnderPoint(cursor);
+    if (shape !== this.dtl.target) {
+      this.resetToIdle();
+      return;
+    }
+    this.dtl.cursor = cursor;
+  }
+  startPending(textObj, shape, cursor) {
+    this.guides.showHintHighlight(shape);
+    this.canvas.renderAll();
+    const timer = setTimeout(() => this.doAnchor(), ANCHOR_DELAY_MS);
+    this.dtl = {
+      phase: "pending",
+      timer,
+      target: shape,
+      source: textObj,
+      cursor,
+      cooldownUntil: this.dtl.cooldownUntil
+    };
+  }
+  // ── State machine: ANCHOR (PENDING → ANCHORED) ───────────────────
+  doAnchor() {
+    if (this.dtl.phase !== "pending") return;
+    const { target: shape, source: text, cursor } = this.dtl;
+    const session = new AttachSession(this.canvas, shape, text, cursor);
+    this.guides.showLayoutGuides(session.container, session.child);
+    this.canvas.renderAll();
+    this.dtl = {
+      phase: "anchored",
+      session,
+      cooldownUntil: this.dtl.cooldownUntil
+    };
+  }
+  // ── State machine: ANCHORED (during drag) ─────────────────────────
+  handleAnchoredMoving(cursor) {
+    if (this.dtl.phase !== "anchored") return;
+    const { session } = this.dtl;
+    const result = session.handleMoving(cursor);
+    if (result === "exited") {
+      this.resetToIdle(Date.now() + 1e3);
+      return;
+    }
+    this.guides.showLayoutGuides(session.container, session.child);
+    this.canvas.renderAll();
+  }
+  // ── State machine: COMMIT ─────────────────────────────────────────
+  doCommit() {
+    if (this.dtl.phase !== "anchored") return;
+    const { session } = this.dtl;
+    this.guides.clear();
+    session.commit();
+    this.callbacks.onLayoutChanged?.();
+    this.callbacks.onLayoutCreated?.();
+    this.dtl = { phase: "idle", cooldownUntil: 0 };
+  }
+  // ── Reset ─────────────────────────────────────────────────────────
+  resetToIdle(cooldownUntil = 0) {
+    this.guides.clear();
+    if (this.dtl.phase === "pending") {
+      clearTimeout(this.dtl.timer);
+    }
+    this.dtl = { phase: "idle", cooldownUntil: cooldownUntil || this.dtl.cooldownUntil };
+  }
+  // ── Shape hit-testing ─────────────────────────────────────────────
+  findShapeUnderPoint(point) {
+    const objects = this.canvas.getObjects().slice().reverse();
+    for (const obj of objects) {
+      if (obj.excludeFromExport) continue;
+      const layout = obj.get?.("layout");
+      if (layout && "role" in layout) continue;
+      if (layout && "parentId" in layout) continue;
+      if (obj.get?.("layerId") === "originalImage") continue;
+      const layerType = obj.layerType;
+      if (layerType !== "shape" && !(obj instanceof Rect5)) continue;
+      if (pointInObject(point, obj)) return obj;
+    }
+    return null;
   }
 };
 
@@ -2578,7 +3356,7 @@ var _FabricEditor = class _FabricEditor {
     this._resizeCallbacks = [];
     this._initialized = false;
     this.config = config;
-    this.canvas = new Canvas4(canvasElement, {
+    this.canvas = new Canvas6(canvasElement, {
       width: config.width,
       height: config.height,
       preserveObjectStacking: true
@@ -2589,6 +3367,7 @@ var _FabricEditor = class _FabricEditor {
     this.persistence = new PersistenceManager(this.canvas, this.layers);
     this.history = new HistoryManager(this.canvas, this.layers);
     this.snapping = new SnappingManager(this.canvas);
+    this.layout = new LayoutManager2(this.canvas);
     this.canvas.snappingManager = this.snapping;
     this.extendFabricObject();
     this.configureRotationControl();
@@ -3085,8 +3864,8 @@ var _FabricEditor = class _FabricEditor {
   extendFabricObject() {
     if (_FabricEditor._toObjectExtended) return;
     _FabricEditor._toObjectExtended = true;
-    const originalToObject = FabricObject6.prototype.toObject;
-    FabricObject6.prototype.toObject = function(propertiesToInclude) {
+    const originalToObject = FabricObject7.prototype.toObject;
+    FabricObject7.prototype.toObject = function(propertiesToInclude) {
       return originalToObject.call(
         this,
         ["layerId", "layout"].concat(propertiesToInclude || [])
@@ -3118,7 +3897,7 @@ var _FabricEditor = class _FabricEditor {
     });
   }
 };
-console.log("[fabric-editor] \u2713 linked local build");
+console.log("[fabric-editor] \u2713 linked local build 2");
 /**
  * Étend FabricObject pour inclure layerId dans la sérialisation
  */
@@ -3126,7 +3905,7 @@ _FabricEditor._toObjectExtended = false;
 var FabricEditor = _FabricEditor;
 
 // src/ImageDropHandler.ts
-import { Rect as Rect4 } from "#fabric";
+import { Rect as Rect6 } from "#fabric";
 var HIGHLIGHT_COLOR = "#3b82f6";
 var ImageDropHandler = class {
   constructor(editor, config) {
@@ -3350,7 +4129,7 @@ var ImageDropHandler = class {
       height = target.height;
       clipPath = target.clipPath;
     }
-    const fabricOverlay = new Rect4({
+    const fabricOverlay = new Rect6({
       left: target.left,
       top: target.top,
       width,
@@ -3453,152 +4232,6 @@ var ImageDropHandler = class {
 
 // src/index.ts
 init_PendingUploadsManager();
-
-// src/layout/types.ts
-function isContainerLayout(l) {
-  return "role" in l && l.role === "container";
-}
-function isChildLayout(l) {
-  return "parentId" in l;
-}
-
-// src/layout/engine.ts
-var TEXT_TYPES = ["i-text", "textbox"];
-function isTextObject(obj) {
-  return TEXT_TYPES.includes(obj.type);
-}
-function resolveChildren(objects, containerId) {
-  const out = [];
-  for (const obj of objects) {
-    const cl = obj.get("layout");
-    if (cl && isChildLayout(cl) && cl.parentId === containerId) {
-      out.push({ obj, cl });
-    }
-  }
-  return out;
-}
-function scaledSize(obj) {
-  return {
-    w: obj.width * (obj.scaleX || 1),
-    h: obj.height * (obj.scaleY || 1)
-  };
-}
-function runLayout(objects) {
-  for (const obj of objects) {
-    const layout = obj.get("layout");
-    if (!layout || !isContainerLayout(layout)) continue;
-    const containerId = obj.get("layerId");
-    const children = resolveChildren(objects, containerId);
-    if (children.length === 0) continue;
-    layoutContainer(obj, layout, children);
-  }
-}
-function layoutContainer(container, layout, children) {
-  const modeX = layout.sizeMode.x;
-  const modeY = layout.sizeMode.y;
-  const { w: currentW, h: currentH } = scaledSize(container);
-  const bothFixed = modeX === "fixed" && modeY === "fixed";
-  if (!bothFixed) restoreTextFontSizes(children);
-  prepareTextChildren(children, modeX, currentW);
-  const { w: requiredW, h: requiredH } = measureChildren(children);
-  const finalW = modeX === "hug" ? requiredW : currentW;
-  const finalH = modeY === "hug" ? requiredH : currentH;
-  applyContainerSize(container, finalW, finalH);
-  if (bothFixed) {
-    shrinkOverflowingText(children, finalW, finalH);
-  }
-  positionChildren(children, container.left, container.top);
-  syncCoords(container, children);
-}
-function prepareTextChildren(children, modeX, containerW) {
-  for (const { obj, cl } of children) {
-    if (!isTextObject(obj)) continue;
-    const t = obj;
-    if (modeX === "fixed") {
-      const availW = containerW - cl.margins.left - cl.margins.right;
-      obj.set({ width: availW / (obj.scaleX || 1) });
-    } else {
-      obj.set({ width: 1e4 });
-    }
-    t.initDimensions();
-    if (modeX === "hug") {
-      const realW = t.calcTextWidth();
-      obj.set({ width: realW });
-      t.initDimensions();
-    }
-  }
-}
-function measureChildren(children) {
-  let w = 0;
-  let h = 0;
-  for (const { obj, cl } of children) {
-    const { w: childW, h: childH } = scaledSize(obj);
-    w = Math.max(w, cl.margins.left + childW + cl.margins.right);
-    h = Math.max(h, cl.margins.top + childH + cl.margins.bottom);
-  }
-  return { w, h };
-}
-function applyContainerSize(container, finalW, finalH) {
-  container.set({
-    width: finalW / (container.scaleX || 1),
-    height: finalH / (container.scaleY || 1)
-  });
-}
-function shrinkOverflowingText(children, containerW, containerH) {
-  for (const { obj, cl } of children) {
-    if (!isTextObject(obj)) continue;
-    const availW = containerW - cl.margins.left - cl.margins.right;
-    const availH = containerH - cl.margins.top - cl.margins.bottom;
-    const { h: childH } = scaledSize(obj);
-    if (childH > availH) {
-      shrinkTextToFit(obj, availW, availH);
-    }
-  }
-}
-function positionChildren(children, containerLeft, containerTop) {
-  for (const { obj, cl } of children) {
-    obj.set({
-      left: containerLeft + cl.margins.left,
-      top: containerTop + cl.margins.top
-    });
-  }
-}
-function syncCoords(container, children) {
-  container.setCoords();
-  for (const { obj } of children) {
-    obj.setCoords();
-  }
-}
-function restoreTextFontSizes(children) {
-  for (const { obj } of children) {
-    if (!isTextObject(obj)) continue;
-    const t = obj;
-    if (t._layoutOriginalFontSize == null) continue;
-    t.fontSize = t._layoutOriginalFontSize;
-    delete t._layoutOriginalFontSize;
-    t.initDimensions();
-  }
-}
-function shrinkTextToFit(obj, availW, availH) {
-  const t = obj;
-  const originalSize = t._layoutOriginalFontSize ?? t.fontSize;
-  t._layoutOriginalFontSize = originalSize;
-  t.fontSize = originalSize;
-  t.initDimensions();
-  const minFontSize = 8;
-  let fontSize = originalSize;
-  for (let i = 0; i < 20; i++) {
-    const { w: textW, h: textH } = scaledSize(obj);
-    if (textW <= availW && textH <= availH) break;
-    if (fontSize <= minFontSize) break;
-    const ratioW = availW / Math.max(textW, 1);
-    const ratioH = availH / Math.max(textH, 1);
-    fontSize = Math.max(minFontSize, Math.floor(fontSize * Math.min(ratioW, ratioH)));
-    t.fontSize = fontSize;
-    obj.set({ width: availW / (obj.scaleX || 1) });
-    t.initDimensions();
-  }
-}
 
 // src/html/cssUtils.ts
 function originXToCss(originX) {
@@ -4102,6 +4735,8 @@ function layerToHtmlStandalone(layer, zIndex) {
   return layerToHtml(layer, zIndex);
 }
 export {
+  AttachSession,
+  CanvasGuides,
   CustomTextbox,
   FabricEditor,
   HEART_PATH,
@@ -4110,6 +4745,8 @@ export {
   ImageDropHandler,
   ImageFrame,
   LayerManager,
+  LayoutManager2 as LayoutManager,
+  MIN_PAD,
   MaskManager,
   PendingUploadsManager,
   PersistenceManager,
@@ -4123,6 +4760,7 @@ export {
   antiScale,
   applyClip,
   applyLockMode,
+  clampTopLeft,
   createCircle,
   createHeart,
   createHexagon,
@@ -4134,6 +4772,7 @@ export {
   getAvailableShapes,
   getLockMode,
   getNextLockMode,
+  hasExceededOffset,
   isChildLayout,
   isContainerLayout,
   isContentLocked,
@@ -4142,9 +4781,13 @@ export {
   isValidShape,
   layerToHtmlStandalone,
   nextShape,
+  pointInObject,
   removeCropControls,
   runLayout,
+  scaledSize,
   switchClip,
-  switchShape
+  switchShape,
+  topLeft,
+  wrapContainerAroundChild
 };
 //# sourceMappingURL=index.mjs.map

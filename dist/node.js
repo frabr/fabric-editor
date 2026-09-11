@@ -147,6 +147,50 @@ var import_fabric5 = require("#fabric");
 // src/controls/CustomTextbox.ts
 var import_fabric = require("#fabric");
 var CustomTextbox = class extends import_fabric.Textbox {
+  constructor(text, options) {
+    const hasExplicitWidth = options?.width != null;
+    super(text, options);
+    /**
+     * Auto-width mode : le textbox s'étend horizontalement au contenu.
+     * Désactivé automatiquement quand l'utilisateur resize manuellement.
+     */
+    this._autoWidth = true;
+    /** Dernière width calculée par le mode auto-width. */
+    this._autoWidthValue = 0;
+    if (hasExplicitWidth) {
+      this._autoWidth = false;
+    } else {
+      this.initDimensions();
+    }
+    this.on("resizing", () => {
+      this._autoWidth = false;
+    });
+    this.on("scaling", () => {
+      this._autoWidth = false;
+    });
+  }
+  /**
+   * Override initDimensions : en mode auto-width, on calcule les dimensions
+   * avec une width infinie puis on ajuste width au résultat.
+   * Si la width entrante diffère de notre dernière valeur auto, c'est un
+   * resize externe → on désactive auto-width.
+   */
+  initDimensions() {
+    if (this._autoWidth) {
+      if (this._autoWidthValue > 0 && Math.abs(this.width - this._autoWidthValue) > 2) {
+        this._autoWidth = false;
+        super.initDimensions();
+        return;
+      }
+      this.width = 1e4;
+      super.initDimensions();
+      const natural = Math.ceil(this.calcTextWidth());
+      this.width = natural;
+      this._autoWidthValue = natural;
+    } else {
+      super.initDimensions();
+    }
+  }
   /**
    * overflow-wrap: break-word — pré-découpe les mots trop longs
    * en chunks et les marque pour que _wrapLine ne mette pas

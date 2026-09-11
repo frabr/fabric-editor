@@ -129,6 +129,8 @@ var init_PendingUploadsManager = __esm({
 // src/index.ts
 var index_exports = {};
 __export(index_exports, {
+  AttachSession: () => AttachSession,
+  CanvasGuides: () => CanvasGuides,
   CustomTextbox: () => CustomTextbox,
   FabricEditor: () => FabricEditor,
   HEART_PATH: () => HEART_PATH,
@@ -137,6 +139,8 @@ __export(index_exports, {
   ImageDropHandler: () => ImageDropHandler,
   ImageFrame: () => ImageFrame,
   LayerManager: () => LayerManager,
+  LayoutManager: () => LayoutManager2,
+  MIN_PAD: () => MIN_PAD,
   MaskManager: () => MaskManager,
   PendingUploadsManager: () => PendingUploadsManager,
   PersistenceManager: () => PersistenceManager,
@@ -150,6 +154,7 @@ __export(index_exports, {
   antiScale: () => antiScale,
   applyClip: () => applyClip,
   applyLockMode: () => applyLockMode,
+  clampTopLeft: () => clampTopLeft,
   createCircle: () => createCircle,
   createHeart: () => createHeart,
   createHexagon: () => createHexagon,
@@ -161,6 +166,7 @@ __export(index_exports, {
   getAvailableShapes: () => getAvailableShapes,
   getLockMode: () => getLockMode,
   getNextLockMode: () => getNextLockMode,
+  hasExceededOffset: () => hasExceededOffset,
   isChildLayout: () => isChildLayout,
   isContainerLayout: () => isContainerLayout,
   isContentLocked: () => isContentLocked,
@@ -169,22 +175,80 @@ __export(index_exports, {
   isValidShape: () => isValidShape,
   layerToHtmlStandalone: () => layerToHtmlStandalone,
   nextShape: () => nextShape,
+  pointInObject: () => pointInObject,
   removeCropControls: () => removeCropControls,
   runLayout: () => runLayout,
+  scaledSize: () => scaledSize,
   switchClip: () => switchClip,
-  switchShape: () => switchShape
+  switchShape: () => switchShape,
+  topLeft: () => topLeft,
+  wrapContainerAroundChild: () => wrapContainerAroundChild
 });
 module.exports = __toCommonJS(index_exports);
 
+// src/fabric-extensions.ts
+var import_fabric = require("#fabric");
+import_fabric.Canvas.prototype.adjustGrabOffset = function(dx, dy) {
+  if (dx === 0 && dy === 0) return;
+  const transform = this._currentTransform;
+  if (!transform) return;
+  transform.offsetX -= dx;
+  transform.offsetY -= dy;
+};
+
 // src/FabricEditor.ts
-var import_fabric9 = require("#fabric");
+var import_fabric11 = require("#fabric");
 
 // src/LayerManager.ts
-var import_fabric5 = require("#fabric");
+var import_fabric6 = require("#fabric");
 
 // src/controls/CustomTextbox.ts
-var import_fabric = require("#fabric");
-var CustomTextbox = class extends import_fabric.Textbox {
+var import_fabric2 = require("#fabric");
+var CustomTextbox = class extends import_fabric2.Textbox {
+  constructor(text, options) {
+    const hasExplicitWidth = options?.width != null;
+    super(text, options);
+    /**
+     * Auto-width mode : le textbox s'étend horizontalement au contenu.
+     * Désactivé automatiquement quand l'utilisateur resize manuellement.
+     */
+    this._autoWidth = true;
+    /** Dernière width calculée par le mode auto-width. */
+    this._autoWidthValue = 0;
+    if (hasExplicitWidth) {
+      this._autoWidth = false;
+    } else {
+      this.initDimensions();
+    }
+    this.on("resizing", () => {
+      this._autoWidth = false;
+    });
+    this.on("scaling", () => {
+      this._autoWidth = false;
+    });
+  }
+  /**
+   * Override initDimensions : en mode auto-width, on calcule les dimensions
+   * avec une width infinie puis on ajuste width au résultat.
+   * Si la width entrante diffère de notre dernière valeur auto, c'est un
+   * resize externe → on désactive auto-width.
+   */
+  initDimensions() {
+    if (this._autoWidth) {
+      if (this._autoWidthValue > 0 && Math.abs(this.width - this._autoWidthValue) > 2) {
+        this._autoWidth = false;
+        super.initDimensions();
+        return;
+      }
+      this.width = 1e4;
+      super.initDimensions();
+      const natural = Math.ceil(this.calcTextWidth());
+      this.width = natural;
+      this._autoWidthValue = natural;
+    } else {
+      super.initDimensions();
+    }
+  }
   /**
    * overflow-wrap: break-word — pré-découpe les mots trop longs
    * en chunks et les marque pour que _wrapLine ne mette pas
@@ -329,11 +393,11 @@ var CustomTextbox = class extends import_fabric.Textbox {
     const upperCanvas = this.canvas.upperCanvasEl;
     const upperCanvasWidth = upperCanvas.width / retinaScaling;
     const upperCanvasHeight = upperCanvas.height / retinaScaling;
-    const p = new import_fabric.Point(
+    const p = new import_fabric2.Point(
       boundaries.left + leftOffset,
       boundaries.top + boundaries.topOffset + charHeight
     ).transform(this.calcTransformMatrix()).transform(this.canvas.viewportTransform).multiply(
-      new import_fabric.Point(
+      new import_fabric2.Point(
         upperCanvas.clientWidth / upperCanvasWidth,
         upperCanvas.clientHeight / upperCanvasHeight
       )
@@ -350,14 +414,14 @@ var CustomTextbox = class extends import_fabric.Textbox {
 };
 
 // src/shapes/factories.ts
-var import_fabric3 = require("#fabric");
+var import_fabric4 = require("#fabric");
 
 // src/shapes/paths.ts
 var HEART_PATH = "M 0 13 Q -1 13 -4 11 C -12 5 -17 -3 -12 -10 C -9 -14 -2 -13 0 -7 C 2 -13 9 -14 12 -10 C 17 -3 11 5 4 11 Q 1 13 0 13 Z";
 var HEXAGON_PATH = "M-2 -23.3453C-0.7624 -24.0598 0.7624 -24.0598 2 -23.3453L19.2176 -13.4047C20.4552 -12.6902 21.2176 -11.3697 21.2176 -9.9406V10.4406C21.2176 11.8697 20.4552 13.1902 19.2176 13.9047L2 23.8453C0.7624 24.5598 -0.7624 24.5598 -2 23.8453L-19.2176 13.9047C-20.4552 13.1902 -21.2176 11.8697 -21.2176 10.4406V-9.9406C-21.2176 -11.3697 -20.4552 -12.6902 -19.2176 -13.4047L-2 -23.3453Z";
 
 // src/controls/cropControls.ts
-var import_fabric2 = require("#fabric");
+var import_fabric3 = require("#fabric");
 var CROP_CONFIGS = {
   left: {
     dimension: "width",
@@ -451,7 +515,7 @@ function addCropControls(obj) {
   sides.forEach((side) => {
     const position = CONTROL_POSITIONS[side];
     const controlName = CONTROL_NAMES[side];
-    obj.controls[controlName] = new import_fabric2.Control({
+    obj.controls[controlName] = new import_fabric3.Control({
       x: position.x,
       y: position.y,
       actionHandler: createCropActionHandler(side),
@@ -470,7 +534,7 @@ function removeCropControls(obj) {
 
 // src/shapes/factories.ts
 function createRect(options) {
-  return new import_fabric3.Rect({
+  return new import_fabric4.Rect({
     id: "rect",
     originX: "center",
     originY: "center",
@@ -480,7 +544,7 @@ function createRect(options) {
 function createRoundedRect(options) {
   const width = options?.width || 40;
   const height = options?.height || 40;
-  const rect = new import_fabric3.Rect({
+  const rect = new import_fabric4.Rect({
     id: "rounded",
     originX: "center",
     originY: "center",
@@ -500,7 +564,7 @@ function createRoundedRect(options) {
   return rect;
 }
 function createCircle(options) {
-  return new import_fabric3.Circle({
+  return new import_fabric4.Circle({
     id: "circle",
     originX: "center",
     originY: "center",
@@ -510,7 +574,7 @@ function createCircle(options) {
 function createHeart(options) {
   const minSize = Math.min(options?.height || 40, options?.width || 40) / 2;
   const scaleFactor = minSize / 14;
-  return new import_fabric3.Path(HEART_PATH, {
+  return new import_fabric4.Path(HEART_PATH, {
     id: "heart",
     originX: "center",
     originY: "center",
@@ -522,7 +586,7 @@ function createHeart(options) {
   });
 }
 function createHexagon(options) {
-  return new import_fabric3.Path(HEXAGON_PATH, {
+  return new import_fabric4.Path(HEXAGON_PATH, {
     id: "hexagon",
     originX: "center",
     originY: "center",
@@ -530,7 +594,7 @@ function createHexagon(options) {
   });
 }
 async function createImage(url, options) {
-  const img = await import_fabric3.FabricImage.fromURL(url, { crossOrigin: "anonymous" });
+  const img = await import_fabric4.FabricImage.fromURL(url, { crossOrigin: "anonymous" });
   let scale = 1;
   if (img.width > 300 || img.height > 300) {
     scale = Math.min(300 / img.width, 300 / img.height);
@@ -666,7 +730,7 @@ function isPositionLocked(obj) {
 }
 
 // src/ImageFrame.ts
-var import_fabric4 = require("#fabric");
+var import_fabric5 = require("#fabric");
 function rotatePoint(dx, dy, angleDeg) {
   const angle = -angleDeg * Math.PI / 180;
   return {
@@ -674,7 +738,7 @@ function rotatePoint(dx, dy, angleDeg) {
     y: dx * Math.sin(angle) + dy * Math.cos(angle)
   };
 }
-var ImageFrame = class _ImageFrame extends import_fabric4.Group {
+var ImageFrame = class _ImageFrame extends import_fabric5.Group {
   constructor(image, options = {}) {
     const frameScale = options.frameScale ?? 1;
     const frameWidth = options.frameWidth ?? image.width * frameScale;
@@ -702,7 +766,7 @@ var ImageFrame = class _ImageFrame extends import_fabric4.Group {
       height: frameHeight,
       subTargetCheck: false,
       interactive: false,
-      layoutManager: new import_fabric4.LayoutManager(new import_fabric4.FixedLayout()),
+      layoutManager: new import_fabric5.LayoutManager(new import_fabric5.FixedLayout()),
       // Désactiver le cache pour que le clipPath soit redessiné à chaque frame
       objectCaching: false
     });
@@ -870,7 +934,7 @@ var ImageFrame = class _ImageFrame extends import_fabric4.Group {
     const minSize = Math.min(this.frameWidth, this.frameHeight);
     switch (shapeType) {
       case "rect":
-        this.clipPath = new import_fabric4.Rect({
+        this.clipPath = new import_fabric5.Rect({
           width: this.frameWidth,
           height: this.frameHeight,
           originX: "center",
@@ -1062,7 +1126,7 @@ var ImageFrame = class _ImageFrame extends import_fabric4.Group {
     };
   }
   static async fromObject(data) {
-    const img = await import_fabric4.FabricImage.fromURL(data.image.src, { crossOrigin: "anonymous" });
+    const img = await import_fabric5.FabricImage.fromURL(data.image.src, { crossOrigin: "anonymous" });
     const frame = new _ImageFrame(img, {
       left: data.left,
       top: data.top,
@@ -1114,8 +1178,8 @@ var ImageFrame = class _ImageFrame extends import_fabric4.Group {
     });
   }
 };
-import_fabric4.classRegistry.setClass(ImageFrame);
-import_fabric4.classRegistry.setClass(ImageFrame, "ImageFrame");
+import_fabric5.classRegistry.setClass(ImageFrame);
+import_fabric5.classRegistry.setClass(ImageFrame, "ImageFrame");
 
 // src/LayerManager.ts
 var BACKGROUND_LAYER_ID = "originalImage";
@@ -1145,7 +1209,7 @@ var LayerManager = class {
    * Charge l'image de fond
    */
   async loadBackgroundImage(url) {
-    const img = await import_fabric5.FabricImage.fromURL(url, { crossOrigin: "anonymous" });
+    const img = await import_fabric6.FabricImage.fromURL(url, { crossOrigin: "anonymous" });
     const scaleX = this.canvas.width / img.width;
     const scaleY = this.canvas.height / img.height;
     const scale = Math.max(scaleX, scaleY);
@@ -1246,7 +1310,7 @@ var LayerManager = class {
    */
   async addImage(url, options = {}) {
     const { left = 100, top = 100, layerId = this.generateId() } = options;
-    const img = await import_fabric5.FabricImage.fromURL(url, { crossOrigin: "anonymous" });
+    const img = await import_fabric6.FabricImage.fromURL(url, { crossOrigin: "anonymous" });
     let frameScale = 1;
     if (img.width > 300 || img.height > 300) {
       frameScale = Math.min(300 / img.width, 300 / img.height);
@@ -1275,7 +1339,7 @@ var LayerManager = class {
     const layerType = target.layerType;
     if (layerType === "imageFrame" || target instanceof ImageFrame) {
       const frame = target;
-      const newImg = await import_fabric5.FabricImage.fromURL(newUrl, { crossOrigin: "anonymous" });
+      const newImg = await import_fabric6.FabricImage.fromURL(newUrl, { crossOrigin: "anonymous" });
       await frame.replaceImage(newImg);
       if (options?.opacity !== void 0) {
         frame.opacity = options.opacity;
@@ -1301,7 +1365,7 @@ var LayerManager = class {
       layerType: target.get("layerType")
     };
     const lockMode = getLockMode(target);
-    const newImg = await import_fabric5.FabricImage.fromURL(newUrl, { crossOrigin: "anonymous" });
+    const newImg = await import_fabric6.FabricImage.fromURL(newUrl, { crossOrigin: "anonymous" });
     const oldWidth = target.width * target.scaleX;
     const oldHeight = target.height * target.scaleY;
     const coverScale = Math.max(oldWidth / newImg.width, oldHeight / newImg.height);
@@ -1347,7 +1411,7 @@ var LayerManager = class {
     const displayedHeight = shape.height * (shape.scaleY || 1);
     const center = shape.getCenterPoint();
     const zIndex = this.canvas._objects.indexOf(shape);
-    const img = await import_fabric5.FabricImage.fromURL(imageUrl, { crossOrigin: "anonymous" });
+    const img = await import_fabric6.FabricImage.fromURL(imageUrl, { crossOrigin: "anonymous" });
     const frame = new ImageFrame(img, {
       left: center.x,
       top: center.y,
@@ -1388,7 +1452,7 @@ var LayerManager = class {
    * Groupe plusieurs objets ensemble
    */
   groupObjects(objects) {
-    const group = new import_fabric5.Group(objects);
+    const group = new import_fabric6.Group(objects);
     objects.forEach((obj) => this.canvas.remove(obj));
     this.canvas.add(group);
     this.canvas.setActiveObject(group);
@@ -1423,7 +1487,7 @@ var LayerManager = class {
       }
       case "Image":
       case "image": {
-        const img = await import_fabric5.FabricImage.fromObject({
+        const img = await import_fabric6.FabricImage.fromObject({
           ...layer,
           crossOrigin: "anonymous"
         });
@@ -1437,19 +1501,19 @@ var LayerManager = class {
       }
       case "Group":
       case "group":
-        obj = await import_fabric5.Group.fromObject(layer);
+        obj = await import_fabric6.Group.fromObject(layer);
         break;
       case "Rect":
       case "rect":
-        obj = await import_fabric5.Rect.fromObject(layer);
+        obj = await import_fabric6.Rect.fromObject(layer);
         break;
       case "Path":
       case "path":
-        obj = await import_fabric5.Path.fromObject(layer);
+        obj = await import_fabric6.Path.fromObject(layer);
         break;
       case "Circle":
       case "circle":
-        obj = await import_fabric5.Circle.fromObject(layer);
+        obj = await import_fabric6.Circle.fromObject(layer);
         break;
       default:
         console.warn(`Type de calque inconnu: ${layer.type}`);
@@ -1527,7 +1591,7 @@ var LayerManager = class {
 };
 
 // src/SelectionManager.ts
-var import_fabric6 = require("#fabric");
+var import_fabric7 = require("#fabric");
 var OBJECT_CONTROLS = {
   // Formes créées par l'éditeur (layerType: "shape")
   shape: ["outline", "clip", "color"],
@@ -1708,7 +1772,7 @@ var SelectionManager = class {
       }
       if (unlocked.length < e.selected.length) {
         this.canvas.discardActiveObject();
-        const newSelection = new import_fabric6.ActiveSelection(unlocked, { canvas: this.canvas });
+        const newSelection = new import_fabric7.ActiveSelection(unlocked, { canvas: this.canvas });
         this.canvas.setActiveObject(newSelection);
         this._current = unlocked;
         if (this.callbacks.onSelect && unlocked[0]) {
@@ -1772,7 +1836,7 @@ var SelectionManager = class {
 };
 
 // src/MaskManager.ts
-var import_fabric7 = require("#fabric");
+var import_fabric8 = require("#fabric");
 var MASK_LAYER_ID = "mask";
 var BACKGROUND_LAYER_ID2 = "originalImage";
 var MaskManager = class {
@@ -1817,7 +1881,7 @@ var MaskManager = class {
     if (!bgImage) {
       throw new Error("Pas d'image de fond pour appliquer le masque");
     }
-    const maskImage = await import_fabric7.FabricImage.fromURL(maskUrl, {
+    const maskImage = await import_fabric8.FabricImage.fromURL(maskUrl, {
       crossOrigin: "anonymous"
     });
     this.cropCanvasToMask(maskImage, bgImage.height);
@@ -2130,11 +2194,186 @@ var HistoryManager = class {
   }
 };
 
+// src/CanvasGuides.ts
+var import_fabric9 = require("#fabric");
+
+// src/layout/types.ts
+function isContainerLayout(l) {
+  return "role" in l && l.role === "container";
+}
+function isChildLayout(l) {
+  return "parentId" in l;
+}
+var MIN_PAD = 8;
+
+// src/layout/geometry.ts
+function scaledSize(obj) {
+  return {
+    w: obj.width * (obj.scaleX || 1),
+    h: obj.height * (obj.scaleY || 1)
+  };
+}
+function topLeft(obj) {
+  const { w, h } = scaledSize(obj);
+  let x = obj.left;
+  let y = obj.top;
+  if (obj.originX === "center") x -= w / 2;
+  else if (obj.originX === "right") x -= w;
+  if (obj.originY === "center") y -= h / 2;
+  else if (obj.originY === "bottom") y -= h;
+  return { x, y };
+}
+function pointInObject(point, obj, margin = 0) {
+  const tl = topLeft(obj);
+  const { w, h } = scaledSize(obj);
+  return point.x >= tl.x - margin && point.x <= tl.x + w + margin && point.y >= tl.y - margin && point.y <= tl.y + h + margin;
+}
+var TEXT_TYPES = ["i-text", "textbox"];
+function isTextObject(obj) {
+  return TEXT_TYPES.includes(obj.type);
+}
+function clampTopLeft(obj, reference, padding) {
+  const tl = topLeft(obj);
+  const refTl = topLeft(reference);
+  return {
+    x: Math.max(refTl.x + padding, tl.x),
+    y: Math.max(refTl.y + padding, tl.y)
+  };
+}
+function hasExceededOffset(current, origin, offsetX, offsetY, margin) {
+  const dx = current.x - origin.x;
+  const dy = current.y - origin.y;
+  return offsetX > 0 && dx < -(offsetX + margin) || offsetX < 0 && dx > -offsetX + margin || offsetY > 0 && dy < -(offsetY + margin) || offsetY < 0 && dy > -offsetY + margin;
+}
+
+// src/CanvasGuides.ts
+var CanvasGuides = class {
+  constructor(canvas) {
+    this.objects = [];
+    this.canvas = canvas;
+  }
+  // ── Low-level primitives ──────────────────────────────────────────
+  /** Add a line guide. */
+  addLine(coords, opts = {}) {
+    const line = new import_fabric9.Line(coords, {
+      stroke: opts.stroke ?? "#ff00ff",
+      strokeWidth: opts.strokeWidth ?? 1,
+      strokeDashArray: opts.strokeDashArray ?? [5, 5],
+      selectable: false,
+      evented: false,
+      excludeFromExport: true
+    });
+    this.objects.push(line);
+    this.canvas.add(line);
+  }
+  /** Add a rectangle guide (highlight zone, margin indicator, etc.). */
+  addRect(opts) {
+    const rect = new import_fabric9.Rect({
+      left: opts.left,
+      top: opts.top,
+      originX: "left",
+      originY: "top",
+      width: opts.width,
+      height: opts.height,
+      fill: opts.fill ?? "transparent",
+      stroke: opts.stroke ?? "transparent",
+      strokeWidth: opts.strokeWidth ?? 0,
+      strokeDashArray: opts.strokeDashArray,
+      selectable: false,
+      evented: false,
+      excludeFromExport: true
+    });
+    this.objects.push(rect);
+    this.canvas.add(rect);
+  }
+  /** Remove all guides added by this instance. */
+  clear() {
+    for (const obj of this.objects) {
+      this.canvas.remove(obj);
+    }
+    this.objects = [];
+  }
+  /** Clear + render in one call (common pattern). */
+  clearAndRender() {
+    this.clear();
+    this.canvas.requestRenderAll();
+  }
+  /** Whether this instance currently has guides on the canvas. */
+  get hasGuides() {
+    return this.objects.length > 0;
+  }
+  // ── High-level presets ────────────────────────────────────────────
+  /**
+   * Show a dashed hover hint around a shape (used during PENDING state
+   * in drag-to-layout to signal that anchoring is about to happen).
+   */
+  showHintHighlight(shape) {
+    this.clear();
+    const { w, h } = scaledSize(shape);
+    const tl = topLeft(shape);
+    this.addRect({
+      left: tl.x,
+      top: tl.y,
+      width: w,
+      height: h,
+      fill: "rgba(59, 130, 246, 0.05)",
+      stroke: "rgba(59, 130, 246, 0.4)",
+      strokeWidth: 1.5,
+      strokeDashArray: [6, 4]
+    });
+  }
+  /**
+   * Show layout guides: a dashed outline around the container and
+   * colored overlays for each non-zero margin zone.
+   */
+  showLayoutGuides(container, child) {
+    this.clear();
+    const { w: cw, h: ch } = scaledSize(container);
+    const ctl = topLeft(container);
+    this.addRect({
+      left: ctl.x,
+      top: ctl.y,
+      width: cw,
+      height: ch,
+      fill: "transparent",
+      stroke: "#3b82f6",
+      strokeWidth: 2,
+      strokeDashArray: [6, 4]
+    });
+    const layout = child.get?.("layout");
+    if (!layout || !isChildLayout(layout)) return;
+    const m = layout.margins;
+    const FILL = "rgba(59, 130, 246, 0.08)";
+    const STROKE = "rgba(59, 130, 246, 0.3)";
+    if (m.left > 0)
+      this.addRect({ left: ctl.x, top: ctl.y, width: m.left, height: ch, fill: FILL, stroke: STROKE, strokeWidth: 0.5 });
+    if (m.right > 0)
+      this.addRect({ left: ctl.x + cw - m.right, top: ctl.y, width: m.right, height: ch, fill: FILL, stroke: STROKE, strokeWidth: 0.5 });
+    if (m.top > 0)
+      this.addRect({ left: ctl.x + m.left, top: ctl.y, width: cw - m.left - m.right, height: m.top, fill: FILL, stroke: STROKE, strokeWidth: 0.5 });
+    if (m.bottom > 0)
+      this.addRect({ left: ctl.x + m.left, top: ctl.y + ch - m.bottom, width: cw - m.left - m.right, height: m.bottom, fill: FILL, stroke: STROKE, strokeWidth: 0.5 });
+  }
+  /**
+   * Show snap alignment lines (horizontal/vertical) spanning the full canvas.
+   */
+  showSnapLines(guides, opts = {}) {
+    this.clear();
+    const canvasW = this.canvas.width;
+    const canvasH = this.canvas.height;
+    for (const guide of guides) {
+      const coords = guide.orientation === "vertical" ? [guide.position, 0, guide.position, canvasH] : [0, guide.position, canvasW, guide.position];
+      this.addLine(coords, {
+        stroke: opts.stroke ?? "#ff00ff",
+        strokeDashArray: [5, 5]
+      });
+    }
+  }
+};
+
 // src/SnappingManager.ts
-var import_fabric8 = require("#fabric");
 var SnappingManager = class {
   constructor(canvas, config = {}) {
-    this.guides = [];
     this.enabled = true;
     this.snapState = null;
     this.resizeSnapState = null;
@@ -2147,6 +2386,7 @@ var SnappingManager = class {
       snapToEdges: config.snapToEdges ?? true,
       guideColor: config.guideColor ?? "#ff00ff"
     };
+    this.guides = new CanvasGuides(canvas);
     this.setupEventListeners();
   }
   /**
@@ -2155,7 +2395,7 @@ var SnappingManager = class {
   setEnabled(enabled) {
     this.enabled = enabled;
     if (!enabled) {
-      this.clearGuides();
+      this.guides.clearAndRender();
     }
   }
   /**
@@ -2174,11 +2414,11 @@ var SnappingManager = class {
     this.canvas.on("object:moving", (e) => this.handleObjectMoving(e));
     this.canvas.on("object:scaling", (e) => this.handleObjectScaling(e.target));
     this.canvas.on("object:modified", () => {
-      this.clearGuides();
+      this.guides.clearAndRender();
       this.snapState = null;
     });
     this.canvas.on("selection:cleared", () => {
-      this.clearGuides();
+      this.guides.clearAndRender();
       this.snapState = null;
     });
     this.canvas.on("mouse:down", () => {
@@ -2341,30 +2581,8 @@ var SnappingManager = class {
     this.updateGuides(activeGuides);
   }
   updateGuides(activeGuides) {
-    this.clearGuides();
-    for (const guide of activeGuides) {
-      const line = this.createGuideLine(guide);
-      this.guides.push(line);
-      this.canvas.add(line);
-    }
+    this.guides.showSnapLines(activeGuides, { stroke: this.config.guideColor });
     this.canvas.requestRenderAll();
-  }
-  createGuideLine(guide) {
-    const coords = guide.orientation === "vertical" ? [guide.position, 0, guide.position, this.canvas.height] : [0, guide.position, this.canvas.width, guide.position];
-    return new import_fabric8.Line(coords, {
-      stroke: this.config.guideColor,
-      strokeWidth: 1,
-      strokeDashArray: [5, 5],
-      selectable: false,
-      evented: false,
-      excludeFromExport: true
-    });
-  }
-  clearGuides() {
-    for (const guide of this.guides) {
-      this.canvas.remove(guide);
-    }
-    this.guides = [];
   }
   /**
    * Calcule le snap pendant le redimensionnement d'un objet
@@ -2492,17 +2710,587 @@ var SnappingManager = class {
    */
   resetResizeSnap() {
     this.resizeSnapState = null;
-    this.clearGuides();
+    this.guides.clearAndRender();
   }
   /**
    * Nettoie les ressources
    */
   dispose() {
-    this.clearGuides();
+    this.guides.clear();
     this.canvas.off("object:moving");
     this.canvas.off("object:scaling");
     this.canvas.off("object:modified");
     this.canvas.off("selection:cleared");
+  }
+};
+
+// src/LayoutManager.ts
+var import_fabric10 = require("#fabric");
+
+// src/layout/reconcile.ts
+function resolveChildren(objects, containerId) {
+  const out = [];
+  for (const obj of objects) {
+    const cl = obj.get("layout");
+    if (cl && isChildLayout(cl) && cl.parentId === containerId) {
+      out.push({ obj, cl });
+    }
+  }
+  return out;
+}
+function normalizeScale(obj, layout) {
+  const sx = obj.scaleX || 1;
+  const sy = obj.scaleY || 1;
+  if (sx === 1 && sy === 1) return;
+  const newW = obj.width * sx;
+  const newH = obj.height * sy;
+  obj.set({ width: newW, height: newH, scaleX: 1, scaleY: 1 });
+  const modeX = layout.sizeMode.x;
+  const modeY = layout.sizeMode.y;
+  if (modeX === "hug" || modeY === "hug") {
+    if (!layout.minSize) layout.minSize = { w: 0, h: 0 };
+    if (modeX === "hug") layout.minSize.w = newW;
+    if (modeY === "hug") layout.minSize.h = newH;
+  }
+}
+function runLayout(objects, preview = false) {
+  for (const obj of objects) {
+    const layout = obj.get("layout");
+    if (!layout || !isContainerLayout(layout)) continue;
+    const containerId = obj.get("layerId");
+    const children = resolveChildren(objects, containerId);
+    if (children.length === 0) continue;
+    layoutContainer(obj, layout, children, preview);
+  }
+}
+function layoutContainer(container, layout, children, preview = false) {
+  if (preview) {
+    const { w, h } = scaledSize(container);
+    positionChildren(children, container.left, container.top, w, h);
+    syncCoords(container, children);
+    return;
+  }
+  const modeX = layout.sizeMode.x;
+  const modeY = layout.sizeMode.y;
+  normalizeScale(container, layout);
+  const { w: rawW, h: rawH } = scaledSize(container);
+  const minW = layout.minSize?.w ?? 0;
+  const minH = layout.minSize?.h ?? 0;
+  const currentW = Math.max(rawW, minW);
+  const currentH = Math.max(rawH, minH);
+  const bothFixed = modeX === "fixed" && modeY === "fixed";
+  if (!bothFixed) restoreTextFontSizes(children);
+  prepareTextChildren(children, modeX, currentW);
+  const { w: requiredW, h: requiredH } = measureChildren(children);
+  const finalW = modeX === "hug" ? Math.max(requiredW, minW) : currentW;
+  const finalH = modeY === "hug" ? Math.max(requiredH, minH) : currentH;
+  applyContainerSize(container, finalW, finalH);
+  if (bothFixed) {
+    shrinkOverflowingText(children, finalW, finalH);
+  }
+  positionChildren(children, container.left, container.top, finalW, finalH);
+  syncCoords(container, children);
+}
+function prepareTextChildren(children, modeX, containerW) {
+  for (const { obj, cl } of children) {
+    if (!isTextObject(obj)) continue;
+    const t = obj;
+    const anchorX = cl.anchorX ?? "left";
+    t.set({ textAlign: anchorX === "right" ? "right" : "left" });
+    if (modeX === "fixed") {
+      const availW = containerW - cl.margins.left - cl.margins.right;
+      obj.set({ width: availW / (obj.scaleX || 1) });
+    } else {
+      obj.set({ width: 1e4 });
+    }
+    t.initDimensions();
+    if (modeX === "hug") {
+      const realW = Math.ceil(t.calcTextWidth());
+      obj.set({ width: realW });
+      t.initDimensions();
+    }
+  }
+}
+function measureChildren(children) {
+  let w = 0;
+  let h = 0;
+  for (const { obj, cl } of children) {
+    const { w: childW, h: childH } = scaledSize(obj);
+    w = Math.max(w, cl.margins.left + childW + cl.margins.right);
+    h = Math.max(h, cl.margins.top + childH + cl.margins.bottom);
+  }
+  return { w, h };
+}
+function applyContainerSize(container, finalW, finalH) {
+  container.set({
+    width: finalW / (container.scaleX || 1),
+    height: finalH / (container.scaleY || 1)
+  });
+}
+function shrinkOverflowingText(children, containerW, containerH) {
+  for (const { obj, cl } of children) {
+    if (!isTextObject(obj)) continue;
+    const availW = containerW - cl.margins.left - cl.margins.right;
+    const availH = containerH - cl.margins.top - cl.margins.bottom;
+    const { h: childH } = scaledSize(obj);
+    if (childH > availH) {
+      shrinkTextToFit(obj, availW, availH);
+    }
+  }
+}
+function positionChildren(children, containerLeft, containerTop, containerW, containerH) {
+  for (const { obj, cl } of children) {
+    const anchorX = cl.anchorX ?? "left";
+    const anchorY = cl.anchorY ?? "top";
+    const { w: childW, h: childH } = scaledSize(obj);
+    const left = anchorX === "left" ? containerLeft + cl.margins.left : containerLeft + containerW - cl.margins.right - childW;
+    const top = anchorY === "top" ? containerTop + cl.margins.top : containerTop + containerH - cl.margins.bottom - childH;
+    obj.set({ left, top });
+  }
+}
+function syncCoords(container, children) {
+  container.setCoords();
+  for (const { obj } of children) {
+    obj.setCoords();
+  }
+}
+function restoreTextFontSizes(children) {
+  for (const { obj } of children) {
+    if (!isTextObject(obj)) continue;
+    const t = obj;
+    if (t._layoutOriginalFontSize == null) continue;
+    t.fontSize = t._layoutOriginalFontSize;
+    delete t._layoutOriginalFontSize;
+    t.initDimensions();
+  }
+}
+function shrinkTextToFit(obj, availW, availH) {
+  const t = obj;
+  const originalSize = t._layoutOriginalFontSize ?? t.fontSize;
+  t._layoutOriginalFontSize = originalSize;
+  t.fontSize = originalSize;
+  t.initDimensions();
+  const minFontSize = 8;
+  let fontSize = originalSize;
+  for (let i = 0; i < 20; i++) {
+    const { w: textW, h: textH } = scaledSize(obj);
+    if (textW <= availW && textH <= availH) break;
+    if (fontSize <= minFontSize) break;
+    const ratioW = availW / Math.max(textW, 1);
+    const ratioH = availH / Math.max(textH, 1);
+    fontSize = Math.max(minFontSize, Math.floor(fontSize * Math.min(ratioW, ratioH)));
+    t.fontSize = fontSize;
+    obj.set({ width: availW / (obj.scaleX || 1) });
+    t.initDimensions();
+  }
+}
+
+// src/layout/attach-session.ts
+var EXIT_MARGIN = 5;
+var AttachSession = class {
+  constructor(canvas, shape, text, cursor) {
+    this.canvas = canvas;
+    this.shape = shape;
+    this.text = text;
+    this.anchorCursor = cursor;
+    this.snapshot = takeSnapshot(shape, text);
+    normalizeShapeOrigin(shape);
+    const { containerLayout, childLayout } = computeInitialLayout(shape, text);
+    shape.set("layout", containerLayout);
+    text.set("layout", childLayout);
+    const clampedPos = clampTopLeft(text, shape, MIN_PAD);
+    const preTL = topLeft(text);
+    this.clampDx = clampedPos.x - preTL.x;
+    this.clampDy = clampedPos.y - preTL.y;
+    canvas.adjustGrabOffset(this.clampDx, this.clampDy);
+    if (this.clampDx !== 0 || this.clampDy !== 0) {
+      text.left += this.clampDx;
+      text.top += this.clampDy;
+      text.setCoords();
+    }
+    wrapContainerAroundChild(text, shape);
+  }
+  /** During drag: clamp text, resize container, check for exit. */
+  handleMoving(cursor) {
+    if (this.shouldExit(cursor)) {
+      this.rollback();
+      return "exited";
+    }
+    const clamped = clampTopLeft(this.text, this.shape, MIN_PAD);
+    const currentTL = topLeft(this.text);
+    const dx = clamped.x - currentTL.x;
+    const dy = clamped.y - currentTL.y;
+    if (dx !== 0 || dy !== 0) {
+      this.text.left += dx;
+      this.text.top += dy;
+      this.text.setCoords();
+    }
+    wrapContainerAroundChild(this.text, this.shape);
+    return "anchored";
+  }
+  /** Finalize the attach. Returns a cleanup function for the "changed" listener. */
+  commit() {
+    const tTL = topLeft(this.text);
+    this.text.set({ left: tTL.x, top: tTL.y, originX: "left", originY: "top" });
+    this.text.setCoords();
+    runLayout(this.canvas.getObjects());
+    const relayout = () => {
+      runLayout(this.canvas.getObjects());
+      this.canvas.renderAll();
+    };
+    this.text.on("changed", relayout);
+    this.canvas.renderAll();
+    return () => this.text.off("changed", relayout);
+  }
+  /** Undo anchor: restore snapshot, reverse grab offset. */
+  rollback() {
+    this.shape.set({
+      left: this.snapshot.shape.left,
+      top: this.snapshot.shape.top,
+      originX: this.snapshot.shape.originX,
+      originY: this.snapshot.shape.originY,
+      width: this.snapshot.shape.width,
+      height: this.snapshot.shape.height,
+      scaleX: this.snapshot.shape.scaleX,
+      scaleY: this.snapshot.shape.scaleY,
+      stroke: this.snapshot.shape.stroke,
+      strokeWidth: this.snapshot.shape.strokeWidth
+    });
+    this.shape.set("layout", this.snapshot.shape.layout ?? void 0);
+    this.text.set({
+      left: this.snapshot.text.left,
+      top: this.snapshot.text.top,
+      originX: this.snapshot.text.originX,
+      originY: this.snapshot.text.originY,
+      width: this.snapshot.text.width,
+      scaleX: this.snapshot.text.scaleX,
+      scaleY: this.snapshot.text.scaleY,
+      textAlign: this.snapshot.text.textAlign
+    });
+    this.text.set("layout", this.snapshot.text.layout ?? void 0);
+    this.canvas.adjustGrabOffset(-this.clampDx, -this.clampDy);
+    this.text.off("changed");
+    this.shape.setCoords();
+    this.text.setCoords();
+    this.canvas.renderAll();
+  }
+  /** The shape this session is attached to (for guide rendering). */
+  get container() {
+    return this.shape;
+  }
+  /** The text being attached (for guide rendering). */
+  get child() {
+    return this.text;
+  }
+  shouldExit(cursor) {
+    if (!pointInObject(cursor, this.shape, EXIT_MARGIN)) return true;
+    return hasExceededOffset(cursor, this.anchorCursor, this.clampDx, this.clampDy, EXIT_MARGIN);
+  }
+};
+function takeSnapshot(shape, text) {
+  return {
+    shape: {
+      left: shape.left,
+      top: shape.top,
+      originX: shape.originX,
+      originY: shape.originY,
+      width: shape.width,
+      height: shape.height,
+      scaleX: shape.scaleX,
+      scaleY: shape.scaleY,
+      stroke: shape.stroke,
+      strokeWidth: shape.strokeWidth,
+      layout: shape.get?.("layout") ?? void 0
+    },
+    text: {
+      left: text.left,
+      top: text.top,
+      originX: text.originX,
+      originY: text.originY,
+      width: text.width,
+      scaleX: text.scaleX,
+      scaleY: text.scaleY,
+      textAlign: text.textAlign,
+      layout: text.get?.("layout") ?? void 0
+    }
+  };
+}
+function normalizeShapeOrigin(shape) {
+  const sTL = topLeft(shape);
+  const sx = shape.scaleX || 1;
+  const sy = shape.scaleY || 1;
+  shape.set({
+    left: sTL.x,
+    top: sTL.y,
+    originX: "left",
+    originY: "top",
+    width: shape.width * sx,
+    height: shape.height * sy,
+    scaleX: 1,
+    scaleY: 1
+  });
+  shape.setCoords();
+}
+function computeInitialLayout(shape, text) {
+  const sTL = topLeft(shape);
+  const tTL = topLeft(text);
+  const shapeW = shape.width;
+  const shapeH = shape.height;
+  const textW = text.width * (text.scaleX || 1);
+  const padX = Math.max(MIN_PAD, Math.round(tTL.x - sTL.x));
+  const padY = Math.max(MIN_PAD, Math.round(tTL.y - sTL.y));
+  const naturalW = text.calcTextWidth ? Math.ceil(text.calcTextWidth()) : textW;
+  const textWraps = textW < naturalW - 2;
+  const modeX = textWraps ? "fixed" : "hug";
+  const containerId = shape.get?.("layerId");
+  return {
+    containerLayout: {
+      role: "container",
+      sizeMode: { x: modeX, y: "hug" },
+      minSize: { w: shapeW, h: shapeH }
+    },
+    childLayout: {
+      parentId: containerId,
+      margins: { left: padX, right: padX, top: padY, bottom: padY },
+      anchorX: "left",
+      anchorY: "top"
+    }
+  };
+}
+function wrapContainerAroundChild(child, container) {
+  const cl = child.get?.("layout");
+  const containerLayout = container.get?.("layout");
+  if (!cl || !containerLayout) return;
+  const { w: childW, h: childH } = scaledSize(child);
+  const sTL = topLeft(container);
+  const tTL = topLeft(child);
+  const padLeft = Math.max(MIN_PAD, Math.round(tTL.x - sTL.x));
+  const padTop = Math.max(MIN_PAD, Math.round(tTL.y - sTL.y));
+  cl.margins = { left: padLeft, right: padLeft, top: padTop, bottom: padTop };
+  cl.anchorX = "left";
+  cl.anchorY = "top";
+  child.set("layout", { ...cl });
+  const minW = containerLayout.minSize?.w ?? 0;
+  const minH = containerLayout.minSize?.h ?? 0;
+  const requiredW = padLeft + childW + padLeft;
+  const requiredH = padTop + childH + padTop;
+  container.set({ width: Math.max(requiredW, minW), height: Math.max(requiredH, minH) });
+  container.setCoords();
+}
+
+// src/LayoutManager.ts
+var ANCHOR_DELAY_MS = 300;
+var LayoutManager2 = class {
+  constructor(canvas, callbacks = {}) {
+    this.dtl = { phase: "idle", cooldownUntil: 0 };
+    // ── Event wiring ──────────────────────────────────────────────────
+    this.onMovingBound = (e) => this.onMoving(e);
+    this.onModifiedBound = (e) => this.onModified(e);
+    this.onScalingBound = (e) => this.onScaling(e);
+    this.canvas = canvas;
+    this.callbacks = callbacks;
+    this.guides = new CanvasGuides(canvas);
+    this.setupEventListeners();
+  }
+  /** Set or update callbacks after construction. */
+  setCallbacks(callbacks) {
+    this.callbacks = callbacks;
+  }
+  // ── Public API ────────────────────────────────────────────────────
+  /** Run layout on all canvas objects. */
+  relayout(preview = false) {
+    runLayout(this.canvas.getObjects(), preview);
+    this.canvas.renderAll();
+  }
+  /** Update layout mode on the currently selected container. */
+  setMode(obj, mode) {
+    const layout = obj.get("layout");
+    if (!layout || !isContainerLayout(layout)) return;
+    switch (mode) {
+      case "hug":
+        layout.sizeMode = { x: "hug", y: "hug" };
+        break;
+      case "hug-y":
+        layout.sizeMode = { x: "fixed", y: "hug" };
+        break;
+      case "fixed":
+        layout.sizeMode = { x: "fixed", y: "fixed" };
+        break;
+    }
+    obj.set("layout", { ...layout });
+    this.relayout();
+    this.callbacks.onLayoutChanged?.();
+  }
+  /** Update a margin on a child layout object. */
+  setMargin(obj, side, value) {
+    const layout = obj.get("layout");
+    if (!layout || !isChildLayout(layout)) return;
+    layout.margins[side] = value;
+    obj.set("layout", { ...layout });
+    this.relayout();
+    this.callbacks.onLayoutChanged?.();
+  }
+  /** Update anchor on a child layout object. */
+  setAnchor(obj, anchorX, anchorY) {
+    const layout = obj.get("layout");
+    if (!layout || !isChildLayout(layout)) return;
+    layout.anchorX = anchorX;
+    layout.anchorY = anchorY;
+    obj.set("layout", { ...layout });
+    this.relayout();
+    this.callbacks.onLayoutChanged?.();
+  }
+  /** Clean up event listeners. */
+  dispose() {
+    this.resetToIdle();
+    this.canvas.off("object:moving", this.onMovingBound);
+    this.canvas.off("object:modified", this.onModifiedBound);
+    this.canvas.off("object:scaling", this.onScalingBound);
+  }
+  setupEventListeners() {
+    this.canvas.on("object:moving", this.onMovingBound);
+    this.canvas.on("object:modified", this.onModifiedBound);
+    this.canvas.on("object:scaling", this.onScalingBound);
+  }
+  // ── Canvas event handlers ─────────────────────────────────────────
+  onMoving(e) {
+    const textObj = e.target;
+    if (!isTextObject(textObj)) return;
+    const textLayout = textObj.get?.("layout");
+    if (textLayout && "parentId" in textLayout && this.dtl.phase !== "anchored") return;
+    const cursor = this.canvas.getScenePoint(e.e);
+    switch (this.dtl.phase) {
+      case "anchored":
+        this.handleAnchoredMoving(cursor);
+        break;
+      case "pending":
+        this.handlePendingMoving(textObj, cursor);
+        break;
+      case "idle":
+        this.handleIdleMoving(textObj, cursor);
+        break;
+    }
+  }
+  onModified(e) {
+    const textObj = e.target;
+    if (!isTextObject(textObj)) return;
+    if (this.dtl.phase === "anchored") {
+      this.doCommit();
+      return;
+    }
+    if (this.dtl.phase === "pending") {
+      const cursor = this.canvas.getScenePoint(e.e);
+      if (pointInObject(cursor, this.dtl.target)) {
+        clearTimeout(this.dtl.timer);
+        this.dtl = { ...this.dtl, source: textObj, cursor };
+        this.guides.clear();
+        this.doAnchor();
+        this.doCommit();
+        return;
+      }
+    }
+    const layout = textObj.get?.("layout");
+    if (layout && isContainerLayout(layout)) {
+      this.relayout();
+      this.callbacks.onLayoutChanged?.();
+      return;
+    }
+    this.resetToIdle();
+  }
+  onScaling(e) {
+    const layout = e.target?.get?.("layout");
+    if (layout && isContainerLayout(layout)) {
+      this.relayout(true);
+    }
+  }
+  // ── State machine: IDLE → PENDING ─────────────────────────────────
+  handleIdleMoving(textObj, cursor) {
+    if (Date.now() < this.dtl.cooldownUntil) return;
+    const shape = this.findShapeUnderPoint(cursor);
+    if (shape) {
+      this.startPending(textObj, shape, cursor);
+    }
+  }
+  // ── State machine: PENDING ────────────────────────────────────────
+  handlePendingMoving(_textObj, cursor) {
+    if (this.dtl.phase !== "pending") return;
+    const shape = this.findShapeUnderPoint(cursor);
+    if (shape !== this.dtl.target) {
+      this.resetToIdle();
+      return;
+    }
+    this.dtl.cursor = cursor;
+  }
+  startPending(textObj, shape, cursor) {
+    this.guides.showHintHighlight(shape);
+    this.canvas.renderAll();
+    const timer = setTimeout(() => this.doAnchor(), ANCHOR_DELAY_MS);
+    this.dtl = {
+      phase: "pending",
+      timer,
+      target: shape,
+      source: textObj,
+      cursor,
+      cooldownUntil: this.dtl.cooldownUntil
+    };
+  }
+  // ── State machine: ANCHOR (PENDING → ANCHORED) ───────────────────
+  doAnchor() {
+    if (this.dtl.phase !== "pending") return;
+    const { target: shape, source: text, cursor } = this.dtl;
+    const session = new AttachSession(this.canvas, shape, text, cursor);
+    this.guides.showLayoutGuides(session.container, session.child);
+    this.canvas.renderAll();
+    this.dtl = {
+      phase: "anchored",
+      session,
+      cooldownUntil: this.dtl.cooldownUntil
+    };
+  }
+  // ── State machine: ANCHORED (during drag) ─────────────────────────
+  handleAnchoredMoving(cursor) {
+    if (this.dtl.phase !== "anchored") return;
+    const { session } = this.dtl;
+    const result = session.handleMoving(cursor);
+    if (result === "exited") {
+      this.resetToIdle(Date.now() + 1e3);
+      return;
+    }
+    this.guides.showLayoutGuides(session.container, session.child);
+    this.canvas.renderAll();
+  }
+  // ── State machine: COMMIT ─────────────────────────────────────────
+  doCommit() {
+    if (this.dtl.phase !== "anchored") return;
+    const { session } = this.dtl;
+    this.guides.clear();
+    session.commit();
+    this.callbacks.onLayoutChanged?.();
+    this.callbacks.onLayoutCreated?.();
+    this.dtl = { phase: "idle", cooldownUntil: 0 };
+  }
+  // ── Reset ─────────────────────────────────────────────────────────
+  resetToIdle(cooldownUntil = 0) {
+    this.guides.clear();
+    if (this.dtl.phase === "pending") {
+      clearTimeout(this.dtl.timer);
+    }
+    this.dtl = { phase: "idle", cooldownUntil: cooldownUntil || this.dtl.cooldownUntil };
+  }
+  // ── Shape hit-testing ─────────────────────────────────────────────
+  findShapeUnderPoint(point) {
+    const objects = this.canvas.getObjects().slice().reverse();
+    for (const obj of objects) {
+      if (obj.excludeFromExport) continue;
+      const layout = obj.get?.("layout");
+      if (layout && "role" in layout) continue;
+      if (layout && "parentId" in layout) continue;
+      if (obj.get?.("layerId") === "originalImage") continue;
+      const layerType = obj.layerType;
+      if (layerType !== "shape" && !(obj instanceof import_fabric10.Rect)) continue;
+      if (pointInObject(point, obj)) return obj;
+    }
+    return null;
   }
 };
 
@@ -2620,7 +3408,7 @@ var _FabricEditor = class _FabricEditor {
     this._resizeCallbacks = [];
     this._initialized = false;
     this.config = config;
-    this.canvas = new import_fabric9.Canvas(canvasElement, {
+    this.canvas = new import_fabric11.Canvas(canvasElement, {
       width: config.width,
       height: config.height,
       preserveObjectStacking: true
@@ -2631,6 +3419,7 @@ var _FabricEditor = class _FabricEditor {
     this.persistence = new PersistenceManager(this.canvas, this.layers);
     this.history = new HistoryManager(this.canvas, this.layers);
     this.snapping = new SnappingManager(this.canvas);
+    this.layout = new LayoutManager2(this.canvas);
     this.canvas.snappingManager = this.snapping;
     this.extendFabricObject();
     this.configureRotationControl();
@@ -2980,7 +3769,7 @@ var _FabricEditor = class _FabricEditor {
       obj.nextClipShape();
       obj.dirty = true;
       this.canvas.requestRenderAll();
-    } else if (obj instanceof import_fabric9.FabricImage) {
+    } else if (obj instanceof import_fabric11.FabricImage) {
       switchClip(obj);
       obj.dirty = true;
       this.canvas.remove(obj);
@@ -2992,7 +3781,7 @@ var _FabricEditor = class _FabricEditor {
    */
   switchShape() {
     const obj = this.selection.current;
-    if (!obj || obj instanceof import_fabric9.FabricImage) return;
+    if (!obj || obj instanceof import_fabric11.FabricImage) return;
     const currentShapeId = obj.id;
     const nextShapeType = nextShape(currentShapeId);
     this.changeShape(nextShapeType);
@@ -3008,7 +3797,7 @@ var _FabricEditor = class _FabricEditor {
       obj.applyClipShape(shapeType);
       obj.dirty = true;
       this.canvas.requestRenderAll();
-    } else if (!(obj instanceof import_fabric9.FabricImage)) {
+    } else if (!(obj instanceof import_fabric11.FabricImage)) {
       const newObj = switchShape(obj, shapeType);
       const layerId = obj.get("layerId");
       const layerType = obj.get("layerType");
@@ -3096,7 +3885,7 @@ var _FabricEditor = class _FabricEditor {
    * Utilisé par ImageDropHandler pour le drop d'images sur images ET sur formes.
    */
   findDropTargetAtPoint(x, y) {
-    const point = new import_fabric9.Point(x, y);
+    const point = new import_fabric11.Point(x, y);
     const objects = this.canvas.getObjects().slice().reverse();
     for (const obj of objects) {
       if (obj.get("layerId") === "originalImage") continue;
@@ -3107,7 +3896,7 @@ var _FabricEditor = class _FabricEditor {
       if (layerType === "shape" && obj.containsPoint(point)) {
         return obj;
       }
-      if (obj instanceof import_fabric9.FabricImage && obj.containsPoint(point)) {
+      if (obj instanceof import_fabric11.FabricImage && obj.containsPoint(point)) {
         return obj;
       }
     }
@@ -3127,8 +3916,8 @@ var _FabricEditor = class _FabricEditor {
   extendFabricObject() {
     if (_FabricEditor._toObjectExtended) return;
     _FabricEditor._toObjectExtended = true;
-    const originalToObject = import_fabric9.FabricObject.prototype.toObject;
-    import_fabric9.FabricObject.prototype.toObject = function(propertiesToInclude) {
+    const originalToObject = import_fabric11.FabricObject.prototype.toObject;
+    import_fabric11.FabricObject.prototype.toObject = function(propertiesToInclude) {
       return originalToObject.call(
         this,
         ["layerId", "layout"].concat(propertiesToInclude || [])
@@ -3143,13 +3932,13 @@ var _FabricEditor = class _FabricEditor {
    * l'événement object:added pour modifier chaque nouvel objet.
    */
   configureRotationControl() {
-    const createSideRotationControl = () => new import_fabric9.Control({
+    const createSideRotationControl = () => new import_fabric11.Control({
       x: 0.5,
       y: 0,
       offsetX: 30,
       offsetY: 0,
-      actionHandler: import_fabric9.controlsUtils.rotationWithSnapping,
-      cursorStyleHandler: import_fabric9.controlsUtils.rotationStyleHandler,
+      actionHandler: import_fabric11.controlsUtils.rotationWithSnapping,
+      cursorStyleHandler: import_fabric11.controlsUtils.rotationStyleHandler,
       withConnection: true,
       actionName: "rotate"
     });
@@ -3160,7 +3949,7 @@ var _FabricEditor = class _FabricEditor {
     });
   }
 };
-console.log("[fabric-editor] \u2713 linked local build");
+console.log("[fabric-editor] \u2713 linked local build 2");
 /**
  * Étend FabricObject pour inclure layerId dans la sérialisation
  */
@@ -3168,7 +3957,7 @@ _FabricEditor._toObjectExtended = false;
 var FabricEditor = _FabricEditor;
 
 // src/ImageDropHandler.ts
-var import_fabric10 = require("#fabric");
+var import_fabric12 = require("#fabric");
 var HIGHLIGHT_COLOR = "#3b82f6";
 var ImageDropHandler = class {
   constructor(editor, config) {
@@ -3392,7 +4181,7 @@ var ImageDropHandler = class {
       height = target.height;
       clipPath = target.clipPath;
     }
-    const fabricOverlay = new import_fabric10.Rect({
+    const fabricOverlay = new import_fabric12.Rect({
       left: target.left,
       top: target.top,
       width,
@@ -3495,152 +4284,6 @@ var ImageDropHandler = class {
 
 // src/index.ts
 init_PendingUploadsManager();
-
-// src/layout/types.ts
-function isContainerLayout(l) {
-  return "role" in l && l.role === "container";
-}
-function isChildLayout(l) {
-  return "parentId" in l;
-}
-
-// src/layout/engine.ts
-var TEXT_TYPES = ["i-text", "textbox"];
-function isTextObject(obj) {
-  return TEXT_TYPES.includes(obj.type);
-}
-function resolveChildren(objects, containerId) {
-  const out = [];
-  for (const obj of objects) {
-    const cl = obj.get("layout");
-    if (cl && isChildLayout(cl) && cl.parentId === containerId) {
-      out.push({ obj, cl });
-    }
-  }
-  return out;
-}
-function scaledSize(obj) {
-  return {
-    w: obj.width * (obj.scaleX || 1),
-    h: obj.height * (obj.scaleY || 1)
-  };
-}
-function runLayout(objects) {
-  for (const obj of objects) {
-    const layout = obj.get("layout");
-    if (!layout || !isContainerLayout(layout)) continue;
-    const containerId = obj.get("layerId");
-    const children = resolveChildren(objects, containerId);
-    if (children.length === 0) continue;
-    layoutContainer(obj, layout, children);
-  }
-}
-function layoutContainer(container, layout, children) {
-  const modeX = layout.sizeMode.x;
-  const modeY = layout.sizeMode.y;
-  const { w: currentW, h: currentH } = scaledSize(container);
-  const bothFixed = modeX === "fixed" && modeY === "fixed";
-  if (!bothFixed) restoreTextFontSizes(children);
-  prepareTextChildren(children, modeX, currentW);
-  const { w: requiredW, h: requiredH } = measureChildren(children);
-  const finalW = modeX === "hug" ? requiredW : currentW;
-  const finalH = modeY === "hug" ? requiredH : currentH;
-  applyContainerSize(container, finalW, finalH);
-  if (bothFixed) {
-    shrinkOverflowingText(children, finalW, finalH);
-  }
-  positionChildren(children, container.left, container.top);
-  syncCoords(container, children);
-}
-function prepareTextChildren(children, modeX, containerW) {
-  for (const { obj, cl } of children) {
-    if (!isTextObject(obj)) continue;
-    const t = obj;
-    if (modeX === "fixed") {
-      const availW = containerW - cl.margins.left - cl.margins.right;
-      obj.set({ width: availW / (obj.scaleX || 1) });
-    } else {
-      obj.set({ width: 1e4 });
-    }
-    t.initDimensions();
-    if (modeX === "hug") {
-      const realW = t.calcTextWidth();
-      obj.set({ width: realW });
-      t.initDimensions();
-    }
-  }
-}
-function measureChildren(children) {
-  let w = 0;
-  let h = 0;
-  for (const { obj, cl } of children) {
-    const { w: childW, h: childH } = scaledSize(obj);
-    w = Math.max(w, cl.margins.left + childW + cl.margins.right);
-    h = Math.max(h, cl.margins.top + childH + cl.margins.bottom);
-  }
-  return { w, h };
-}
-function applyContainerSize(container, finalW, finalH) {
-  container.set({
-    width: finalW / (container.scaleX || 1),
-    height: finalH / (container.scaleY || 1)
-  });
-}
-function shrinkOverflowingText(children, containerW, containerH) {
-  for (const { obj, cl } of children) {
-    if (!isTextObject(obj)) continue;
-    const availW = containerW - cl.margins.left - cl.margins.right;
-    const availH = containerH - cl.margins.top - cl.margins.bottom;
-    const { h: childH } = scaledSize(obj);
-    if (childH > availH) {
-      shrinkTextToFit(obj, availW, availH);
-    }
-  }
-}
-function positionChildren(children, containerLeft, containerTop) {
-  for (const { obj, cl } of children) {
-    obj.set({
-      left: containerLeft + cl.margins.left,
-      top: containerTop + cl.margins.top
-    });
-  }
-}
-function syncCoords(container, children) {
-  container.setCoords();
-  for (const { obj } of children) {
-    obj.setCoords();
-  }
-}
-function restoreTextFontSizes(children) {
-  for (const { obj } of children) {
-    if (!isTextObject(obj)) continue;
-    const t = obj;
-    if (t._layoutOriginalFontSize == null) continue;
-    t.fontSize = t._layoutOriginalFontSize;
-    delete t._layoutOriginalFontSize;
-    t.initDimensions();
-  }
-}
-function shrinkTextToFit(obj, availW, availH) {
-  const t = obj;
-  const originalSize = t._layoutOriginalFontSize ?? t.fontSize;
-  t._layoutOriginalFontSize = originalSize;
-  t.fontSize = originalSize;
-  t.initDimensions();
-  const minFontSize = 8;
-  let fontSize = originalSize;
-  for (let i = 0; i < 20; i++) {
-    const { w: textW, h: textH } = scaledSize(obj);
-    if (textW <= availW && textH <= availH) break;
-    if (fontSize <= minFontSize) break;
-    const ratioW = availW / Math.max(textW, 1);
-    const ratioH = availH / Math.max(textH, 1);
-    fontSize = Math.max(minFontSize, Math.floor(fontSize * Math.min(ratioW, ratioH)));
-    t.fontSize = fontSize;
-    obj.set({ width: availW / (obj.scaleX || 1) });
-    t.initDimensions();
-  }
-}
 
 // src/html/cssUtils.ts
 function originXToCss(originX) {
@@ -4145,6 +4788,8 @@ function layerToHtmlStandalone(layer, zIndex) {
 }
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {
+  AttachSession,
+  CanvasGuides,
   CustomTextbox,
   FabricEditor,
   HEART_PATH,
@@ -4153,6 +4798,8 @@ function layerToHtmlStandalone(layer, zIndex) {
   ImageDropHandler,
   ImageFrame,
   LayerManager,
+  LayoutManager,
+  MIN_PAD,
   MaskManager,
   PendingUploadsManager,
   PersistenceManager,
@@ -4166,6 +4813,7 @@ function layerToHtmlStandalone(layer, zIndex) {
   antiScale,
   applyClip,
   applyLockMode,
+  clampTopLeft,
   createCircle,
   createHeart,
   createHexagon,
@@ -4177,6 +4825,7 @@ function layerToHtmlStandalone(layer, zIndex) {
   getAvailableShapes,
   getLockMode,
   getNextLockMode,
+  hasExceededOffset,
   isChildLayout,
   isContainerLayout,
   isContentLocked,
@@ -4185,9 +4834,13 @@ function layerToHtmlStandalone(layer, zIndex) {
   isValidShape,
   layerToHtmlStandalone,
   nextShape,
+  pointInObject,
   removeCropControls,
   runLayout,
+  scaledSize,
   switchClip,
-  switchShape
+  switchShape,
+  topLeft,
+  wrapContainerAroundChild
 });
 //# sourceMappingURL=index.js.map

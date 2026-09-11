@@ -1,4 +1,5 @@
-import { Canvas, FabricObject, Line } from "#fabric";
+import { Canvas, FabricObject } from "#fabric";
+import { CanvasGuides } from "./CanvasGuides";
 
 export interface SnappingConfig {
   /** Distance en pixels pour déclencher le snap (défaut: 10) */
@@ -49,7 +50,7 @@ export interface ResizeSnapResult {
 export class SnappingManager {
   private canvas: Canvas;
   private config: Required<SnappingConfig>;
-  private guides: Line[] = [];
+  private guides: CanvasGuides;
   private enabled: boolean = true;
   private snapState: SnapState | null = null;
   private resizeSnapState: ResizeSnapState | null = null;
@@ -64,6 +65,7 @@ export class SnappingManager {
       snapToEdges: config.snapToEdges ?? true,
       guideColor: config.guideColor ?? "#ff00ff",
     };
+    this.guides = new CanvasGuides(canvas);
 
     this.setupEventListeners();
   }
@@ -74,7 +76,7 @@ export class SnappingManager {
   setEnabled(enabled: boolean): void {
     this.enabled = enabled;
     if (!enabled) {
-      this.clearGuides();
+      this.guides.clearAndRender();
     }
   }
 
@@ -96,11 +98,11 @@ export class SnappingManager {
     this.canvas.on("object:moving", (e) => this.handleObjectMoving(e));
     this.canvas.on("object:scaling", (e) => this.handleObjectScaling(e.target));
     this.canvas.on("object:modified", () => {
-      this.clearGuides();
+      this.guides.clearAndRender();
       this.snapState = null;
     });
     this.canvas.on("selection:cleared", () => {
-      this.clearGuides();
+      this.guides.clearAndRender();
       this.snapState = null;
     });
     this.canvas.on("mouse:down", () => {
@@ -311,38 +313,8 @@ export class SnappingManager {
   }
 
   private updateGuides(activeGuides: SnapGuide[]): void {
-    this.clearGuides();
-
-    for (const guide of activeGuides) {
-      const line = this.createGuideLine(guide);
-      this.guides.push(line);
-      this.canvas.add(line);
-    }
-
+    this.guides.showSnapLines(activeGuides, { stroke: this.config.guideColor });
     this.canvas.requestRenderAll();
-  }
-
-  private createGuideLine(guide: SnapGuide): Line {
-    const coords =
-      guide.orientation === "vertical"
-        ? [guide.position, 0, guide.position, this.canvas.height]
-        : [0, guide.position, this.canvas.width, guide.position];
-
-    return new Line(coords as [number, number, number, number], {
-      stroke: this.config.guideColor,
-      strokeWidth: 1,
-      strokeDashArray: [5, 5],
-      selectable: false,
-      evented: false,
-      excludeFromExport: true,
-    });
-  }
-
-  private clearGuides(): void {
-    for (const guide of this.guides) {
-      this.canvas.remove(guide);
-    }
-    this.guides = [];
   }
 
   /**
@@ -504,14 +476,14 @@ export class SnappingManager {
    */
   resetResizeSnap(): void {
     this.resizeSnapState = null;
-    this.clearGuides();
+    this.guides.clearAndRender();
   }
 
   /**
    * Nettoie les ressources
    */
   dispose(): void {
-    this.clearGuides();
+    this.guides.clear();
     this.canvas.off("object:moving");
     this.canvas.off("object:scaling");
     this.canvas.off("object:modified");

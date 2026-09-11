@@ -1,4 +1,19 @@
-import { Textbox, FabricObject, Group, FabricImage, Canvas, TOptions, RectProps, Rect, CircleProps, Circle, PathProps, Path } from '#fabric';
+import { Textbox, FabricObject, Canvas, Group, FabricImage, TOptions, RectProps, Rect, CircleProps, Circle, PathProps, Path } from '#fabric';
+
+declare module "fabric" {
+    interface Canvas {
+        /**
+         * Shift the active drag's grab offset by (dx, dy).
+         *
+         * During a drag, Fabric places the object at `cursor + offset`.
+         * Adjusting the offset "teleports" the object without breaking
+         * the drag delta calculation.
+         *
+         * No-op if there is no active drag transform.
+         */
+        adjustGrabOffset(dx: number, dy: number): void;
+    }
+}
 
 /**
  * Textbox personnalisé qui :
@@ -23,6 +38,21 @@ type GraphemeData = {
     wordsData: WordEntry[][];
 };
 declare class CustomTextbox extends Textbox {
+    /**
+     * Auto-width mode : le textbox s'étend horizontalement au contenu.
+     * Désactivé automatiquement quand l'utilisateur resize manuellement.
+     */
+    _autoWidth: boolean;
+    constructor(text: string, options?: Record<string, unknown>);
+    /** Dernière width calculée par le mode auto-width. */
+    private _autoWidthValue;
+    /**
+     * Override initDimensions : en mode auto-width, on calcule les dimensions
+     * avec une width infinie puis on ajuste width au résultat.
+     * Si la width entrante diffère de notre dernière valeur auto, c'est un
+     * resize externe → on désactive auto-width.
+     */
+    initDimensions(): void;
     /**
      * overflow-wrap: break-word — pré-découpe les mots trop longs
      * en chunks et les marque pour que _wrapLine ne mette pas
@@ -97,7 +127,11 @@ declare function isContentLocked(obj: FabricObject): boolean;
 declare function isPositionLocked(obj: FabricObject): boolean;
 
 /**
- * Layout engine — "springs & struts" model.
+ * Layout reconciliation — "springs & struts" model.
+ *
+ * Takes the declared layout state (container/child relationships, size modes,
+ * margins) and resolves concrete positions and dimensions. Idempotent:
+ * running it twice on the same state produces the same result.
  *
  * Supports two size modes per axis:
  * - "hug": container adapts to content (bottom-up)
@@ -112,8 +146,10 @@ declare function isPositionLocked(obj: FabricObject): boolean;
 /**
  * Run the layout pass on the given set of objects.
  * Objects are mutated in-place.
+ *
+ * @param preview — si true, skip normalizeScale (pour le live preview pendant un resize)
  */
-declare function runLayout(objects: FabricObject[]): void;
+declare function runLayout(objects: FabricObject[], preview?: boolean): void;
 
 /**
  * Layout system types — "springs & struts" model.
@@ -137,9 +173,17 @@ interface ContainerLayout {
         x: SizeMode;
         y: SizeMode;
     };
+    /** Taille minimum définie par resize manuel. Le container ne descendra
+     *  jamais en dessous, même si le contenu est plus petit. */
+    minSize?: {
+        w: number;
+        h: number;
+    };
     /** Overflow behavior when content exceeds fixed size */
     overflow?: "clip" | "shrink";
 }
+type AnchorX = "left" | "right";
+type AnchorY = "top" | "bottom";
 /** Layout block carried by a **child** (element inside a container). */
 interface ChildLayout {
     parentId: string;
@@ -149,11 +193,104 @@ interface ChildLayout {
         top: number;
         bottom: number;
     };
+    /** Point d'ancrage horizontal (défaut: "left") */
+    anchorX?: AnchorX;
+    /** Point d'ancrage vertical (défaut: "top") */
+    anchorY?: AnchorY;
 }
 /** Union — the `layout` property on any participating Fabric object. */
 type LayoutData = ContainerLayout | ChildLayout;
 declare function isContainerLayout(l: LayoutData): l is ContainerLayout;
 declare function isChildLayout(l: LayoutData): l is ChildLayout;
+/** Minimum padding between a child and its container edges. */
+declare const MIN_PAD = 8;
+/** Snapshot of shape + text properties before attach, used for rollback. */
+interface AttachSnapshot {
+    shape: Record<string, any>;
+    text: Record<string, any>;
+}
+
+/**
+ * Shared geometry helpers for layout computations.
+ *
+ * Used by both the layout engine (steady-state relayout) and the
+ * LayoutManager (drag-to-layout interactions).
+ */
+
+/** Scaled dimensions (width × scaleX, height × scaleY). */
+declare function scaledSize(obj: FabricObject): {
+    w: number;
+    h: number;
+};
+/** Top-left corner in canvas coordinates, regardless of originX/Y. */
+declare function topLeft(obj: FabricObject): {
+    x: number;
+    y: number;
+};
+/** Hit-test: is a point inside an object's bounding box (with optional margin)? */
+declare function pointInObject(point: {
+    x: number;
+    y: number;
+}, obj: FabricObject, margin?: number): boolean;
+/**
+ * Clamp the top-left of `obj` so it doesn't go above/left of
+ * `reference`'s top-left + padding. Returns the clamped position.
+ */
+declare function clampTopLeft(obj: FabricObject, reference: FabricObject, padding: number): {
+    x: number;
+    y: number;
+};
+/**
+ * Has a point moved back past a threshold distance from an origin,
+ * on the axis/direction where an initial offset was applied?
+ *
+ * Used to detect when a user "undoes" a clamp by dragging away.
+ */
+declare function hasExceededOffset(current: {
+    x: number;
+    y: number;
+}, origin: {
+    x: number;
+    y: number;
+}, offsetX: number, offsetY: number, margin: number): boolean;
+
+/**
+ * AttachSession — encapsulates one drag-to-layout interaction.
+ *
+ * Created by the LayoutManager when a text enters a shape, destroyed
+ * after commit or rollback. The LayoutManager never sees the internals
+ * (snapshot, clamp offsets, etc.) — it just drives the session.
+ */
+
+declare class AttachSession {
+    private canvas;
+    private shape;
+    private text;
+    private snapshot;
+    private clampDx;
+    private clampDy;
+    private anchorCursor;
+    constructor(canvas: Canvas, shape: FabricObject, text: FabricObject, cursor: {
+        x: number;
+        y: number;
+    });
+    /** During drag: clamp text, resize container, check for exit. */
+    handleMoving(cursor: {
+        x: number;
+        y: number;
+    }): "anchored" | "exited";
+    /** Finalize the attach. Returns a cleanup function for the "changed" listener. */
+    commit(): () => void;
+    /** Undo anchor: restore snapshot, reverse grab offset. */
+    rollback(): void;
+    /** The shape this session is attached to (for guide rendering). */
+    get container(): FabricObject;
+    /** The text being attached (for guide rendering). */
+    get child(): FabricObject;
+    private shouldExit;
+}
+/** Resize container to wrap around its child, updating margins from current position. */
+declare function wrapContainerAroundChild(child: FabricObject, container: FabricObject): void;
 
 interface EditorConfig {
     width: number;
@@ -850,8 +987,6 @@ declare class SnappingManager {
     private handleObjectMoving;
     private handleObjectScaling;
     private updateGuides;
-    private createGuideLine;
-    private clearGuides;
     /**
      * Calcule le snap pendant le redimensionnement d'un objet
      *
@@ -880,6 +1015,57 @@ declare class SnappingManager {
     dispose(): void;
 }
 
+interface LayoutManagerCallbacks {
+    /** Called after a layout relationship is committed (drag-to-layout or panel edit). */
+    onLayoutCreated?: () => void;
+    /** Called after any layout change (relayout, margin/anchor/mode change). */
+    onLayoutChanged?: () => void;
+}
+/**
+ * Manages layout relationships between canvas objects.
+ *
+ * Two responsibilities:
+ * 1. **Drag-to-layout**: when a text is dragged over a shape, creates a
+ *    container/child layout relationship after a short delay, with live
+ *    preview, rollback support, and visual guides.
+ * 2. **Automatic relayout**: keeps container/child dimensions in sync
+ *    when text content changes or containers are moved/resized.
+ */
+declare class LayoutManager {
+    private canvas;
+    private callbacks;
+    private guides;
+    private dtl;
+    constructor(canvas: Canvas, callbacks?: LayoutManagerCallbacks);
+    /** Set or update callbacks after construction. */
+    setCallbacks(callbacks: LayoutManagerCallbacks): void;
+    /** Run layout on all canvas objects. */
+    relayout(preview?: boolean): void;
+    /** Update layout mode on the currently selected container. */
+    setMode(obj: FabricObject, mode: "hug" | "hug-y" | "fixed"): void;
+    /** Update a margin on a child layout object. */
+    setMargin(obj: FabricObject, side: string, value: number): void;
+    /** Update anchor on a child layout object. */
+    setAnchor(obj: FabricObject, anchorX: string, anchorY: string): void;
+    /** Clean up event listeners. */
+    dispose(): void;
+    private onMovingBound;
+    private onModifiedBound;
+    private onScalingBound;
+    private setupEventListeners;
+    private onMoving;
+    private onModified;
+    private onScaling;
+    private handleIdleMoving;
+    private handlePendingMoving;
+    private startPending;
+    private doAnchor;
+    private handleAnchoredMoving;
+    private doCommit;
+    private resetToIdle;
+    private findShapeUnderPoint;
+}
+
 /**
  * Éditeur d'images basé sur Fabric.js
  *
@@ -894,6 +1080,7 @@ declare class FabricEditor {
     readonly persistence: PersistenceManager;
     readonly history: HistoryManager;
     readonly snapping: SnappingManager;
+    readonly layout: LayoutManager;
     private config;
     private _displayScale;
     private _userZoom;
@@ -1068,6 +1255,64 @@ declare class FabricEditor {
      * l'événement object:added pour modifier chaque nouvel objet.
      */
     private configureRotationControl;
+}
+
+/**
+ * Manages ephemeral visual guides (overlays) on a Fabric canvas.
+ *
+ * Provides both low-level primitives (addLine, addRect) and
+ * high-level presets for common guide patterns (layout margins,
+ * snap lines, hover hints).
+ *
+ * Each consumer gets its own CanvasGuides instance — guides from
+ * different owners don't interfere with each other.
+ */
+declare class CanvasGuides {
+    private canvas;
+    private objects;
+    constructor(canvas: Canvas);
+    /** Add a line guide. */
+    addLine(coords: [number, number, number, number], opts?: {
+        stroke?: string;
+        strokeWidth?: number;
+        strokeDashArray?: number[];
+    }): void;
+    /** Add a rectangle guide (highlight zone, margin indicator, etc.). */
+    addRect(opts: {
+        left: number;
+        top: number;
+        width: number;
+        height: number;
+        fill?: string;
+        stroke?: string;
+        strokeWidth?: number;
+        strokeDashArray?: number[];
+    }): void;
+    /** Remove all guides added by this instance. */
+    clear(): void;
+    /** Clear + render in one call (common pattern). */
+    clearAndRender(): void;
+    /** Whether this instance currently has guides on the canvas. */
+    get hasGuides(): boolean;
+    /**
+     * Show a dashed hover hint around a shape (used during PENDING state
+     * in drag-to-layout to signal that anchoring is about to happen).
+     */
+    showHintHighlight(shape: FabricObject): void;
+    /**
+     * Show layout guides: a dashed outline around the container and
+     * colored overlays for each non-zero margin zone.
+     */
+    showLayoutGuides(container: FabricObject, child: FabricObject): void;
+    /**
+     * Show snap alignment lines (horizontal/vertical) spanning the full canvas.
+     */
+    showSnapLines(guides: Array<{
+        orientation: "horizontal" | "vertical";
+        position: number;
+    }>, opts?: {
+        stroke?: string;
+    }): void;
 }
 
 interface ImageDropHandlerConfig {
@@ -1325,4 +1570,4 @@ declare function fabricToHtml(layers: LayerData[], options: HtmlRenderOptions): 
  */
 declare function layerToHtmlStandalone(layer: LayerData, zIndex: number): HtmlLayerOutput;
 
-export { type ChildLayout, type ContainerLayout, type ControlOption, CustomTextbox, type EditorConfig, FabricEditor, type FontConfig, type FontsConfig, HEART_PATH, HEXAGON_PATH, type HistoryCallbacks, HistoryManager, type HistoryState, type HtmlLayerOutput, type HtmlRenderOptions, ImageDropHandler, ImageFrame, type ImageLayerOptions, type LayerData, LayerManager, type LayoutData, type LockMode$1 as LockMode, MaskManager, type ObjectControlsConfig, PendingUploadsManager, PersistenceManager, type ResizeSnapResult, type SaveOptions, type SaveResult, type SelectionCallbacks, SelectionManager, type ShapeLayerOptions, type ShapeType, type SizeMode, type SnappingConfig, SnappingManager, type TextLayerOptions, addCircleClip, addCropControls, addHeartClip, addHexagonClip, addRoundedClip, antiScale, applyClip, applyLockMode, createCircle, createHeart, createHexagon, createImage, createRect, createRoundedRect, createShape, fabricToHtml, getAvailableShapes, getLockMode, getNextLockMode, isChildLayout, isContainerLayout, isContentLocked, isPositionLocked, isStyleLocked, isValidShape, layerToHtmlStandalone, nextShape, removeCropControls, runLayout, switchClip, switchShape };
+export { AttachSession, type AttachSnapshot, CanvasGuides, type ChildLayout, type ContainerLayout, type ControlOption, CustomTextbox, type EditorConfig, FabricEditor, type FontConfig, type FontsConfig, HEART_PATH, HEXAGON_PATH, type HistoryCallbacks, HistoryManager, type HistoryState, type HtmlLayerOutput, type HtmlRenderOptions, ImageDropHandler, ImageFrame, type ImageLayerOptions, type LayerData, LayerManager, type LayoutData, LayoutManager, type LayoutManagerCallbacks, type LockMode$1 as LockMode, MIN_PAD, MaskManager, type ObjectControlsConfig, PendingUploadsManager, PersistenceManager, type ResizeSnapResult, type SaveOptions, type SaveResult, type SelectionCallbacks, SelectionManager, type ShapeLayerOptions, type ShapeType, type SizeMode, type SnappingConfig, SnappingManager, type TextLayerOptions, addCircleClip, addCropControls, addHeartClip, addHexagonClip, addRoundedClip, antiScale, applyClip, applyLockMode, clampTopLeft, createCircle, createHeart, createHexagon, createImage, createRect, createRoundedRect, createShape, fabricToHtml, getAvailableShapes, getLockMode, getNextLockMode, hasExceededOffset, isChildLayout, isContainerLayout, isContentLocked, isPositionLocked, isStyleLocked, isValidShape, layerToHtmlStandalone, nextShape, pointInObject, removeCropControls, runLayout, scaledSize, switchClip, switchShape, topLeft, wrapContainerAroundChild };

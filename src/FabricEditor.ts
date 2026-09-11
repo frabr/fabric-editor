@@ -5,6 +5,7 @@ import { MaskManager } from "./MaskManager";
 import { PersistenceManager } from "./PersistenceManager";
 import { HistoryManager } from "./HistoryManager";
 import { SnappingManager, type SnappingConfig } from "./SnappingManager";
+import { LayoutManager, type LayoutManagerCallbacks } from "./LayoutManager";
 import { switchClip } from "./clipping";
 import { switchShape, nextShape } from "./shapes";
 import { ImageFrame } from "./ImageFrame";
@@ -20,7 +21,7 @@ import type { EditorConfig, LayerData, FontsConfig, ShapeType } from "./types";
 export class FabricEditor {
   // TODO: remove — validation log pour vérifier que le link: est live
   static {
-    console.log("[fabric-editor] ✓ linked local build");
+    console.log("[fabric-editor] ✓ linked local build 2");
   }
 
   readonly canvas: Canvas;
@@ -30,6 +31,7 @@ export class FabricEditor {
   readonly persistence: PersistenceManager;
   readonly history: HistoryManager;
   readonly snapping: SnappingManager;
+  readonly layout: LayoutManager;
 
   private config: EditorConfig;
   private _displayScale = 1;
@@ -53,6 +55,7 @@ export class FabricEditor {
     this.persistence = new PersistenceManager(this.canvas, this.layers);
     this.history = new HistoryManager(this.canvas, this.layers);
     this.snapping = new SnappingManager(this.canvas);
+    this.layout = new LayoutManager(this.canvas);
 
     // Stocker une référence au SnappingManager sur le canvas pour l'accès depuis ImageFrame
     (this.canvas as unknown as { snappingManager: SnappingManager }).snappingManager = this.snapping;
@@ -679,7 +682,7 @@ export class FabricEditor {
     FabricEditor._toObjectExtended = true;
 
     const originalToObject = FabricObject.prototype.toObject;
-    FabricObject.prototype.toObject = function (propertiesToInclude) {
+    FabricObject.prototype.toObject = function(propertiesToInclude) {
       return originalToObject.call(
         this,
         ["layerId", "layout"].concat(propertiesToInclude || [])

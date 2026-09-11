@@ -1,5 +1,9 @@
 /**
- * Layout engine — "springs & struts" model.
+ * Layout reconciliation — "springs & struts" model.
+ *
+ * Takes the declared layout state (container/child relationships, size modes,
+ * margins) and resolves concrete positions and dimensions. Idempotent:
+ * running it twice on the same state produces the same result.
  *
  * Supports two size modes per axis:
  * - "hug": container adapts to content (bottom-up)
@@ -19,12 +23,7 @@ import {
   type ContainerLayout,
   type SizeMode,
 } from "./types";
-
-const TEXT_TYPES = ["i-text", "textbox"];
-
-function isTextObject(obj: FabricObject): boolean {
-  return TEXT_TYPES.includes(obj.type);
-}
+import { scaledSize, isTextObject } from "./geometry";
 
 // ── helpers ──────────────────────────────────────────────────────────
 
@@ -48,11 +47,28 @@ function resolveChildren(
   return out;
 }
 
-function scaledSize(obj: FabricObject): { w: number; h: number } {
-  return {
-    w: obj.width * (obj.scaleX || 1),
-    h: obj.height * (obj.scaleY || 1),
-  };
+/**
+ * Absorbe le scale dans width/height et remet scaleX/Y à 1.
+ * En mode hug, met à jour minSize car un resize manuel = nouveau plancher.
+ */
+function normalizeScale(obj: FabricObject, layout: ContainerLayout): void {
+  const sx = obj.scaleX || 1;
+  const sy = obj.scaleY || 1;
+  if (sx === 1 && sy === 1) return;
+
+  const newW = obj.width * sx;
+  const newH = obj.height * sy;
+
+  obj.set({ width: newW, height: newH, scaleX: 1, scaleY: 1 });
+
+  // Resize manuel → mettre à jour le plancher sur les axes hug
+  const modeX = layout.sizeMode.x;
+  const modeY = layout.sizeMode.y;
+  if (modeX === "hug" || modeY === "hug") {
+    if (!layout.minSize) layout.minSize = { w: 0, h: 0 };
+    if (modeX === "hug") layout.minSize.w = newW;
+    if (modeY === "hug") layout.minSize.h = newH;
+  }
 }
 
 // ── public entry point ───────────────────────────────────────────────
@@ -60,8 +76,10 @@ function scaledSize(obj: FabricObject): { w: number; h: number } {
 /**
  * Run the layout pass on the given set of objects.
  * Objects are mutated in-place.
+ *
+ * @param preview — si true, skip normalizeScale (pour le live preview pendant un resize)
  */
-export function runLayout(objects: FabricObject[]): void {
+export function runLayout(objects: FabricObject[], preview = false): void {
   for (const obj of objects) {
     const layout = obj.get("layout") as LayoutData | undefined;
     if (!layout || !isContainerLayout(layout)) continue;
@@ -70,7 +88,7 @@ export function runLayout(objects: FabricObject[]): void {
     const children = resolveChildren(objects, containerId);
     if (children.length === 0) continue;
 
-    layoutContainer(obj, layout, children);
+    layoutContainer(obj, layout, children, preview);
   }
 }
 
@@ -79,11 +97,29 @@ export function runLayout(objects: FabricObject[]): void {
 function layoutContainer(
   container: FabricObject,
   layout: ContainerLayout,
-  children: ResolvedChild[]
+  children: ResolvedChild[],
+  preview = false
 ): void {
+  // Preview (pendant le scaling) : juste repositionner les enfants
+  if (preview) {
+    const { w, h } = scaledSize(container);
+    positionChildren(children, container.left, container.top, w, h);
+    syncCoords(container, children);
+    return;
+  }
+
   const modeX = layout.sizeMode.x;
   const modeY = layout.sizeMode.y;
-  const { w: currentW, h: currentH } = scaledSize(container);
+
+  normalizeScale(container, layout);
+
+  const { w: rawW, h: rawH } = scaledSize(container);
+  const minW = layout.minSize?.w ?? 0;
+  const minH = layout.minSize?.h ?? 0;
+
+  // En mode fixed, la largeur/hauteur effective est au moins minSize
+  const currentW = Math.max(rawW, minW);
+  const currentH = Math.max(rawH, minH);
 
   const bothFixed = modeX === "fixed" && modeY === "fixed";
 
@@ -94,8 +130,8 @@ function layoutContainer(
 
   const { w: requiredW, h: requiredH } = measureChildren(children);
 
-  const finalW = modeX === "hug" ? requiredW : currentW;
-  const finalH = modeY === "hug" ? requiredH : currentH;
+  const finalW = modeX === "hug" ? Math.max(requiredW, minW) : currentW;
+  const finalH = modeY === "hug" ? Math.max(requiredH, minH) : currentH;
 
   applyContainerSize(container, finalW, finalH);
 
@@ -103,7 +139,7 @@ function layoutContainer(
     shrinkOverflowingText(children, finalW, finalH);
   }
 
-  positionChildren(children, container.left, container.top);
+  positionChildren(children, container.left, container.top, finalW, finalH);
 
   syncCoords(container, children);
 }
@@ -123,6 +159,10 @@ function prepareTextChildren(
     if (!isTextObject(obj)) continue;
 
     const t = obj as unknown as FabricText;
+    const anchorX = cl.anchorX ?? "left";
+
+    // Alignement du texte selon l'anchor
+    t.set({ textAlign: anchorX === "right" ? "right" : "left" });
 
     if (modeX === "fixed") {
       const availW = containerW - cl.margins.left - cl.margins.right;
@@ -135,7 +175,8 @@ function prepareTextChildren(
     t.initDimensions();
 
     if (modeX === "hug") {
-      const realW = t.calcTextWidth();
+      // ceil pour éviter qu'un arrondi flottant ne fasse wrapper le dernier mot
+      const realW = Math.ceil(t.calcTextWidth());
       obj.set({ width: realW });
       t.initDimensions();
     }
@@ -189,17 +230,28 @@ function shrinkOverflowingText(
   }
 }
 
-/** Position each child relative to the container's top-left corner. */
+/** Position each child relative to the container, selon ses anchors. */
 function positionChildren(
   children: ResolvedChild[],
   containerLeft: number,
-  containerTop: number
+  containerTop: number,
+  containerW: number,
+  containerH: number
 ): void {
   for (const { obj, cl } of children) {
-    obj.set({
-      left: containerLeft + cl.margins.left,
-      top: containerTop + cl.margins.top,
-    });
+    const anchorX = cl.anchorX ?? "left";
+    const anchorY = cl.anchorY ?? "top";
+    const { w: childW, h: childH } = scaledSize(obj);
+
+    const left = anchorX === "left"
+      ? containerLeft + cl.margins.left
+      : containerLeft + containerW - cl.margins.right - childW;
+
+    const top = anchorY === "top"
+      ? containerTop + cl.margins.top
+      : containerTop + containerH - cl.margins.bottom - childH;
+
+    obj.set({ left, top });
   }
 }
 

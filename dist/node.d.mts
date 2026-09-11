@@ -24,6 +24,21 @@ type GraphemeData = {
 };
 declare class CustomTextbox extends Textbox {
     /**
+     * Auto-width mode : le textbox s'étend horizontalement au contenu.
+     * Désactivé automatiquement quand l'utilisateur resize manuellement.
+     */
+    _autoWidth: boolean;
+    constructor(text: string, options?: Record<string, unknown>);
+    /** Dernière width calculée par le mode auto-width. */
+    private _autoWidthValue;
+    /**
+     * Override initDimensions : en mode auto-width, on calcule les dimensions
+     * avec une width infinie puis on ajuste width au résultat.
+     * Si la width entrante diffère de notre dernière valeur auto, c'est un
+     * resize externe → on désactive auto-width.
+     */
+    initDimensions(): void;
+    /**
      * overflow-wrap: break-word — pré-découpe les mots trop longs
      * en chunks et les marque pour que _wrapLine ne mette pas
      * d'espace entre eux.
@@ -89,9 +104,17 @@ interface ContainerLayout {
         x: SizeMode;
         y: SizeMode;
     };
+    /** Taille minimum définie par resize manuel. Le container ne descendra
+     *  jamais en dessous, même si le contenu est plus petit. */
+    minSize?: {
+        w: number;
+        h: number;
+    };
     /** Overflow behavior when content exceeds fixed size */
     overflow?: "clip" | "shrink";
 }
+type AnchorX = "left" | "right";
+type AnchorY = "top" | "bottom";
 /** Layout block carried by a **child** (element inside a container). */
 interface ChildLayout {
     parentId: string;
@@ -101,9 +124,28 @@ interface ChildLayout {
         top: number;
         bottom: number;
     };
+    /** Point d'ancrage horizontal (défaut: "left") */
+    anchorX?: AnchorX;
+    /** Point d'ancrage vertical (défaut: "top") */
+    anchorY?: AnchorY;
 }
 /** Union — the `layout` property on any participating Fabric object. */
 type LayoutData = ContainerLayout | ChildLayout;
+
+declare module "fabric" {
+    interface Canvas {
+        /**
+         * Shift the active drag's grab offset by (dx, dy).
+         *
+         * During a drag, Fabric places the object at `cursor + offset`.
+         * Adjusting the offset "teleports" the object without breaking
+         * the drag delta calculation.
+         *
+         * No-op if there is no active drag transform.
+         */
+        adjustGrabOffset(dx: number, dy: number): void;
+    }
+}
 
 interface FontConfig {
     family: string;

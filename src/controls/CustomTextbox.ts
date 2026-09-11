@@ -21,6 +21,55 @@ type GraphemeData = {
 
 export class CustomTextbox extends Textbox {
   /**
+   * Auto-width mode : le textbox s'étend horizontalement au contenu.
+   * Désactivé automatiquement quand l'utilisateur resize manuellement.
+   */
+  _autoWidth = true;
+
+  constructor(text: string, options?: Record<string, unknown>) {
+    const hasExplicitWidth = options?.width != null;
+    super(text, options);
+    // _autoWidth = true est assigné ici par TS (après super).
+    // Le super() a déjà appelé initDimensions avec _autoWidth = undefined,
+    // donc on relance pour appliquer le mode auto-width.
+    if (hasExplicitWidth) {
+      this._autoWidth = false;
+    } else {
+      this.initDimensions();
+    }
+    // Resize manuel (handles latéraux changent width, scaling change scaleX)
+    this.on("resizing", () => { this._autoWidth = false; });
+    this.on("scaling", () => { this._autoWidth = false; });
+  }
+
+  /** Dernière width calculée par le mode auto-width. */
+  private _autoWidthValue = 0;
+
+  /**
+   * Override initDimensions : en mode auto-width, on calcule les dimensions
+   * avec une width infinie puis on ajuste width au résultat.
+   * Si la width entrante diffère de notre dernière valeur auto, c'est un
+   * resize externe → on désactive auto-width.
+   */
+  initDimensions(): void {
+    if (this._autoWidth) {
+      // Détecter un resize externe (handle latéral, API, etc.)
+      if (this._autoWidthValue > 0 && Math.abs(this.width - this._autoWidthValue) > 2) {
+        this._autoWidth = false;
+        super.initDimensions();
+        return;
+      }
+      // Mesurer sur une seule ligne
+      this.width = 10000;
+      super.initDimensions();
+      const natural = Math.ceil(this.calcTextWidth());
+      this.width = natural;
+      this._autoWidthValue = natural;
+    } else {
+      super.initDimensions();
+    }
+  }
+  /**
    * overflow-wrap: break-word — pré-découpe les mots trop longs
    * en chunks et les marque pour que _wrapLine ne mette pas
    * d'espace entre eux.

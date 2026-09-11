@@ -19,14 +19,24 @@ export type SizeMode = "hug" | "fixed";
 export interface ContainerLayout {
   role: "container";
   sizeMode: { x: SizeMode; y: SizeMode };
+  /** Taille minimum définie par resize manuel. Le container ne descendra
+   *  jamais en dessous, même si le contenu est plus petit. */
+  minSize?: { w: number; h: number };
   /** Overflow behavior when content exceeds fixed size */
   overflow?: "clip" | "shrink";
 }
+
+export type AnchorX = "left" | "right";
+export type AnchorY = "top" | "bottom";
 
 /** Layout block carried by a **child** (element inside a container). */
 export interface ChildLayout {
   parentId: string;
   margins: { left: number; right: number; top: number; bottom: number };
+  /** Point d'ancrage horizontal (défaut: "left") */
+  anchorX?: AnchorX;
+  /** Point d'ancrage vertical (défaut: "top") */
+  anchorY?: AnchorY;
 }
 
 /** Union — the `layout` property on any participating Fabric object. */
@@ -38,4 +48,17 @@ export function isContainerLayout(l: LayoutData): l is ContainerLayout {
 
 export function isChildLayout(l: LayoutData): l is ChildLayout {
   return "parentId" in l;
+}
+
+// ── Layout constants ────────────────────────────────────────────────
+
+/** Minimum padding between a child and its container edges. */
+export const MIN_PAD = 8;
+
+// ── Attach types ────────────────────────────────────────────────────
+
+/** Snapshot of shape + text properties before attach, used for rollback. */
+export interface AttachSnapshot {
+  shape: Record<string, any>;
+  text: Record<string, any>;
 }

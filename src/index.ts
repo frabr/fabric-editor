@@ -3,6 +3,9 @@
 // Ce module fournit un éditeur d'images complet avec gestion des calques,
 // formes, clips, et masques.
 
+// Fabric.js prototype extensions (side-effect import)
+import "./fabric-extensions";
+
 // Classe principale
 export { FabricEditor } from "./FabricEditor";
 
@@ -13,6 +16,8 @@ export { MaskManager } from "./MaskManager";
 export { PersistenceManager } from "./PersistenceManager";
 export { HistoryManager } from "./HistoryManager";
 export { SnappingManager } from "./SnappingManager";
+export { LayoutManager } from "./LayoutManager";
+export { CanvasGuides } from "./CanvasGuides";
 
 // Handlers
 export { ImageDropHandler } from "./ImageDropHandler";
@@ -62,10 +67,12 @@ export {
 // Controls
 export { addCropControls, removeCropControls, CustomTextbox } from "./controls";
 
-// Layout engine
+// Layout
 export { runLayout } from "./layout";
-export type { LayoutData, ContainerLayout, ChildLayout, SizeMode } from "./layout";
-export { isContainerLayout, isChildLayout } from "./layout";
+export type { LayoutData, ContainerLayout, ChildLayout, SizeMode, AttachSnapshot } from "./layout";
+export { isContainerLayout, isChildLayout, MIN_PAD } from "./layout";
+export { scaledSize, topLeft, pointInObject, clampTopLeft, hasExceededOffset } from "./layout";
+export { AttachSession, wrapContainerAroundChild } from "./layout";
 
 // HTML Renderer
 export { fabricToHtml, layerToHtmlStandalone } from "./html";
@@ -91,3 +98,4 @@ export type {
 
 export type { HistoryState, HistoryCallbacks } from "./HistoryManager";
 export type { SnappingConfig, ResizeSnapResult } from "./SnappingManager";
+export type { LayoutManagerCallbacks } from "./LayoutManager";
