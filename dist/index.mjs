@@ -1533,7 +1533,9 @@ var LayerManager = class {
     let obj = null;
     switch (layer.type) {
       case "IText":
-      case "i-text": {
+      case "i-text":
+      case "Textbox":
+      case "textbox": {
         const text = await CustomTextbox.fromObject(layer);
         text.charSpacing = text.charSpacing || 1;
         obj = text;
@@ -1651,6 +1653,17 @@ var LayerManager = class {
 
 // src/SelectionManager.ts
 import { ActiveSelection } from "#fabric";
+
+// src/layout/types.ts
+function isContainerLayout(l) {
+  return "role" in l && l.role === "container";
+}
+function isChildLayout(l) {
+  return "parentId" in l;
+}
+var MIN_PAD = 8;
+
+// src/SelectionManager.ts
 var OBJECT_CONTROLS = {
   // Formes créées par l'éditeur (layerType: "shape")
   shape: ["outline", "clip", "color"],
@@ -1671,7 +1684,16 @@ var SelectionManager = class {
     this.callbacks = {};
     this.isTransforming = false;
     this._silenced = false;
+    /**
+     * When set, we are "inside" a layout group: hover and click target
+     * children directly instead of redirecting to the container.
+     */
+    this._activeGroupId = null;
     this.setupListeners();
+  }
+  /** The layerId of the container we're currently editing inside, or null. */
+  get activeGroupId() {
+    return this._activeGroupId;
   }
   /**
    * L'objet actuellement sélectionné (ou tableau si sélection multiple)
@@ -1731,6 +1753,23 @@ var SelectionManager = class {
    */
   set onModified(callback) {
     this.callbacks.onModified = callback;
+  }
+  /**
+   * Given a Fabric target (the object under the cursor), return the object
+   * that should actually be highlighted / selected.
+   *
+   * - If the target is a layout child and we are NOT inside its group,
+   *   redirect to the parent container.
+   * - Otherwise return the target as-is.
+   */
+  resolveTarget(obj) {
+    const layout = obj.get("layout");
+    if (!layout || !isChildLayout(layout)) return obj;
+    if (this._activeGroupId === layout.parentId) return obj;
+    const parent = this.canvas.getObjects().find(
+      (o) => o.get("layerId") === layout.parentId
+    );
+    return parent ?? obj;
   }
   /**
    * Retourne les contrôles disponibles pour l'objet sélectionné
@@ -1794,6 +1833,7 @@ var SelectionManager = class {
    * Configure les écouteurs d'événements du canvas
    */
   setupListeners() {
+    this.canvas.on("mouse:down", this.handleMouseDown.bind(this));
     this.canvas.on("selection:created", this.handleSelection.bind(this));
     this.canvas.on("selection:updated", this.handleSelection.bind(this));
     this.canvas.on("selection:cleared", this.handleDeselection.bind(this));
@@ -1801,6 +1841,41 @@ var SelectionManager = class {
     this.canvas.on("object:scaling", this.handleTransformStart.bind(this));
     this.canvas.on("object:rotating", this.handleTransformStart.bind(this));
     this.canvas.on("object:modified", this.handleModified.bind(this));
+  }
+  /**
+   * Intercept mouse:down to manage group-enter / group-exit logic.
+   *
+   * - Click on an already-selected container → enter the group
+   * - Click on an object outside the active group → exit the group
+   * - Click on empty canvas → exit the group
+   */
+  handleMouseDown(e) {
+    const target = e.target;
+    if (!target) {
+      this._activeGroupId = null;
+      return;
+    }
+    const targetLayout = target.get("layout");
+    if (this._activeGroupId) {
+      const isChildOfGroup = targetLayout && isChildLayout(targetLayout) && targetLayout.parentId === this._activeGroupId;
+      const isTheContainer = target.get("layerId") === this._activeGroupId;
+      if (!isChildOfGroup && !isTheContainer) {
+        this._activeGroupId = null;
+      }
+      return;
+    }
+    const currentObj = this.current;
+    if (!currentObj) return;
+    const currentLayout = currentObj.get("layout");
+    if (!currentLayout || !("role" in currentLayout)) return;
+    const currentId = currentObj.get("layerId");
+    if (target === currentObj) {
+      this._activeGroupId = currentId;
+      return;
+    }
+    if (targetLayout && isChildLayout(targetLayout) && targetLayout.parentId === currentId) {
+      this._activeGroupId = currentId;
+    }
   }
   /**
    * Gère la création/mise à jour de sélection
@@ -1845,6 +1920,16 @@ var SelectionManager = class {
       }
       return;
     }
+    const resolved = this.resolveTarget(activeObject);
+    if (resolved !== activeObject) {
+      this.canvas.discardActiveObject();
+      this.canvas.setActiveObject(resolved);
+      this._current = resolved;
+      if (this.callbacks.onSelect) {
+        this.callbacks.onSelect(resolved);
+      }
+      return;
+    }
     this._current = activeObject;
     if (this.callbacks.onSelect) {
       this.callbacks.onSelect(activeObject);
@@ -1855,6 +1940,7 @@ var SelectionManager = class {
    */
   handleDeselection() {
     this._current = null;
+    this._activeGroupId = null;
     if (this._silenced) return;
     if (this.callbacks.onDeselect) {
       this.callbacks.onDeselect();
@@ -2255,15 +2341,6 @@ var HistoryManager = class {
 
 // src/ui/guides.ts
 import { Line, Rect as Rect4, Pattern } from "#fabric";
-
-// src/layout/types.ts
-function isContainerLayout(l) {
-  return "role" in l && l.role === "container";
-}
-function isChildLayout(l) {
-  return "parentId" in l;
-}
-var MIN_PAD = 8;
 
 // src/layout/geometry.ts
 function scaledSize(obj) {
@@ -3002,12 +3079,13 @@ function shrinkTextToFit(obj, availW, availH) {
 
 // src/layout/attach-session.ts
 var EXIT_MARGIN = 5;
-var AttachSession = class {
+var AttachSession = class _AttachSession {
   constructor(canvas, shape, text, cursor) {
     this.canvas = canvas;
     this.shape = shape;
     this.text = text;
     this.anchorCursor = cursor;
+    this._isReattach = false;
     this.snapshot = takeSnapshot(shape, text);
     normalizeShapeOrigin(shape);
     const { containerLayout, childLayout } = computeInitialLayout(shape, text);
@@ -3024,6 +3102,23 @@ var AttachSession = class {
       text.setCoords();
     }
     wrapContainerAroundChild(text, shape);
+  }
+  /**
+   * Create a session for repositioning a child that is already attached.
+   * Skips layout creation, origin normalization, and clamp/grab offset.
+   * On exit (rollback), the child is detached instead of restored.
+   */
+  static reattach(canvas, shape, text, cursor) {
+    const session = Object.create(_AttachSession.prototype);
+    session.canvas = canvas;
+    session.shape = shape;
+    session.text = text;
+    session.anchorCursor = cursor;
+    session._isReattach = true;
+    session.snapshot = takeSnapshot(shape, text);
+    session.clampDx = 0;
+    session.clampDy = 0;
+    return session;
   }
   /** During drag: clamp text, resize container, check for exit. */
   handleMoving(cursor) {
@@ -3049,16 +3144,33 @@ var AttachSession = class {
     this.text.set({ left: tTL.x, top: tTL.y, originX: "left", originY: "top" });
     this.text.setCoords();
     runLayout(this.canvas.getObjects());
+    this.canvas.renderAll();
+    if (this._isReattach) {
+      return () => {
+      };
+    }
     const relayout = () => {
       runLayout(this.canvas.getObjects());
       this.canvas.renderAll();
     };
     this.text.on("changed", relayout);
-    this.canvas.renderAll();
     return () => this.text.off("changed", relayout);
   }
   /** Undo anchor: restore snapshot, reverse grab offset. */
   rollback() {
+    if (this._isReattach) {
+      this.text.set("layout", void 0);
+      this.shape.set({
+        width: this.snapshot.shape.width,
+        height: this.snapshot.shape.height
+      });
+      this.shape.set("layout", this.snapshot.shape.layout ?? void 0);
+      this.text.off("changed");
+      this.shape.setCoords();
+      this.text.setCoords();
+      this.canvas.renderAll();
+      return;
+    }
     this.shape.set({
       left: this.snapshot.shape.left,
       top: this.snapshot.shape.top,
@@ -3207,9 +3319,9 @@ var LayoutManager2 = class {
     this.guides = new CanvasGuides(canvas, guideColor);
     this.setupEventListeners();
   }
-  /** Set or update callbacks after construction. */
+  /** Set or update callbacks after construction (merges with existing). */
   setCallbacks(callbacks) {
-    this.callbacks = callbacks;
+    this.callbacks = { ...this.callbacks, ...callbacks };
   }
   // ── Public API ────────────────────────────────────────────────────
   /** Run layout on all canvas objects. */
@@ -3269,9 +3381,30 @@ var LayoutManager2 = class {
   }
   // ── Canvas event handlers ─────────────────────────────────────────
   onMoving(e) {
-    const textObj = e.target;
-    if (!isTextObject(textObj)) return;
-    const textLayout = textObj.get?.("layout");
+    const obj = e.target;
+    const layout = obj.get?.("layout");
+    if (layout && isContainerLayout(layout)) {
+      this.relayout(true);
+      return;
+    }
+    if (layout && isChildLayout(layout) && this.dtl.phase !== "anchored") {
+      const activeGroup = this.callbacks.getActiveGroupId?.();
+      if (activeGroup === layout.parentId) {
+        const container = this.canvas.getObjects().find(
+          (o) => o.get("layerId") === layout.parentId
+        );
+        if (container) {
+          const cursor2 = this.canvas.getScenePoint(e.e);
+          const session = AttachSession.reattach(this.canvas, container, obj, cursor2);
+          this.guides.showLayoutGuides(session.container, session.child);
+          this.canvas.renderAll();
+          this.dtl = { phase: "anchored", session, cooldownUntil: 0 };
+        }
+        return;
+      }
+    }
+    if (!isTextObject(obj)) return;
+    const textLayout = obj.get?.("layout");
     if (textLayout && "parentId" in textLayout && this.dtl.phase !== "anchored") return;
     const cursor = this.canvas.getScenePoint(e.e);
     switch (this.dtl.phase) {
@@ -3279,16 +3412,22 @@ var LayoutManager2 = class {
         this.handleAnchoredMoving(cursor);
         break;
       case "pending":
-        this.handlePendingMoving(textObj, cursor);
+        this.handlePendingMoving(obj, cursor);
         break;
       case "idle":
-        this.handleIdleMoving(textObj, cursor);
+        this.handleIdleMoving(obj, cursor);
         break;
     }
   }
   onModified(e) {
-    const textObj = e.target;
-    if (!isTextObject(textObj)) return;
+    const obj = e.target;
+    const layout = obj.get?.("layout");
+    if (layout && isContainerLayout(layout)) {
+      this.relayout();
+      this.callbacks.onLayoutChanged?.();
+      return;
+    }
+    if (!isTextObject(obj)) return;
     if (this.dtl.phase === "anchored") {
       this.doCommit();
       return;
@@ -3297,18 +3436,12 @@ var LayoutManager2 = class {
       const cursor = this.canvas.getScenePoint(e.e);
       if (pointInObject(cursor, this.dtl.target)) {
         clearTimeout(this.dtl.timer);
-        this.dtl = { ...this.dtl, source: textObj, cursor };
+        this.dtl = { ...this.dtl, source: obj, cursor };
         this.guides.clear();
         this.doAnchor();
         this.doCommit();
         return;
       }
-    }
-    const layout = textObj.get?.("layout");
-    if (layout && isContainerLayout(layout)) {
-      this.relayout();
-      this.callbacks.onLayoutChanged?.();
-      return;
     }
     this.resetToIdle();
   }
@@ -3398,7 +3531,6 @@ var LayoutManager2 = class {
     for (const obj of objects) {
       if (obj.excludeFromExport) continue;
       const layout = obj.get?.("layout");
-      if (layout && "role" in layout) continue;
       if (layout && "parentId" in layout) continue;
       if (obj.get?.("layerId") === "originalImage") continue;
       const layerType = obj.layerType;
@@ -3516,7 +3648,7 @@ function applyClip(obj, shapeType) {
 
 // src/ui/controls.ts
 import { FabricObject as FabricObject7, Control as Control2, controlsUtils } from "#fabric";
-function applyControlStyle(canvas, guideColor) {
+function applyControlStyle(canvas, guideColor, resolveTarget) {
   const gc = guideColor;
   FabricObject7.ownDefaults.borderColor = gc;
   FabricObject7.ownDefaults.borderScaleFactor = 2;
@@ -3529,7 +3661,7 @@ function applyControlStyle(canvas, guideColor) {
   installControlRenderer(gc, hoverProgress);
   installControlHitAreas(canvas);
   installHoverAnimation(canvas, hoverProgress);
-  installHoverBorder(canvas);
+  installHoverBorder(canvas, resolveTarget);
 }
 var EDGE_CONTROLS = /* @__PURE__ */ new Set(["mt", "mb", "ml", "mr"]);
 var CORNER_CONTROLS = /* @__PURE__ */ new Set(["tl", "tr", "bl", "br"]);
@@ -3680,7 +3812,7 @@ function installHoverAnimation(canvas, hoverProgress) {
     }
   });
 }
-function installHoverBorder(canvas) {
+function installHoverBorder(canvas, resolveTarget) {
   let hoveredObj = null;
   const clearTopCtx = () => {
     const fc = canvas.originalFabricCanvas;
@@ -3688,13 +3820,18 @@ function installHoverBorder(canvas) {
     if (ctx) ctx.clearRect(0, 0, fc.width, fc.height);
   };
   canvas.on("mouse:over", (e) => {
-    const target = e.target;
-    if (!target || target === canvas.getActiveObject()) return;
+    const raw = e.target;
+    if (!raw) return;
+    const target = resolveTarget ? resolveTarget(raw) : raw;
+    if (target === canvas.getActiveObject()) return;
     hoveredObj = target;
     canvas.requestRenderAll();
   });
   canvas.on("mouse:out", (e) => {
-    if (e.target === hoveredObj) {
+    const raw = e.target;
+    if (!raw) return;
+    const resolved = resolveTarget ? resolveTarget(raw) : raw;
+    if (resolved === hoveredObj || raw === hoveredObj) {
       hoveredObj = null;
       clearTopCtx();
     }
@@ -3727,14 +3864,18 @@ var _FabricEditor = class _FabricEditor {
       selectionBorderColor: hexAlpha(gc, 0.6),
       selectionLineWidth: 1
     });
-    applyControlStyle(this.canvas, gc);
     this.layers = new LayerManager(this.canvas);
     this.selection = new SelectionManager(this.canvas);
+    applyControlStyle(this.canvas, gc, (obj) => this.selection.resolveTarget(obj));
     this.masks = new MaskManager(this.canvas);
     this.persistence = new PersistenceManager(this.canvas, this.layers);
     this.history = new HistoryManager(this.canvas, this.layers);
     this.snapping = new SnappingManager(this.canvas, {}, config.guideColor);
-    this.layout = new LayoutManager2(this.canvas, {}, config.guideColor);
+    this.layout = new LayoutManager2(
+      this.canvas,
+      { getActiveGroupId: () => this.selection.activeGroupId },
+      config.guideColor
+    );
     this.canvas.originalFabricCanvas.snappingManager = this.snapping;
     this.extendFabricObject();
     if (config.transparent) {

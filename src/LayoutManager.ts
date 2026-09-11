@@ -7,10 +7,10 @@ import {
   isChildLayout,
   type ContainerLayout,
   type ChildLayout,
-  MIN_PAD,
+  type LayoutData,
 } from "./layout/types";
-import { topLeft, pointInObject, isTextObject, clampTopLeft, hasExceededOffset } from "./layout/geometry";
-import { AttachSession, wrapContainerAroundChild } from "./layout/attach-session";
+import { pointInObject, isTextObject } from "./layout/geometry";
+import { AttachSession } from "./layout/attach-session";
 
 // ── Types ───────────────────────────────────────────────────────────
 
@@ -19,6 +19,8 @@ export interface LayoutManagerCallbacks {
   onLayoutCreated?: () => void;
   /** Called after any layout change (relayout, margin/anchor/mode change). */
   onLayoutChanged?: () => void;
+  /** Returns the active group layerId if we're in group-edit mode, null otherwise. */
+  getActiveGroupId?: () => string | null;
 }
 
 // ── Discriminated union for drag-to-layout state ────────────────────
@@ -73,9 +75,9 @@ export class LayoutManager {
     this.setupEventListeners();
   }
 
-  /** Set or update callbacks after construction. */
+  /** Set or update callbacks after construction (merges with existing). */
   setCallbacks(callbacks: LayoutManagerCallbacks): void {
-    this.callbacks = callbacks;
+    this.callbacks = { ...this.callbacks, ...callbacks };
   }
 
   // ── Public API ────────────────────────────────────────────────────
@@ -156,10 +158,38 @@ export class LayoutManager {
   // ── Canvas event handlers ─────────────────────────────────────────
 
   private onMoving(e: any): void {
-    const textObj = e.target;
-    if (!isTextObject(textObj)) return;
+    const obj = e.target;
 
-    const textLayout = textObj.get?.("layout");
+    // Container being dragged → reposition children (preview mode)
+    const layout = obj.get?.("layout") as LayoutData | undefined;
+    if (layout && isContainerLayout(layout)) {
+      this.relayout(true);
+      return;
+    }
+
+    // Child being dragged inside active group → start reattach session
+    if (layout && isChildLayout(layout) && this.dtl.phase !== "anchored") {
+      const activeGroup = this.callbacks.getActiveGroupId?.();
+      if (activeGroup === layout.parentId) {
+        const container = this.canvas.getObjects().find(
+          (o) => o.get("layerId") === layout.parentId,
+        );
+        if (container) {
+          const cursor = this.canvas.getScenePoint(e.e);
+          const session = AttachSession.reattach(this.canvas, container, obj, cursor);
+          this.guides.showLayoutGuides(session.container, session.child);
+          this.canvas.renderAll();
+          this.dtl = { phase: "anchored", session, cooldownUntil: 0 };
+        }
+        return;
+      }
+    }
+
+    // Only handle text objects for drag-to-layout
+    if (!isTextObject(obj)) return;
+
+    // Already-attached text that isn't in group-edit mode → ignore
+    const textLayout = obj.get?.("layout");
     if (textLayout && "parentId" in textLayout && this.dtl.phase !== "anchored") return;
 
     const cursor = this.canvas.getScenePoint(e.e);
@@ -169,17 +199,27 @@ export class LayoutManager {
         this.handleAnchoredMoving(cursor);
         break;
       case "pending":
-        this.handlePendingMoving(textObj, cursor);
+        this.handlePendingMoving(obj, cursor);
         break;
       case "idle":
-        this.handleIdleMoving(textObj, cursor);
+        this.handleIdleMoving(obj, cursor);
         break;
     }
   }
 
   private onModified(e: any): void {
-    const textObj = e.target;
-    if (!isTextObject(textObj)) return;
+    const obj = e.target;
+
+    // Container modified → clean relayout
+    const layout = obj.get?.("layout") as LayoutData | undefined;
+    if (layout && isContainerLayout(layout)) {
+      this.relayout();
+      this.callbacks.onLayoutChanged?.();
+      return;
+    }
+
+    // Only handle text objects for drag-to-layout
+    if (!isTextObject(obj)) return;
 
     if (this.dtl.phase === "anchored") {
       this.doCommit();
@@ -190,19 +230,12 @@ export class LayoutManager {
       const cursor = this.canvas.getScenePoint(e.e);
       if (pointInObject(cursor, this.dtl.target)) {
         clearTimeout(this.dtl.timer);
-        this.dtl = { ...this.dtl, source: textObj, cursor };
+        this.dtl = { ...this.dtl, source: obj, cursor };
         this.guides.clear();
         this.doAnchor();
         this.doCommit();
         return;
       }
-    }
-
-    const layout = textObj.get?.("layout");
-    if (layout && isContainerLayout(layout)) {
-      this.relayout();
-      this.callbacks.onLayoutChanged?.();
-      return;
     }
 
     this.resetToIdle();
@@ -323,7 +356,6 @@ export class LayoutManager {
     for (const obj of objects) {
       if ((obj as any).excludeFromExport) continue;
       const layout = obj.get?.("layout");
-      if (layout && "role" in layout) continue;
       if (layout && "parentId" in layout) continue;
       if ((obj.get?.("layerId") as string) === "originalImage") continue;
       const layerType = (obj as any).layerType;

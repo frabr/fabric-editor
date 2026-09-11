@@ -38,11 +38,15 @@ export class AttachSession {
   private clampDy: number;
   private anchorCursor: { x: number; y: number };
 
+  /** If true, rollback detaches the child instead of restoring the snapshot. */
+  private _isReattach: boolean;
+
   constructor(canvas: DesignCanvas, shape: FabricObject, text: FabricObject, cursor: { x: number; y: number }) {
     this.canvas = canvas;
     this.shape = shape;
     this.text = text;
     this.anchorCursor = cursor;
+    this._isReattach = false;
 
     this.snapshot = takeSnapshot(shape, text);
     normalizeShapeOrigin(shape);
@@ -65,6 +69,24 @@ export class AttachSession {
     }
 
     wrapContainerAroundChild(text, shape);
+  }
+
+  /**
+   * Create a session for repositioning a child that is already attached.
+   * Skips layout creation, origin normalization, and clamp/grab offset.
+   * On exit (rollback), the child is detached instead of restored.
+   */
+  static reattach(canvas: DesignCanvas, shape: FabricObject, text: FabricObject, cursor: { x: number; y: number }): AttachSession {
+    const session = Object.create(AttachSession.prototype) as AttachSession;
+    session.canvas = canvas;
+    session.shape = shape;
+    session.text = text;
+    session.anchorCursor = cursor;
+    session._isReattach = true;
+    session.snapshot = takeSnapshot(shape, text);
+    session.clampDx = 0;
+    session.clampDy = 0;
+    return session;
   }
 
   /** During drag: clamp text, resize container, check for exit. */
@@ -95,6 +117,12 @@ export class AttachSession {
     this.text.setCoords();
 
     runLayout(this.canvas.getObjects());
+    this.canvas.renderAll();
+
+    // Reattach: listener already exists from the first attach
+    if (this._isReattach) {
+      return () => {};
+    }
 
     const relayout = () => {
       runLayout(this.canvas.getObjects());
@@ -102,13 +130,28 @@ export class AttachSession {
     };
     (this.text as any).on("changed", relayout);
 
-    this.canvas.renderAll();
-
     return () => (this.text as any).off("changed", relayout);
   }
 
   /** Undo anchor: restore snapshot, reverse grab offset. */
   rollback(): void {
+    if (this._isReattach) {
+      // Detach: remove layout from child, restore container to pre-drag state
+      this.text.set("layout", undefined);
+
+      // Restore container to snapshot (before the drag resized it)
+      this.shape.set({
+        width: this.snapshot.shape.width, height: this.snapshot.shape.height,
+      });
+      this.shape.set("layout", this.snapshot.shape.layout ?? undefined);
+
+      (this.text as any).off("changed");
+      this.shape.setCoords();
+      this.text.setCoords();
+      this.canvas.renderAll();
+      return;
+    }
+
     this.shape.set({
       left: this.snapshot.shape.left, top: this.snapshot.shape.top,
       originX: this.snapshot.shape.originX, originY: this.snapshot.shape.originY,

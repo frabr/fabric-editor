@@ -408,7 +408,9 @@ export class LayerManager {
 
     switch (layer.type) {
       case "IText":
-      case "i-text": {
+      case "i-text":
+      case "Textbox":
+      case "textbox": {
         const text = await CustomTextbox.fromObject(layer);
         text.charSpacing = text.charSpacing || 1;
         obj = text;

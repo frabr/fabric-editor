@@ -57,16 +57,20 @@ export class FabricEditor {
       selectionLineWidth: 1,
     });
 
-    applyControlStyle(this.canvas, gc);
-
     // Initialiser les managers
     this.layers = new LayerManager(this.canvas);
     this.selection = new SelectionManager(this.canvas);
+
+    applyControlStyle(this.canvas, gc, (obj) => this.selection.resolveTarget(obj));
     this.masks = new MaskManager(this.canvas);
     this.persistence = new PersistenceManager(this.canvas, this.layers);
     this.history = new HistoryManager(this.canvas, this.layers);
     this.snapping = new SnappingManager(this.canvas, {}, config.guideColor);
-    this.layout = new LayoutManager(this.canvas, {}, config.guideColor);
+    this.layout = new LayoutManager(
+      this.canvas,
+      { getActiveGroupId: () => this.selection.activeGroupId },
+      config.guideColor,
+    );
 
     // Stocker une référence au SnappingManager sur le canvas pour l'accès depuis ImageFrame
     (this.canvas.originalFabricCanvas as unknown as { snappingManager: SnappingManager }).snappingManager = this.snapping;

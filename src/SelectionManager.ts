@@ -1,6 +1,7 @@
 import { ActiveSelection, type FabricObject } from "#fabric";
 import type { DesignCanvas } from "./DesignCanvas";
 import { isPositionLocked } from "./locking";
+import { isChildLayout, type LayoutData } from "./layout/types";
 import type { SelectionCallbacks, ControlOption } from "./types";
 
 /**
@@ -28,8 +29,19 @@ export class SelectionManager {
   private isTransforming = false;
   private _silenced = false;
 
+  /**
+   * When set, we are "inside" a layout group: hover and click target
+   * children directly instead of redirecting to the container.
+   */
+  private _activeGroupId: string | null = null;
+
   constructor(private canvas: DesignCanvas) {
     this.setupListeners();
+  }
+
+  /** The layerId of the container we're currently editing inside, or null. */
+  get activeGroupId(): string | null {
+    return this._activeGroupId;
   }
 
   /**
@@ -98,6 +110,28 @@ export class SelectionManager {
    */
   set onModified(callback: ((obj: FabricObject | null) => void) | undefined) {
     this.callbacks.onModified = callback;
+  }
+
+  /**
+   * Given a Fabric target (the object under the cursor), return the object
+   * that should actually be highlighted / selected.
+   *
+   * - If the target is a layout child and we are NOT inside its group,
+   *   redirect to the parent container.
+   * - Otherwise return the target as-is.
+   */
+  resolveTarget(obj: FabricObject): FabricObject {
+    const layout = obj.get("layout") as LayoutData | undefined;
+    if (!layout || !isChildLayout(layout)) return obj;
+
+    // We're inside this child's group → target the child directly
+    if (this._activeGroupId === layout.parentId) return obj;
+
+    // Not inside the group → redirect to the parent container
+    const parent = this.canvas.getObjects().find(
+      (o) => o.get("layerId") === layout.parentId,
+    );
+    return parent ?? obj;
   }
 
   /**
@@ -171,6 +205,7 @@ export class SelectionManager {
    * Configure les écouteurs d'événements du canvas
    */
   private setupListeners(): void {
+    this.canvas.on("mouse:down", this.handleMouseDown.bind(this));
     this.canvas.on("selection:created", this.handleSelection.bind(this));
     this.canvas.on("selection:updated", this.handleSelection.bind(this));
     this.canvas.on("selection:cleared", this.handleDeselection.bind(this));
@@ -178,6 +213,57 @@ export class SelectionManager {
     this.canvas.on("object:scaling", this.handleTransformStart.bind(this));
     this.canvas.on("object:rotating", this.handleTransformStart.bind(this));
     this.canvas.on("object:modified", this.handleModified.bind(this));
+  }
+
+  /**
+   * Intercept mouse:down to manage group-enter / group-exit logic.
+   *
+   * - Click on an already-selected container → enter the group
+   * - Click on an object outside the active group → exit the group
+   * - Click on empty canvas → exit the group
+   */
+  private handleMouseDown(e: any): void {
+    const target = e.target as FabricObject | undefined;
+
+    // Click on empty canvas → exit group
+    if (!target) {
+      this._activeGroupId = null;
+      return;
+    }
+
+    const targetLayout = target.get("layout") as LayoutData | undefined;
+
+    // If we're inside a group, check if the click is still within it
+    if (this._activeGroupId) {
+      const isChildOfGroup = targetLayout && isChildLayout(targetLayout)
+        && targetLayout.parentId === this._activeGroupId;
+      const isTheContainer = target.get("layerId") === this._activeGroupId;
+
+      if (!isChildOfGroup && !isTheContainer) {
+        // Clicked outside the active group → exit
+        this._activeGroupId = null;
+      }
+      return;
+    }
+
+    // Not inside a group: check if we should enter one.
+    const currentObj = this.current;
+    if (!currentObj) return;
+
+    const currentLayout = currentObj.get("layout") as LayoutData | undefined;
+    if (!currentLayout || !("role" in currentLayout)) return;
+
+    const currentId = currentObj.get("layerId") as string;
+
+    // Click on the container itself, or on one of its children → enter group
+    if (target === currentObj) {
+      this._activeGroupId = currentId;
+      return;
+    }
+
+    if (targetLayout && isChildLayout(targetLayout) && targetLayout.parentId === currentId) {
+      this._activeGroupId = currentId;
+    }
   }
 
   /**
@@ -237,7 +323,18 @@ export class SelectionManager {
       return;
     }
 
-    // Sélection simple
+    // Sélection simple — redirect child → container if not inside group
+    const resolved = this.resolveTarget(activeObject);
+    if (resolved !== activeObject) {
+      this.canvas.discardActiveObject();
+      this.canvas.setActiveObject(resolved);
+      this._current = resolved;
+      if (this.callbacks.onSelect) {
+        this.callbacks.onSelect(resolved);
+      }
+      return;
+    }
+
     this._current = activeObject;
     if (this.callbacks.onSelect) {
       this.callbacks.onSelect(activeObject);
@@ -249,6 +346,7 @@ export class SelectionManager {
    */
   private handleDeselection(): void {
     this._current = null;
+    this._activeGroupId = null;
     if (this._silenced) return;
     if (this.callbacks.onDeselect) {
       this.callbacks.onDeselect();

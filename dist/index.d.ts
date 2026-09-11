@@ -321,10 +321,21 @@ declare class AttachSession {
     private clampDx;
     private clampDy;
     private anchorCursor;
+    /** If true, rollback detaches the child instead of restoring the snapshot. */
+    private _isReattach;
     constructor(canvas: DesignCanvas, shape: FabricObject, text: FabricObject, cursor: {
         x: number;
         y: number;
     });
+    /**
+     * Create a session for repositioning a child that is already attached.
+     * Skips layout creation, origin normalization, and clamp/grab offset.
+     * On exit (rollback), the child is detached instead of restored.
+     */
+    static reattach(canvas: DesignCanvas, shape: FabricObject, text: FabricObject, cursor: {
+        x: number;
+        y: number;
+    }): AttachSession;
     /** During drag: clamp text, resize container, check for exit. */
     handleMoving(cursor: {
         x: number;
@@ -675,7 +686,14 @@ declare class SelectionManager {
     private callbacks;
     private isTransforming;
     private _silenced;
+    /**
+     * When set, we are "inside" a layout group: hover and click target
+     * children directly instead of redirecting to the container.
+     */
+    private _activeGroupId;
     constructor(canvas: DesignCanvas);
+    /** The layerId of the container we're currently editing inside, or null. */
+    get activeGroupId(): string | null;
     /**
      * L'objet actuellement sélectionné (ou tableau si sélection multiple)
      */
@@ -713,6 +731,15 @@ declare class SelectionManager {
      */
     set onModified(callback: ((obj: FabricObject | null) => void) | undefined);
     /**
+     * Given a Fabric target (the object under the cursor), return the object
+     * that should actually be highlighted / selected.
+     *
+     * - If the target is a layout child and we are NOT inside its group,
+     *   redirect to the parent container.
+     * - Otherwise return the target as-is.
+     */
+    resolveTarget(obj: FabricObject): FabricObject;
+    /**
      * Retourne les contrôles disponibles pour l'objet sélectionné
      */
     getAvailableControls(): ControlOption[];
@@ -747,6 +774,14 @@ declare class SelectionManager {
      * Configure les écouteurs d'événements du canvas
      */
     private setupListeners;
+    /**
+     * Intercept mouse:down to manage group-enter / group-exit logic.
+     *
+     * - Click on an already-selected container → enter the group
+     * - Click on an object outside the active group → exit the group
+     * - Click on empty canvas → exit the group
+     */
+    private handleMouseDown;
     /**
      * Gère la création/mise à jour de sélection
      * Les objets verrouillés sont exclus des sélections multiples
@@ -1071,6 +1106,8 @@ interface LayoutManagerCallbacks {
     onLayoutCreated?: () => void;
     /** Called after any layout change (relayout, margin/anchor/mode change). */
     onLayoutChanged?: () => void;
+    /** Returns the active group layerId if we're in group-edit mode, null otherwise. */
+    getActiveGroupId?: () => string | null;
 }
 /**
  * Manages layout relationships between canvas objects.
@@ -1088,7 +1125,7 @@ declare class LayoutManager {
     private guides;
     private dtl;
     constructor(canvas: DesignCanvas, callbacks?: LayoutManagerCallbacks, guideColor?: string);
-    /** Set or update callbacks after construction. */
+    /** Set or update callbacks after construction (merges with existing). */
     setCallbacks(callbacks: LayoutManagerCallbacks): void;
     /** Run layout on all canvas objects. */
     relayout(preview?: boolean): void;

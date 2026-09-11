@@ -11,7 +11,14 @@ import { parseHex, hexAlpha } from "./color";
 
 // ── Public entry point ─────────────────────────────────────────────
 
-export function applyControlStyle(canvas: DesignCanvas, guideColor: string): void {
+/** Optional callback to redirect hover targets (e.g. child → container). */
+export type ResolveTargetFn = (obj: FabricObject) => FabricObject;
+
+export function applyControlStyle(
+  canvas: DesignCanvas,
+  guideColor: string,
+  resolveTarget?: ResolveTargetFn,
+): void {
   const gc = guideColor;
 
   // Defaults
@@ -30,7 +37,7 @@ export function applyControlStyle(canvas: DesignCanvas, guideColor: string): voi
   // Wire up canvas events
   installControlHitAreas(canvas);
   installHoverAnimation(canvas, hoverProgress);
-  installHoverBorder(canvas);
+  installHoverBorder(canvas, resolveTarget);
 }
 
 // ── Custom control renderer ────────────────────────────────────────
@@ -219,7 +226,7 @@ function installHoverAnimation(
 
 // ── Hover border on non-selected objects ───────────────────────────
 
-function installHoverBorder(canvas: DesignCanvas): void {
+function installHoverBorder(canvas: DesignCanvas, resolveTarget?: ResolveTargetFn): void {
   let hoveredObj: FabricObject | null = null;
 
   const clearTopCtx = () => {
@@ -229,18 +236,24 @@ function installHoverBorder(canvas: DesignCanvas): void {
   };
 
   canvas.on("mouse:over", (e: any) => {
-    const target = e.target as FabricObject | undefined;
-    if (!target || target === canvas.getActiveObject()) return;
+    const raw = e.target as FabricObject | undefined;
+    if (!raw) return;
+    const target = resolveTarget ? resolveTarget(raw) : raw;
+    if (target === canvas.getActiveObject()) return;
     hoveredObj = target;
     canvas.requestRenderAll();
   });
 
   canvas.on("mouse:out", (e: any) => {
-    if (e.target === hoveredObj) {
+    const raw = e.target as FabricObject | undefined;
+    if (!raw) return;
+    const resolved = resolveTarget ? resolveTarget(raw) : raw;
+    if (resolved === hoveredObj || raw === hoveredObj) {
       hoveredObj = null;
       clearTopCtx();
     }
   });
+
 
   canvas.on("after:render", () => {
     clearTopCtx();
