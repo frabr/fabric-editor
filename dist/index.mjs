@@ -2367,6 +2367,23 @@ var CanvasGuides = class {
   }
   // ── High-level presets ────────────────────────────────────────────
   /**
+   * Draw a hatched overlay (same style as margin guides) covering an
+   * arbitrary rectangle.  Useful anywhere a region needs to be visually
+   * "claimed" — e.g. hinting that a shape is about to become a container.
+   */
+  showHatchOverlay(rect) {
+    const border = colorAlpha(this.color, 0.3);
+    this.addRect({
+      left: rect.left,
+      top: rect.top,
+      width: rect.width,
+      height: rect.height,
+      fill: this.hatchPattern,
+      stroke: border,
+      strokeWidth: 0.5
+    });
+  }
+  /**
    * Show a dashed hover hint around a shape (used during PENDING state
    * in drag-to-layout to signal that anchoring is about to happen).
    */
@@ -2374,12 +2391,12 @@ var CanvasGuides = class {
     this.clear();
     const { w, h } = scaledSize(shape);
     const tl = topLeft(shape);
+    this.showHatchOverlay({ left: tl.x, top: tl.y, width: w, height: h });
     this.addRect({
       left: tl.x,
       top: tl.y,
       width: w,
       height: h,
-      fill: this.fillLight,
       stroke: this.strokeColor,
       strokeWidth: 1.5,
       strokeDashArray: [6, 4]
