@@ -1157,7 +1157,7 @@ var LayerManager = class {
    * Ne peut pas descendre en dessous de l'image de fond
    */
   sendBackward(obj) {
-    const index = this.canvas._objects.indexOf(obj);
+    const index = this.canvas.getObjects().indexOf(obj);
     if (index > 1) {
       this.canvas.sendObjectBackwards(obj);
       this.canvas.renderAll();
@@ -1268,10 +1268,10 @@ var LayerManager = class {
       left: oldCenter.x,
       top: oldCenter.y
     });
-    const index = this.canvas._objects.indexOf(target);
+    const index = this.canvas.getObjects().indexOf(target);
     this.canvas.remove(target);
     this.canvas.add(newImg);
-    if (index >= 0 && index < this.canvas._objects.length) {
+    if (index >= 0 && index < this.canvas.getObjects().length) {
       this.canvas.moveObjectTo(newImg, index);
     }
     if (lockMode !== "free") {
@@ -1292,7 +1292,7 @@ var LayerManager = class {
     const displayedWidth = shape.width * (shape.scaleX || 1);
     const displayedHeight = shape.height * (shape.scaleY || 1);
     const center = shape.getCenterPoint();
-    const zIndex = this.canvas._objects.indexOf(shape);
+    const zIndex = this.canvas.getObjects().indexOf(shape);
     const img = await FabricImage4.fromURL(imageUrl, { crossOrigin: "anonymous" });
     const frame = new ImageFrame(img, {
       left: center.x,
@@ -1305,7 +1305,7 @@ var LayerManager = class {
     });
     this.canvas.remove(shape);
     this.canvas.add(frame);
-    if (zIndex >= 0 && zIndex < this.canvas._objects.length) {
+    if (zIndex >= 0 && zIndex < this.canvas.getObjects().length) {
       this.canvas.moveObjectTo(frame, zIndex);
     }
     this.canvas.setActiveObject(frame);

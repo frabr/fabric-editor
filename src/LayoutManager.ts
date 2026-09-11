@@ -1,4 +1,5 @@
-import { Canvas, FabricObject, Rect } from "#fabric";
+import { FabricObject, Rect } from "#fabric";
+import type { DesignCanvas } from "./DesignCanvas";
 import { CanvasGuides } from "./CanvasGuides";
 import { runLayout } from "./layout/reconcile";
 import {
@@ -61,11 +62,11 @@ const ANCHOR_DELAY_MS = 300;
  *    when text content changes or containers are moved/resized.
  */
 export class LayoutManager {
-  private canvas: Canvas;
+  private canvas: DesignCanvas;
   private callbacks: LayoutManagerCallbacks;
   private guides: CanvasGuides;
   private dtl: DtlState = { phase: "idle", cooldownUntil: 0 };
-  constructor(canvas: Canvas, callbacks: LayoutManagerCallbacks = {}, guideColor?: string) {
+  constructor(canvas: DesignCanvas, callbacks: LayoutManagerCallbacks = {}, guideColor?: string) {
     this.canvas = canvas;
     this.callbacks = callbacks;
     this.guides = new CanvasGuides(canvas, guideColor);

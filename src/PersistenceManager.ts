@@ -1,4 +1,4 @@
-import { Canvas } from "#fabric";
+import type { DesignCanvas } from "./DesignCanvas";
 import type { LayerManager } from "./LayerManager";
 import type { PendingUploadsManager } from "./PendingUploadsManager";
 import type { SaveOptions, SaveResult, LayerData } from "./types";
@@ -10,7 +10,7 @@ export class PersistenceManager {
   private pendingUploads: PendingUploadsManager | null = null;
 
   constructor(
-    private canvas: Canvas,
+    private canvas: DesignCanvas,
     private layers: LayerManager
   ) { }
 

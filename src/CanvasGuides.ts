@@ -1,4 +1,5 @@
-import { Canvas, FabricObject, Line, Rect, Pattern } from "#fabric";
+import { FabricObject, Line, Rect, Pattern } from "#fabric";
+import type { DesignCanvas } from "./DesignCanvas";
 import { isChildLayout, type ChildLayout } from "./layout/types";
 import { scaledSize, topLeft } from "./layout/geometry";
 
@@ -15,7 +16,7 @@ import { scaledSize, topLeft } from "./layout/geometry";
  * different owners don't interfere with each other.
  */
 export class CanvasGuides {
-  private canvas: Canvas;
+  private canvas: DesignCanvas;
   private objects: FabricObject[] = [];
   private color: string;
 
@@ -24,7 +25,7 @@ export class CanvasGuides {
   private fillLight: string;
   private hatchPattern: Pattern;
 
-  constructor(canvas: Canvas, color = "#ff00ff") {
+  constructor(canvas: DesignCanvas, color = "#ff00ff") {
     this.canvas = canvas;
     this.color = color;
 

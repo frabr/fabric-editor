@@ -1,4 +1,70 @@
-import { Textbox, Group, FabricImage, Canvas, FabricObject, StaticCanvas } from '#fabric';
+import { Canvas, FabricObject, TPointerEvent, Textbox, Group, FabricImage, StaticCanvas } from '#fabric';
+
+/**
+ * DesignCanvas — wraps a Fabric Canvas to separate design size from display size.
+ *
+ * `width` and `height` always return the logical design dimensions.
+ * The underlying Fabric Canvas buffer may be a different size (after fitToSize).
+ *
+ * Access the raw Fabric Canvas via `originalFabricCanvas` — the verbose name
+ * is intentional: prefer using delegation methods when possible.
+ */
+
+declare class DesignCanvas {
+    readonly width: number;
+    readonly height: number;
+    readonly originalFabricCanvas: Canvas;
+    private _scale;
+    constructor(canvasElement: HTMLCanvasElement, opts: {
+        width: number;
+        height: number;
+    } & Record<string, any>);
+    /** Current viewport scale factor (set by fitToSize). */
+    get scale(): number;
+    /**
+     * Resize the canvas buffer to fit a container and scale content
+     * via Fabric's viewportTransform. Returns the computed scale.
+     */
+    fitToSize(containerW: number, containerH: number, userZoom?: number): number;
+    /**
+     * Shift the active drag's grab offset by (dx, dy).
+     *
+     * During a drag, Fabric places the object at `cursor + offset`.
+     * Adjusting the offset "teleports" the object without breaking
+     * the drag delta calculation.
+     */
+    adjustGrabOffset(dx: number, dy: number): void;
+    getObjects(): FabricObject[];
+    add(...objects: FabricObject[]): void;
+    remove(...objects: FabricObject[]): void;
+    renderAll(): void;
+    requestRenderAll(): void;
+    on(eventName: string, handler: (...args: any[]) => void): void;
+    off(eventName: string, handler?: (...args: any[]) => void): void;
+    getActiveObject(): FabricObject | null;
+    setActiveObject(obj: FabricObject): void;
+    discardActiveObject(): void;
+    getScenePoint(e: TPointerEvent): {
+        x: number;
+        y: number;
+    };
+    setDimensions(dims: {
+        width: number;
+        height: number;
+    }): void;
+    bringObjectForward(obj: FabricObject, intersecting?: boolean): void;
+    sendObjectBackwards(obj: FabricObject): void;
+    moveObjectTo(obj: FabricObject, index: number): void;
+    getZoom(): number;
+    setZoom(zoom: number): void;
+    toDataURL(opts?: any): string;
+    clear(): void;
+    dispose(): void;
+    set backgroundColor(color: string);
+    get backgroundColor(): string;
+    set renderOnAddRemove(value: boolean);
+    get renderOnAddRemove(): boolean;
+}
 
 /**
  * Textbox personnalisé qui :
@@ -131,21 +197,6 @@ interface ChildLayout {
 }
 /** Union — the `layout` property on any participating Fabric object. */
 type LayoutData = ContainerLayout | ChildLayout;
-
-declare module "fabric" {
-    interface Canvas {
-        /**
-         * Shift the active drag's grab offset by (dx, dy).
-         *
-         * During a drag, Fabric places the object at `cursor + offset`.
-         * Adjusting the offset "teleports" the object without breaking
-         * the drag delta calculation.
-         *
-         * No-op if there is no active drag transform.
-         */
-        adjustGrabOffset(dx: number, dy: number): void;
-    }
-}
 
 interface FontConfig {
     family: string;
@@ -337,7 +388,7 @@ declare class ImageFrame extends Group {
  */
 declare class LayerManager {
     private canvas;
-    constructor(canvas: Canvas);
+    constructor(canvas: DesignCanvas);
     /**
      * Retourne tous les calques (excluant l'image de fond)
      */
@@ -503,7 +554,7 @@ declare class PersistenceManager {
     private canvas;
     private layers;
     private pendingUploads;
-    constructor(canvas: Canvas, layers: LayerManager);
+    constructor(canvas: DesignCanvas, layers: LayerManager);
     /**
      * Configure le gestionnaire d'uploads en attente
      */
@@ -566,7 +617,7 @@ declare class HistoryManager {
     private maxSize;
     private callbacks;
     private isRestoring;
-    constructor(canvas: Canvas, layers: LayerManager, options?: {
+    constructor(canvas: DesignCanvas, layers: LayerManager, options?: {
         maxSize?: number;
     });
     /**

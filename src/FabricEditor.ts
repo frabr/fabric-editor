@@ -1,4 +1,5 @@
-import { Canvas, FabricObject, FabricImage, Point, Control, controlsUtils } from "#fabric";
+import { FabricObject, FabricImage, Point, Control, controlsUtils } from "#fabric";
+import { DesignCanvas } from "./DesignCanvas";
 import { LayerManager } from "./LayerManager";
 import { SelectionManager } from "./SelectionManager";
 import { MaskManager } from "./MaskManager";
@@ -24,7 +25,7 @@ export class FabricEditor {
     console.log("[fabric-editor] ✓ linked local build 2");
   }
 
-  readonly canvas: Canvas;
+  readonly canvas: DesignCanvas;
   readonly layers: LayerManager;
   readonly selection: SelectionManager;
   readonly masks: MaskManager;
@@ -44,7 +45,7 @@ export class FabricEditor {
 
     const gc = config.guideColor ?? "#ff00ff";
 
-    this.canvas = new Canvas(canvasElement, {
+    this.canvas = new DesignCanvas(canvasElement, {
       width: config.width,
       height: config.height,
       preserveObjectStacking: true,
@@ -68,7 +69,7 @@ export class FabricEditor {
     this.layout = new LayoutManager(this.canvas, {}, config.guideColor);
 
     // Stocker une référence au SnappingManager sur le canvas pour l'accès depuis ImageFrame
-    (this.canvas as unknown as { snappingManager: SnappingManager }).snappingManager = this.snapping;
+    (this.canvas.originalFabricCanvas as unknown as { snappingManager: SnappingManager }).snappingManager = this.snapping;
 
     // Étendre FabricObject pour inclure layerId dans le JSON
     this.extendFabricObject();
@@ -125,34 +126,30 @@ export class FabricEditor {
   }
 
   /**
-   * CSS-scale the canvas to fit inside its container.
+   * Resize the canvas buffer to fit inside its container and use
+   * Fabric's viewportTransform to scale the content.
    *
-   * The canvas stays at native resolution (config.width × config.height);
-   * a CSS `transform: scale()` on the .canvas-container wrapper makes it
-   * fit the container element.  Returns the computed scale factor.
+   * This avoids CSS `transform: scale()` which causes sub-pixel blur.
+   * The canvas buffer matches the display size exactly → pixel-perfect.
    */
   fitToContainer(): number {
     const container = this.config.container;
     if (!container) return 1;
 
-    const compW = this.config.width;
-    const compH = this.config.height;
     const boxW = container.clientWidth;
     const boxH = container.clientHeight;
-    const fitScale = Math.min(boxW / compW, boxH / compH);
-    const scale = fitScale * this._userZoom;
+    const scale = this.canvas.fitToSize(boxW, boxH, this._userZoom);
 
-    this.canvas.setDimensions({ width: compW, height: compH });
+    const bufferW = Math.round(this.canvas.width * scale);
+    const bufferH = Math.round(this.canvas.height * scale);
 
     const canvasEl = container.querySelector<HTMLElement>(".canvas-container") || container;
-    canvasEl.style.transformOrigin = "top left";
-    canvasEl.style.transform = `scale(${scale})`;
+    canvasEl.style.transform = "";
+    canvasEl.style.transformOrigin = "";
 
-    // Center the scaled canvas within the container
-    const scaledW = compW * scale;
-    const scaledH = compH * scale;
-    const offsetX = Math.max(0, (boxW - scaledW) / 2);
-    const offsetY = Math.max(0, (boxH - scaledH) / 2);
+    // Center the canvas within the container
+    const offsetX = Math.max(0, (boxW - bufferW) / 2);
+    const offsetY = Math.max(0, (boxH - bufferH) / 2);
     canvasEl.style.marginLeft = `${offsetX}px`;
     canvasEl.style.marginTop = `${offsetY}px`;
 
@@ -543,10 +540,11 @@ export class FabricEditor {
       // On mute les callbacks le temps du swap.
       this.selection.silenceCallbacks();
 
-      const zIndex = this.canvas._objects.indexOf(obj);
+      const objects = this.canvas.getObjects();
+      const zIndex = objects.indexOf(obj);
       this.canvas.remove(obj);
       this.canvas.add(newObj);
-      if (zIndex >= 0 && zIndex < this.canvas._objects.length) {
+      if (zIndex >= 0 && zIndex < this.canvas.getObjects().length) {
         this.canvas.moveObjectTo(newObj, zIndex);
       }
       this.canvas.setActiveObject(newObj);

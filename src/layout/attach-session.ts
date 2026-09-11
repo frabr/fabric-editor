@@ -5,8 +5,8 @@
  * after commit or rollback. The LayoutManager never sees the internals
  * (snapshot, clamp offsets, etc.) — it just drives the session.
  */
-import type { Canvas, FabricObject } from "#fabric";
-import "../fabric-extensions";
+import type { FabricObject } from "#fabric";
+import type { DesignCanvas } from "../DesignCanvas";
 import {
   type ContainerLayout,
   type ChildLayout,
@@ -29,7 +29,7 @@ const EXIT_MARGIN = 5;
 // ── AttachSession ────────────────────────────────────────────────────
 
 export class AttachSession {
-  private canvas: Canvas;
+  private canvas: DesignCanvas;
   private shape: FabricObject;
   private text: FabricObject;
 
@@ -38,7 +38,7 @@ export class AttachSession {
   private clampDy: number;
   private anchorCursor: { x: number; y: number };
 
-  constructor(canvas: Canvas, shape: FabricObject, text: FabricObject, cursor: { x: number; y: number }) {
+  constructor(canvas: DesignCanvas, shape: FabricObject, text: FabricObject, cursor: { x: number; y: number }) {
     this.canvas = canvas;
     this.shape = shape;
     this.text = text;

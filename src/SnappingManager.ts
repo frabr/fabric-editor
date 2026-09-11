@@ -1,4 +1,5 @@
-import { Canvas, FabricObject } from "#fabric";
+import type { FabricObject } from "#fabric";
+import type { DesignCanvas } from "./DesignCanvas";
 import { CanvasGuides } from "./CanvasGuides";
 
 export interface SnappingConfig {
@@ -46,7 +47,7 @@ export interface ResizeSnapResult {
  * - Les bords du canvas
  */
 export class SnappingManager {
-  private canvas: Canvas;
+  private canvas: DesignCanvas;
   private config: Required<SnappingConfig>;
   private guides: CanvasGuides;
   private enabled: boolean = true;
@@ -55,7 +56,7 @@ export class SnappingManager {
   /** Multiplicateur pour le seuil de sortie du snap (défaut: 2x le seuil d'entrée) */
   private exitMultiplier: number = 2;
 
-  constructor(canvas: Canvas, config: SnappingConfig = {}, guideColor?: string) {
+  constructor(canvas: DesignCanvas, config: SnappingConfig = {}, guideColor?: string) {
     this.canvas = canvas;
     this.config = {
       threshold: config.threshold ?? 10,

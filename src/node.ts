@@ -8,7 +8,8 @@
  */
 
 import { createRequire } from "module";
-import { Canvas as FabricCanvas, StaticCanvas, FabricObject } from "#fabric";
+import { StaticCanvas, FabricObject } from "#fabric";
+import type { DesignCanvas } from "./DesignCanvas";
 
 // Pour require("canvas") dans registerFonts
 const require = createRequire(import.meta.url);
@@ -62,13 +63,13 @@ export class NodeEditor {
     });
 
     // Initialiser les managers compatibles
-    this.layers = new LayerManager(this.canvas as unknown as FabricCanvas);
+    this.layers = new LayerManager(this.canvas as unknown as DesignCanvas);
     this.persistence = new PersistenceManager(
-      this.canvas as unknown as FabricCanvas,
+      this.canvas as unknown as DesignCanvas,
       this.layers
     );
     this.history = new HistoryManager(
-      this.canvas as unknown as FabricCanvas,
+      this.canvas as unknown as DesignCanvas,
       this.layers
     );
 

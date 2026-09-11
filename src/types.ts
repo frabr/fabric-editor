@@ -1,4 +1,4 @@
-import type { FabricObject, Canvas } from "#fabric";
+import type { FabricObject } from "#fabric";
 
 // Configuration de l'éditeur
 export interface EditorConfig {

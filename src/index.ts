@@ -3,11 +3,9 @@
 // Ce module fournit un éditeur d'images complet avec gestion des calques,
 // formes, clips, et masques.
 
-// Fabric.js prototype extensions (side-effect import)
-import "./fabric-extensions";
-
 // Classe principale
 export { FabricEditor } from "./FabricEditor";
+export { DesignCanvas } from "./DesignCanvas";
 
 // Managers
 export { LayerManager } from "./LayerManager";

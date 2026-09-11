@@ -1,4 +1,5 @@
-import { ActiveSelection, type Canvas, type FabricObject } from "#fabric";
+import { ActiveSelection, type FabricObject } from "#fabric";
+import type { DesignCanvas } from "./DesignCanvas";
 import { isPositionLocked } from "./locking";
 import type { SelectionCallbacks, ControlOption } from "./types";
 
@@ -27,7 +28,7 @@ export class SelectionManager {
   private isTransforming = false;
   private _silenced = false;
 
-  constructor(private canvas: Canvas) {
+  constructor(private canvas: DesignCanvas) {
     this.setupListeners();
   }
 
@@ -219,7 +220,7 @@ export class SelectionManager {
       // Si des objets verrouillés ont été filtrés, recréer la sélection sans eux
       if (unlocked.length < e.selected.length) {
         this.canvas.discardActiveObject();
-        const newSelection = new ActiveSelection(unlocked, { canvas: this.canvas });
+        const newSelection = new ActiveSelection(unlocked, { canvas: this.canvas.originalFabricCanvas });
         this.canvas.setActiveObject(newSelection);
         this._current = unlocked;
         if (this.callbacks.onSelect && unlocked[0]) {

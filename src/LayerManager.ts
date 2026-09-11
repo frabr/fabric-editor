@@ -1,5 +1,4 @@
 import {
-  Canvas,
   FabricImage,
   FabricObject,
   Group,
@@ -7,6 +6,7 @@ import {
   Path,
   Circle,
 } from "#fabric";
+import type { DesignCanvas } from "./DesignCanvas";
 import { CustomTextbox } from "./controls/CustomTextbox";
 import { createRect, createShape, createImage } from "./shapes/factories";
 import { isValidShape } from "./shapes";
@@ -21,7 +21,7 @@ const BACKGROUND_LAYER_ID = "originalImage";
  * Responsable de l'ajout, suppression et organisation des objets
  */
 export class LayerManager {
-  constructor(private canvas: Canvas) { }
+  constructor(private canvas: DesignCanvas) { }
 
   /**
    * Retourne tous les calques (excluant l'image de fond)
@@ -128,7 +128,7 @@ export class LayerManager {
    * Ne peut pas descendre en dessous de l'image de fond
    */
   sendBackward(obj: FabricObject): void {
-    const index = this.canvas._objects.indexOf(obj);
+    const index = this.canvas.getObjects().indexOf(obj);
     if (index > 1) {
       this.canvas.sendObjectBackwards(obj);
       this.canvas.renderAll();
@@ -286,12 +286,12 @@ export class LayerManager {
     });
 
     // Remplacer l'ancienne image par la nouvelle
-    const index = this.canvas._objects.indexOf(target);
+    const index = this.canvas.getObjects().indexOf(target);
     this.canvas.remove(target);
     this.canvas.add(newImg);
 
     // Restaurer la position dans la pile des calques
-    if (index >= 0 && index < this.canvas._objects.length) {
+    if (index >= 0 && index < this.canvas.getObjects().length) {
       this.canvas.moveObjectTo(newImg, index);
     }
 
@@ -326,7 +326,7 @@ export class LayerManager {
     const center = shape.getCenterPoint();
 
     // Sauvegarder le z-index
-    const zIndex = this.canvas._objects.indexOf(shape);
+    const zIndex = this.canvas.getObjects().indexOf(shape);
 
     // Charger l'image
     const img = await FabricImage.fromURL(imageUrl, { crossOrigin: "anonymous" });
@@ -345,7 +345,7 @@ export class LayerManager {
     // Supprimer la shape et insérer l'ImageFrame au même z-index
     this.canvas.remove(shape);
     this.canvas.add(frame);
-    if (zIndex >= 0 && zIndex < this.canvas._objects.length) {
+    if (zIndex >= 0 && zIndex < this.canvas.getObjects().length) {
       this.canvas.moveObjectTo(frame, zIndex);
     }
 

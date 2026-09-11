@@ -114,18 +114,129 @@ var init_PendingUploadsManager = __esm({
   }
 });
 
-// src/fabric-extensions.ts
-import { Canvas } from "#fabric";
-Canvas.prototype.adjustGrabOffset = function(dx, dy) {
-  if (dx === 0 && dy === 0) return;
-  const transform = this._currentTransform;
-  if (!transform) return;
-  transform.offsetX -= dx;
-  transform.offsetY -= dy;
-};
-
 // src/FabricEditor.ts
-import { Canvas as Canvas6, FabricObject as FabricObject7, FabricImage as FabricImage6, Point as Point2, Control as Control2, controlsUtils } from "#fabric";
+import { FabricObject as FabricObject7, FabricImage as FabricImage6, Point as Point2, Control as Control2, controlsUtils } from "#fabric";
+
+// src/DesignCanvas.ts
+import { Canvas } from "#fabric";
+var DesignCanvas = class {
+  constructor(canvasElement, opts) {
+    this._scale = 1;
+    const { width, height, ...canvasOpts } = opts;
+    this.width = width;
+    this.height = height;
+    this.originalFabricCanvas = new Canvas(canvasElement, {
+      width,
+      height,
+      ...canvasOpts
+    });
+  }
+  /** Current viewport scale factor (set by fitToSize). */
+  get scale() {
+    return this._scale;
+  }
+  /**
+   * Resize the canvas buffer to fit a container and scale content
+   * via Fabric's viewportTransform. Returns the computed scale.
+   */
+  fitToSize(containerW, containerH, userZoom = 1) {
+    const fitScale = Math.min(containerW / this.width, containerH / this.height);
+    const scale = fitScale * userZoom;
+    const bufferW = Math.round(this.width * scale);
+    const bufferH = Math.round(this.height * scale);
+    this.originalFabricCanvas.setDimensions({ width: bufferW, height: bufferH });
+    this.originalFabricCanvas.setViewportTransform([scale, 0, 0, scale, 0, 0]);
+    this._scale = scale;
+    return scale;
+  }
+  /**
+   * Shift the active drag's grab offset by (dx, dy).
+   *
+   * During a drag, Fabric places the object at `cursor + offset`.
+   * Adjusting the offset "teleports" the object without breaking
+   * the drag delta calculation.
+   */
+  adjustGrabOffset(dx, dy) {
+    if (dx === 0 && dy === 0) return;
+    const transform = this.originalFabricCanvas._currentTransform;
+    if (!transform) return;
+    transform.offsetX -= dx;
+    transform.offsetY -= dy;
+  }
+  // ── Delegation methods ──────────────────────────────────────────────
+  getObjects() {
+    return this.originalFabricCanvas.getObjects();
+  }
+  add(...objects) {
+    this.originalFabricCanvas.add(...objects);
+  }
+  remove(...objects) {
+    this.originalFabricCanvas.remove(...objects);
+  }
+  renderAll() {
+    this.originalFabricCanvas.renderAll();
+  }
+  requestRenderAll() {
+    this.originalFabricCanvas.requestRenderAll();
+  }
+  on(eventName, handler) {
+    this.originalFabricCanvas.on(eventName, handler);
+  }
+  off(eventName, handler) {
+    this.originalFabricCanvas.off(eventName, handler);
+  }
+  getActiveObject() {
+    return this.originalFabricCanvas.getActiveObject() ?? null;
+  }
+  setActiveObject(obj) {
+    this.originalFabricCanvas.setActiveObject(obj);
+  }
+  discardActiveObject() {
+    this.originalFabricCanvas.discardActiveObject();
+  }
+  getScenePoint(e) {
+    return this.originalFabricCanvas.getScenePoint(e);
+  }
+  setDimensions(dims) {
+    this.originalFabricCanvas.setDimensions(dims);
+  }
+  bringObjectForward(obj, intersecting) {
+    this.originalFabricCanvas.bringObjectForward(obj, intersecting);
+  }
+  sendObjectBackwards(obj) {
+    this.originalFabricCanvas.sendObjectBackwards(obj);
+  }
+  moveObjectTo(obj, index) {
+    this.originalFabricCanvas.moveObjectTo(obj, index);
+  }
+  getZoom() {
+    return this.originalFabricCanvas.getZoom();
+  }
+  setZoom(zoom) {
+    this.originalFabricCanvas.setZoom(zoom);
+  }
+  toDataURL(opts) {
+    return this.originalFabricCanvas.toDataURL(opts);
+  }
+  clear() {
+    this.originalFabricCanvas.clear();
+  }
+  dispose() {
+    this.originalFabricCanvas.dispose();
+  }
+  set backgroundColor(color) {
+    this.originalFabricCanvas.backgroundColor = color;
+  }
+  get backgroundColor() {
+    return this.originalFabricCanvas.backgroundColor;
+  }
+  set renderOnAddRemove(value) {
+    this.originalFabricCanvas.renderOnAddRemove = value;
+  }
+  get renderOnAddRemove() {
+    return this.originalFabricCanvas.renderOnAddRemove;
+  }
+};
 
 // src/LayerManager.ts
 import {
@@ -1223,7 +1334,7 @@ var LayerManager = class {
    * Ne peut pas descendre en dessous de l'image de fond
    */
   sendBackward(obj) {
-    const index = this.canvas._objects.indexOf(obj);
+    const index = this.canvas.getObjects().indexOf(obj);
     if (index > 1) {
       this.canvas.sendObjectBackwards(obj);
       this.canvas.renderAll();
@@ -1334,10 +1445,10 @@ var LayerManager = class {
       left: oldCenter.x,
       top: oldCenter.y
     });
-    const index = this.canvas._objects.indexOf(target);
+    const index = this.canvas.getObjects().indexOf(target);
     this.canvas.remove(target);
     this.canvas.add(newImg);
-    if (index >= 0 && index < this.canvas._objects.length) {
+    if (index >= 0 && index < this.canvas.getObjects().length) {
       this.canvas.moveObjectTo(newImg, index);
     }
     if (lockMode !== "free") {
@@ -1358,7 +1469,7 @@ var LayerManager = class {
     const displayedWidth = shape.width * (shape.scaleX || 1);
     const displayedHeight = shape.height * (shape.scaleY || 1);
     const center = shape.getCenterPoint();
-    const zIndex = this.canvas._objects.indexOf(shape);
+    const zIndex = this.canvas.getObjects().indexOf(shape);
     const img = await FabricImage4.fromURL(imageUrl, { crossOrigin: "anonymous" });
     const frame = new ImageFrame(img, {
       left: center.x,
@@ -1371,7 +1482,7 @@ var LayerManager = class {
     });
     this.canvas.remove(shape);
     this.canvas.add(frame);
-    if (zIndex >= 0 && zIndex < this.canvas._objects.length) {
+    if (zIndex >= 0 && zIndex < this.canvas.getObjects().length) {
       this.canvas.moveObjectTo(frame, zIndex);
     }
     this.canvas.setActiveObject(frame);
@@ -1720,7 +1831,7 @@ var SelectionManager = class {
       }
       if (unlocked.length < e.selected.length) {
         this.canvas.discardActiveObject();
-        const newSelection = new ActiveSelection(unlocked, { canvas: this.canvas });
+        const newSelection = new ActiveSelection(unlocked, { canvas: this.canvas.originalFabricCanvas });
         this.canvas.setActiveObject(newSelection);
         this._current = unlocked;
         if (this.callbacks.onSelect && unlocked[0]) {
@@ -3394,7 +3505,7 @@ var _FabricEditor = class _FabricEditor {
     this._initialized = false;
     this.config = config;
     const gc = config.guideColor ?? "#ff00ff";
-    this.canvas = new Canvas6(canvasElement, {
+    this.canvas = new DesignCanvas(canvasElement, {
       width: config.width,
       height: config.height,
       preserveObjectStacking: true,
@@ -3412,7 +3523,7 @@ var _FabricEditor = class _FabricEditor {
     this.history = new HistoryManager(this.canvas, this.layers);
     this.snapping = new SnappingManager(this.canvas, {}, config.guideColor);
     this.layout = new LayoutManager2(this.canvas, {}, config.guideColor);
-    this.canvas.snappingManager = this.snapping;
+    this.canvas.originalFabricCanvas.snappingManager = this.snapping;
     this.extendFabricObject();
     this.configureRotationControl();
     if (config.transparent) {
@@ -3457,29 +3568,25 @@ var _FabricEditor = class _FabricEditor {
     return this._displayScale;
   }
   /**
-   * CSS-scale the canvas to fit inside its container.
+   * Resize the canvas buffer to fit inside its container and use
+   * Fabric's viewportTransform to scale the content.
    *
-   * The canvas stays at native resolution (config.width × config.height);
-   * a CSS `transform: scale()` on the .canvas-container wrapper makes it
-   * fit the container element.  Returns the computed scale factor.
+   * This avoids CSS `transform: scale()` which causes sub-pixel blur.
+   * The canvas buffer matches the display size exactly → pixel-perfect.
    */
   fitToContainer() {
     const container = this.config.container;
     if (!container) return 1;
-    const compW = this.config.width;
-    const compH = this.config.height;
     const boxW = container.clientWidth;
     const boxH = container.clientHeight;
-    const fitScale = Math.min(boxW / compW, boxH / compH);
-    const scale = fitScale * this._userZoom;
-    this.canvas.setDimensions({ width: compW, height: compH });
+    const scale = this.canvas.fitToSize(boxW, boxH, this._userZoom);
+    const bufferW = Math.round(this.canvas.width * scale);
+    const bufferH = Math.round(this.canvas.height * scale);
     const canvasEl = container.querySelector(".canvas-container") || container;
-    canvasEl.style.transformOrigin = "top left";
-    canvasEl.style.transform = `scale(${scale})`;
-    const scaledW = compW * scale;
-    const scaledH = compH * scale;
-    const offsetX = Math.max(0, (boxW - scaledW) / 2);
-    const offsetY = Math.max(0, (boxH - scaledH) / 2);
+    canvasEl.style.transform = "";
+    canvasEl.style.transformOrigin = "";
+    const offsetX = Math.max(0, (boxW - bufferW) / 2);
+    const offsetY = Math.max(0, (boxH - bufferH) / 2);
     canvasEl.style.marginLeft = `${offsetX}px`;
     canvasEl.style.marginTop = `${offsetY}px`;
     container.style.overflow = this._userZoom > 1 ? "auto" : "hidden";
@@ -3796,10 +3903,11 @@ var _FabricEditor = class _FabricEditor {
       if (layerId) newObj.set("layerId", layerId);
       if (layerType) newObj.set("layerType", layerType);
       this.selection.silenceCallbacks();
-      const zIndex = this.canvas._objects.indexOf(obj);
+      const objects = this.canvas.getObjects();
+      const zIndex = objects.indexOf(obj);
       this.canvas.remove(obj);
       this.canvas.add(newObj);
-      if (zIndex >= 0 && zIndex < this.canvas._objects.length) {
+      if (zIndex >= 0 && zIndex < this.canvas.getObjects().length) {
         this.canvas.moveObjectTo(newObj, zIndex);
       }
       this.canvas.setActiveObject(newObj);
@@ -4789,6 +4897,7 @@ export {
   AttachSession,
   CanvasGuides,
   CustomTextbox,
+  DesignCanvas,
   FabricEditor,
   HEART_PATH,
   HEXAGON_PATH,

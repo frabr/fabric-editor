@@ -1,18 +1,69 @@
-import { Textbox, FabricObject, Canvas, Group, FabricImage, Pattern, TOptions, RectProps, Rect, CircleProps, Circle, PathProps, Path } from '#fabric';
+import { Canvas, FabricObject, TPointerEvent, Textbox, Group, FabricImage, Pattern, TOptions, RectProps, Rect, CircleProps, Circle, PathProps, Path } from '#fabric';
 
-declare module "fabric" {
-    interface Canvas {
-        /**
-         * Shift the active drag's grab offset by (dx, dy).
-         *
-         * During a drag, Fabric places the object at `cursor + offset`.
-         * Adjusting the offset "teleports" the object without breaking
-         * the drag delta calculation.
-         *
-         * No-op if there is no active drag transform.
-         */
-        adjustGrabOffset(dx: number, dy: number): void;
-    }
+/**
+ * DesignCanvas — wraps a Fabric Canvas to separate design size from display size.
+ *
+ * `width` and `height` always return the logical design dimensions.
+ * The underlying Fabric Canvas buffer may be a different size (after fitToSize).
+ *
+ * Access the raw Fabric Canvas via `originalFabricCanvas` — the verbose name
+ * is intentional: prefer using delegation methods when possible.
+ */
+
+declare class DesignCanvas {
+    readonly width: number;
+    readonly height: number;
+    readonly originalFabricCanvas: Canvas;
+    private _scale;
+    constructor(canvasElement: HTMLCanvasElement, opts: {
+        width: number;
+        height: number;
+    } & Record<string, any>);
+    /** Current viewport scale factor (set by fitToSize). */
+    get scale(): number;
+    /**
+     * Resize the canvas buffer to fit a container and scale content
+     * via Fabric's viewportTransform. Returns the computed scale.
+     */
+    fitToSize(containerW: number, containerH: number, userZoom?: number): number;
+    /**
+     * Shift the active drag's grab offset by (dx, dy).
+     *
+     * During a drag, Fabric places the object at `cursor + offset`.
+     * Adjusting the offset "teleports" the object without breaking
+     * the drag delta calculation.
+     */
+    adjustGrabOffset(dx: number, dy: number): void;
+    getObjects(): FabricObject[];
+    add(...objects: FabricObject[]): void;
+    remove(...objects: FabricObject[]): void;
+    renderAll(): void;
+    requestRenderAll(): void;
+    on(eventName: string, handler: (...args: any[]) => void): void;
+    off(eventName: string, handler?: (...args: any[]) => void): void;
+    getActiveObject(): FabricObject | null;
+    setActiveObject(obj: FabricObject): void;
+    discardActiveObject(): void;
+    getScenePoint(e: TPointerEvent): {
+        x: number;
+        y: number;
+    };
+    setDimensions(dims: {
+        width: number;
+        height: number;
+    }): void;
+    bringObjectForward(obj: FabricObject, intersecting?: boolean): void;
+    sendObjectBackwards(obj: FabricObject): void;
+    moveObjectTo(obj: FabricObject, index: number): void;
+    getZoom(): number;
+    setZoom(zoom: number): void;
+    toDataURL(opts?: any): string;
+    clear(): void;
+    dispose(): void;
+    set backgroundColor(color: string);
+    get backgroundColor(): string;
+    set renderOnAddRemove(value: boolean);
+    get renderOnAddRemove(): boolean;
 }
 
 /**
@@ -270,7 +321,7 @@ declare class AttachSession {
     private clampDx;
     private clampDy;
     private anchorCursor;
-    constructor(canvas: Canvas, shape: FabricObject, text: FabricObject, cursor: {
+    constructor(canvas: DesignCanvas, shape: FabricObject, text: FabricObject, cursor: {
         x: number;
         y: number;
     });
@@ -506,7 +557,7 @@ declare class ImageFrame extends Group {
  */
 declare class LayerManager {
     private canvas;
-    constructor(canvas: Canvas);
+    constructor(canvas: DesignCanvas);
     /**
      * Retourne tous les calques (excluant l'image de fond)
      */
@@ -624,7 +675,7 @@ declare class SelectionManager {
     private callbacks;
     private isTransforming;
     private _silenced;
-    constructor(canvas: Canvas);
+    constructor(canvas: DesignCanvas);
     /**
      * L'objet actuellement sélectionné (ou tableau si sélection multiple)
      */
@@ -725,7 +776,7 @@ declare class SelectionManager {
  */
 declare class MaskManager {
     private canvas;
-    constructor(canvas: Canvas);
+    constructor(canvas: DesignCanvas);
     /**
      * Vérifie si un masque est appliqué
      */
@@ -813,7 +864,7 @@ declare class PersistenceManager {
     private canvas;
     private layers;
     private pendingUploads;
-    constructor(canvas: Canvas, layers: LayerManager);
+    constructor(canvas: DesignCanvas, layers: LayerManager);
     /**
      * Configure le gestionnaire d'uploads en attente
      */
@@ -876,7 +927,7 @@ declare class HistoryManager {
     private maxSize;
     private callbacks;
     private isRestoring;
-    constructor(canvas: Canvas, layers: LayerManager, options?: {
+    constructor(canvas: DesignCanvas, layers: LayerManager, options?: {
         maxSize?: number;
     });
     /**
@@ -970,7 +1021,7 @@ declare class SnappingManager {
     private resizeSnapState;
     /** Multiplicateur pour le seuil de sortie du snap (défaut: 2x le seuil d'entrée) */
     private exitMultiplier;
-    constructor(canvas: Canvas, config?: SnappingConfig, guideColor?: string);
+    constructor(canvas: DesignCanvas, config?: SnappingConfig, guideColor?: string);
     /**
      * Active ou désactive le snapping
      */
@@ -1036,7 +1087,7 @@ declare class LayoutManager {
     private callbacks;
     private guides;
     private dtl;
-    constructor(canvas: Canvas, callbacks?: LayoutManagerCallbacks, guideColor?: string);
+    constructor(canvas: DesignCanvas, callbacks?: LayoutManagerCallbacks, guideColor?: string);
     /** Set or update callbacks after construction. */
     setCallbacks(callbacks: LayoutManagerCallbacks): void;
     /** Run layout on all canvas objects. */
@@ -1073,7 +1124,7 @@ declare class LayoutManager {
  * pour l'édition d'images avec calques.
  */
 declare class FabricEditor {
-    readonly canvas: Canvas;
+    readonly canvas: DesignCanvas;
     readonly layers: LayerManager;
     readonly selection: SelectionManager;
     readonly masks: MaskManager;
@@ -1107,11 +1158,11 @@ declare class FabricEditor {
      */
     get displayScale(): number;
     /**
-     * CSS-scale the canvas to fit inside its container.
+     * Resize the canvas buffer to fit inside its container and use
+     * Fabric's viewportTransform to scale the content.
      *
-     * The canvas stays at native resolution (config.width × config.height);
-     * a CSS `transform: scale()` on the .canvas-container wrapper makes it
-     * fit the container element.  Returns the computed scale factor.
+     * This avoids CSS `transform: scale()` which causes sub-pixel blur.
+     * The canvas buffer matches the display size exactly → pixel-perfect.
      */
     fitToContainer(): number;
     /**
@@ -1277,7 +1328,7 @@ declare class CanvasGuides {
     private strokeColor;
     private fillLight;
     private hatchPattern;
-    constructor(canvas: Canvas, color?: string);
+    constructor(canvas: DesignCanvas, color?: string);
     /** Add a line guide. */
     addLine(coords: [number, number, number, number], opts?: {
         stroke?: string;
@@ -1575,4 +1626,4 @@ declare function fabricToHtml(layers: LayerData[], options: HtmlRenderOptions): 
  */
 declare function layerToHtmlStandalone(layer: LayerData, zIndex: number): HtmlLayerOutput;
 
-export { AttachSession, type AttachSnapshot, CanvasGuides, type ChildLayout, type ContainerLayout, type ControlOption, CustomTextbox, type EditorConfig, FabricEditor, type FontConfig, type FontsConfig, HEART_PATH, HEXAGON_PATH, type HistoryCallbacks, HistoryManager, type HistoryState, type HtmlLayerOutput, type HtmlRenderOptions, ImageDropHandler, ImageFrame, type ImageLayerOptions, type LayerData, LayerManager, type LayoutData, LayoutManager, type LayoutManagerCallbacks, type LockMode$1 as LockMode, MIN_PAD, MaskManager, type ObjectControlsConfig, PendingUploadsManager, PersistenceManager, type ResizeSnapResult, type SaveOptions, type SaveResult, type SelectionCallbacks, SelectionManager, type ShapeLayerOptions, type ShapeType, type SizeMode, type SnappingConfig, SnappingManager, type TextLayerOptions, addCircleClip, addCropControls, addHeartClip, addHexagonClip, addRoundedClip, antiScale, applyClip, applyLockMode, clampTopLeft, createCircle, createHeart, createHexagon, createImage, createRect, createRoundedRect, createShape, fabricToHtml, getAvailableShapes, getLockMode, getNextLockMode, hasExceededOffset, isChildLayout, isContainerLayout, isContentLocked, isPositionLocked, isStyleLocked, isValidShape, layerToHtmlStandalone, nextShape, pointInObject, removeCropControls, runLayout, scaledSize, switchClip, switchShape, topLeft, wrapContainerAroundChild };
+export { AttachSession, type AttachSnapshot, CanvasGuides, type ChildLayout, type ContainerLayout, type ControlOption, CustomTextbox, DesignCanvas, type EditorConfig, FabricEditor, type FontConfig, type FontsConfig, HEART_PATH, HEXAGON_PATH, type HistoryCallbacks, HistoryManager, type HistoryState, type HtmlLayerOutput, type HtmlRenderOptions, ImageDropHandler, ImageFrame, type ImageLayerOptions, type LayerData, LayerManager, type LayoutData, LayoutManager, type LayoutManagerCallbacks, type LockMode$1 as LockMode, MIN_PAD, MaskManager, type ObjectControlsConfig, PendingUploadsManager, PersistenceManager, type ResizeSnapResult, type SaveOptions, type SaveResult, type SelectionCallbacks, SelectionManager, type ShapeLayerOptions, type ShapeType, type SizeMode, type SnappingConfig, SnappingManager, type TextLayerOptions, addCircleClip, addCropControls, addHeartClip, addHexagonClip, addRoundedClip, antiScale, applyClip, applyLockMode, clampTopLeft, createCircle, createHeart, createHexagon, createImage, createRect, createRoundedRect, createShape, fabricToHtml, getAvailableShapes, getLockMode, getNextLockMode, hasExceededOffset, isChildLayout, isContainerLayout, isContentLocked, isPositionLocked, isStyleLocked, isValidShape, layerToHtmlStandalone, nextShape, pointInObject, removeCropControls, runLayout, scaledSize, switchClip, switchShape, topLeft, wrapContainerAroundChild };
