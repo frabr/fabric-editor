@@ -115,7 +115,7 @@ var init_PendingUploadsManager = __esm({
 });
 
 // src/FabricEditor.ts
-import { FabricObject as FabricObject7, FabricImage as FabricImage6, Point as Point2, Control as Control2, controlsUtils } from "#fabric";
+import { FabricObject as FabricObject8, FabricImage as FabricImage6, Point as Point2 } from "#fabric";
 
 // src/DesignCanvas.ts
 import { Canvas } from "#fabric";
@@ -2253,7 +2253,7 @@ var HistoryManager = class {
   }
 };
 
-// src/CanvasGuides.ts
+// src/ui/guides.ts
 import { Line, Rect as Rect4, Pattern } from "#fabric";
 
 // src/layout/types.ts
@@ -2305,14 +2305,35 @@ function hasExceededOffset(current, origin, offsetX, offsetY, margin) {
   return offsetX > 0 && dx < -(offsetX + margin) || offsetX < 0 && dx > -offsetX + margin || offsetY > 0 && dy < -(offsetY + margin) || offsetY < 0 && dy > -offsetY + margin;
 }
 
-// src/CanvasGuides.ts
+// src/ui/color.ts
+function parseHex(hex) {
+  const h = hex.replace("#", "");
+  if (h.length === 3) {
+    return [
+      parseInt(h[0] + h[0], 16),
+      parseInt(h[1] + h[1], 16),
+      parseInt(h[2] + h[2], 16)
+    ];
+  }
+  return [
+    parseInt(h.slice(0, 2), 16),
+    parseInt(h.slice(2, 4), 16),
+    parseInt(h.slice(4, 6), 16)
+  ];
+}
+function hexAlpha(hex, alpha) {
+  const [r, g, b] = parseHex(hex);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
+// src/ui/guides.ts
 var CanvasGuides = class {
   constructor(canvas, color = "#ff00ff") {
     this.objects = [];
     this.canvas = canvas;
     this.color = color;
-    this.strokeColor = colorAlpha(color, 0.4);
-    this.fillLight = colorAlpha(color, 0.05);
+    this.strokeColor = hexAlpha(color, 0.4);
+    this.fillLight = hexAlpha(color, 0.05);
     this.hatchPattern = createHatchPattern(color);
   }
   // ── Low-level primitives ──────────────────────────────────────────
@@ -2372,7 +2393,7 @@ var CanvasGuides = class {
    * "claimed" — e.g. hinting that a shape is about to become a container.
    */
   showHatchOverlay(rect) {
-    const border = colorAlpha(this.color, 0.3);
+    const border = hexAlpha(this.color, 0.3);
     this.addRect({
       left: rect.left,
       top: rect.top,
@@ -2424,7 +2445,7 @@ var CanvasGuides = class {
     if (!layout || !isChildLayout(layout)) return;
     const m = layout.margins;
     const hatch = this.hatchPattern;
-    const border = colorAlpha(this.color, 0.3);
+    const border = hexAlpha(this.color, 0.3);
     if (m.left > 0)
       this.addRect({ left: ctl.x, top: ctl.y, width: m.left, height: ch, fill: hatch, stroke: border, strokeWidth: 0.5 });
     if (m.right > 0)
@@ -2447,32 +2468,13 @@ var CanvasGuides = class {
     }
   }
 };
-function parseHex(hex) {
-  const h = hex.replace("#", "");
-  if (h.length === 3) {
-    return [
-      parseInt(h[0] + h[0], 16),
-      parseInt(h[1] + h[1], 16),
-      parseInt(h[2] + h[2], 16)
-    ];
-  }
-  return [
-    parseInt(h.slice(0, 2), 16),
-    parseInt(h.slice(2, 4), 16),
-    parseInt(h.slice(4, 6), 16)
-  ];
-}
-function colorAlpha(hex, alpha) {
-  const [r, g, b] = parseHex(hex);
-  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
-}
 function createHatchPattern(hex) {
   const size = 8;
   const canvas = document.createElement("canvas");
   canvas.width = size;
   canvas.height = size;
   const ctx = canvas.getContext("2d");
-  ctx.strokeStyle = colorAlpha(hex, 0.3);
+  ctx.strokeStyle = hexAlpha(hex, 0.3);
   ctx.lineWidth = 1;
   ctx.beginPath();
   ctx.moveTo(0, size);
@@ -3512,6 +3514,200 @@ function applyClip(obj, shapeType) {
   }
 }
 
+// src/ui/controls.ts
+import { FabricObject as FabricObject7, Control as Control2, controlsUtils } from "#fabric";
+function applyControlStyle(canvas, guideColor) {
+  const gc = guideColor;
+  FabricObject7.ownDefaults.borderColor = gc;
+  FabricObject7.ownDefaults.borderScaleFactor = 2;
+  FabricObject7.ownDefaults.borderOpacityWhenMoving = 1;
+  FabricObject7.ownDefaults.cornerColor = "#ffffff";
+  FabricObject7.ownDefaults.cornerStrokeColor = "#000000";
+  FabricObject7.ownDefaults.transparentCorners = false;
+  FabricObject7.ownDefaults.cornerSize = 16;
+  const hoverProgress = /* @__PURE__ */ new WeakMap();
+  installControlRenderer(gc, hoverProgress);
+  installControlHitAreas(canvas);
+  installHoverAnimation(canvas, hoverProgress);
+  installHoverBorder(canvas);
+}
+var EDGE_CONTROLS = /* @__PURE__ */ new Set(["mt", "mb", "ml", "mr"]);
+var CORNER_CONTROLS = /* @__PURE__ */ new Set(["tl", "tr", "bl", "br"]);
+var DEFAULT_COLOR = "#ffffff";
+var HOVER_DELAY = 60;
+var ANIM_SPEED = 10;
+function installControlRenderer(gc, hoverProgress) {
+  const [activeR, activeG, activeB] = parseHex(gc);
+  const hoverStart = /* @__PURE__ */ new WeakMap();
+  Control2.prototype.render = function(ctx, left, top, styleOverride, fabricObject) {
+    if (fabricObject.isMoving) return;
+    const baseColor = styleOverride?.cornerColor ?? fabricObject.cornerColor;
+    const isDefault = baseColor === DEFAULT_COLOR;
+    const hoveredCtrl = isDefault && fabricObject.__corner ? fabricObject.controls[fabricObject.__corner] : void 0;
+    const isHovered = hoveredCtrl === this;
+    const now = performance.now();
+    const cvs = fabricObject.canvas;
+    const transform = cvs?._currentTransform;
+    const isGrabbed = transform && transform.target === fabricObject && transform.corner && fabricObject.controls[transform.corner] === this;
+    if (isHovered && !hoverStart.has(this)) {
+      hoverStart.set(this, now);
+    } else if (!isHovered && !isGrabbed) {
+      hoverStart.delete(this);
+    }
+    const elapsed = isHovered ? now - (hoverStart.get(this) ?? now) : 0;
+    const target = isGrabbed ? 1 : isHovered && elapsed >= HOVER_DELAY ? 1 : 0;
+    const prev = hoverProgress.get(this) ?? 0;
+    const dt = 1 / 60;
+    const t = Math.min(1, ANIM_SPEED * dt);
+    const progress = prev + (target - prev) * t;
+    hoverProgress.set(this, progress);
+    const p = progress;
+    const r = Math.round(255 + (activeR - 255) * p);
+    const g = Math.round(255 + (activeG - 255) * p);
+    const b = Math.round(255 + (activeB - 255) * p);
+    const fill = isDefault ? `rgb(${r}, ${g}, ${b})` : baseColor;
+    let key = "";
+    for (const [k, c] of Object.entries(fabricObject.controls)) {
+      if (c === this) {
+        key = k;
+        break;
+      }
+    }
+    ctx.save();
+    ctx.translate(left, top);
+    ctx.rotate(fabricObject.getTotalAngle() * Math.PI / 180);
+    let w, h, cr;
+    if (EDGE_CONTROLS.has(key)) {
+      const long = 20, short = 8;
+      const horizontal = key === "mt" || key === "mb";
+      w = horizontal ? long : short;
+      h = horizontal ? short : long;
+      cr = short / 2;
+    } else if (CORNER_CONTROLS.has(key)) {
+      w = 12;
+      h = 12;
+      cr = 3;
+    } else {
+      w = 10;
+      h = 10;
+      cr = 3;
+    }
+    const x = -w / 2, y = -h / 2;
+    ctx.beginPath();
+    ctx.roundRect(x, y, w, h, cr);
+    ctx.fillStyle = fill;
+    ctx.fill();
+    ctx.strokeStyle = "rgba(0, 0, 0, 0.5)";
+    ctx.lineWidth = 0.5;
+    ctx.stroke();
+    ctx.restore();
+  };
+}
+var HIT_DEPTH = 14;
+var CORNER_INSET = 20;
+function installControlHitAreas(canvas) {
+  const createSideRotationControl = () => new Control2({
+    x: 0.5,
+    y: 0,
+    offsetX: 30,
+    offsetY: 0,
+    actionHandler: controlsUtils.rotationWithSnapping,
+    cursorStyleHandler: controlsUtils.rotationStyleHandler,
+    withConnection: true,
+    actionName: "rotate"
+  });
+  canvas.on("object:added", (e) => {
+    const obj = e.target;
+    if (!obj?.controls) return;
+    if (obj.controls.mtr) {
+      obj.controls.mtr = createSideRotationControl();
+    }
+    for (const key of ["mt", "mb", "ml", "mr"]) {
+      const ctrl = obj.controls[key];
+      if (!ctrl) continue;
+      const horizontal = key === "mt" || key === "mb";
+      const origCalc = ctrl.calcCornerCoords.bind(ctrl);
+      ctrl.calcCornerCoords = (angle, cornerSize, cx, cy, isTouch, fObj) => {
+        const dim = fObj._calculateCurrentDimensions();
+        const along = horizontal ? dim.x : dim.y;
+        const edgeLen = Math.max(0, along - CORNER_INSET * 2);
+        ctrl.sizeX = horizontal ? edgeLen : HIT_DEPTH;
+        ctrl.sizeY = horizontal ? HIT_DEPTH : edgeLen;
+        return origCalc(angle, cornerSize, cx, cy, isTouch, fObj);
+      };
+    }
+  });
+}
+function installHoverAnimation(canvas, hoverProgress) {
+  let animating = false;
+  const tick = () => {
+    const active = canvas.getActiveObject();
+    if (!active?.controls) {
+      animating = false;
+      return;
+    }
+    let needsFrame = false;
+    for (const ctrl of Object.values(active.controls)) {
+      const p = hoverProgress.get(ctrl) ?? 0;
+      if (p > 0.01 && p < 0.99) {
+        needsFrame = true;
+        break;
+      }
+      const isHovered = active.__corner ? active.controls[active.__corner] === ctrl : false;
+      if (isHovered && p < 0.99) {
+        needsFrame = true;
+        break;
+      }
+    }
+    if (needsFrame) {
+      canvas.requestRenderAll();
+      requestAnimationFrame(tick);
+    } else {
+      animating = false;
+    }
+  };
+  let lastCorner;
+  canvas.on("mouse:move", () => {
+    const active = canvas.getActiveObject();
+    const corner = active?.__corner;
+    if (corner !== lastCorner) {
+      lastCorner = corner;
+      canvas.requestRenderAll();
+      if (!animating) {
+        animating = true;
+        requestAnimationFrame(tick);
+      }
+    }
+  });
+}
+function installHoverBorder(canvas) {
+  let hoveredObj = null;
+  const clearTopCtx = () => {
+    const fc = canvas.originalFabricCanvas;
+    const ctx = fc.contextTop;
+    if (ctx) ctx.clearRect(0, 0, fc.width, fc.height);
+  };
+  canvas.on("mouse:over", (e) => {
+    const target = e.target;
+    if (!target || target === canvas.getActiveObject()) return;
+    hoveredObj = target;
+    canvas.requestRenderAll();
+  });
+  canvas.on("mouse:out", (e) => {
+    if (e.target === hoveredObj) {
+      hoveredObj = null;
+      clearTopCtx();
+    }
+  });
+  canvas.on("after:render", () => {
+    clearTopCtx();
+    if (!hoveredObj || hoveredObj === canvas.getActiveObject()) return;
+    const ctx = canvas.originalFabricCanvas.contextTop;
+    if (!ctx) return;
+    hoveredObj._renderControls(ctx, { hasControls: false, hasBorders: true });
+  });
+}
+
 // src/FabricEditor.ts
 var _FabricEditor = class _FabricEditor {
   constructor(canvasElement, config) {
@@ -3521,18 +3717,17 @@ var _FabricEditor = class _FabricEditor {
     this._resizeCallbacks = [];
     this._initialized = false;
     this.config = config;
-    const gc = config.guideColor ?? "#ff00ff";
+    const gc = config.guideColor ?? "#d946ef";
     this.canvas = new DesignCanvas(canvasElement, {
       width: config.width,
       height: config.height,
       preserveObjectStacking: true,
+      uniformScaling: false,
       selectionColor: hexAlpha(gc, 0.15),
       selectionBorderColor: hexAlpha(gc, 0.6),
       selectionLineWidth: 1
     });
-    FabricObject7.ownDefaults.borderColor = hexAlpha(gc, 0.6);
-    FabricObject7.ownDefaults.cornerColor = gc;
-    FabricObject7.ownDefaults.cornerStrokeColor = gc;
+    applyControlStyle(this.canvas, gc);
     this.layers = new LayerManager(this.canvas);
     this.selection = new SelectionManager(this.canvas);
     this.masks = new MaskManager(this.canvas);
@@ -3542,7 +3737,6 @@ var _FabricEditor = class _FabricEditor {
     this.layout = new LayoutManager2(this.canvas, {}, config.guideColor);
     this.canvas.originalFabricCanvas.snappingManager = this.snapping;
     this.extendFabricObject();
-    this.configureRotationControl();
     if (config.transparent) {
       this.canvas.backgroundColor = "transparent";
     }
@@ -4033,37 +4227,13 @@ var _FabricEditor = class _FabricEditor {
   extendFabricObject() {
     if (_FabricEditor._toObjectExtended) return;
     _FabricEditor._toObjectExtended = true;
-    const originalToObject = FabricObject7.prototype.toObject;
-    FabricObject7.prototype.toObject = function(propertiesToInclude) {
+    const originalToObject = FabricObject8.prototype.toObject;
+    FabricObject8.prototype.toObject = function(propertiesToInclude) {
       return originalToObject.call(
         this,
         ["layerId", "layout"].concat(propertiesToInclude || [])
       );
     };
-  }
-  /**
-   * Déplace le contrôle de rotation (mtr) sur le côté droit de l'objet
-   * pour éviter le conflit avec la barre de contrôles positionnée au-dessus
-   *
-   * En Fabric.js v6, les contrôles sont créés par instance, donc on écoute
-   * l'événement object:added pour modifier chaque nouvel objet.
-   */
-  configureRotationControl() {
-    const createSideRotationControl = () => new Control2({
-      x: 0.5,
-      y: 0,
-      offsetX: 30,
-      offsetY: 0,
-      actionHandler: controlsUtils.rotationWithSnapping,
-      cursorStyleHandler: controlsUtils.rotationStyleHandler,
-      withConnection: true,
-      actionName: "rotate"
-    });
-    this.canvas.on("object:added", (e) => {
-      if (e.target?.controls?.mtr) {
-        e.target.controls.mtr = createSideRotationControl();
-      }
-    });
   }
 };
 console.log("[fabric-editor] \u2713 linked local build 2");
@@ -4072,13 +4242,6 @@ console.log("[fabric-editor] \u2713 linked local build 2");
  */
 _FabricEditor._toObjectExtended = false;
 var FabricEditor = _FabricEditor;
-function hexAlpha(hex, alpha) {
-  const h = hex.replace("#", "");
-  const r = parseInt(h.length === 3 ? h[0] + h[0] : h.slice(0, 2), 16);
-  const g = parseInt(h.length === 3 ? h[1] + h[1] : h.slice(2, 4), 16);
-  const b = parseInt(h.length === 3 ? h[2] + h[2] : h.slice(4, 6), 16);
-  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
-}
 
 // src/ImageDropHandler.ts
 import { Rect as Rect6 } from "#fabric";

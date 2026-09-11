@@ -1,4 +1,4 @@
-import { FabricObject, FabricImage, Point, Control, controlsUtils } from "#fabric";
+import { FabricObject, FabricImage, Point } from "#fabric";
 import { DesignCanvas } from "./DesignCanvas";
 import { LayerManager } from "./LayerManager";
 import { SelectionManager } from "./SelectionManager";
@@ -11,6 +11,8 @@ import { switchClip } from "./clipping";
 import { switchShape, nextShape } from "./shapes";
 import { ImageFrame } from "./ImageFrame";
 import { isPositionLocked } from "./locking";
+import { applyControlStyle } from "./ui/controls";
+import { hexAlpha } from "./ui/color";
 import type { EditorConfig, LayerData, FontsConfig, ShapeType } from "./types";
 
 /**
@@ -43,21 +45,19 @@ export class FabricEditor {
   constructor(canvasElement: HTMLCanvasElement, config: EditorConfig) {
     this.config = config;
 
-    const gc = config.guideColor ?? "#ff00ff";
+    const gc = config.guideColor ?? "#d946ef";
 
     this.canvas = new DesignCanvas(canvasElement, {
       width: config.width,
       height: config.height,
       preserveObjectStacking: true,
+      uniformScaling: false,
       selectionColor: hexAlpha(gc, 0.15),
       selectionBorderColor: hexAlpha(gc, 0.6),
       selectionLineWidth: 1,
     });
 
-    // Apply guide color to Fabric's default object controls
-    FabricObject.ownDefaults.borderColor = hexAlpha(gc, 0.6);
-    FabricObject.ownDefaults.cornerColor = gc;
-    FabricObject.ownDefaults.cornerStrokeColor = gc;
+    applyControlStyle(this.canvas, gc);
 
     // Initialiser les managers
     this.layers = new LayerManager(this.canvas);
@@ -73,9 +73,6 @@ export class FabricEditor {
 
     // Étendre FabricObject pour inclure layerId dans le JSON
     this.extendFabricObject();
-
-    // Déplacer le contrôle de rotation sur le côté droit
-    this.configureRotationControl();
 
     if (config.transparent) {
       this.canvas.backgroundColor = "transparent";
@@ -698,41 +695,5 @@ export class FabricEditor {
     };
   }
 
-  /**
-   * Déplace le contrôle de rotation (mtr) sur le côté droit de l'objet
-   * pour éviter le conflit avec la barre de contrôles positionnée au-dessus
-   *
-   * En Fabric.js v6, les contrôles sont créés par instance, donc on écoute
-   * l'événement object:added pour modifier chaque nouvel objet.
-   */
-  private configureRotationControl(): void {
-    const createSideRotationControl = () =>
-      new Control({
-        x: 0.5,
-        y: 0,
-        offsetX: 30,
-        offsetY: 0,
-        actionHandler: controlsUtils.rotationWithSnapping,
-        cursorStyleHandler: controlsUtils.rotationStyleHandler,
-        withConnection: true,
-        actionName: "rotate",
-      });
-
-    // Modifier les contrôles de chaque objet ajouté au canvas
-    this.canvas.on("object:added", (e) => {
-      if (e.target?.controls?.mtr) {
-        e.target.controls.mtr = createSideRotationControl();
-      }
-    });
-  }
 }
 
-// ── Helpers ──────────────────────────────────────────────────────────
-
-function hexAlpha(hex: string, alpha: number): string {
-  const h = hex.replace("#", "");
-  const r = parseInt(h.length === 3 ? h[0] + h[0] : h.slice(0, 2), 16);
-  const g = parseInt(h.length === 3 ? h[1] + h[1] : h.slice(2, 4), 16);
-  const b = parseInt(h.length === 3 ? h[2] + h[2] : h.slice(4, 6), 16);
-  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
-}

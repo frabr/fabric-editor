@@ -1,6 +1,6 @@
 import { FabricObject, Rect } from "#fabric";
 import type { DesignCanvas } from "./DesignCanvas";
-import { CanvasGuides } from "./CanvasGuides";
+import { CanvasGuides } from "./ui/guides";
 import { runLayout } from "./layout/reconcile";
 import {
   isContainerLayout,

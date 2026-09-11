@@ -15,7 +15,7 @@ export { PersistenceManager } from "./PersistenceManager";
 export { HistoryManager } from "./HistoryManager";
 export { SnappingManager } from "./SnappingManager";
 export { LayoutManager } from "./LayoutManager";
-export { CanvasGuides } from "./CanvasGuides";
+export { CanvasGuides } from "./ui/guides";
 
 // Handlers
 export { ImageDropHandler } from "./ImageDropHandler";

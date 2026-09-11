@@ -1298,14 +1298,6 @@ declare class FabricEditor {
      */
     private static _toObjectExtended;
     private extendFabricObject;
-    /**
-     * Déplace le contrôle de rotation (mtr) sur le côté droit de l'objet
-     * pour éviter le conflit avec la barre de contrôles positionnée au-dessus
-     *
-     * En Fabric.js v6, les contrôles sont créés par instance, donc on écoute
-     * l'événement object:added pour modifier chaque nouvel objet.
-     */
-    private configureRotationControl;
 }
 
 /**

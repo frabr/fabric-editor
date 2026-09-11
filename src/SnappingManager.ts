@@ -1,6 +1,6 @@
 import type { FabricObject } from "#fabric";
 import type { DesignCanvas } from "./DesignCanvas";
-import { CanvasGuides } from "./CanvasGuides";
+import { CanvasGuides } from "./ui/guides";
 
 export interface SnappingConfig {
   /** Distance en pixels pour déclencher le snap (défaut: 10) */

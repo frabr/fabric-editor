@@ -1,7 +1,8 @@
 import { FabricObject, Line, Rect, Pattern } from "#fabric";
-import type { DesignCanvas } from "./DesignCanvas";
-import { isChildLayout, type ChildLayout } from "./layout/types";
-import { scaledSize, topLeft } from "./layout/geometry";
+import type { DesignCanvas } from "../DesignCanvas";
+import { isChildLayout, type ChildLayout } from "../layout/types";
+import { scaledSize, topLeft } from "../layout/geometry";
+import { hexAlpha } from "./color";
 
 /**
  * Manages ephemeral visual guides (overlays) on a Fabric canvas.
@@ -29,8 +30,8 @@ export class CanvasGuides {
     this.canvas = canvas;
     this.color = color;
 
-    this.strokeColor = colorAlpha(color, 0.4);
-    this.fillLight = colorAlpha(color, 0.05);
+    this.strokeColor = hexAlpha(color, 0.4);
+    this.fillLight = hexAlpha(color, 0.05);
     this.hatchPattern = createHatchPattern(color);
   }
 
@@ -111,7 +112,7 @@ export class CanvasGuides {
    * "claimed" — e.g. hinting that a shape is about to become a container.
    */
   showHatchOverlay(rect: { left: number; top: number; width: number; height: number }): void {
-    const border = colorAlpha(this.color, 0.3);
+    const border = hexAlpha(this.color, 0.3);
     this.addRect({
       left: rect.left, top: rect.top,
       width: rect.width, height: rect.height,
@@ -165,7 +166,7 @@ export class CanvasGuides {
     const m = layout.margins;
 
     const hatch = this.hatchPattern;
-    const border = colorAlpha(this.color, 0.3);
+    const border = hexAlpha(this.color, 0.3);
 
     if (m.left > 0)
       this.addRect({ left: ctl.x, top: ctl.y, width: m.left, height: ch, fill: hatch, stroke: border, strokeWidth: 0.5 });
@@ -198,33 +199,6 @@ export class CanvasGuides {
   }
 }
 
-// ── Color utilities (module-private) ────────────────────────────────
-
-/**
- * Parse a hex color (#rgb or #rrggbb) into [r, g, b].
- */
-function parseHex(hex: string): [number, number, number] {
-  const h = hex.replace("#", "");
-  if (h.length === 3) {
-    return [
-      parseInt(h[0] + h[0], 16),
-      parseInt(h[1] + h[1], 16),
-      parseInt(h[2] + h[2], 16),
-    ];
-  }
-  return [
-    parseInt(h.slice(0, 2), 16),
-    parseInt(h.slice(2, 4), 16),
-    parseInt(h.slice(4, 6), 16),
-  ];
-}
-
-/** Return an rgba() string from a hex color + alpha. */
-function colorAlpha(hex: string, alpha: number): string {
-  const [r, g, b] = parseHex(hex);
-  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
-}
-
 /**
  * Create a diagonal hatch Pattern from a base color.
  * Uses an offscreen canvas to draw repeating diagonal lines.
@@ -236,7 +210,7 @@ function createHatchPattern(hex: string): Pattern {
   canvas.height = size;
   const ctx = canvas.getContext("2d")!;
 
-  ctx.strokeStyle = colorAlpha(hex, 0.3);
+  ctx.strokeStyle = hexAlpha(hex, 0.3);
   ctx.lineWidth = 1;
 
   // Diagonal line from bottom-left to top-right, repeated
