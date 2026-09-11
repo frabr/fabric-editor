@@ -42,11 +42,21 @@ export class FabricEditor {
   constructor(canvasElement: HTMLCanvasElement, config: EditorConfig) {
     this.config = config;
 
+    const gc = config.guideColor ?? "#ff00ff";
+
     this.canvas = new Canvas(canvasElement, {
       width: config.width,
       height: config.height,
       preserveObjectStacking: true,
+      selectionColor: hexAlpha(gc, 0.15),
+      selectionBorderColor: hexAlpha(gc, 0.6),
+      selectionLineWidth: 1,
     });
+
+    // Apply guide color to Fabric's default object controls
+    FabricObject.ownDefaults.borderColor = hexAlpha(gc, 0.6);
+    FabricObject.ownDefaults.cornerColor = gc;
+    FabricObject.ownDefaults.cornerStrokeColor = gc;
 
     // Initialiser les managers
     this.layers = new LayerManager(this.canvas);
@@ -54,8 +64,8 @@ export class FabricEditor {
     this.masks = new MaskManager(this.canvas);
     this.persistence = new PersistenceManager(this.canvas, this.layers);
     this.history = new HistoryManager(this.canvas, this.layers);
-    this.snapping = new SnappingManager(this.canvas);
-    this.layout = new LayoutManager(this.canvas);
+    this.snapping = new SnappingManager(this.canvas, {}, config.guideColor);
+    this.layout = new LayoutManager(this.canvas, {}, config.guideColor);
 
     // Stocker une référence au SnappingManager sur le canvas pour l'accès depuis ImageFrame
     (this.canvas as unknown as { snappingManager: SnappingManager }).snappingManager = this.snapping;
@@ -717,4 +727,14 @@ export class FabricEditor {
       }
     });
   }
+}
+
+// ── Helpers ──────────────────────────────────────────────────────────
+
+function hexAlpha(hex: string, alpha: number): string {
+  const h = hex.replace("#", "");
+  const r = parseInt(h.length === 3 ? h[0] + h[0] : h.slice(0, 2), 16);
+  const g = parseInt(h.length === 3 ? h[1] + h[1] : h.slice(2, 4), 16);
+  const b = parseInt(h.length === 3 ? h[2] + h[2] : h.slice(4, 6), 16);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }

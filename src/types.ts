@@ -6,6 +6,8 @@ export interface EditorConfig {
   height: number;
   fonts?: FontsConfig;
   defaultColor?: string;
+  /** Base color for all visual guides (snap lines, layout margins, hints). */
+  guideColor?: string;
   container?: HTMLElement;
   transparent?: boolean;
 }

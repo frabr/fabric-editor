@@ -1,4 +1,4 @@
-import { Textbox, FabricObject, Canvas, Group, FabricImage, TOptions, RectProps, Rect, CircleProps, Circle, PathProps, Path } from '#fabric';
+import { Textbox, FabricObject, Canvas, Group, FabricImage, Pattern, TOptions, RectProps, Rect, CircleProps, Circle, PathProps, Path } from '#fabric';
 
 declare module "fabric" {
     interface Canvas {
@@ -297,6 +297,8 @@ interface EditorConfig {
     height: number;
     fonts?: FontsConfig;
     defaultColor?: string;
+    /** Base color for all visual guides (snap lines, layout margins, hints). */
+    guideColor?: string;
     container?: HTMLElement;
     transparent?: boolean;
 }
@@ -939,8 +941,6 @@ interface SnappingConfig {
     snapToCenter?: boolean;
     /** Activer le snap aux bords du canvas (défaut: true) */
     snapToEdges?: boolean;
-    /** Couleur des guides visuels (défaut: "#ff00ff") */
-    guideColor?: string;
 }
 interface SnapGuide {
     orientation: "horizontal" | "vertical";
@@ -970,7 +970,7 @@ declare class SnappingManager {
     private resizeSnapState;
     /** Multiplicateur pour le seuil de sortie du snap (défaut: 2x le seuil d'entrée) */
     private exitMultiplier;
-    constructor(canvas: Canvas, config?: SnappingConfig);
+    constructor(canvas: Canvas, config?: SnappingConfig, guideColor?: string);
     /**
      * Active ou désactive le snapping
      */
@@ -1036,7 +1036,7 @@ declare class LayoutManager {
     private callbacks;
     private guides;
     private dtl;
-    constructor(canvas: Canvas, callbacks?: LayoutManagerCallbacks);
+    constructor(canvas: Canvas, callbacks?: LayoutManagerCallbacks, guideColor?: string);
     /** Set or update callbacks after construction. */
     setCallbacks(callbacks: LayoutManagerCallbacks): void;
     /** Run layout on all canvas objects. */
@@ -1260,6 +1260,8 @@ declare class FabricEditor {
 /**
  * Manages ephemeral visual guides (overlays) on a Fabric canvas.
  *
+ * All colors are derived from a single base color passed at construction.
+ *
  * Provides both low-level primitives (addLine, addRect) and
  * high-level presets for common guide patterns (layout margins,
  * snap lines, hover hints).
@@ -1270,7 +1272,12 @@ declare class FabricEditor {
 declare class CanvasGuides {
     private canvas;
     private objects;
-    constructor(canvas: Canvas);
+    private color;
+    /** Derived colors (computed once from base color). */
+    private strokeColor;
+    private fillLight;
+    private hatchPattern;
+    constructor(canvas: Canvas, color?: string);
     /** Add a line guide. */
     addLine(coords: [number, number, number, number], opts?: {
         stroke?: string;
@@ -1283,7 +1290,7 @@ declare class CanvasGuides {
         top: number;
         width: number;
         height: number;
-        fill?: string;
+        fill?: string | Pattern;
         stroke?: string;
         strokeWidth?: number;
         strokeDashArray?: number[];
@@ -1301,7 +1308,7 @@ declare class CanvasGuides {
     showHintHighlight(shape: FabricObject): void;
     /**
      * Show layout guides: a dashed outline around the container and
-     * colored overlays for each non-zero margin zone.
+     * hatched overlays for each non-zero margin zone.
      */
     showLayoutGuides(container: FabricObject, child: FabricObject): void;
     /**
@@ -1310,9 +1317,7 @@ declare class CanvasGuides {
     showSnapLines(guides: Array<{
         orientation: "horizontal" | "vertical";
         position: number;
-    }>, opts?: {
-        stroke?: string;
-    }): void;
+    }>): void;
 }
 
 interface ImageDropHandlerConfig {

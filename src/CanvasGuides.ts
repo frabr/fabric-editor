@@ -1,9 +1,11 @@
-import { Canvas, FabricObject, Line, Rect } from "#fabric";
+import { Canvas, FabricObject, Line, Rect, Pattern } from "#fabric";
 import { isChildLayout, type ChildLayout } from "./layout/types";
 import { scaledSize, topLeft } from "./layout/geometry";
 
 /**
  * Manages ephemeral visual guides (overlays) on a Fabric canvas.
+ *
+ * All colors are derived from a single base color passed at construction.
  *
  * Provides both low-level primitives (addLine, addRect) and
  * high-level presets for common guide patterns (layout margins,
@@ -15,9 +17,20 @@ import { scaledSize, topLeft } from "./layout/geometry";
 export class CanvasGuides {
   private canvas: Canvas;
   private objects: FabricObject[] = [];
+  private color: string;
 
-  constructor(canvas: Canvas) {
+  /** Derived colors (computed once from base color). */
+  private strokeColor: string;
+  private fillLight: string;
+  private hatchPattern: Pattern;
+
+  constructor(canvas: Canvas, color = "#ff00ff") {
     this.canvas = canvas;
+    this.color = color;
+
+    this.strokeColor = colorAlpha(color, 0.4);
+    this.fillLight = colorAlpha(color, 0.05);
+    this.hatchPattern = createHatchPattern(color);
   }
 
   // ── Low-level primitives ──────────────────────────────────────────
@@ -29,7 +42,7 @@ export class CanvasGuides {
     strokeDashArray?: number[];
   } = {}): void {
     const line = new Line(coords, {
-      stroke: opts.stroke ?? "#ff00ff",
+      stroke: opts.stroke ?? this.color,
       strokeWidth: opts.strokeWidth ?? 1,
       strokeDashArray: opts.strokeDashArray ?? [5, 5],
       selectable: false,
@@ -46,7 +59,7 @@ export class CanvasGuides {
     top: number;
     width: number;
     height: number;
-    fill?: string;
+    fill?: string | Pattern;
     stroke?: string;
     strokeWidth?: number;
     strokeDashArray?: number[];
@@ -102,8 +115,8 @@ export class CanvasGuides {
     this.addRect({
       left: tl.x, top: tl.y,
       width: w, height: h,
-      fill: "rgba(59, 130, 246, 0.05)",
-      stroke: "rgba(59, 130, 246, 0.4)",
+      fill: this.fillLight,
+      stroke: this.strokeColor,
       strokeWidth: 1.5,
       strokeDashArray: [6, 4],
     });
@@ -111,7 +124,7 @@ export class CanvasGuides {
 
   /**
    * Show layout guides: a dashed outline around the container and
-   * colored overlays for each non-zero margin zone.
+   * hatched overlays for each non-zero margin zone.
    */
   showLayoutGuides(container: FabricObject, child: FabricObject): void {
     this.clear();
@@ -124,26 +137,26 @@ export class CanvasGuides {
       left: ctl.x, top: ctl.y,
       width: cw, height: ch,
       fill: "transparent",
-      stroke: "#3b82f6", strokeWidth: 2,
+      stroke: this.color, strokeWidth: 2,
       strokeDashArray: [6, 4],
     });
 
-    // Margin zones
+    // Margin zones (hatched)
     const layout = child.get?.("layout") as ChildLayout | undefined;
     if (!layout || !isChildLayout(layout)) return;
     const m = layout.margins;
 
-    const FILL = "rgba(59, 130, 246, 0.08)";
-    const STROKE = "rgba(59, 130, 246, 0.3)";
+    const hatch = this.hatchPattern;
+    const border = colorAlpha(this.color, 0.3);
 
     if (m.left > 0)
-      this.addRect({ left: ctl.x, top: ctl.y, width: m.left, height: ch, fill: FILL, stroke: STROKE, strokeWidth: 0.5 });
+      this.addRect({ left: ctl.x, top: ctl.y, width: m.left, height: ch, fill: hatch, stroke: border, strokeWidth: 0.5 });
     if (m.right > 0)
-      this.addRect({ left: ctl.x + cw - m.right, top: ctl.y, width: m.right, height: ch, fill: FILL, stroke: STROKE, strokeWidth: 0.5 });
+      this.addRect({ left: ctl.x + cw - m.right, top: ctl.y, width: m.right, height: ch, fill: hatch, stroke: border, strokeWidth: 0.5 });
     if (m.top > 0)
-      this.addRect({ left: ctl.x + m.left, top: ctl.y, width: cw - m.left - m.right, height: m.top, fill: FILL, stroke: STROKE, strokeWidth: 0.5 });
+      this.addRect({ left: ctl.x + m.left, top: ctl.y, width: cw - m.left - m.right, height: m.top, fill: hatch, stroke: border, strokeWidth: 0.5 });
     if (m.bottom > 0)
-      this.addRect({ left: ctl.x + m.left, top: ctl.y + ch - m.bottom, width: cw - m.left - m.right, height: m.bottom, fill: FILL, stroke: STROKE, strokeWidth: 0.5 });
+      this.addRect({ left: ctl.x + m.left, top: ctl.y + ch - m.bottom, width: cw - m.left - m.right, height: m.bottom, fill: hatch, stroke: border, strokeWidth: 0.5 });
   }
 
   /**
@@ -151,7 +164,6 @@ export class CanvasGuides {
    */
   showSnapLines(
     guides: Array<{ orientation: "horizontal" | "vertical"; position: number }>,
-    opts: { stroke?: string } = {},
   ): void {
     this.clear();
     const canvasW = this.canvas.width;
@@ -163,10 +175,62 @@ export class CanvasGuides {
           ? [guide.position, 0, guide.position, canvasH]
           : [0, guide.position, canvasW, guide.position];
 
-      this.addLine(coords, {
-        stroke: opts.stroke ?? "#ff00ff",
-        strokeDashArray: [5, 5],
-      });
+      this.addLine(coords, { strokeDashArray: [5, 5] });
     }
   }
+}
+
+// ── Color utilities (module-private) ────────────────────────────────
+
+/**
+ * Parse a hex color (#rgb or #rrggbb) into [r, g, b].
+ */
+function parseHex(hex: string): [number, number, number] {
+  const h = hex.replace("#", "");
+  if (h.length === 3) {
+    return [
+      parseInt(h[0] + h[0], 16),
+      parseInt(h[1] + h[1], 16),
+      parseInt(h[2] + h[2], 16),
+    ];
+  }
+  return [
+    parseInt(h.slice(0, 2), 16),
+    parseInt(h.slice(2, 4), 16),
+    parseInt(h.slice(4, 6), 16),
+  ];
+}
+
+/** Return an rgba() string from a hex color + alpha. */
+function colorAlpha(hex: string, alpha: number): string {
+  const [r, g, b] = parseHex(hex);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
+/**
+ * Create a diagonal hatch Pattern from a base color.
+ * Uses an offscreen canvas to draw repeating diagonal lines.
+ */
+function createHatchPattern(hex: string): Pattern {
+  const size = 8;
+  const canvas = document.createElement("canvas");
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext("2d")!;
+
+  ctx.strokeStyle = colorAlpha(hex, 0.3);
+  ctx.lineWidth = 1;
+
+  // Diagonal line from bottom-left to top-right, repeated
+  ctx.beginPath();
+  ctx.moveTo(0, size);
+  ctx.lineTo(size, 0);
+  // Wrap-around lines for seamless tiling
+  ctx.moveTo(-size / 2, size / 2);
+  ctx.lineTo(size / 2, -size / 2);
+  ctx.moveTo(size / 2, size + size / 2);
+  ctx.lineTo(size + size / 2, size / 2);
+  ctx.stroke();
+
+  return new Pattern({ source: canvas, repeat: "repeat" });
 }

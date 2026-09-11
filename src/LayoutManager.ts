@@ -65,10 +65,10 @@ export class LayoutManager {
   private callbacks: LayoutManagerCallbacks;
   private guides: CanvasGuides;
   private dtl: DtlState = { phase: "idle", cooldownUntil: 0 };
-  constructor(canvas: Canvas, callbacks: LayoutManagerCallbacks = {}) {
+  constructor(canvas: Canvas, callbacks: LayoutManagerCallbacks = {}, guideColor?: string) {
     this.canvas = canvas;
     this.callbacks = callbacks;
-    this.guides = new CanvasGuides(canvas);
+    this.guides = new CanvasGuides(canvas, guideColor);
     this.setupEventListeners();
   }
 

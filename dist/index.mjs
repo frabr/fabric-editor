@@ -2143,7 +2143,7 @@ var HistoryManager = class {
 };
 
 // src/CanvasGuides.ts
-import { Line, Rect as Rect4 } from "#fabric";
+import { Line, Rect as Rect4, Pattern } from "#fabric";
 
 // src/layout/types.ts
 function isContainerLayout(l) {
@@ -2196,15 +2196,19 @@ function hasExceededOffset(current, origin, offsetX, offsetY, margin) {
 
 // src/CanvasGuides.ts
 var CanvasGuides = class {
-  constructor(canvas) {
+  constructor(canvas, color = "#ff00ff") {
     this.objects = [];
     this.canvas = canvas;
+    this.color = color;
+    this.strokeColor = colorAlpha(color, 0.4);
+    this.fillLight = colorAlpha(color, 0.05);
+    this.hatchPattern = createHatchPattern(color);
   }
   // ── Low-level primitives ──────────────────────────────────────────
   /** Add a line guide. */
   addLine(coords, opts = {}) {
     const line = new Line(coords, {
-      stroke: opts.stroke ?? "#ff00ff",
+      stroke: opts.stroke ?? this.color,
       strokeWidth: opts.strokeWidth ?? 1,
       strokeDashArray: opts.strokeDashArray ?? [5, 5],
       selectable: false,
@@ -2264,15 +2268,15 @@ var CanvasGuides = class {
       top: tl.y,
       width: w,
       height: h,
-      fill: "rgba(59, 130, 246, 0.05)",
-      stroke: "rgba(59, 130, 246, 0.4)",
+      fill: this.fillLight,
+      stroke: this.strokeColor,
       strokeWidth: 1.5,
       strokeDashArray: [6, 4]
     });
   }
   /**
    * Show layout guides: a dashed outline around the container and
-   * colored overlays for each non-zero margin zone.
+   * hatched overlays for each non-zero margin zone.
    */
   showLayoutGuides(container, child) {
     this.clear();
@@ -2284,44 +2288,78 @@ var CanvasGuides = class {
       width: cw,
       height: ch,
       fill: "transparent",
-      stroke: "#3b82f6",
+      stroke: this.color,
       strokeWidth: 2,
       strokeDashArray: [6, 4]
     });
     const layout = child.get?.("layout");
     if (!layout || !isChildLayout(layout)) return;
     const m = layout.margins;
-    const FILL = "rgba(59, 130, 246, 0.08)";
-    const STROKE = "rgba(59, 130, 246, 0.3)";
+    const hatch = this.hatchPattern;
+    const border = colorAlpha(this.color, 0.3);
     if (m.left > 0)
-      this.addRect({ left: ctl.x, top: ctl.y, width: m.left, height: ch, fill: FILL, stroke: STROKE, strokeWidth: 0.5 });
+      this.addRect({ left: ctl.x, top: ctl.y, width: m.left, height: ch, fill: hatch, stroke: border, strokeWidth: 0.5 });
     if (m.right > 0)
-      this.addRect({ left: ctl.x + cw - m.right, top: ctl.y, width: m.right, height: ch, fill: FILL, stroke: STROKE, strokeWidth: 0.5 });
+      this.addRect({ left: ctl.x + cw - m.right, top: ctl.y, width: m.right, height: ch, fill: hatch, stroke: border, strokeWidth: 0.5 });
     if (m.top > 0)
-      this.addRect({ left: ctl.x + m.left, top: ctl.y, width: cw - m.left - m.right, height: m.top, fill: FILL, stroke: STROKE, strokeWidth: 0.5 });
+      this.addRect({ left: ctl.x + m.left, top: ctl.y, width: cw - m.left - m.right, height: m.top, fill: hatch, stroke: border, strokeWidth: 0.5 });
     if (m.bottom > 0)
-      this.addRect({ left: ctl.x + m.left, top: ctl.y + ch - m.bottom, width: cw - m.left - m.right, height: m.bottom, fill: FILL, stroke: STROKE, strokeWidth: 0.5 });
+      this.addRect({ left: ctl.x + m.left, top: ctl.y + ch - m.bottom, width: cw - m.left - m.right, height: m.bottom, fill: hatch, stroke: border, strokeWidth: 0.5 });
   }
   /**
    * Show snap alignment lines (horizontal/vertical) spanning the full canvas.
    */
-  showSnapLines(guides, opts = {}) {
+  showSnapLines(guides) {
     this.clear();
     const canvasW = this.canvas.width;
     const canvasH = this.canvas.height;
     for (const guide of guides) {
       const coords = guide.orientation === "vertical" ? [guide.position, 0, guide.position, canvasH] : [0, guide.position, canvasW, guide.position];
-      this.addLine(coords, {
-        stroke: opts.stroke ?? "#ff00ff",
-        strokeDashArray: [5, 5]
-      });
+      this.addLine(coords, { strokeDashArray: [5, 5] });
     }
   }
 };
+function parseHex(hex) {
+  const h = hex.replace("#", "");
+  if (h.length === 3) {
+    return [
+      parseInt(h[0] + h[0], 16),
+      parseInt(h[1] + h[1], 16),
+      parseInt(h[2] + h[2], 16)
+    ];
+  }
+  return [
+    parseInt(h.slice(0, 2), 16),
+    parseInt(h.slice(2, 4), 16),
+    parseInt(h.slice(4, 6), 16)
+  ];
+}
+function colorAlpha(hex, alpha) {
+  const [r, g, b] = parseHex(hex);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+function createHatchPattern(hex) {
+  const size = 8;
+  const canvas = document.createElement("canvas");
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext("2d");
+  ctx.strokeStyle = colorAlpha(hex, 0.3);
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(0, size);
+  ctx.lineTo(size, 0);
+  ctx.moveTo(-size / 2, size / 2);
+  ctx.lineTo(size / 2, -size / 2);
+  ctx.moveTo(size / 2, size + size / 2);
+  ctx.lineTo(size + size / 2, size / 2);
+  ctx.stroke();
+  return new Pattern({ source: canvas, repeat: "repeat" });
+}
 
 // src/SnappingManager.ts
 var SnappingManager = class {
-  constructor(canvas, config = {}) {
+  constructor(canvas, config = {}, guideColor) {
     this.enabled = true;
     this.snapState = null;
     this.resizeSnapState = null;
@@ -2331,10 +2369,9 @@ var SnappingManager = class {
     this.config = {
       threshold: config.threshold ?? 10,
       snapToCenter: config.snapToCenter ?? true,
-      snapToEdges: config.snapToEdges ?? true,
-      guideColor: config.guideColor ?? "#ff00ff"
+      snapToEdges: config.snapToEdges ?? true
     };
-    this.guides = new CanvasGuides(canvas);
+    this.guides = new CanvasGuides(canvas, guideColor);
     this.setupEventListeners();
   }
   /**
@@ -2529,7 +2566,7 @@ var SnappingManager = class {
     this.updateGuides(activeGuides);
   }
   updateGuides(activeGuides) {
-    this.guides.showSnapLines(activeGuides, { stroke: this.config.guideColor });
+    this.guides.showSnapLines(activeGuides);
     this.canvas.requestRenderAll();
   }
   /**
@@ -3029,7 +3066,7 @@ function wrapContainerAroundChild(child, container) {
 // src/LayoutManager.ts
 var ANCHOR_DELAY_MS = 300;
 var LayoutManager2 = class {
-  constructor(canvas, callbacks = {}) {
+  constructor(canvas, callbacks = {}, guideColor) {
     this.dtl = { phase: "idle", cooldownUntil: 0 };
     // ── Event wiring ──────────────────────────────────────────────────
     this.onMovingBound = (e) => this.onMoving(e);
@@ -3037,7 +3074,7 @@ var LayoutManager2 = class {
     this.onScalingBound = (e) => this.onScaling(e);
     this.canvas = canvas;
     this.callbacks = callbacks;
-    this.guides = new CanvasGuides(canvas);
+    this.guides = new CanvasGuides(canvas, guideColor);
     this.setupEventListeners();
   }
   /** Set or update callbacks after construction. */
@@ -3356,18 +3393,25 @@ var _FabricEditor = class _FabricEditor {
     this._resizeCallbacks = [];
     this._initialized = false;
     this.config = config;
+    const gc = config.guideColor ?? "#ff00ff";
     this.canvas = new Canvas6(canvasElement, {
       width: config.width,
       height: config.height,
-      preserveObjectStacking: true
+      preserveObjectStacking: true,
+      selectionColor: hexAlpha(gc, 0.15),
+      selectionBorderColor: hexAlpha(gc, 0.6),
+      selectionLineWidth: 1
     });
+    FabricObject7.ownDefaults.borderColor = hexAlpha(gc, 0.6);
+    FabricObject7.ownDefaults.cornerColor = gc;
+    FabricObject7.ownDefaults.cornerStrokeColor = gc;
     this.layers = new LayerManager(this.canvas);
     this.selection = new SelectionManager(this.canvas);
     this.masks = new MaskManager(this.canvas);
     this.persistence = new PersistenceManager(this.canvas, this.layers);
     this.history = new HistoryManager(this.canvas, this.layers);
-    this.snapping = new SnappingManager(this.canvas);
-    this.layout = new LayoutManager2(this.canvas);
+    this.snapping = new SnappingManager(this.canvas, {}, config.guideColor);
+    this.layout = new LayoutManager2(this.canvas, {}, config.guideColor);
     this.canvas.snappingManager = this.snapping;
     this.extendFabricObject();
     this.configureRotationControl();
@@ -3903,6 +3947,13 @@ console.log("[fabric-editor] \u2713 linked local build 2");
  */
 _FabricEditor._toObjectExtended = false;
 var FabricEditor = _FabricEditor;
+function hexAlpha(hex, alpha) {
+  const h = hex.replace("#", "");
+  const r = parseInt(h.length === 3 ? h[0] + h[0] : h.slice(0, 2), 16);
+  const g = parseInt(h.length === 3 ? h[1] + h[1] : h.slice(2, 4), 16);
+  const b = parseInt(h.length === 3 ? h[2] + h[2] : h.slice(4, 6), 16);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
 
 // src/ImageDropHandler.ts
 import { Rect as Rect6 } from "#fabric";

@@ -8,8 +8,6 @@ export interface SnappingConfig {
   snapToCenter?: boolean;
   /** Activer le snap aux bords du canvas (défaut: true) */
   snapToEdges?: boolean;
-  /** Couleur des guides visuels (défaut: "#ff00ff") */
-  guideColor?: string;
 }
 
 interface SnapGuide {
@@ -57,15 +55,14 @@ export class SnappingManager {
   /** Multiplicateur pour le seuil de sortie du snap (défaut: 2x le seuil d'entrée) */
   private exitMultiplier: number = 2;
 
-  constructor(canvas: Canvas, config: SnappingConfig = {}) {
+  constructor(canvas: Canvas, config: SnappingConfig = {}, guideColor?: string) {
     this.canvas = canvas;
     this.config = {
       threshold: config.threshold ?? 10,
       snapToCenter: config.snapToCenter ?? true,
       snapToEdges: config.snapToEdges ?? true,
-      guideColor: config.guideColor ?? "#ff00ff",
     };
-    this.guides = new CanvasGuides(canvas);
+    this.guides = new CanvasGuides(canvas, guideColor);
 
     this.setupEventListeners();
   }
@@ -313,7 +310,7 @@ export class SnappingManager {
   }
 
   private updateGuides(activeGuides: SnapGuide[]): void {
-    this.guides.showSnapLines(activeGuides, { stroke: this.config.guideColor });
+    this.guides.showSnapLines(activeGuides);
     this.canvas.requestRenderAll();
   }
 
