@@ -143,19 +143,19 @@ export class LayoutManager {
     this.resetToIdle();
     this.canvas.off("object:moving", this.onMovingBound);
     this.canvas.off("object:modified", this.onModifiedBound);
-    this.canvas.off("object:scaling", this.onScalingBound);
+    this.canvas.off("object:resizing", this.onResizingBound);
   }
 
   // ── Event wiring ──────────────────────────────────────────────────
 
   private onMovingBound = (e: any) => this.onMoving(e);
   private onModifiedBound = (e: any) => this.onModified(e);
-  private onScalingBound = (e: any) => this.onScaling(e);
+  private onResizingBound = (e: any) => this.onResizing(e);
 
   private setupEventListeners(): void {
     this.canvas.on("object:moving", this.onMovingBound);
     this.canvas.on("object:modified", this.onModifiedBound);
-    this.canvas.on("object:scaling", this.onScalingBound);
+    this.canvas.on("object:resizing", this.onResizingBound);
   }
 
   // ── Canvas event handlers ─────────────────────────────────────────
@@ -248,17 +248,17 @@ export class LayoutManager {
     this.resetToIdle();
   }
 
-  private onScaling(e: any): void {
+  private onResizing(e: any): void {
     const target = e.target;
     const layout = target?.get?.("layout");
     if (!layout || !isContainerLayout(layout)) return;
 
-    // Create session on first scaling frame
+    // Create session on first resizing frame
     if (!this.resizeSession) {
       this.resizeSession = new ResizeSession(target, e.transform?.corner);
     }
 
-    this.resizeSession.handleScaling(this.canvas.getObjects());
+    this.resizeSession.handleResizing(this.canvas.getObjects());
     this.canvas.renderAll();
   }
 

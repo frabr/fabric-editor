@@ -5,7 +5,7 @@
  * Call `applyControlStyle(canvas, guideColor)` once after creating
  * the DesignCanvas to install all behaviours.
  */
-import { FabricObject, Control, controlsUtils } from "#fabric";
+import { FabricObject, Control, controlsUtils, type TPointerEvent } from "#fabric";
 import type { DesignCanvas } from "../DesignCanvas";
 import { parseHex, hexAlpha } from "./color";
 
@@ -141,6 +141,46 @@ function installControlRenderer(
 
 const HIT_DEPTH = 14;
 const CORNER_INSET = 20;
+const RESIZING = "resizing";
+
+// ── Resize action handlers (width/height instead of scale) ─────────
+
+const {
+  changeWidth,
+  changeHeight,
+  changeObjectWidth,
+  changeObjectHeight,
+} = controlsUtils;
+
+/**
+ * Corner handler that changes both width and height (replaces scalingEqually).
+ * Reproduces wrapWithFixedAnchor + wrapWithFireEvent inline since those
+ * aren't exported from Fabric's controlsUtils.
+ */
+const resizeBoth = (
+  eventData: TPointerEvent,
+  transform: any,
+  x: number,
+  y: number,
+): boolean => {
+  const { target, originX, originY } = transform;
+  const constraint = target.getPositionByOrigin(originX, originY);
+
+  const changedW = changeObjectWidth(eventData, transform, x, y);
+  const changedH = changeObjectHeight(eventData, transform, x, y);
+
+  target.setPositionByOrigin(constraint, transform.originX, transform.originY);
+
+  if (changedW || changedH) {
+    target.canvas?.fire("object:resizing", {
+      target,
+      e: eventData,
+      transform,
+      pointer: { x, y },
+    });
+  }
+  return changedW || changedH;
+};
 
 function installControlHitAreas(canvas: DesignCanvas): void {
   const createSideRotationControl = () =>
@@ -162,6 +202,29 @@ function installControlHitAreas(canvas: DesignCanvas): void {
     // Rotation on the right side
     if (obj.controls.mtr) {
       obj.controls.mtr = createSideRotationControl();
+    }
+
+    // Replace scale controls with resize controls (width/height, not scaleX/Y)
+    const edgeMap: Record<string, typeof changeWidth> = {
+      ml: changeWidth,
+      mr: changeWidth,
+      mt: changeHeight,
+      mb: changeHeight,
+    };
+    const resizingActionName = () => RESIZING;
+    for (const [key, handler] of Object.entries(edgeMap)) {
+      const ctrl = obj.controls[key];
+      if (!ctrl) continue;
+      ctrl.actionHandler = handler;
+      ctrl.actionName = RESIZING;
+      ctrl.getActionName = resizingActionName;
+    }
+    for (const key of ["tl", "tr", "bl", "br"]) {
+      const ctrl = obj.controls[key];
+      if (!ctrl) continue;
+      ctrl.actionHandler = resizeBoth;
+      ctrl.actionName = RESIZING;
+      ctrl.getActionName = resizingActionName;
     }
 
     // Edge controls: hit area spans the full side, minus corner zones

@@ -1,7 +1,7 @@
 /**
  * ResizeSession — encapsulates one user-initiated resize interaction.
  *
- * Created by the LayoutManager on the first `object:scaling` event,
+ * Created by the LayoutManager on the first `object:resizing` event,
  * fed with each subsequent scaling frame, and committed on `object:modified`.
  *
  * Separates the user's resize intent (which axes, what size) from
@@ -41,33 +41,30 @@ export class ResizeSession {
     this.layout = container.get("layout") as ContainerLayout;
     this.axes = cornerToAxes(corner);
 
-    // Initial user size = current scaled size
-    const { w, h } = scaledSize(container);
-    this.userW = w;
-    this.userH = h;
+    this.userW = container.width;
+    this.userH = container.height;
   }
 
   /**
-   * Called on each `object:scaling` frame.
-   * Reads the user's resize intent, runs layout, and adjusts the
-   * container's scale to reflect the resolved size.
+   * Called on each `object:resizing` frame.
+   * Controls already set width/height directly (no scale involved).
    */
-  handleScaling(objects: FabricObject[]): void {
+  handleResizing(objects: FabricObject[]): void {
     const { container, layout, axes } = this;
     const modeX = layout.sizeMode.x;
     const modeY = layout.sizeMode.y;
 
-    const { w: scaledW, h: scaledH } = scaledSize(container);
+    const currentW = container.width;
+    const currentH = container.height;
 
     // Update user size only on axes the user is dragging.
-    // On other axes, scaleY may be our residual from the previous frame.
-    if (axes.x) this.userW = scaledW;
-    if (axes.y) this.userH = scaledH;
+    if (axes.x) this.userW = currentW;
+    if (axes.y) this.userH = currentH;
 
     const children = resolveContainerChildren(objects, container);
     if (children.length === 0) return;
 
-    prepareTextChildren(children, modeX, scaledW);
+    prepareTextChildren(children, modeX, currentW);
     const { w: requiredW, h: requiredH } = measureChildren(children);
 
     // Axes hug: content = floor. User can grow beyond if dragging that axis.
@@ -76,51 +73,31 @@ export class ResizeSession {
     if (modeX === "hug") {
       finalW = axes.x ? Math.max(this.userW, requiredW) : requiredW;
     } else {
-      finalW = scaledW;
+      finalW = currentW;
     }
 
     let finalH: number;
     if (modeY === "hug") {
       finalH = axes.y ? Math.max(this.userH, requiredH) : requiredH;
     } else {
-      finalH = scaledH;
+      finalH = currentH;
     }
 
-    // Adjust scale for rendering (Fabric re-computes it next frame).
-    if (finalW !== scaledW || finalH !== scaledH) {
-      container.set({
-        scaleX: finalW / container.width,
-        scaleY: finalH / container.height,
-      });
-    }
+    // Apply resolved size directly.
+    container.set({ width: finalW, height: finalH });
 
     positionChildren(children, container.left, container.top, finalW, finalH);
     syncCoords(container, children);
   }
 
   /**
-   * Called on `object:modified`. Absorbs the scale into width/height,
-   * captures minSize from the user's intent, and runs a final layout pass.
+   * Called on `object:modified`. Captures minSize from the user's intent.
    */
   commit(objects: FabricObject[]): void {
     const { container, layout } = this;
-
-    // Absorb scale into dimensions
-    const sx = container.scaleX || 1;
-    const sy = container.scaleY || 1;
-    if (sx !== 1 || sy !== 1) {
-      container.set({
-        width: container.width * sx,
-        height: container.height * sy,
-        scaleX: 1,
-        scaleY: 1,
-      });
-    }
-
-    // Capture minSize from user intent (not from the potentially
-    // hug-adjusted scale, but from the tracked userW/userH).
     const modeX = layout.sizeMode.x;
     const modeY = layout.sizeMode.y;
+
     if (!layout.minSize) layout.minSize = { w: 0, h: 0 };
     if (modeX === "hug") layout.minSize.w = this.userW;
     if (modeX === "fixed") layout.minSize.w = container.width;
@@ -161,7 +138,7 @@ export function prepareTextChildren(
 
     if (modeX === "fixed") {
       const availW = containerW - cl.margins.left - cl.margins.right;
-      obj.set({ width: availW / (obj.scaleX || 1) });
+      obj.set({ width: availW });
     } else {
       obj.set({ width: 10000 });
     }

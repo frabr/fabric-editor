@@ -31,25 +31,6 @@ import {
   positionChildren,
 } from "./resize-session";
 
-// ── helpers ──────────────────────────────────────────────────────────
-
-/**
- * Absorbe le scale dans width/height et remet scaleX/Y à 1.
- * Called only for programmatic relayout — no minSize update.
- */
-function normalizeScale(obj: FabricObject): void {
-  const sx = obj.scaleX || 1;
-  const sy = obj.scaleY || 1;
-  if (sx === 1 && sy === 1) return;
-
-  obj.set({
-    width: obj.width * sx,
-    height: obj.height * sy,
-    scaleX: 1,
-    scaleY: 1,
-  });
-}
-
 // ── public entry point ───────────────────────────────────────────────
 
 /**
@@ -79,14 +60,11 @@ function layoutContainer(
   const modeX = layout.sizeMode.x;
   const modeY = layout.sizeMode.y;
 
-  normalizeScale(container);
-
-  const { w: rawW, h: rawH } = scaledSize(container);
   const minW = layout.minSize?.w ?? 0;
   const minH = layout.minSize?.h ?? 0;
 
-  const currentW = Math.max(rawW, minW);
-  const currentH = Math.max(rawH, minH);
+  const currentW = Math.max(container.width, minW);
+  const currentH = Math.max(container.height, minH);
 
   const bothFixed = modeX === "fixed" && modeY === "fixed";
 
@@ -99,7 +77,7 @@ function layoutContainer(
   const finalW = modeX === "hug" ? Math.max(requiredW, minW) : currentW;
   const finalH = modeY === "hug" ? Math.max(requiredH, minH) : currentH;
 
-  applyContainerSize(container, finalW, finalH);
+  container.set({ width: finalW, height: finalH });
 
   if (bothFixed) {
     shrinkOverflowingText(children, finalW, finalH);
@@ -110,19 +88,6 @@ function layoutContainer(
   syncCoords(container, children);
 }
 
-// ── steps ────────────────────────────────────────────────────────────
-
-/** Apply the resolved size to the container. */
-function applyContainerSize(
-  container: FabricObject,
-  finalW: number,
-  finalH: number
-): void {
-  container.set({
-    width: finalW / (container.scaleX || 1),
-    height: finalH / (container.scaleY || 1),
-  });
-}
 
 /** Shrink text children that overflow when both axes are fixed. */
 function shrinkOverflowingText(
@@ -193,7 +158,7 @@ function shrinkTextToFit(
     fontSize = Math.max(minFontSize, Math.floor(fontSize * Math.min(ratioW, ratioH)));
 
     t.fontSize = fontSize;
-    obj.set({ width: availW / (obj.scaleX || 1) });
+    obj.set({ width: availW });
     t.initDimensions();
   }
 }

@@ -94,7 +94,7 @@ export class SnappingManager {
 
   private setupEventListeners(): void {
     this.canvas.on("object:moving", (e) => this.handleObjectMoving(e));
-    this.canvas.on("object:scaling", (e) => this.handleObjectScaling(e.target));
+    this.canvas.on("object:resizing", (e: any) => this.handleObjectScaling(e.target));
     this.canvas.on("object:modified", () => {
       this.guides.clearAndRender();
       this.snapState = null;
@@ -483,7 +483,7 @@ export class SnappingManager {
   dispose(): void {
     this.guides.clear();
     this.canvas.off("object:moving");
-    this.canvas.off("object:scaling");
+    this.canvas.off("object:resizing");
     this.canvas.off("object:modified");
     this.canvas.off("selection:cleared");
   }

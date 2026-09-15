@@ -564,7 +564,7 @@ export class FabricEditor {
 
     const { stroke, fill } = obj;
     obj.set({ fill: stroke, stroke: fill });
-    obj.strokeWidth = obj.stroke ? 4 / obj.scaleY : 0;
+    obj.strokeWidth = obj.stroke ? 4 : 0;
     this.canvas.renderAll();
   }
 
