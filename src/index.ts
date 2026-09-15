@@ -67,6 +67,7 @@ export { addCropControls, removeCropControls, CustomTextbox } from "./controls";
 
 // Layout
 export { runLayout } from "./layout";
+export { ResizeSession } from "./layout";
 export type { LayoutData, ContainerLayout, ChildLayout, SizeMode, AttachSnapshot } from "./layout";
 export { isContainerLayout, isChildLayout, MIN_PAD } from "./layout";
 export { scaledSize, topLeft, pointInObject, clampTopLeft, hasExceededOffset } from "./layout";

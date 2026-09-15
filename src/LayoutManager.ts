@@ -2,6 +2,7 @@ import { FabricObject, Rect } from "#fabric";
 import type { DesignCanvas } from "./DesignCanvas";
 import { CanvasGuides } from "./ui/guides";
 import { runLayout } from "./layout/reconcile";
+import { ResizeSession } from "./layout/resize-session";
 import {
   isContainerLayout,
   isChildLayout,
@@ -68,6 +69,8 @@ export class LayoutManager {
   private callbacks: LayoutManagerCallbacks;
   private guides: CanvasGuides;
   private dtl: DtlState = { phase: "idle", cooldownUntil: 0 };
+  private resizeSession: ResizeSession | null = null;
+
   constructor(canvas: DesignCanvas, callbacks: LayoutManagerCallbacks = {}, guideColor?: string) {
     this.canvas = canvas;
     this.callbacks = callbacks;
@@ -82,9 +85,9 @@ export class LayoutManager {
 
   // ── Public API ────────────────────────────────────────────────────
 
-  /** Run layout on all canvas objects. */
-  relayout(preview = false): void {
-    runLayout(this.canvas.getObjects(), preview);
+  /** Run layout on all canvas objects (programmatic relayout). */
+  relayout(): void {
+    runLayout(this.canvas.getObjects());
     this.canvas.renderAll();
   }
 
@@ -160,10 +163,10 @@ export class LayoutManager {
   private onMoving(e: any): void {
     const obj = e.target;
 
-    // Container being dragged → reposition children (preview mode)
+    // Container being dragged → reposition children (no resize, just move)
     const layout = obj.get?.("layout") as LayoutData | undefined;
     if (layout && isContainerLayout(layout)) {
-      this.relayout(true);
+      this.relayout();
       return;
     }
 
@@ -210,9 +213,13 @@ export class LayoutManager {
   private onModified(e: any): void {
     const obj = e.target;
 
-    // Container modified → clean relayout
+    // Container modified → commit resize session if active, then relayout
     const layout = obj.get?.("layout") as LayoutData | undefined;
     if (layout && isContainerLayout(layout)) {
+      if (this.resizeSession) {
+        this.resizeSession.commit(this.canvas.getObjects());
+        this.resizeSession = null;
+      }
       this.relayout();
       this.callbacks.onLayoutChanged?.();
       return;
@@ -242,10 +249,17 @@ export class LayoutManager {
   }
 
   private onScaling(e: any): void {
-    const layout = e.target?.get?.("layout");
-    if (layout && isContainerLayout(layout)) {
-      this.relayout(true);
+    const target = e.target;
+    const layout = target?.get?.("layout");
+    if (!layout || !isContainerLayout(layout)) return;
+
+    // Create session on first scaling frame
+    if (!this.resizeSession) {
+      this.resizeSession = new ResizeSession(target, e.transform?.corner);
     }
+
+    this.resizeSession.handleScaling(this.canvas.getObjects());
+    this.canvas.renderAll();
   }
 
   // ── State machine: IDLE → PENDING ─────────────────────────────────

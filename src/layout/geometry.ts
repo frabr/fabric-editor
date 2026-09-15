@@ -5,6 +5,7 @@
  * LayoutManager (drag-to-layout interactions).
  */
 import type { FabricObject } from "#fabric";
+import type { ResolvedChild } from "./types";
 
 /** Scaled dimensions (width × scaleX, height × scaleY). */
 export function scaledSize(obj: FabricObject): { w: number; h: number } {
@@ -84,4 +85,44 @@ export function hasExceededOffset(
     (offsetY > 0 && dy < -(offsetY + margin)) ||
     (offsetY < 0 && dy > (-offsetY + margin))
   );
+}
+
+/** Measure the bounding box that children need (margins included). */
+export function measureChildren(
+  children: ResolvedChild[],
+): { w: number; h: number } {
+  let w = 0;
+  let h = 0;
+  for (const { obj, cl } of children) {
+    const { w: childW, h: childH } = scaledSize(obj);
+    w = Math.max(w, cl.margins.left + childW + cl.margins.right);
+    h = Math.max(h, cl.margins.top + childH + cl.margins.bottom);
+  }
+  return { w, h };
+}
+
+/** Refresh Fabric's internal coordinate caches. */
+export function syncCoords(
+  container: FabricObject,
+  children: ResolvedChild[],
+): void {
+  container.setCoords();
+  for (const { obj } of children) {
+    obj.setCoords();
+  }
+}
+
+/** Which axes the user is actively dragging (derived from Fabric corner). */
+export interface ResizeAxes {
+  x: boolean;
+  y: boolean;
+}
+
+/** Translate a Fabric control corner id to the axes it controls. */
+export function cornerToAxes(corner?: string): ResizeAxes {
+  if (!corner) return { x: true, y: true };
+  const hasX = corner.includes("l") || corner.includes("r");
+  const hasY = corner.includes("t") || corner.includes("b");
+  // ml/mr → x only, mt/mb → y only, tl/tr/bl/br → both
+  return { x: hasX, y: hasY };
 }

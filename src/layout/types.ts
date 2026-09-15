@@ -42,6 +42,12 @@ export interface ChildLayout {
 /** Union — the `layout` property on any participating Fabric object. */
 export type LayoutData = ContainerLayout | ChildLayout;
 
+/** Resolved child: a Fabric object paired with its ChildLayout. */
+export interface ResolvedChild {
+  obj: import("#fabric").FabricObject;
+  cl: ChildLayout;
+}
+
 export function isContainerLayout(l: LayoutData): l is ContainerLayout {
   return "role" in l && l.role === "container";
 }
