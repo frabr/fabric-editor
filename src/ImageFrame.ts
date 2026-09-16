@@ -12,7 +12,7 @@ import {
 import type { ShapeType, LockMode } from "./types";
 import {
   createCircle,
-  createRoundedRect,
+  createRect,
   createPathShape,
   getShapeCatalog,
 } from "./shapes/factories";
@@ -30,6 +30,8 @@ export interface ImageFrameOptions {
   layerId?: string;
   lockMode?: LockMode;
   clipShape?: ShapeType;
+  /** Corner radius in pixels for "rect" clip shape (0 = sharp corners). */
+  cornerRadius?: number;
   imageOffsetX?: number;
   imageOffsetY?: number;
   imageScale?: number;
@@ -50,6 +52,8 @@ export interface ImageFrameData {
   frameWidth: number;
   frameHeight: number;
   clipShape?: ShapeType;
+  /** Corner radius in pixels (only meaningful when clipShape is "rect"). */
+  cornerRadius?: number;
   layerId?: string;
   lockMode?: LockMode;
   lockContent?: boolean;
@@ -95,6 +99,8 @@ export class ImageFrame extends Group {
   frameWidth: number;
   frameHeight: number;
   clipShape?: ShapeType;
+  /** Corner radius in pixels for "rect" clip shape. 0 = sharp corners. */
+  cornerRadius: number = 0;
 
   private _imageOffsetX: number = 0;
   private _imageOffsetY: number = 0;
@@ -150,6 +156,7 @@ export class ImageFrame extends Group {
     this.set("layerType", "imageFrame");
 
     // Clip par défaut + forme personnalisée si demandée
+    this.cornerRadius = options.cornerRadius ?? 0;
     this._applyClip(options.clipShape || "rect");
 
     this._setupControls();
@@ -311,6 +318,20 @@ export class ImageFrame extends Group {
     this.applyClipShape(shapes[(currentIndex + 1) % shapes.length]);
   }
 
+  /**
+   * Set the corner radius (in pixels) for the "rect" clip shape.
+   * Automatically switches to "rect" if another clip shape is active.
+   */
+  setCornerRadius(radius: number): void {
+    this.cornerRadius = Math.max(0, radius);
+    if (this.clipShape !== "rect") {
+      this.clipShape = "rect";
+    }
+    this._applyClip("rect");
+    this.dirty = true;
+    this.canvas?.requestRenderAll();
+  }
+
   // ─────────────────────────────────────────────────────────────
   // Méthodes privées
   // ─────────────────────────────────────────────────────────────
@@ -336,26 +357,20 @@ export class ImageFrame extends Group {
     const minSize = Math.min(this.frameWidth, this.frameHeight);
 
     switch (shapeType) {
-      case "rect":
-        this.clipPath = new Rect({
+      case "rect": {
+        const r = Math.min(this.cornerRadius, minSize / 2);
+        this.clipPath = createRect({
           width: this.frameWidth,
           height: this.frameHeight,
-          originX: "center",
-          originY: "center",
+          rx: r,
+          ry: r,
           left: 0,
           top: 0,
         });
         break;
+      }
       case "circle":
         this.clipPath = createCircle({ radius: minSize / 2 });
-        break;
-      case "rounded":
-        this.clipPath = createRoundedRect({
-          width: this.frameWidth,
-          height: this.frameHeight,
-          rx: minSize * 0.15,
-          ry: minSize * 0.15,
-        });
         break;
       default:
         this.clipPath = createPathShape(shapeType, {
@@ -558,6 +573,7 @@ export class ImageFrame extends Group {
       frameWidth: this.frameWidth,
       frameHeight: this.frameHeight,
       clipShape: this.clipShape,
+      cornerRadius: this.cornerRadius || undefined,
       layerId: base.layerId,
       lockMode: base.lockMode,
       lockContent: base.lockContent,
@@ -600,8 +616,17 @@ export class ImageFrame extends Group {
       top: data.image.offsetY,
     });
 
-    if (data.clipShape) {
-      frame.applyClipShape(data.clipShape);
+    // Rétrocompat : ancien "rounded" → rect + cornerRadius
+    let clipShape = data.clipShape;
+    if (clipShape === "rounded") {
+      frame.cornerRadius = data.cornerRadius ?? Math.min(data.frameWidth, data.frameHeight) * 0.15;
+      clipShape = "rect";
+    } else {
+      frame.cornerRadius = data.cornerRadius ?? 0;
+    }
+
+    if (clipShape) {
+      frame.applyClipShape(clipShape);
     }
 
     frame.scaleX = data.scaleX;

@@ -143,14 +143,7 @@ const HIT_DEPTH = 14;
 const CORNER_INSET = 20;
 const RESIZING = "resizing";
 
-// ── Resize action handlers (width/height instead of scale) ─────────
-
-const {
-  changeWidth: _changeWidth,
-  changeHeight: _changeHeight,
-  changeObjectWidth,
-  changeObjectHeight,
-} = controlsUtils;
+// ── Resize action handlers ───────────────────────────────────────────
 
 /** Fire resizing event on both the object and the canvas. */
 function fireResizing(target: any, e: TPointerEvent, transform: any, x: number, y: number): void {
@@ -158,40 +151,30 @@ function fireResizing(target: any, e: TPointerEvent, transform: any, x: number, 
   target.canvas?.fire("object:resizing", { target, e, transform, pointer: { x, y } });
 }
 
-/** Wrap a Fabric resize handler to also fire the resizing event. */
-const wrapResize = (handler: typeof _changeWidth) =>
-  (eventData: TPointerEvent, transform: any, x: number, y: number): boolean => {
-    const result = handler(eventData, transform, x, y);
-    if (result) fireResizing(transform.target, eventData, transform, x, y);
-    return result;
-  };
-
-const changeWidth = wrapResize(_changeWidth);
-const changeHeight = wrapResize(_changeHeight);
-
-/**
- * Corner handler that changes both width and height (replaces scalingEqually).
- * Reproduces wrapWithFixedAnchor + wrapWithFireEvent inline since those
- * aren't exported from Fabric's controlsUtils.
- */
+/** Corner handler — delegates to the target's handleCornerResize(). */
 const resizeBoth = (
   eventData: TPointerEvent,
   transform: any,
   x: number,
   y: number,
 ): boolean => {
-  const { target, originX, originY } = transform;
-  const constraint = target.getPositionByOrigin(originX, originY);
+  const { target } = transform;
+  const changed = target.handleCornerResize(transform, x, y);
+  if (changed) fireResizing(target, eventData, transform, x, y);
+  return changed;
+};
 
-  const changedW = changeObjectWidth(eventData, transform, x, y);
-  const changedH = changeObjectHeight(eventData, transform, x, y);
-
-  target.setPositionByOrigin(constraint, transform.originX, transform.originY);
-
-  if (changedW || changedH) {
-    fireResizing(target, eventData, transform, x, y);
-  }
-  return changedW || changedH;
+/** Edge handler — delegates to the target's handleEdgeResize(). */
+const resizeEdge = (
+  eventData: TPointerEvent,
+  transform: any,
+  x: number,
+  y: number,
+): boolean => {
+  const { target } = transform;
+  const changed = target.handleEdgeResize(transform, x, y);
+  if (changed) fireResizing(target, eventData, transform, x, y);
+  return changed;
 };
 
 function installControlHitAreas(canvas: DesignCanvas): void {
@@ -216,18 +199,12 @@ function installControlHitAreas(canvas: DesignCanvas): void {
       obj.controls.mtr = createSideRotationControl();
     }
 
-    // Replace scale controls with resize controls (width/height, not scaleX/Y)
-    const edgeMap: Record<string, typeof changeWidth> = {
-      ml: changeWidth,
-      mr: changeWidth,
-      mt: changeHeight,
-      mb: changeHeight,
-    };
+    // Replace scale controls with resize controls
     const resizingActionName = () => RESIZING;
-    for (const [key, handler] of Object.entries(edgeMap)) {
+    for (const key of ["ml", "mr", "mt", "mb"]) {
       const ctrl = obj.controls[key];
       if (!ctrl) continue;
-      ctrl.actionHandler = handler;
+      ctrl.actionHandler = resizeEdge;
       ctrl.actionName = RESIZING;
       ctrl.getActionName = resizingActionName;
     }

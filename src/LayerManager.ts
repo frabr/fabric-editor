@@ -8,7 +8,10 @@ import {
 } from "#fabric";
 import type { DesignCanvas } from "./DesignCanvas";
 import { CustomTextbox } from "./controls/CustomTextbox";
-import { createRect, createShape, createImage, installPathResizeHandler } from "./shapes/factories";
+import { createShape, createImage } from "./shapes/factories";
+import { FabRect } from "./shapes/FabRect";
+import { FabCircle } from "./shapes/FabCircle";
+import { FabPath } from "./shapes/FabPath";
 import { isValidShape } from "./shapes";
 import { scaledSize } from "./layout/geometry";
 import { applyLockMode, getLockMode, type LockMode } from "./locking";
@@ -453,18 +456,18 @@ export class LayerManager {
 
       case "Rect":
       case "rect":
-        obj = (await Rect.fromObject(layer)) as unknown as FabricObject;
+        obj = (await FabRect.fromObject(layer)) as unknown as FabricObject;
         break;
 
       case "Path":
       case "path":
-        obj = (await Path.fromObject(layer)) as unknown as FabricObject;
-        installPathResizeHandler(obj as unknown as import("#fabric").Path);
+        // FabPath constructor installs the resize handler automatically
+        obj = (await FabPath.fromObject(layer)) as unknown as FabricObject;
         break;
 
       case "Circle":
       case "circle":
-        obj = (await Circle.fromObject(layer)) as unknown as FabricObject;
+        obj = (await FabCircle.fromObject(layer)) as unknown as FabricObject;
         break;
 
       default:
@@ -474,7 +477,12 @@ export class LayerManager {
 
     // Appliquer les propriétés de verrouillage si présentes
     if (obj && layer.lockMode) {
-      applyLockMode(obj, layer.lockMode as LockMode);
+      const mode = layer.lockMode as LockMode;
+      if ("applyLockMode" in obj && typeof (obj as any).applyLockMode === "function") {
+        (obj as any).applyLockMode(mode);
+      } else {
+        applyLockMode(obj, mode);
+      }
     }
 
     return obj;
@@ -515,10 +523,6 @@ export class LayerManager {
     }
 
     if (type === "rect") {
-      // Rect avec rx/ry = rounded, sinon rect simple (pas de clip spécial)
-      if (clipPath.rx || clipPath.ry) {
-        return "rounded";
-      }
       return "rect";
     }
 

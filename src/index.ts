@@ -24,15 +24,16 @@ export { PendingUploadsManager } from "./PendingUploadsManager";
 // ImageFrame
 export { ImageFrame } from "./ImageFrame";
 
-// Shapes
+// OOP shape classes
+export { FabRect, FabCircle, FabPath, type Lockable } from "./shapes";
+
+// Shape factories (return Fab* instances)
 export {
   createRect,
-  createRoundedRect,
   createCircle,
   createImage,
   createShape,
   createPathShape,
-  installPathResizeHandler,
   getShapeCatalog,
   type ShapeCatalogEntry,
   SHAPE_PATHS,
@@ -55,7 +56,6 @@ export {
   addCircleClip,
   addHeartClip,
   addHexagonClip,
-  addRoundedClip,
   switchClip,
   applyClip,
 } from "./clipping";

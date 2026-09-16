@@ -15,22 +15,9 @@ export function scaledSize(obj: FabricObject): { w: number; h: number } {
   };
 }
 
-/**
- * Set the visual size of a shape, dispatching to the correct native model:
- * - Rect/RoundedRect: sets width/height directly
- * - Circle: derives radius, keeps scale at 1
- * - Path: adjusts scaleX/scaleY (path coordinates are immutable)
- */
+/** Set the visual size of a shape via its setSize() method. */
 export function setShapeSize(obj: FabricObject, w: number, h: number): void {
-  if (obj.type === "circle") {
-    const r = Math.min(w, h) / 2;
-    (obj as any).radius = r;
-    obj.set({ width: r * 2, height: r * 2 });
-  } else if (obj.type === "path") {
-    obj.set({ scaleX: w / obj.width, scaleY: h / obj.height });
-  } else {
-    obj.set({ width: w, height: h });
-  }
+  (obj as any).setSize(w, h);
 }
 
 /** Top-left corner in canvas coordinates, regardless of originX/Y. */

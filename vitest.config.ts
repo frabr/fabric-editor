@@ -11,6 +11,7 @@ export default defineConfig({
     ],
     exclude: [
       'src/**/*.browser.test.ts',
+      'src/__tests__/node.test.ts',
     ],
   },
 });

@@ -1,13 +1,18 @@
 // Shapes module - création et gestion des formes
 
+// OOP shape classes
+export { FabRect } from "./FabRect";
+export { FabCircle } from "./FabCircle";
+export { FabPath } from "./FabPath";
+export { type Lockable } from "./lockMixin";
+
+// Factory functions (return Fab* instances)
 export {
   createRect,
-  createRoundedRect,
   createCircle,
   createImage,
   createShape,
   createPathShape,
-  installPathResizeHandler,
   getShapeCatalog,
   type ShapeCatalogEntry,
 } from "./factories";

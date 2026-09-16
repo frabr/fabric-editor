@@ -7,7 +7,6 @@ import type { FabricObject } from "#fabric";
 import { antiScale } from "./antiScale";
 import {
   createCircle,
-  createRoundedRect,
   createPathShape,
 } from "../shapes/factories";
 import { nextShape } from "../shapes/shapeWheel";
@@ -67,29 +66,6 @@ export function addHexagonClip(obj: FabricObject): void {
 }
 
 /**
- * Applique un clip avec coins arrondis à un objet
- */
-export function addRoundedClip(obj: FabricObject): void {
-  obj.noScaleCache = false;
-
-  function scale() {
-    if (!obj.clipPath) return;
-    const [scaleX, scaleY] = antiScale(obj);
-    const minSize = Math.min(obj.height, obj.width);
-    obj.clipPath.set({
-      height: obj.height,
-      width: obj.width,
-      ry: minSize * 0.15 * scaleY,
-      rx: minSize * 0.15 * scaleX,
-    });
-  }
-
-  obj.clipPath = createRoundedRect({});
-  scale();
-  obj.on("scaling", scale);
-}
-
-/**
  * Applique un clip path shape générique à un objet
  */
 function addPathClip(obj: FabricObject, shapeId: string): void {
@@ -126,9 +102,6 @@ export function applyClip(obj: FabricObject, shapeType: ShapeType): void {
   switch (shapeType) {
     case "rect":
       obj.clipPath = undefined;
-      break;
-    case "rounded":
-      addRoundedClip(obj);
       break;
     case "circle":
       addCircleClip(obj);

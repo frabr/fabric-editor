@@ -254,7 +254,7 @@ interface ShapeLayerOptions {
     layerId?: string;
     shapeType?: ShapeType;
 }
-type ShapeType = "rect" | "rounded" | "circle" | (string & {});
+type ShapeType = "rect" | "circle" | (string & {});
 interface SaveOptions {
     rasterize?: boolean;
     ajaxCall?: boolean;
@@ -281,6 +281,8 @@ interface ImageFrameOptions {
     layerId?: string;
     lockMode?: LockMode$1;
     clipShape?: ShapeType;
+    /** Corner radius in pixels for "rect" clip shape (0 = sharp corners). */
+    cornerRadius?: number;
     imageOffsetX?: number;
     imageOffsetY?: number;
     imageScale?: number;
@@ -300,6 +302,8 @@ interface ImageFrameData {
     frameWidth: number;
     frameHeight: number;
     clipShape?: ShapeType;
+    /** Corner radius in pixels (only meaningful when clipShape is "rect"). */
+    cornerRadius?: number;
     layerId?: string;
     lockMode?: LockMode$1;
     lockContent?: boolean;
@@ -322,6 +326,8 @@ declare class ImageFrame extends Group {
     frameWidth: number;
     frameHeight: number;
     clipShape?: ShapeType;
+    /** Corner radius in pixels for "rect" clip shape. 0 = sharp corners. */
+    cornerRadius: number;
     private _imageOffsetX;
     private _imageOffsetY;
     private _imageScale;
@@ -361,6 +367,11 @@ declare class ImageFrame extends Group {
      * Cycle vers la forme de clip suivante
      */
     nextClipShape(): void;
+    /**
+     * Set the corner radius (in pixels) for the "rect" clip shape.
+     * Automatically switches to "rect" if another clip shape is active.
+     */
+    setCornerRadius(radius: number): void;
     private _applyImageOffset;
     private _clampOffset;
     private _applyClip;

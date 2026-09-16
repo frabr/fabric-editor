@@ -3,12 +3,12 @@ import { nextShape, isValidShape, getAvailableShapes } from "./shapeWheel";
 
 describe("shapeWheel", () => {
   describe("nextShape", () => {
-    it("returns 'rounded' when no current shape", () => {
-      expect(nextShape(undefined)).toBe("rounded");
+    it("returns 'circle' when no current shape", () => {
+      expect(nextShape(undefined)).toBe("circle");
     });
 
-    it("returns 'rounded' for invalid shape", () => {
-      expect(nextShape("invalid" as any)).toBe("rounded");
+    it("returns 'circle' for invalid shape", () => {
+      expect(nextShape("invalid" as any)).toBe("circle");
     });
 
     it("cycles through all shapes and loops back", () => {
@@ -38,12 +38,11 @@ describe("shapeWheel", () => {
     it("contains built-in and path shapes", () => {
       const shapes = getAvailableShapes();
       expect(shapes).toContain("rect");
-      expect(shapes).toContain("rounded");
       expect(shapes).toContain("circle");
       expect(shapes).toContain("heart");
       expect(shapes).toContain("hexagon");
-      // At least the 3 built-ins + whatever SVGs exist
-      expect(shapes.length).toBeGreaterThanOrEqual(5);
+      // At least the 2 built-ins + whatever SVGs exist
+      expect(shapes.length).toBeGreaterThanOrEqual(4);
     });
   });
 });

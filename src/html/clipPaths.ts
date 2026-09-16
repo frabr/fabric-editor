@@ -2,37 +2,36 @@ import type { ShapeType } from "../types";
 import { SHAPE_PATHS } from "../shapes/generated/paths";
 
 /**
- * Génère le CSS clip-path pour une forme simple (circle, rounded)
+ * Génère le CSS clip-path pour une forme simple (circle, rect with cornerRadius)
  * Pour heart/hexagon, retourne undefined car ils nécessitent un SVG inline
  * @param shapeType Le type de forme
  * @param width Largeur de l'élément
  * @param height Hauteur de l'élément
+ * @param cornerRadius Rayon des coins en pixels (uniquement pour "rect")
  * @returns La valeur CSS clip-path ou undefined
  */
 export function getClipPathCss(
   shapeType: ShapeType | undefined,
   width?: number,
-  height?: number
+  height?: number,
+  cornerRadius?: number,
 ): string | undefined {
-  if (!shapeType || shapeType === "rect") {
-    return undefined;
-  }
+  if (!shapeType) return undefined;
 
   const w = width ?? 100;
   const h = height ?? 100;
   const minSize = Math.min(w, h);
 
   switch (shapeType) {
-    case "circle": {
-      // Cercle basé sur minSize, centré
-      const radius = minSize / 2;
-      return `circle(${radius}px at ${w / 2}px ${h / 2}px)`;
+    case "rect": {
+      if (!cornerRadius) return undefined;
+      const r = Math.min(cornerRadius, minSize / 2);
+      return `inset(0 round ${r}px)`;
     }
 
-    case "rounded": {
-      // 15% du côté le plus petit, comme dans Fabric
-      const radius = minSize * 0.15;
-      return `inset(0 round ${radius}px)`;
+    case "circle": {
+      const radius = minSize / 2;
+      return `circle(${radius}px at ${w / 2}px ${h / 2}px)`;
     }
 
     default:

@@ -1,4 +1,4 @@
-import { Canvas, FabricObject, TPointerEvent, Textbox, Group, FabricImage, Pattern, TOptions, RectProps, Rect, CircleProps, Circle, PathProps, Path } from '#fabric';
+import { Canvas, FabricObject, TPointerEvent, Textbox, Group, FabricImage, Pattern, Rect, TOptions, RectProps, Circle, CircleProps, Path, PathProps } from '#fabric';
 
 /**
  * DesignCanvas — wraps a Fabric Canvas to separate design size from display size.
@@ -453,7 +453,7 @@ interface ShapeLayerOptions {
     layerId?: string;
     shapeType?: ShapeType;
 }
-type ShapeType = "rect" | "rounded" | "circle" | (string & {});
+type ShapeType = "rect" | "circle" | (string & {});
 interface ObjectControlsConfig {
     type: string;
     options: ControlOption[];
@@ -493,6 +493,8 @@ interface ImageFrameOptions {
     layerId?: string;
     lockMode?: LockMode$1;
     clipShape?: ShapeType;
+    /** Corner radius in pixels for "rect" clip shape (0 = sharp corners). */
+    cornerRadius?: number;
     imageOffsetX?: number;
     imageOffsetY?: number;
     imageScale?: number;
@@ -512,6 +514,8 @@ interface ImageFrameData {
     frameWidth: number;
     frameHeight: number;
     clipShape?: ShapeType;
+    /** Corner radius in pixels (only meaningful when clipShape is "rect"). */
+    cornerRadius?: number;
     layerId?: string;
     lockMode?: LockMode$1;
     lockContent?: boolean;
@@ -534,6 +538,8 @@ declare class ImageFrame extends Group {
     frameWidth: number;
     frameHeight: number;
     clipShape?: ShapeType;
+    /** Corner radius in pixels for "rect" clip shape. 0 = sharp corners. */
+    cornerRadius: number;
     private _imageOffsetX;
     private _imageOffsetY;
     private _imageScale;
@@ -573,6 +579,11 @@ declare class ImageFrame extends Group {
      * Cycle vers la forme de clip suivante
      */
     nextClipShape(): void;
+    /**
+     * Set the corner radius (in pixels) for the "rect" clip shape.
+     * Automatically switches to "rect" if another clip shape is active.
+     */
+    setCornerRadius(radius: number): void;
     private _applyImageOffset;
     private _clampOffset;
     private _applyClip;
@@ -1538,42 +1549,111 @@ declare class ImageDropHandler {
     private addImage;
 }
 
+interface Lockable {
+    lockMode: LockMode$1;
+    lockContent: boolean;
+    applyLockMode(mode: LockMode$1): void;
+    getLockMode(): LockMode$1;
+    getNextLockMode(): LockMode$1;
+    isPositionLocked(): boolean;
+    isStyleLocked(): boolean;
+    isContentLocked(): boolean;
+}
+
+declare class FabRect extends Rect implements Lockable {
+    static type: string;
+    static customProperties: string[];
+    lockMode: LockMode$1;
+    lockContent: boolean;
+    applyLockMode: (mode: LockMode$1) => void;
+    getLockMode: () => LockMode$1;
+    getNextLockMode: () => LockMode$1;
+    isPositionLocked: () => boolean;
+    isStyleLocked: () => boolean;
+    isContentLocked: () => boolean;
+    constructor(options?: Partial<TOptions<RectProps>>);
+    setCornerRadius(radius: number): void;
+    getCornerRadius(): number;
+    /** Corner resize: free resize on both axes (no ratio lock). */
+    handleCornerResize(transform: any, x: number, y: number): boolean;
+    /** Edge resize: single-axis width or height change. */
+    handleEdgeResize(transform: any, x: number, y: number): boolean;
+    setSize(w: number, h: number): void;
+}
+
+declare class FabCircle extends Circle implements Lockable {
+    static type: string;
+    static customProperties: string[];
+    lockMode: LockMode$1;
+    lockContent: boolean;
+    applyLockMode: (mode: LockMode$1) => void;
+    getLockMode: () => LockMode$1;
+    getNextLockMode: () => LockMode$1;
+    isPositionLocked: () => boolean;
+    isStyleLocked: () => boolean;
+    isContentLocked: () => boolean;
+    /** Natural diameter — stays fixed, scale absorbs sizing. */
+    private _naturalSize;
+    constructor(options?: Partial<TOptions<CircleProps>>);
+    /** Corner resize: uniform scaling (aspect ratio locked). */
+    handleCornerResize(transform: any, x: number, y: number): boolean;
+    /** Edge resize: single-axis stretch, absorbed into scale. */
+    handleEdgeResize(transform: any, x: number, y: number): boolean;
+    setSize(w: number, h: number): void;
+}
+
+declare class FabPath extends Path implements Lockable {
+    static type: string;
+    static customProperties: string[];
+    lockMode: LockMode$1;
+    lockContent: boolean;
+    applyLockMode: (mode: LockMode$1) => void;
+    getLockMode: () => LockMode$1;
+    getNextLockMode: () => LockMode$1;
+    isPositionLocked: () => boolean;
+    isStyleLocked: () => boolean;
+    isContentLocked: () => boolean;
+    private _naturalW;
+    private _naturalH;
+    constructor(path: string | any[], options?: Partial<TOptions<PathProps>>);
+    /** Corner resize: uniform scaling (aspect ratio locked). */
+    handleCornerResize(transform: any, x: number, y: number): boolean;
+    /** Edge resize: single-axis stretch, absorbed into scale. */
+    handleEdgeResize(transform: any, x: number, y: number): boolean;
+    setSize(w: number, h: number): void;
+    /**
+     * Create a FabPath from the shape catalog (heart, hexagon, etc.).
+     *
+     * Dimension logic:
+     * - Both width & height: scale to fill both
+     * - Only width: scale height proportionally
+     * - Only height: scale width proportionally
+     * - Neither: longest axis = 300px
+     */
+    static createFromCatalog(shapeId: string, options?: Partial<TOptions<PathProps>>): FabPath;
+}
+
 /**
- * Crée un rectangle basique
+ * Crée un FabRect, optionnellement avec coins arrondis via rx/ry.
  */
-declare function createRect(options?: Partial<TOptions<RectProps>>): Rect;
+declare function createRect(options?: Partial<TOptions<RectProps>>): FabRect;
 /**
- * Crée un rectangle avec coins arrondis
- * Gère le scaling en modifiant width/height plutôt que scale
+ * Crée un FabCircle
  */
-declare function createRoundedRect(options?: Partial<TOptions<RectProps>>): Rect;
-/**
- * Crée un cercle
- */
-declare function createCircle(options?: Partial<TOptions<CircleProps>>): Circle;
+declare function createCircle(options?: Partial<TOptions<CircleProps>>): FabCircle;
 /**
  * @legacy Use createPathShape("heart", ...) instead.
  */
-declare function createHeart(options?: Partial<TOptions<PathProps>>): Path;
+declare function createHeart(options?: Partial<TOptions<PathProps>>): FabPath;
 /**
  * @legacy Use createPathShape("hexagon", ...) instead.
  */
-declare function createHexagon(options?: Partial<TOptions<PathProps>>): Path;
+declare function createHexagon(options?: Partial<TOptions<PathProps>>): FabPath;
 /**
- * Install the resizing handler on a Path shape so that width/height changes
- * from the resize controls are converted back to scaleX/scaleY.
- * Can be called on paths created by factories or deserialized via Path.fromObject().
- */
-declare function installPathResizeHandler(path: Path): void;
-/**
- * Crée une forme Path à partir d'un ShapePath normalisé.
+ * Crée un FabPath à partir d'un ShapePath normalisé.
  * Factory générique — remplace createHeart/createHexagon.
- *
- * - Sans dimension : proportions naturelles de la forme.
- * - Une seule dimension (width ou height) : scale uniforme, l'autre est calculée.
- * - Les deux : scale par axe pour remplir la box demandée.
  */
-declare function createPathShape(shapeId: string, options?: Partial<TOptions<PathProps>>): Path;
+declare function createPathShape(shapeId: string, options?: Partial<TOptions<PathProps>>): FabPath;
 /**
  * Crée une image avec les contrôles de crop
  */
@@ -1594,7 +1674,7 @@ interface CreateShapeOptions {
  * - path shapes : une seule dimension donnée → l'autre est calculée
  *   proportionnellement ; aucune → axe principal = 300
  */
-declare function createShape(shapeType: ShapeType, options?: CreateShapeOptions): FabricObject;
+declare function createShape(shapeType: ShapeType, options?: CreateShapeOptions): FabRect | FabCircle | FabPath;
 interface ShapeCatalogEntry {
     id: ShapeType;
     /** SVG path `d` attribute for preview rendering, or null for built-in primitives. */
@@ -1607,7 +1687,7 @@ declare function getShapeCatalog(): ShapeCatalogEntry[];
 /**
  * @legacy Shape switching is no longer supported.
  */
-declare function switchShape(obj: FabricObject, nextShapeType: ShapeType): FabricObject;
+declare function switchShape(obj: FabricObject, nextShapeType: ShapeType): FabRect | FabCircle | FabPath;
 
 interface ShapePath {
     /** Shape identifier (derived from SVG filename). */
@@ -1682,10 +1762,6 @@ declare function addHeartClip(obj: FabricObject): void;
  */
 declare function addHexagonClip(obj: FabricObject): void;
 /**
- * Applique un clip avec coins arrondis à un objet
- */
-declare function addRoundedClip(obj: FabricObject): void;
-/**
  * Passe au clip suivant dans le cycle des formes
  */
 declare function switchClip(obj: FabricObject): void;
@@ -1751,4 +1827,4 @@ declare function fabricToHtml(layers: LayerData[], options: HtmlRenderOptions): 
  */
 declare function layerToHtmlStandalone(layer: LayerData, zIndex: number): HtmlLayerOutput;
 
-export { AttachSession, type AttachSnapshot, CanvasGuides, type ChildLayout, type ContainerLayout, type ControlOption, CustomTextbox, DesignCanvas, type EditorConfig, FabricEditor, type FontConfig, type FontsConfig, HEART_PATH, HEXAGON_PATH, type HistoryCallbacks, HistoryManager, type HistoryState, type HtmlLayerOutput, type HtmlRenderOptions, ImageDropHandler, ImageFrame, type ImageLayerOptions, type LayerData, LayerManager, type LayoutData, LayoutManager, type LayoutManagerCallbacks, type LockMode$1 as LockMode, MIN_PAD, MaskManager, type ObjectControlsConfig, PendingUploadsManager, PersistenceManager, ResizeSession, type ResizeSnapResult, SHAPE_PATHS, type SaveOptions, type SaveResult, type SelectionCallbacks, SelectionManager, type ShapeCatalogEntry, type ShapeLayerOptions, type ShapePath, type ShapeType, type SizeMode, type SnappingConfig, SnappingManager, type TextLayerOptions, addCircleClip, addCropControls, addHeartClip, addHexagonClip, addRoundedClip, antiScale, applyClip, applyLockMode, clampTopLeft, createCircle, createHeart, createHexagon, createImage, createPathShape, createRect, createRoundedRect, createShape, fabricToHtml, getAvailableShapes, getLockMode, getNextLockMode, getShapeCatalog, hasExceededOffset, installPathResizeHandler, isChildLayout, isContainerLayout, isContentLocked, isPositionLocked, isStyleLocked, isValidShape, layerToHtmlStandalone, nextShape, pointInObject, removeCropControls, runLayout, scaledSize, switchClip, switchShape, topLeft, wrapContainerAroundChild };
+export { AttachSession, type AttachSnapshot, CanvasGuides, type ChildLayout, type ContainerLayout, type ControlOption, CustomTextbox, DesignCanvas, type EditorConfig, FabCircle, FabPath, FabRect, FabricEditor, type FontConfig, type FontsConfig, HEART_PATH, HEXAGON_PATH, type HistoryCallbacks, HistoryManager, type HistoryState, type HtmlLayerOutput, type HtmlRenderOptions, ImageDropHandler, ImageFrame, type ImageLayerOptions, type LayerData, LayerManager, type LayoutData, LayoutManager, type LayoutManagerCallbacks, type LockMode$1 as LockMode, type Lockable, MIN_PAD, MaskManager, type ObjectControlsConfig, PendingUploadsManager, PersistenceManager, ResizeSession, type ResizeSnapResult, SHAPE_PATHS, type SaveOptions, type SaveResult, type SelectionCallbacks, SelectionManager, type ShapeCatalogEntry, type ShapeLayerOptions, type ShapePath, type ShapeType, type SizeMode, type SnappingConfig, SnappingManager, type TextLayerOptions, addCircleClip, addCropControls, addHeartClip, addHexagonClip, antiScale, applyClip, applyLockMode, clampTopLeft, createCircle, createHeart, createHexagon, createImage, createPathShape, createRect, createShape, fabricToHtml, getAvailableShapes, getLockMode, getNextLockMode, getShapeCatalog, hasExceededOffset, isChildLayout, isContainerLayout, isContentLocked, isPositionLocked, isStyleLocked, isValidShape, layerToHtmlStandalone, nextShape, pointInObject, removeCropControls, runLayout, scaledSize, switchClip, switchShape, topLeft, wrapContainerAroundChild };

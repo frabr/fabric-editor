@@ -1,9 +1,6 @@
 import {
-  Path,
   FabricImage,
   FabricObject,
-  Rect,
-  Circle,
   type TOptions,
   type PathProps,
   type RectProps,
@@ -12,156 +9,47 @@ import {
 import { SHAPE_PATHS, type ShapePath } from "./generated/paths";
 import type { ShapeType } from "../types";
 import { addCropControls } from "../controls/cropControls";
+import { FabRect } from "./FabRect";
+import { FabCircle } from "./FabCircle";
+import { FabPath } from "./FabPath";
 
 /**
- * Crée un rectangle basique
+ * Crée un FabRect, optionnellement avec coins arrondis via rx/ry.
  */
-export function createRect(options?: Partial<TOptions<RectProps>>): Rect {
-  return new Rect({
-    id: "rect",
-    originX: "center",
-    originY: "center",
-    ...options,
-  });
+export function createRect(options?: Partial<TOptions<RectProps>>): FabRect {
+  return new FabRect(options);
 }
 
 /**
- * Crée un rectangle avec coins arrondis
- * Gère le scaling en modifiant width/height plutôt que scale
+ * Crée un FabCircle
  */
-export function createRoundedRect(options?: Partial<TOptions<RectProps>>): Rect {
-  const width = options?.width || 40;
-  const height = options?.height || 40;
-
-  const rect = new Rect({
-    id: "rounded",
-    originX: "center",
-    originY: "center",
-    ry: height * 0.15,
-    rx: width * 0.15,
-    ...options,
-  });
-
-  rect.noScaleCache = false;
-  rect.on("scaling", () => {
-    const sX = rect.scaleX;
-    const sY = rect.scaleY;
-    rect.width *= sX;
-    rect.height *= sY;
-    rect.scaleX = 1;
-    rect.scaleY = 1;
-  });
-
-  return rect;
-}
-
-/**
- * Crée un cercle
- */
-export function createCircle(options?: Partial<TOptions<CircleProps>>): Circle {
-  const circle = new Circle({
-    id: "circle",
-    originX: "center",
-    originY: "center",
-    ...options,
-  });
-
-  circle.on("resizing", () => {
-    const size = Math.min(circle.width, circle.height);
-    circle.radius = size / 2;
-    circle.width = size;
-    circle.height = size;
-  });
-
-  return circle;
+export function createCircle(options?: Partial<TOptions<CircleProps>>): FabCircle {
+  return new FabCircle(options);
 }
 
 /**
  * @legacy Use createPathShape("heart", ...) instead.
  */
-export function createHeart(options?: Partial<TOptions<PathProps>>): Path {
+export function createHeart(options?: Partial<TOptions<PathProps>>): FabPath {
   return createPathShape("heart", options);
 }
 
 /**
  * @legacy Use createPathShape("hexagon", ...) instead.
  */
-export function createHexagon(options?: Partial<TOptions<PathProps>>): Path {
+export function createHexagon(options?: Partial<TOptions<PathProps>>): FabPath {
   return createPathShape("hexagon", options);
 }
 
 /**
- * Install the resizing handler on a Path shape so that width/height changes
- * from the resize controls are converted back to scaleX/scaleY.
- * Can be called on paths created by factories or deserialized via Path.fromObject().
- */
-export function installPathResizeHandler(path: Path): void {
-  const naturalW = path.width;
-  const naturalH = path.height;
-  path.on("resizing", () => {
-    path.scaleX *= path.width / naturalW;
-    path.scaleY *= path.height / naturalH;
-    path.width = naturalW;
-    path.height = naturalH;
-  });
-}
-
-/**
- * Crée une forme Path à partir d'un ShapePath normalisé.
+ * Crée un FabPath à partir d'un ShapePath normalisé.
  * Factory générique — remplace createHeart/createHexagon.
- *
- * - Sans dimension : proportions naturelles de la forme.
- * - Une seule dimension (width ou height) : scale uniforme, l'autre est calculée.
- * - Les deux : scale par axe pour remplir la box demandée.
  */
 export function createPathShape(
   shapeId: string,
   options?: Partial<TOptions<PathProps>>,
-): Path {
-  const shapePath = SHAPE_PATHS.find((s) => s.id === shapeId);
-  if (!shapePath) {
-    throw new Error(`Unknown path shape: "${shapeId}". Available: ${SHAPE_PATHS.map((s) => s.id).join(", ")}`);
-  }
-
-  const path = new Path(shapePath.d, {
-    id: shapeId,
-    originX: "center",
-    originY: "center",
-    ...options,
-  });
-
-  // path.width / path.height = dimensions naturelles parsées par Fabric
-  const naturalW = path.width;
-  const naturalH = path.height;
-
-  const hasW = options?.width != null;
-  const hasH = options?.height != null;
-  const ratio = naturalW / naturalH;
-
-  let targetW: number;
-  let targetH: number;
-
-  if (hasW && hasH) {
-    targetW = options!.width!;
-    targetH = options!.height!;
-  } else if (hasW) {
-    targetW = options!.width!;
-    targetH = targetW / ratio;
-  } else if (hasH) {
-    targetH = options!.height!;
-    targetW = targetH * ratio;
-  } else {
-    // No dimension specified: scale so the longest axis = DEFAULT_SIZE
-    const scale = DEFAULT_SIZE / Math.max(naturalW, naturalH);
-    targetW = naturalW * scale;
-    targetH = naturalH * scale;
-  }
-
-  path.scaleX = targetW / naturalW;
-  path.scaleY = targetH / naturalH;
-
-  installPathResizeHandler(path);
-  return path;
+): FabPath {
+  return FabPath.createFromCatalog(shapeId, options);
 }
 
 /**
@@ -212,7 +100,7 @@ interface CreateShapeOptions {
 export function createShape(
   shapeType: ShapeType,
   options: CreateShapeOptions = {}
-): FabricObject {
+): FabRect | FabCircle | FabPath {
   const { fill, stroke, left, top } = options;
   const strokeWidth = stroke ? 4 : 0;
   const w = options.width ?? DEFAULT_SIZE;
@@ -222,9 +110,6 @@ export function createShape(
   switch (shapeType) {
     case "rect":
       return createRect({ fill, stroke, left, top, height: h, width: w, strokeWidth });
-
-    case "rounded":
-      return createRoundedRect({ fill, stroke, left, top, height: h, width: w, strokeWidth });
 
     case "circle": {
       const radius = Math.min(w, h) / 2;
@@ -251,7 +136,6 @@ export interface ShapeCatalogEntry {
 export function getShapeCatalog(): ShapeCatalogEntry[] {
   return [
     { id: "rect", path: "M0 0H100V100H0Z", viewBox: "0 0 100 100" },
-    { id: "rounded", path: "M15 0H85Q100 0 100 15V85Q100 100 85 100H15Q0 100 0 85V15Q0 0 15 0Z", viewBox: "0 0 100 100" },
     { id: "circle", path: "M50 0A50 50 0 1 1 50 100A50 50 0 1 1 50 0Z", viewBox: "0 0 100 100" },
     ...SHAPE_PATHS.map((s) => ({ id: s.id, path: s.d, viewBox: "0 0 100 100" })),
   ];
@@ -260,7 +144,7 @@ export function getShapeCatalog(): ShapeCatalogEntry[] {
 /**
  * @legacy Shape switching is no longer supported.
  */
-export function switchShape(obj: FabricObject, nextShapeType: ShapeType): FabricObject {
+export function switchShape(obj: FabricObject, nextShapeType: ShapeType): FabRect | FabCircle | FabPath {
   const { fill, stroke, left, top } = obj;
   const strokeWidth = obj.strokeWidth || 0;
 
@@ -268,7 +152,7 @@ export function switchShape(obj: FabricObject, nextShapeType: ShapeType): Fabric
   let height = obj.height * obj.scaleY;
   const minSize = Math.min(height, width);
 
-  let radius = (obj as Circle).radius || minSize / 2;
+  let radius = (obj as any).radius || minSize / 2;
 
   if (!width && radius) {
     width = radius * 2;

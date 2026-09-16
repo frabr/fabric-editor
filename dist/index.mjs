@@ -241,10 +241,7 @@ var DesignCanvas = class {
 // src/LayerManager.ts
 import {
   FabricImage as FabricImage4,
-  Group as Group2,
-  Rect as Rect3,
-  Path as Path2,
-  Circle as Circle2
+  Group as Group2
 } from "#fabric";
 
 // src/controls/CustomTextbox.ts
@@ -460,10 +457,7 @@ var CustomTextbox = class extends Textbox {
 
 // src/shapes/factories.ts
 import {
-  Path,
-  FabricImage as FabricImage2,
-  Rect,
-  Circle
+  FabricImage as FabricImage2
 } from "#fabric";
 
 // src/shapes/generated/paths.ts
@@ -588,51 +582,265 @@ function removeCropControls(obj) {
   });
 }
 
+// src/shapes/FabRect.ts
+import { Rect, classRegistry, controlsUtils } from "#fabric";
+
+// src/shapes/lockMixin.ts
+var LOCK_MODES = ["free", "position", "full"];
+function installLockMethods(proto) {
+  proto.applyLockMode = function(mode) {
+    this.lockMode = mode;
+    const lockPosition = mode === "position" || mode === "full";
+    this.lockMovementX = lockPosition;
+    this.lockMovementY = lockPosition;
+    this.lockRotation = lockPosition;
+    this.lockScalingX = lockPosition;
+    this.lockScalingY = lockPosition;
+    this.hasControls = mode === "free";
+    this.lockContent = mode === "full";
+  };
+  proto.getLockMode = function() {
+    return this.lockMode || "free";
+  };
+  proto.getNextLockMode = function() {
+    const currentIndex = LOCK_MODES.indexOf(this.getLockMode());
+    return LOCK_MODES[(currentIndex + 1) % LOCK_MODES.length];
+  };
+  proto.isPositionLocked = function() {
+    const mode = this.getLockMode();
+    return mode === "position" || mode === "full";
+  };
+  proto.isStyleLocked = function() {
+    const mode = this.getLockMode();
+    return mode === "position" || mode === "full";
+  };
+  proto.isContentLocked = function() {
+    return this.lockContent === true;
+  };
+}
+
+// src/shapes/FabRect.ts
+var { changeObjectWidth, changeObjectHeight } = controlsUtils;
+var FabRect = class extends Rect {
+  constructor(options) {
+    super({
+      originX: "center",
+      originY: "center",
+      ...options
+    });
+    this.set("id", "rect");
+  }
+  setCornerRadius(radius) {
+    const maxRadius = Math.min(this.width, this.height) / 2;
+    const r = Math.max(0, Math.min(radius, maxRadius));
+    this.set({ rx: r, ry: r });
+    this.dirty = true;
+    this.canvas?.requestRenderAll();
+  }
+  getCornerRadius() {
+    return this.rx ?? 0;
+  }
+  /** Corner resize: free resize on both axes (no ratio lock). */
+  handleCornerResize(transform, x, y) {
+    const { originX, originY } = transform;
+    const anchor = this.getPositionByOrigin(originX, originY);
+    const changedW = changeObjectWidth({}, transform, x, y);
+    const changedH = changeObjectHeight({}, transform, x, y);
+    this.setPositionByOrigin(anchor, originX, originY);
+    return changedW || changedH;
+  }
+  /** Edge resize: single-axis width or height change. */
+  handleEdgeResize(transform, x, y) {
+    const { originX, originY } = transform;
+    const anchor = this.getPositionByOrigin(originX, originY);
+    const corner = transform.corner;
+    const changed = corner === "ml" || corner === "mr" ? changeObjectWidth({}, transform, x, y) : changeObjectHeight({}, transform, x, y);
+    this.setPositionByOrigin(anchor, originX, originY);
+    return changed;
+  }
+  setSize(w, h) {
+    this.set({ width: w, height: h });
+  }
+};
+FabRect.type = "Rect";
+FabRect.customProperties = ["layerId", "layerType", "lockMode", "lockContent"];
+installLockMethods(FabRect.prototype);
+classRegistry.setClass(FabRect, "Rect");
+
+// src/shapes/FabCircle.ts
+import { Circle, classRegistry as classRegistry2, controlsUtils as controlsUtils2 } from "#fabric";
+
+// src/shapes/resizeUtils.ts
+function isTransformCentered(transform) {
+  return transform.originX === "center" && transform.originY === "center";
+}
+
+// src/shapes/FabCircle.ts
+var { changeObjectWidth: changeObjectWidth2, changeObjectHeight: changeObjectHeight2, getLocalPoint } = controlsUtils2;
+var FabCircle = class extends Circle {
+  constructor(options) {
+    super({
+      originX: "center",
+      originY: "center",
+      ...options
+    });
+    this.set("id", "circle");
+    const size = Math.min(this.width, this.height);
+    this.radius = size / 2;
+    this.width = size;
+    this.height = size;
+    this._naturalSize = size;
+  }
+  /** Corner resize: uniform scaling (aspect ratio locked). */
+  handleCornerResize(transform, x, y) {
+    const { originX, originY } = transform;
+    const anchor = this.getPositionByOrigin(originX, originY);
+    const localPoint = getLocalPoint(transform, originX, originY, x, y);
+    const dim = this._getTransformedDimensions();
+    const distance = Math.abs(localPoint.x) + Math.abs(localPoint.y);
+    const originalDistance = Math.abs(dim.x * transform.original.scaleX / this.scaleX) + Math.abs(dim.y * transform.original.scaleY / this.scaleY);
+    if (originalDistance === 0) return false;
+    let scale = distance / originalDistance;
+    if (isTransformCentered(transform)) scale *= 2;
+    const oldScaleX = this.scaleX;
+    const oldScaleY = this.scaleY;
+    this.set("scaleX", transform.original.scaleX * scale);
+    this.set("scaleY", transform.original.scaleY * scale);
+    this.setPositionByOrigin(anchor, originX, originY);
+    return oldScaleX !== this.scaleX || oldScaleY !== this.scaleY;
+  }
+  /** Edge resize: single-axis stretch, absorbed into scale. */
+  handleEdgeResize(transform, x, y) {
+    const { originX, originY } = transform;
+    const anchor = this.getPositionByOrigin(originX, originY);
+    const corner = transform.corner;
+    const changed = corner === "ml" || corner === "mr" ? changeObjectWidth2({}, transform, x, y) : changeObjectHeight2({}, transform, x, y);
+    this.scaleX *= this.width / this._naturalSize;
+    this.scaleY *= this.height / this._naturalSize;
+    this.width = this._naturalSize;
+    this.height = this._naturalSize;
+    this.radius = this._naturalSize / 2;
+    this.setPositionByOrigin(anchor, originX, originY);
+    return changed;
+  }
+  setSize(w, h) {
+    this.set({
+      scaleX: w / this._naturalSize,
+      scaleY: h / this._naturalSize
+    });
+  }
+};
+FabCircle.type = "Circle";
+FabCircle.customProperties = ["layerId", "layerType", "lockMode", "lockContent"];
+installLockMethods(FabCircle.prototype);
+classRegistry2.setClass(FabCircle, "Circle");
+
+// src/shapes/FabPath.ts
+import { Path, classRegistry as classRegistry3, controlsUtils as controlsUtils3 } from "#fabric";
+var { changeObjectWidth: changeObjectWidth3, changeObjectHeight: changeObjectHeight3, getLocalPoint: getLocalPoint2 } = controlsUtils3;
+var DEFAULT_SIZE = 300;
+var _FabPath = class _FabPath extends Path {
+  constructor(path, options) {
+    super(path, {
+      originX: "center",
+      originY: "center",
+      ...options
+    });
+    this._naturalW = this.width;
+    this._naturalH = this.height;
+  }
+  /** Corner resize: uniform scaling (aspect ratio locked). */
+  handleCornerResize(transform, x, y) {
+    const { originX, originY } = transform;
+    const anchor = this.getPositionByOrigin(originX, originY);
+    const localPoint = getLocalPoint2(transform, originX, originY, x, y);
+    const dim = this._getTransformedDimensions();
+    const distance = Math.abs(localPoint.x) + Math.abs(localPoint.y);
+    const originalDistance = Math.abs(dim.x * transform.original.scaleX / this.scaleX) + Math.abs(dim.y * transform.original.scaleY / this.scaleY);
+    if (originalDistance === 0) return false;
+    let scale = distance / originalDistance;
+    if (isTransformCentered(transform)) scale *= 2;
+    const oldScaleX = this.scaleX;
+    const oldScaleY = this.scaleY;
+    this.set("scaleX", transform.original.scaleX * scale);
+    this.set("scaleY", transform.original.scaleY * scale);
+    this.setPositionByOrigin(anchor, originX, originY);
+    return oldScaleX !== this.scaleX || oldScaleY !== this.scaleY;
+  }
+  /** Edge resize: single-axis stretch, absorbed into scale. */
+  handleEdgeResize(transform, x, y) {
+    const { originX, originY } = transform;
+    const anchor = this.getPositionByOrigin(originX, originY);
+    const corner = transform.corner;
+    const changed = corner === "ml" || corner === "mr" ? changeObjectWidth3({}, transform, x, y) : changeObjectHeight3({}, transform, x, y);
+    this.scaleX *= this.width / this._naturalW;
+    this.scaleY *= this.height / this._naturalH;
+    this.width = this._naturalW;
+    this.height = this._naturalH;
+    this.setPositionByOrigin(anchor, originX, originY);
+    return changed;
+  }
+  setSize(w, h) {
+    this.set({ scaleX: w / this._naturalW, scaleY: h / this._naturalH });
+  }
+  /**
+   * Create a FabPath from the shape catalog (heart, hexagon, etc.).
+   *
+   * Dimension logic:
+   * - Both width & height: scale to fill both
+   * - Only width: scale height proportionally
+   * - Only height: scale width proportionally
+   * - Neither: longest axis = 300px
+   */
+  static createFromCatalog(shapeId, options) {
+    const shapePath = SHAPE_PATHS.find((s) => s.id === shapeId);
+    if (!shapePath) {
+      throw new Error(
+        `Unknown path shape: "${shapeId}". Available: ${SHAPE_PATHS.map((s) => s.id).join(", ")}`
+      );
+    }
+    const path = new _FabPath(shapePath.d, {
+      id: shapeId,
+      ...options
+    });
+    const naturalW = path._naturalW;
+    const naturalH = path._naturalH;
+    const hasW = options?.width != null;
+    const hasH = options?.height != null;
+    const ratio = naturalW / naturalH;
+    let targetW;
+    let targetH;
+    if (hasW && hasH) {
+      targetW = options.width;
+      targetH = options.height;
+    } else if (hasW) {
+      targetW = options.width;
+      targetH = targetW / ratio;
+    } else if (hasH) {
+      targetH = options.height;
+      targetW = targetH * ratio;
+    } else {
+      const scale = DEFAULT_SIZE / Math.max(naturalW, naturalH);
+      targetW = naturalW * scale;
+      targetH = naturalH * scale;
+    }
+    path.scaleX = targetW / naturalW;
+    path.scaleY = targetH / naturalH;
+    return path;
+  }
+};
+_FabPath.type = "Path";
+_FabPath.customProperties = ["layerId", "layerType", "lockMode", "lockContent"];
+var FabPath = _FabPath;
+installLockMethods(FabPath.prototype);
+classRegistry3.setClass(FabPath, "Path");
+
 // src/shapes/factories.ts
 function createRect(options) {
-  return new Rect({
-    id: "rect",
-    originX: "center",
-    originY: "center",
-    ...options
-  });
-}
-function createRoundedRect(options) {
-  const width = options?.width || 40;
-  const height = options?.height || 40;
-  const rect = new Rect({
-    id: "rounded",
-    originX: "center",
-    originY: "center",
-    ry: height * 0.15,
-    rx: width * 0.15,
-    ...options
-  });
-  rect.noScaleCache = false;
-  rect.on("scaling", () => {
-    const sX = rect.scaleX;
-    const sY = rect.scaleY;
-    rect.width *= sX;
-    rect.height *= sY;
-    rect.scaleX = 1;
-    rect.scaleY = 1;
-  });
-  return rect;
+  return new FabRect(options);
 }
 function createCircle(options) {
-  const circle = new Circle({
-    id: "circle",
-    originX: "center",
-    originY: "center",
-    ...options
-  });
-  circle.on("resizing", () => {
-    const size = Math.min(circle.width, circle.height);
-    circle.radius = size / 2;
-    circle.width = size;
-    circle.height = size;
-  });
-  return circle;
+  return new FabCircle(options);
 }
 function createHeart(options) {
   return createPathShape("heart", options);
@@ -640,52 +848,8 @@ function createHeart(options) {
 function createHexagon(options) {
   return createPathShape("hexagon", options);
 }
-function installPathResizeHandler(path) {
-  const naturalW = path.width;
-  const naturalH = path.height;
-  path.on("resizing", () => {
-    path.scaleX *= path.width / naturalW;
-    path.scaleY *= path.height / naturalH;
-    path.width = naturalW;
-    path.height = naturalH;
-  });
-}
 function createPathShape(shapeId, options) {
-  const shapePath = SHAPE_PATHS.find((s) => s.id === shapeId);
-  if (!shapePath) {
-    throw new Error(`Unknown path shape: "${shapeId}". Available: ${SHAPE_PATHS.map((s) => s.id).join(", ")}`);
-  }
-  const path = new Path(shapePath.d, {
-    id: shapeId,
-    originX: "center",
-    originY: "center",
-    ...options
-  });
-  const naturalW = path.width;
-  const naturalH = path.height;
-  const hasW = options?.width != null;
-  const hasH = options?.height != null;
-  const ratio = naturalW / naturalH;
-  let targetW;
-  let targetH;
-  if (hasW && hasH) {
-    targetW = options.width;
-    targetH = options.height;
-  } else if (hasW) {
-    targetW = options.width;
-    targetH = targetW / ratio;
-  } else if (hasH) {
-    targetH = options.height;
-    targetW = targetH * ratio;
-  } else {
-    const scale = DEFAULT_SIZE / Math.max(naturalW, naturalH);
-    targetW = naturalW * scale;
-    targetH = naturalH * scale;
-  }
-  path.scaleX = targetW / naturalW;
-  path.scaleY = targetH / naturalH;
-  installPathResizeHandler(path);
-  return path;
+  return FabPath.createFromCatalog(shapeId, options);
 }
 async function createImage(url, options) {
   const img = await FabricImage2.fromURL(url, { crossOrigin: "anonymous" });
@@ -703,17 +867,15 @@ async function createImage(url, options) {
   addCropControls(img);
   return img;
 }
-var DEFAULT_SIZE = 300;
+var DEFAULT_SIZE2 = 300;
 function createShape(shapeType, options = {}) {
   const { fill, stroke, left, top } = options;
   const strokeWidth = stroke ? 4 : 0;
-  const w = options.width ?? DEFAULT_SIZE;
-  const h = options.height ?? DEFAULT_SIZE;
+  const w = options.width ?? DEFAULT_SIZE2;
+  const h = options.height ?? DEFAULT_SIZE2;
   switch (shapeType) {
     case "rect":
       return createRect({ fill, stroke, left, top, height: h, width: w, strokeWidth });
-    case "rounded":
-      return createRoundedRect({ fill, stroke, left, top, height: h, width: w, strokeWidth });
     case "circle": {
       const radius = Math.min(w, h) / 2;
       return createCircle({ radius, fill, stroke, left, top, strokeWidth });
@@ -728,7 +890,6 @@ function createShape(shapeType, options = {}) {
 function getShapeCatalog() {
   return [
     { id: "rect", path: "M0 0H100V100H0Z", viewBox: "0 0 100 100" },
-    { id: "rounded", path: "M15 0H85Q100 0 100 15V85Q100 100 85 100H15Q0 100 0 85V15Q0 0 15 0Z", viewBox: "0 0 100 100" },
     { id: "circle", path: "M50 0A50 50 0 1 1 50 100A50 50 0 1 1 50 0Z", viewBox: "0 0 100 100" },
     ...SHAPE_PATHS.map((s) => ({ id: s.id, path: s.d, viewBox: "0 0 100 100" }))
   ];
@@ -786,15 +947,7 @@ function scaledSize(obj) {
   };
 }
 function setShapeSize(obj, w, h) {
-  if (obj.type === "circle") {
-    const r = Math.min(w, h) / 2;
-    obj.radius = r;
-    obj.set({ width: r * 2, height: r * 2 });
-  } else if (obj.type === "path") {
-    obj.set({ scaleX: w / obj.width, scaleY: h / obj.height });
-  } else {
-    obj.set({ width: w, height: h });
-  }
+  obj.setSize(w, h);
 }
 function topLeft(obj) {
   const { w, h } = scaledSize(obj);
@@ -847,14 +1000,14 @@ function cornerToAxes(corner) {
 }
 
 // src/locking.ts
-var LOCK_MODES = ["free", "position", "full"];
+var LOCK_MODES2 = ["free", "position", "full"];
 function getLockMode(obj) {
   return obj.lockMode || "free";
 }
 function getNextLockMode(currentMode) {
-  const currentIndex = LOCK_MODES.indexOf(currentMode);
-  const nextIndex = (currentIndex + 1) % LOCK_MODES.length;
-  return LOCK_MODES[nextIndex];
+  const currentIndex = LOCK_MODES2.indexOf(currentMode);
+  const nextIndex = (currentIndex + 1) % LOCK_MODES2.length;
+  return LOCK_MODES2[nextIndex];
 }
 function applyLockMode(obj, mode) {
   obj.lockMode = mode;
@@ -885,9 +1038,8 @@ function isPositionLocked(obj) {
 // src/ImageFrame.ts
 import {
   Group,
-  Rect as Rect2,
   FabricImage as FabricImage3,
-  classRegistry,
+  classRegistry as classRegistry4,
   LayoutManager,
   FixedLayout
 } from "#fabric";
@@ -930,6 +1082,8 @@ var ImageFrame = class _ImageFrame extends Group {
       // Désactiver le cache pour que le clipPath soit redessiné à chaque frame
       objectCaching: false
     });
+    /** Corner radius in pixels for "rect" clip shape. 0 = sharp corners. */
+    this.cornerRadius = 0;
     this._imageOffsetX = 0;
     this._imageOffsetY = 0;
     this._imageScale = 1;
@@ -943,6 +1097,7 @@ var ImageFrame = class _ImageFrame extends Group {
       this.set("layerId", options.layerId);
     }
     this.set("layerType", "imageFrame");
+    this.cornerRadius = options.cornerRadius ?? 0;
     this._applyClip(options.clipShape || "rect");
     this._setupControls();
     this._setupScaleAbsorption();
@@ -1073,6 +1228,19 @@ var ImageFrame = class _ImageFrame extends Group {
     const currentIndex = this.clipShape ? shapes.indexOf(this.clipShape) : -1;
     this.applyClipShape(shapes[(currentIndex + 1) % shapes.length]);
   }
+  /**
+   * Set the corner radius (in pixels) for the "rect" clip shape.
+   * Automatically switches to "rect" if another clip shape is active.
+   */
+  setCornerRadius(radius) {
+    this.cornerRadius = Math.max(0, radius);
+    if (this.clipShape !== "rect") {
+      this.clipShape = "rect";
+    }
+    this._applyClip("rect");
+    this.dirty = true;
+    this.canvas?.requestRenderAll();
+  }
   // ─────────────────────────────────────────────────────────────
   // Méthodes privées
   // ─────────────────────────────────────────────────────────────
@@ -1093,26 +1261,20 @@ var ImageFrame = class _ImageFrame extends Group {
     this.clipShape = shapeType;
     const minSize = Math.min(this.frameWidth, this.frameHeight);
     switch (shapeType) {
-      case "rect":
-        this.clipPath = new Rect2({
+      case "rect": {
+        const r = Math.min(this.cornerRadius, minSize / 2);
+        this.clipPath = createRect({
           width: this.frameWidth,
           height: this.frameHeight,
-          originX: "center",
-          originY: "center",
+          rx: r,
+          ry: r,
           left: 0,
           top: 0
         });
         break;
+      }
       case "circle":
         this.clipPath = createCircle({ radius: minSize / 2 });
-        break;
-      case "rounded":
-        this.clipPath = createRoundedRect({
-          width: this.frameWidth,
-          height: this.frameHeight,
-          rx: minSize * 0.15,
-          ry: minSize * 0.15
-        });
         break;
       default:
         this.clipPath = createPathShape(shapeType, {
@@ -1269,6 +1431,7 @@ var ImageFrame = class _ImageFrame extends Group {
       frameWidth: this.frameWidth,
       frameHeight: this.frameHeight,
       clipShape: this.clipShape,
+      cornerRadius: this.cornerRadius || void 0,
       layerId: base.layerId,
       lockMode: base.lockMode,
       lockContent: base.lockContent,
@@ -1304,8 +1467,15 @@ var ImageFrame = class _ImageFrame extends Group {
       left: data.image.offsetX,
       top: data.image.offsetY
     });
-    if (data.clipShape) {
-      frame.applyClipShape(data.clipShape);
+    let clipShape = data.clipShape;
+    if (clipShape === "rounded") {
+      frame.cornerRadius = data.cornerRadius ?? Math.min(data.frameWidth, data.frameHeight) * 0.15;
+      clipShape = "rect";
+    } else {
+      frame.cornerRadius = data.cornerRadius ?? 0;
+    }
+    if (clipShape) {
+      frame.applyClipShape(clipShape);
     }
     frame.scaleX = data.scaleX;
     frame.scaleY = data.scaleY;
@@ -1334,8 +1504,8 @@ var ImageFrame = class _ImageFrame extends Group {
     });
   }
 };
-classRegistry.setClass(ImageFrame);
-classRegistry.setClass(ImageFrame, "ImageFrame");
+classRegistry4.setClass(ImageFrame);
+classRegistry4.setClass(ImageFrame, "ImageFrame");
 
 // src/LayerManager.ts
 var BACKGROUND_LAYER_ID = "originalImage";
@@ -1666,23 +1836,27 @@ var LayerManager = class {
         break;
       case "Rect":
       case "rect":
-        obj = await Rect3.fromObject(layer);
+        obj = await FabRect.fromObject(layer);
         break;
       case "Path":
       case "path":
-        obj = await Path2.fromObject(layer);
-        installPathResizeHandler(obj);
+        obj = await FabPath.fromObject(layer);
         break;
       case "Circle":
       case "circle":
-        obj = await Circle2.fromObject(layer);
+        obj = await FabCircle.fromObject(layer);
         break;
       default:
         console.warn(`Type de calque inconnu: ${layer.type}`);
         return null;
     }
     if (obj && layer.lockMode) {
-      applyLockMode(obj, layer.lockMode);
+      const mode = layer.lockMode;
+      if ("applyLockMode" in obj && typeof obj.applyLockMode === "function") {
+        obj.applyLockMode(mode);
+      } else {
+        applyLockMode(obj, mode);
+      }
     }
     return obj;
   }
@@ -1713,9 +1887,6 @@ var LayerManager = class {
       return "circle";
     }
     if (type === "rect") {
-      if (clipPath.rx || clipPath.ry) {
-        return "rounded";
-      }
       return "rect";
     }
     if (type === "path") {
@@ -3319,24 +3490,12 @@ function takeSnapshot(shape, text) {
 function normalizeShapeOrigin(shape) {
   const center = shape.getRelativeCenterPoint();
   const { w, h } = scaledSize(shape);
-  const newLeft = center.x - w / 2;
-  const newTop = center.y - h / 2;
-  if (shape.type === "path") {
-    shape.set({ left: newLeft, top: newTop, originX: "left", originY: "top" });
-  } else {
-    const sx = shape.scaleX || 1;
-    const sy = shape.scaleY || 1;
-    shape.set({
-      left: newLeft,
-      top: newTop,
-      originX: "left",
-      originY: "top",
-      width: shape.width * sx,
-      height: shape.height * sy,
-      scaleX: 1,
-      scaleY: 1
-    });
-  }
+  shape.set({
+    left: center.x - w / 2,
+    top: center.y - h / 2,
+    originX: "left",
+    originY: "top"
+  });
   shape.setCoords();
 }
 function computeInitialLayout(shape, text) {
@@ -3678,23 +3837,6 @@ function addHexagonClip(obj) {
   scale();
   obj.on("scaling", scale);
 }
-function addRoundedClip(obj) {
-  obj.noScaleCache = false;
-  function scale() {
-    if (!obj.clipPath) return;
-    const [scaleX, scaleY] = antiScale(obj);
-    const minSize = Math.min(obj.height, obj.width);
-    obj.clipPath.set({
-      height: obj.height,
-      width: obj.width,
-      ry: minSize * 0.15 * scaleY,
-      rx: minSize * 0.15 * scaleX
-    });
-  }
-  obj.clipPath = createRoundedRect({});
-  scale();
-  obj.on("scaling", scale);
-}
 function addPathClip(obj, shapeId) {
   function scale() {
     obj.clipPath = createPathShape(shapeId, {
@@ -3719,9 +3861,6 @@ function applyClip(obj, shapeType) {
     case "rect":
       obj.clipPath = void 0;
       break;
-    case "rounded":
-      addRoundedClip(obj);
-      break;
     case "circle":
       addCircleClip(obj);
       break;
@@ -3732,7 +3871,7 @@ function applyClip(obj, shapeType) {
 }
 
 // src/ui/controls.ts
-import { FabricObject as FabricObject7, Control as Control2, controlsUtils } from "#fabric";
+import { FabricObject as FabricObject7, Control as Control2, controlsUtils as controlsUtils4 } from "#fabric";
 function applyControlStyle(canvas, guideColor, resolveTarget) {
   const gc = guideColor;
   FabricObject7.ownDefaults.borderColor = gc;
@@ -3823,33 +3962,21 @@ function installControlRenderer(gc, hoverProgress) {
 var HIT_DEPTH = 14;
 var CORNER_INSET = 20;
 var RESIZING = "resizing";
-var {
-  changeWidth: _changeWidth,
-  changeHeight: _changeHeight,
-  changeObjectWidth,
-  changeObjectHeight
-} = controlsUtils;
 function fireResizing(target, e, transform, x, y) {
   target.fire("resizing");
   target.canvas?.fire("object:resizing", { target, e, transform, pointer: { x, y } });
 }
-var wrapResize = (handler) => (eventData, transform, x, y) => {
-  const result = handler(eventData, transform, x, y);
-  if (result) fireResizing(transform.target, eventData, transform, x, y);
-  return result;
-};
-var changeWidth = wrapResize(_changeWidth);
-var changeHeight = wrapResize(_changeHeight);
 var resizeBoth = (eventData, transform, x, y) => {
-  const { target, originX, originY } = transform;
-  const constraint = target.getPositionByOrigin(originX, originY);
-  const changedW = changeObjectWidth(eventData, transform, x, y);
-  const changedH = changeObjectHeight(eventData, transform, x, y);
-  target.setPositionByOrigin(constraint, transform.originX, transform.originY);
-  if (changedW || changedH) {
-    fireResizing(target, eventData, transform, x, y);
-  }
-  return changedW || changedH;
+  const { target } = transform;
+  const changed = target.handleCornerResize(transform, x, y);
+  if (changed) fireResizing(target, eventData, transform, x, y);
+  return changed;
+};
+var resizeEdge = (eventData, transform, x, y) => {
+  const { target } = transform;
+  const changed = target.handleEdgeResize(transform, x, y);
+  if (changed) fireResizing(target, eventData, transform, x, y);
+  return changed;
 };
 function installControlHitAreas(canvas) {
   const createSideRotationControl = () => new Control2({
@@ -3857,8 +3984,8 @@ function installControlHitAreas(canvas) {
     y: 0,
     offsetX: 30,
     offsetY: 0,
-    actionHandler: controlsUtils.rotationWithSnapping,
-    cursorStyleHandler: controlsUtils.rotationStyleHandler,
+    actionHandler: controlsUtils4.rotationWithSnapping,
+    cursorStyleHandler: controlsUtils4.rotationStyleHandler,
     withConnection: true,
     actionName: "rotate"
   });
@@ -3868,17 +3995,11 @@ function installControlHitAreas(canvas) {
     if (obj.controls.mtr) {
       obj.controls.mtr = createSideRotationControl();
     }
-    const edgeMap = {
-      ml: changeWidth,
-      mr: changeWidth,
-      mt: changeHeight,
-      mb: changeHeight
-    };
     const resizingActionName = () => RESIZING;
-    for (const [key, handler] of Object.entries(edgeMap)) {
+    for (const key of ["ml", "mr", "mt", "mb"]) {
       const ctrl = obj.controls[key];
       if (!ctrl) continue;
-      ctrl.actionHandler = handler;
+      ctrl.actionHandler = resizeEdge;
       ctrl.actionName = RESIZING;
       ctrl.getActionName = resizingActionName;
     }
@@ -5142,21 +5263,20 @@ function pathToHtml(layer, zIndex) {
 }
 
 // src/html/clipPaths.ts
-function getClipPathCss(shapeType, width, height) {
-  if (!shapeType || shapeType === "rect") {
-    return void 0;
-  }
+function getClipPathCss(shapeType, width, height, cornerRadius) {
+  if (!shapeType) return void 0;
   const w = width ?? 100;
   const h = height ?? 100;
   const minSize = Math.min(w, h);
   switch (shapeType) {
+    case "rect": {
+      if (!cornerRadius) return void 0;
+      const r = Math.min(cornerRadius, minSize / 2);
+      return `inset(0 round ${r}px)`;
+    }
     case "circle": {
       const radius = minSize / 2;
       return `circle(${radius}px at ${w / 2}px ${h / 2}px)`;
-    }
-    case "rounded": {
-      const radius = minSize * 0.15;
-      return `inset(0 round ${radius}px)`;
     }
     default:
       return void 0;
@@ -5198,6 +5318,7 @@ function imageFrameToHtml(layer, zIndex) {
     angle = 0,
     opacity = 1,
     clipShape,
+    cornerRadius,
     image,
     layerId
   } = layer;
@@ -5219,7 +5340,7 @@ function imageFrameToHtml(layer, zIndex) {
   let inlineSvgClip = "";
   const clipId = `clip-${layerId || Math.random().toString(36).substr(2, 9)}`;
   let useOverflowHidden = true;
-  const clipPathCss = getClipPathCss(clipShape, frameWidth, frameHeight);
+  const clipPathCss = getClipPathCss(clipShape, frameWidth, frameHeight, cornerRadius);
   if (clipPathCss) {
     containerStyles["clip-path"] = clipPathCss;
     useOverflowHidden = false;
@@ -5336,6 +5457,9 @@ export {
   CanvasGuides,
   CustomTextbox,
   DesignCanvas,
+  FabCircle,
+  FabPath,
+  FabRect,
   FabricEditor,
   HEART_PATH,
   HEXAGON_PATH,
@@ -5356,7 +5480,6 @@ export {
   addCropControls,
   addHeartClip,
   addHexagonClip,
-  addRoundedClip,
   antiScale,
   applyClip,
   applyLockMode,
@@ -5367,7 +5490,6 @@ export {
   createImage,
   createPathShape,
   createRect,
-  createRoundedRect,
   createShape,
   fabricToHtml,
   getAvailableShapes,
@@ -5375,7 +5497,6 @@ export {
   getNextLockMode,
   getShapeCatalog,
   hasExceededOffset,
-  installPathResizeHandler,
   isChildLayout,
   isContainerLayout,
   isContentLocked,

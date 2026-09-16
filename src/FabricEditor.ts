@@ -654,7 +654,7 @@ export class FabricEditor {
         return obj;
       }
 
-      // Shape (rect, circle, heart, hexagon, rounded)
+      // Shape (rect, circle, heart, hexagon, etc.)
       if (layerType === "shape" && obj.containsPoint(point)) {
         return obj;
       }

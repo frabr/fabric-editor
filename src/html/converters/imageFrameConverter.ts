@@ -29,6 +29,7 @@ export function imageFrameToHtml(
     angle = 0,
     opacity = 1,
     clipShape,
+    cornerRadius,
     image,
     layerId,
   } = layer;
@@ -65,7 +66,7 @@ export function imageFrameToHtml(
   const clipId = `clip-${layerId || Math.random().toString(36).substr(2, 9)}`;
   let useOverflowHidden = true; // Par défaut, on utilise overflow:hidden
 
-  const clipPathCss = getClipPathCss(clipShape, frameWidth, frameHeight);
+  const clipPathCss = getClipPathCss(clipShape, frameWidth, frameHeight, cornerRadius);
   if (clipPathCss) {
     // Formes simples (circle, rounded) - utiliser CSS clip-path
     containerStyles["clip-path"] = clipPathCss;

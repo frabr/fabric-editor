@@ -214,26 +214,14 @@ function takeSnapshot(shape: FabricObject, text: FabricObject): AttachSnapshot {
 }
 
 function normalizeShapeOrigin(shape: FabricObject): void {
-  // Use Fabric's own center calculation — handles pathOffset correctly for Paths.
   const center = shape.getRelativeCenterPoint();
   const { w, h } = scaledSize(shape);
-  const newLeft = center.x - w / 2;
-  const newTop = center.y - h / 2;
-
-  if (shape.type === "path") {
-    // Path shapes keep their scale (it controls visual size).
-    shape.set({ left: newLeft, top: newTop, originX: "left", originY: "top" });
-  } else {
-    // Rect/Circle: absorb scale into width/height.
-    const sx = shape.scaleX || 1;
-    const sy = shape.scaleY || 1;
-    shape.set({
-      left: newLeft, top: newTop,
-      originX: "left", originY: "top",
-      width: shape.width * sx, height: shape.height * sy,
-      scaleX: 1, scaleY: 1,
-    });
-  }
+  shape.set({
+    left: center.x - w / 2,
+    top: center.y - h / 2,
+    originX: "left",
+    originY: "top",
+  });
   shape.setCoords();
 }
 

@@ -13,7 +13,7 @@ function shapeIds(): ShapeType[] {
  */
 export function nextShape(currentId?: ShapeType): ShapeType {
   const ids = shapeIds();
-  if (!currentId) return ids[1] ?? ids[0]; // skip rect, start at rounded
+  if (!currentId) return ids[1] ?? ids[0]; // skip rect, start at circle
 
   const idx = ids.indexOf(currentId);
   if (idx === -1) return ids[1] ?? ids[0];

@@ -122,6 +122,7 @@ export interface ImageFrameLayerData extends LayerData {
   frameWidth: number;
   frameHeight: number;
   clipShape?: ShapeType;
+  cornerRadius?: number;
   image: ImageFrameImageData;
 }
 

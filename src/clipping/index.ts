@@ -5,7 +5,6 @@ export {
   addCircleClip,
   addHeartClip,
   addHexagonClip,
-  addRoundedClip,
   switchClip,
   applyClip,
 } from "./clipStrategies";
