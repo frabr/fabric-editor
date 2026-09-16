@@ -1,4 +1,5 @@
 import { Textbox, Point } from "#fabric";
+import { installControlOptions } from "../shapes/controlsMixin";
 
 /**
  * Textbox personnalisé qui :
@@ -280,5 +281,7 @@ export class CustomTextbox extends Textbox {
     };
   }
 }
+
+installControlOptions(CustomTextbox.prototype, ["color", "font"]);
 
 export default CustomTextbox;

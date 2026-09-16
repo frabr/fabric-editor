@@ -9,7 +9,8 @@ import {
   LayoutManager,
   FixedLayout,
 } from "#fabric";
-import type { ShapeType, LockMode } from "./types";
+import type { ShapeType, LockMode, ControlOption } from "./types";
+import { installControlOptions, type Controllable } from "./shapes/controlsMixin";
 import {
   createCircle,
   createRect,
@@ -669,5 +670,6 @@ export class ImageFrame extends Group {
 }
 
 // Enregistrer la classe pour la sérialisation Fabric.js
+installControlOptions(ImageFrame.prototype, ["clip"]);
 classRegistry.setClass(ImageFrame);
 classRegistry.setClass(ImageFrame, "ImageFrame");

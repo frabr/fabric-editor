@@ -25,7 +25,7 @@ export { PendingUploadsManager } from "./PendingUploadsManager";
 export { ImageFrame } from "./ImageFrame";
 
 // OOP shape classes
-export { FabRect, FabCircle, FabPath, type Lockable } from "./shapes";
+export { FabRect, FabCircle, FabPath, type Lockable, type Controllable } from "./shapes";
 
 // Shape factories (return Fab* instances)
 export {

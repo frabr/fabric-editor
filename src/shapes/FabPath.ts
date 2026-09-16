@@ -1,5 +1,6 @@
 import { Path, classRegistry, controlsUtils, type TOptions, type PathProps } from "#fabric";
 import { installLockMethods, type Lockable } from "./lockMixin";
+import { installControlOptions, type Controllable } from "./controlsMixin";
 import { isTransformCentered } from "./resizeUtils";
 import { SHAPE_PATHS } from "./generated/paths";
 import type { LockMode } from "../locking";
@@ -8,7 +9,7 @@ const { changeObjectWidth, changeObjectHeight, getLocalPoint } = controlsUtils;
 
 const DEFAULT_SIZE = 300;
 
-export class FabPath extends Path implements Lockable {
+export class FabPath extends Path implements Lockable, Controllable {
   static type = "Path";
   static customProperties = ["layerId", "layerType", "lockMode", "lockContent"];
 
@@ -20,6 +21,7 @@ export class FabPath extends Path implements Lockable {
   declare isPositionLocked: () => boolean;
   declare isStyleLocked: () => boolean;
   declare isContentLocked: () => boolean;
+  declare getControlOptions: () => import("../types").ControlOption[];
 
   private _naturalW: number;
   private _naturalH: number;
@@ -143,4 +145,5 @@ export class FabPath extends Path implements Lockable {
 }
 
 installLockMethods(FabPath.prototype);
+installControlOptions(FabPath.prototype, ["outline", "clip", "color"]);
 classRegistry.setClass(FabPath, "Path");

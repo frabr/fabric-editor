@@ -91,7 +91,7 @@ export interface ObjectControlsConfig {
   options: ControlOption[];
 }
 
-export type ControlOption = "clip" | "color" | "font" | "outline";
+export type ControlOption = "clip" | "color" | "font" | "outline" | "corner_radius";
 
 // Callbacks de sélection
 export interface SelectionCallbacks {

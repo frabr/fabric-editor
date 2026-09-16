@@ -3,22 +3,7 @@ import type { DesignCanvas } from "./DesignCanvas";
 import { isPositionLocked } from "./locking";
 import { isChildLayout, type LayoutData } from "./layout/types";
 import type { SelectionCallbacks, ControlOption } from "./types";
-
-/**
- * Configuration des contrôles disponibles par type d'objet
- */
-const OBJECT_CONTROLS: Record<string, ControlOption[]> = {
-  // Formes créées par l'éditeur (layerType: "shape")
-  shape: ["outline", "clip", "color"],
-  // Types Fabric.js natifs (fallback)
-  rect: ["outline", "clip", "color"],
-  circle: ["outline", "clip", "color"],
-  path: ["outline", "clip", "color"],
-  image: ["clip"],
-  imageframe: ["clip"], // ImageFrame : permet de changer la forme du clip
-  group: [],
-  "i-text": ["color", "font"],
-};
+import type { Controllable } from "./shapes/controlsMixin";
 
 /**
  * Gère la sélection des objets sur le canvas
@@ -140,11 +125,10 @@ export class SelectionManager {
   getAvailableControls(): ControlOption[] {
     const obj = this.current;
     if (!obj) return [];
-
-    // Utiliser layerType en priorité (pour ImageFrame), sinon type Fabric.js
-    const layerType = (obj as { layerType?: string }).layerType;
-    const type = (layerType || obj.type || "").toLowerCase();
-    return OBJECT_CONTROLS[type] || [];
+    if (typeof (obj as unknown as Controllable).getControlOptions === "function") {
+      return (obj as unknown as Controllable).getControlOptions();
+    }
+    return [];
   }
 
   /**
