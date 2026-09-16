@@ -15,6 +15,7 @@ import {
 } from "./types";
 import {
   scaledSize,
+  setShapeSize,
   topLeft,
   clampTopLeft,
   hasExceededOffset,
@@ -213,15 +214,26 @@ function takeSnapshot(shape: FabricObject, text: FabricObject): AttachSnapshot {
 }
 
 function normalizeShapeOrigin(shape: FabricObject): void {
-  const sTL = topLeft(shape);
-  const sx = shape.scaleX || 1;
-  const sy = shape.scaleY || 1;
-  shape.set({
-    left: sTL.x, top: sTL.y,
-    originX: "left", originY: "top",
-    width: shape.width * sx, height: shape.height * sy,
-    scaleX: 1, scaleY: 1,
-  });
+  // Use Fabric's own center calculation — handles pathOffset correctly for Paths.
+  const center = shape.getRelativeCenterPoint();
+  const { w, h } = scaledSize(shape);
+  const newLeft = center.x - w / 2;
+  const newTop = center.y - h / 2;
+
+  if (shape.type === "path") {
+    // Path shapes keep their scale (it controls visual size).
+    shape.set({ left: newLeft, top: newTop, originX: "left", originY: "top" });
+  } else {
+    // Rect/Circle: absorb scale into width/height.
+    const sx = shape.scaleX || 1;
+    const sy = shape.scaleY || 1;
+    shape.set({
+      left: newLeft, top: newTop,
+      originX: "left", originY: "top",
+      width: shape.width * sx, height: shape.height * sy,
+      scaleX: 1, scaleY: 1,
+    });
+  }
   shape.setCoords();
 }
 
@@ -231,8 +243,7 @@ function computeInitialLayout(shape: FabricObject, text: FabricObject): {
 } {
   const sTL = topLeft(shape);
   const tTL = topLeft(text);
-  const shapeW = shape.width;
-  const shapeH = shape.height;
+  const { w: shapeW, h: shapeH } = scaledSize(shape);
   const textW = text.width * (text.scaleX || 1);
 
   const padX = Math.max(MIN_PAD, Math.round(tTL.x - sTL.x));
@@ -283,6 +294,6 @@ export function wrapContainerAroundChild(child: FabricObject, container: FabricO
   const requiredW = padLeft + childW + padLeft;
   const requiredH = padTop + childH + padTop;
 
-  container.set({ width: Math.max(requiredW, minW), height: Math.max(requiredH, minH) });
+  setShapeSize(container, Math.max(requiredW, minW), Math.max(requiredH, minH));
   container.setCoords();
 }

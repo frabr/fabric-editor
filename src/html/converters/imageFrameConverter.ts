@@ -70,12 +70,12 @@ export function imageFrameToHtml(
     // Formes simples (circle, rounded) - utiliser CSS clip-path
     containerStyles["clip-path"] = clipPathCss;
     useOverflowHidden = false; // Le clip-path gère le découpage
-  } else if (clipShape === "heart" || clipShape === "hexagon") {
-    // Formes complexes - utiliser SVG inline
+  } else if (clipShape && clipShape !== "rect") {
+    // Path shapes (heart, hexagon, etc.) - utiliser SVG inline
     inlineSvgClip = getInlineSvgClip(clipShape, frameWidth, frameHeight, clipId) || "";
     if (inlineSvgClip) {
       containerStyles["clip-path"] = `url(#${clipId})`;
-      useOverflowHidden = false; // Le clip-path SVG gère le découpage
+      useOverflowHidden = false;
     }
   }
 

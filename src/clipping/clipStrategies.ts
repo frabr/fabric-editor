@@ -1,10 +1,14 @@
+/**
+ * @legacy Replaced by ImageFrame's own clip system (_applyClip, applyClipShape, cycleClipShape).
+ * These standalone clip functions use on("scaling") (old model).
+ * Rewired to use the new shape factories underneath.
+ */
 import type { FabricObject } from "#fabric";
 import { antiScale } from "./antiScale";
 import {
   createCircle,
-  createHeart,
-  createHexagon,
   createRoundedRect,
+  createPathShape,
 } from "../shapes/factories";
 import { nextShape } from "../shapes/shapeWheel";
 import type { ShapeType } from "../types";
@@ -33,10 +37,12 @@ export function addCircleClip(obj: FabricObject): void {
  */
 export function addHeartClip(obj: FabricObject): void {
   function scale() {
-    const minSize = Math.min(obj.height, obj.width) / 2;
-    const scaleFactor = minSize / 14;
-    const heart = createHeart({ scaleX: scaleFactor, scaleY: scaleFactor });
-    obj.clipPath = heart;
+    obj.clipPath = createPathShape("heart", {
+      width: obj.width,
+      height: obj.height,
+      left: 0,
+      top: 0,
+    });
   }
 
   scale();
@@ -48,10 +54,12 @@ export function addHeartClip(obj: FabricObject): void {
  */
 export function addHexagonClip(obj: FabricObject): void {
   function scale() {
-    const minSize = Math.min(obj.height, obj.width) / 2;
-    const scaleFactor = minSize / 24;
-    const hexa = createHexagon({ scaleX: scaleFactor, scaleY: scaleFactor });
-    obj.clipPath = hexa;
+    obj.clipPath = createPathShape("hexagon", {
+      width: obj.width,
+      height: obj.height,
+      left: 0,
+      top: 0,
+    });
   }
 
   scale();
@@ -82,33 +90,31 @@ export function addRoundedClip(obj: FabricObject): void {
 }
 
 /**
+ * Applique un clip path shape générique à un objet
+ */
+function addPathClip(obj: FabricObject, shapeId: string): void {
+  function scale() {
+    obj.clipPath = createPathShape(shapeId, {
+      width: obj.width,
+      height: obj.height,
+      left: 0,
+      top: 0,
+    });
+  }
+
+  scale();
+  obj.on("scaling", scale);
+}
+
+/**
  * Passe au clip suivant dans le cycle des formes
  */
 export function switchClip(obj: FabricObject): void {
-  // Retirer les listeners de scaling précédents
   obj.off("scaling");
 
   const clipPath = obj.clipPath;
   const currentShape = (clipPath as (FabricObject & { id?: string }) | undefined)?.id as ShapeType | undefined;
-  const nextShapeType = nextShape(currentShape);
-
-  switch (nextShapeType) {
-    case "rect":
-      obj.clipPath = undefined;
-      break;
-    case "rounded":
-      addRoundedClip(obj);
-      break;
-    case "circle":
-      addCircleClip(obj);
-      break;
-    case "heart":
-      addHeartClip(obj);
-      break;
-    case "hexagon":
-      addHexagonClip(obj);
-      break;
-  }
+  applyClip(obj, nextShape(currentShape));
 }
 
 /**
@@ -127,11 +133,8 @@ export function applyClip(obj: FabricObject, shapeType: ShapeType): void {
     case "circle":
       addCircleClip(obj);
       break;
-    case "heart":
-      addHeartClip(obj);
-      break;
-    case "hexagon":
-      addHexagonClip(obj);
+    default:
+      addPathClip(obj, shapeType);
       break;
   }
 }

@@ -24,7 +24,7 @@ import {
   type LayoutData,
   type ContainerLayout,
 } from "./types";
-import { scaledSize, isTextObject, measureChildren, syncCoords } from "./geometry";
+import { scaledSize, setShapeSize, isTextObject, measureChildren, syncCoords } from "./geometry";
 import {
   resolveContainerChildren,
   prepareTextChildren,
@@ -63,8 +63,9 @@ function layoutContainer(
   const minW = layout.minSize?.w ?? 0;
   const minH = layout.minSize?.h ?? 0;
 
-  const currentW = Math.max(container.width, minW);
-  const currentH = Math.max(container.height, minH);
+  const { w: visW, h: visH } = scaledSize(container);
+  const currentW = Math.max(visW, minW);
+  const currentH = Math.max(visH, minH);
 
   const bothFixed = modeX === "fixed" && modeY === "fixed";
 
@@ -77,7 +78,7 @@ function layoutContainer(
   const finalW = modeX === "hug" ? Math.max(requiredW, minW) : currentW;
   const finalH = modeY === "hug" ? Math.max(requiredH, minH) : currentH;
 
-  container.set({ width: finalW, height: finalH });
+  setShapeSize(container, finalW, finalH);
 
   if (bothFixed) {
     shrinkOverflowingText(children, finalW, finalH);

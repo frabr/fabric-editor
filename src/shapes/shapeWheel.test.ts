@@ -11,26 +11,20 @@ describe("shapeWheel", () => {
       expect(nextShape("invalid" as any)).toBe("rounded");
     });
 
-    it("cycles through shapes in correct order", () => {
-      expect(nextShape("rect")).toBe("rounded");
-      expect(nextShape("rounded")).toBe("circle");
-      expect(nextShape("circle")).toBe("heart");
-      expect(nextShape("heart")).toBe("hexagon");
-      expect(nextShape("hexagon")).toBe("rect");
-    });
-
-    it("loops back to rect after hexagon", () => {
-      expect(nextShape("hexagon")).toBe("rect");
+    it("cycles through all shapes and loops back", () => {
+      const shapes = getAvailableShapes();
+      // Starting from rect, each call should give the next in the catalog
+      for (let i = 0; i < shapes.length; i++) {
+        expect(nextShape(shapes[i])).toBe(shapes[(i + 1) % shapes.length]);
+      }
     });
   });
 
   describe("isValidShape", () => {
-    it("returns true for valid shapes", () => {
-      expect(isValidShape("rect")).toBe(true);
-      expect(isValidShape("rounded")).toBe(true);
-      expect(isValidShape("circle")).toBe(true);
-      expect(isValidShape("heart")).toBe(true);
-      expect(isValidShape("hexagon")).toBe(true);
+    it("returns true for all catalog shapes", () => {
+      for (const shape of getAvailableShapes()) {
+        expect(isValidShape(shape)).toBe(true);
+      }
     });
 
     it("returns false for invalid shapes", () => {
@@ -41,20 +35,15 @@ describe("shapeWheel", () => {
   });
 
   describe("getAvailableShapes", () => {
-    it("returns all available shapes", () => {
+    it("contains built-in and path shapes", () => {
       const shapes = getAvailableShapes();
       expect(shapes).toContain("rect");
       expect(shapes).toContain("rounded");
       expect(shapes).toContain("circle");
       expect(shapes).toContain("heart");
       expect(shapes).toContain("hexagon");
-      expect(shapes).toHaveLength(5);
-    });
-
-    it("returns a readonly array", () => {
-      const shapes = getAvailableShapes();
-      // TypeScript devrait empêcher la mutation, mais on vérifie à runtime
-      expect(Object.isFrozen(shapes) || Array.isArray(shapes)).toBe(true);
+      // At least the 3 built-ins + whatever SVGs exist
+      expect(shapes.length).toBeGreaterThanOrEqual(5);
     });
   });
 });

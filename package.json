@@ -34,6 +34,7 @@
     "test:run": "npm run test:node && npm run test:browser",
     "test:node": "vitest run",
     "test:browser": "vitest run --config vitest.browser.config.ts",
+    "build:shapes": "npx tsx scripts/normalize-shapes.ts",
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
@@ -43,6 +44,7 @@
   "devDependencies": {
     "@types/node": "^25.0.8",
     "jsdom": "^27.4.0",
+    "svgpath": "^2.6.0",
     "tsup": "^8.0.0",
     "typescript": "^5.3.0",
     "vitest": "^4.0.17"

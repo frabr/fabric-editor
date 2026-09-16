@@ -1,39 +1,36 @@
+/**
+ * @legacy Shape cycling UI. Built on top of getShapeCatalog().
+ */
 import type { ShapeType } from "../types";
+import { getShapeCatalog } from "./factories";
 
-// Ordre de cycle des formes
-const SHAPE_WHEEL: readonly ShapeType[] = [
-  "rect",
-  "rounded",
-  "circle",
-  "heart",
-  "hexagon",
-] as const;
+function shapeIds(): ShapeType[] {
+  return getShapeCatalog().map((s) => s.id);
+}
 
 /**
  * Retourne la forme suivante dans le cycle
- * @param currentId - ID de la forme actuelle (ou undefined pour commencer)
- * @returns La forme suivante dans le cycle
  */
 export function nextShape(currentId?: ShapeType): ShapeType {
-  if (!currentId) return "rounded"; // On commence à rounded
+  const ids = shapeIds();
+  if (!currentId) return ids[1] ?? ids[0]; // skip rect, start at rounded
 
-  const currentIndex = SHAPE_WHEEL.indexOf(currentId);
-  if (currentIndex === -1) return "rounded";
+  const idx = ids.indexOf(currentId);
+  if (idx === -1) return ids[1] ?? ids[0];
 
-  const nextIndex = (currentIndex + 1) % SHAPE_WHEEL.length;
-  return SHAPE_WHEEL[nextIndex];
+  return ids[(idx + 1) % ids.length];
 }
 
 /**
  * Vérifie si un ID est une forme valide
  */
 export function isValidShape(id: string): id is ShapeType {
-  return SHAPE_WHEEL.includes(id as ShapeType);
+  return shapeIds().includes(id);
 }
 
 /**
  * Retourne la liste des formes disponibles
  */
-export function getAvailableShapes(): readonly ShapeType[] {
-  return SHAPE_WHEEL;
+export function getAvailableShapes(): ShapeType[] {
+  return shapeIds();
 }

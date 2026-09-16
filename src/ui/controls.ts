@@ -146,11 +146,28 @@ const RESIZING = "resizing";
 // ── Resize action handlers (width/height instead of scale) ─────────
 
 const {
-  changeWidth,
-  changeHeight,
+  changeWidth: _changeWidth,
+  changeHeight: _changeHeight,
   changeObjectWidth,
   changeObjectHeight,
 } = controlsUtils;
+
+/** Fire resizing event on both the object and the canvas. */
+function fireResizing(target: any, e: TPointerEvent, transform: any, x: number, y: number): void {
+  target.fire("resizing");
+  target.canvas?.fire("object:resizing", { target, e, transform, pointer: { x, y } });
+}
+
+/** Wrap a Fabric resize handler to also fire the resizing event. */
+const wrapResize = (handler: typeof _changeWidth) =>
+  (eventData: TPointerEvent, transform: any, x: number, y: number): boolean => {
+    const result = handler(eventData, transform, x, y);
+    if (result) fireResizing(transform.target, eventData, transform, x, y);
+    return result;
+  };
+
+const changeWidth = wrapResize(_changeWidth);
+const changeHeight = wrapResize(_changeHeight);
 
 /**
  * Corner handler that changes both width and height (replaces scalingEqually).
@@ -172,12 +189,7 @@ const resizeBoth = (
   target.setPositionByOrigin(constraint, transform.originX, transform.originY);
 
   if (changedW || changedH) {
-    target.canvas?.fire("object:resizing", {
-      target,
-      e: eventData,
-      transform,
-      pointer: { x, y },
-    });
+    fireResizing(target, eventData, transform, x, y);
   }
   return changedW || changedH;
 };

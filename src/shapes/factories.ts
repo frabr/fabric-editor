@@ -9,7 +9,7 @@ import {
   type RectProps,
   type CircleProps,
 } from "#fabric";
-import { HEART_PATH, HEXAGON_PATH } from "./paths";
+import { SHAPE_PATHS, type ShapePath } from "./generated/paths";
 import type { ShapeType } from "../types";
 import { addCropControls } from "../controls/cropControls";
 
@@ -59,43 +59,109 @@ export function createRoundedRect(options?: Partial<TOptions<RectProps>>): Rect 
  * Crée un cercle
  */
 export function createCircle(options?: Partial<TOptions<CircleProps>>): Circle {
-  return new Circle({
+  const circle = new Circle({
     id: "circle",
     originX: "center",
     originY: "center",
     ...options,
   });
+
+  circle.on("resizing", () => {
+    const size = Math.min(circle.width, circle.height);
+    circle.radius = size / 2;
+    circle.width = size;
+    circle.height = size;
+  });
+
+  return circle;
 }
 
 /**
- * Crée une forme cœur à partir d'un path SVG
+ * @legacy Use createPathShape("heart", ...) instead.
  */
 export function createHeart(options?: Partial<TOptions<PathProps>>): Path {
-  const minSize = Math.min(options?.height || 40, options?.width || 40) / 2;
-  const scaleFactor = minSize / 14; // Hauteur totale du cœur ~28 unités
+  return createPathShape("heart", options);
+}
 
-  return new Path(HEART_PATH, {
-    id: "heart",
-    originX: "center",
-    originY: "center",
-    stroke: "#000000",
-    fill: "",
-    scaleX: scaleFactor,
-    scaleY: scaleFactor,
-    ...options,
+/**
+ * @legacy Use createPathShape("hexagon", ...) instead.
+ */
+export function createHexagon(options?: Partial<TOptions<PathProps>>): Path {
+  return createPathShape("hexagon", options);
+}
+
+/**
+ * Install the resizing handler on a Path shape so that width/height changes
+ * from the resize controls are converted back to scaleX/scaleY.
+ * Can be called on paths created by factories or deserialized via Path.fromObject().
+ */
+export function installPathResizeHandler(path: Path): void {
+  const naturalW = path.width;
+  const naturalH = path.height;
+  path.on("resizing", () => {
+    path.scaleX *= path.width / naturalW;
+    path.scaleY *= path.height / naturalH;
+    path.width = naturalW;
+    path.height = naturalH;
   });
 }
 
 /**
- * Crée une forme hexagone à partir d'un path SVG
+ * Crée une forme Path à partir d'un ShapePath normalisé.
+ * Factory générique — remplace createHeart/createHexagon.
+ *
+ * - Sans dimension : proportions naturelles de la forme.
+ * - Une seule dimension (width ou height) : scale uniforme, l'autre est calculée.
+ * - Les deux : scale par axe pour remplir la box demandée.
  */
-export function createHexagon(options?: Partial<TOptions<PathProps>>): Path {
-  return new Path(HEXAGON_PATH, {
-    id: "hexagon",
+export function createPathShape(
+  shapeId: string,
+  options?: Partial<TOptions<PathProps>>,
+): Path {
+  const shapePath = SHAPE_PATHS.find((s) => s.id === shapeId);
+  if (!shapePath) {
+    throw new Error(`Unknown path shape: "${shapeId}". Available: ${SHAPE_PATHS.map((s) => s.id).join(", ")}`);
+  }
+
+  const path = new Path(shapePath.d, {
+    id: shapeId,
     originX: "center",
     originY: "center",
     ...options,
   });
+
+  // path.width / path.height = dimensions naturelles parsées par Fabric
+  const naturalW = path.width;
+  const naturalH = path.height;
+
+  const hasW = options?.width != null;
+  const hasH = options?.height != null;
+  const ratio = naturalW / naturalH;
+
+  let targetW: number;
+  let targetH: number;
+
+  if (hasW && hasH) {
+    targetW = options!.width!;
+    targetH = options!.height!;
+  } else if (hasW) {
+    targetW = options!.width!;
+    targetH = targetW / ratio;
+  } else if (hasH) {
+    targetH = options!.height!;
+    targetW = targetH * ratio;
+  } else {
+    // No dimension specified: scale so the longest axis = DEFAULT_SIZE
+    const scale = DEFAULT_SIZE / Math.max(naturalW, naturalH);
+    targetW = naturalW * scale;
+    targetH = naturalH * scale;
+  }
+
+  path.scaleX = targetW / naturalW;
+  path.scaleY = targetH / naturalH;
+
+  installPathResizeHandler(path);
+  return path;
 }
 
 /**
@@ -124,6 +190,8 @@ export async function createImage(
   return img;
 }
 
+const DEFAULT_SIZE = 300;
+
 interface CreateShapeOptions {
   fill?: string;
   stroke?: string;
@@ -131,62 +199,66 @@ interface CreateShapeOptions {
   top?: number;
   height?: number;
   width?: number;
-  radius?: number;
 }
 
 /**
- * Factory générique pour créer une forme par son type
+ * Factory générique pour créer une forme par son type.
+ *
+ * width/height sont optionnels :
+ * - rect/rounded/circle : default 300x300
+ * - path shapes : une seule dimension donnée → l'autre est calculée
+ *   proportionnellement ; aucune → axe principal = 300
  */
 export function createShape(
   shapeType: ShapeType,
-  options: CreateShapeOptions
+  options: CreateShapeOptions = {}
 ): FabricObject {
-  const { fill, stroke, left, top, height, width, radius } = options;
+  const { fill, stroke, left, top } = options;
   const strokeWidth = stroke ? 4 : 0;
+  const w = options.width ?? DEFAULT_SIZE;
+  const h = options.height ?? DEFAULT_SIZE;
+
 
   switch (shapeType) {
     case "rect":
-      return createRect({ fill, stroke, left, top, height, width, strokeWidth });
+      return createRect({ fill, stroke, left, top, height: h, width: w, strokeWidth });
 
     case "rounded":
-      return createRoundedRect({ fill, stroke, left, top, height, width, strokeWidth });
+      return createRoundedRect({ fill, stroke, left, top, height: h, width: w, strokeWidth });
 
-    case "circle":
+    case "circle": {
+      const radius = Math.min(w, h) / 2;
       return createCircle({ radius, fill, stroke, left, top, strokeWidth });
-
-    case "heart":
-      return createHeart({
-        fill,
-        stroke,
-        left,
-        top,
-        height,
-        width,
-        strokeWidth: radius ? strokeWidth / (radius / 14) : strokeWidth,
-        scaleY: radius ? radius / 14 : 1,
-        scaleX: radius ? radius / 14 : 1,
-      });
-
-    case "hexagon":
-      return createHexagon({
-        fill,
-        stroke,
-        left,
-        top,
-        height,
-        width,
-        strokeWidth: radius ? strokeWidth / (radius / 24) : strokeWidth,
-        scaleY: radius ? radius / 24 : 1,
-        scaleX: radius ? radius / 24 : 1,
-      });
+    }
 
     default:
-      return createRect({ fill, stroke, left, top, height, width, strokeWidth });
+      if (SHAPE_PATHS.some((s) => s.id === shapeType)) {
+        return createPathShape(shapeType, { fill, stroke, left, top, height: options.height, width: options.width, strokeWidth });
+      }
+      return createRect({ fill, stroke, left, top, height: h, width: w, strokeWidth });
   }
 }
 
+export interface ShapeCatalogEntry {
+  id: ShapeType;
+  /** SVG path `d` attribute for preview rendering, or null for built-in primitives. */
+  path: string | null;
+  /** viewBox to use when rendering the preview SVG (e.g. "0 0 100 100"). */
+  viewBox: string;
+}
+
+/** All shapes available for creation via createShape(), with preview data. */
+export function getShapeCatalog(): ShapeCatalogEntry[] {
+  return [
+    { id: "rect", path: "M0 0H100V100H0Z", viewBox: "0 0 100 100" },
+    { id: "rounded", path: "M15 0H85Q100 0 100 15V85Q100 100 85 100H15Q0 100 0 85V15Q0 0 15 0Z", viewBox: "0 0 100 100" },
+    { id: "circle", path: "M50 0A50 50 0 1 1 50 100A50 50 0 1 1 50 0Z", viewBox: "0 0 100 100" },
+    ...SHAPE_PATHS.map((s) => ({ id: s.id, path: s.d, viewBox: "0 0 100 100" })),
+  ];
+}
+
 /**
- * Convertit un objet existant vers une nouvelle forme
+ * @legacy Shape switching is no longer supported.
  */
 export function switchShape(obj: FabricObject, nextShapeType: ShapeType): FabricObject {
   const { fill, stroke, left, top } = obj;
@@ -212,6 +284,5 @@ export function switchShape(obj: FabricObject, nextShapeType: ShapeType): Fabric
     top,
     height,
     width,
-    radius,
   });
 }

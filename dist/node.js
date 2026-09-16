@@ -358,9 +358,13 @@ var CustomTextbox = class extends import_fabric.Textbox {
 // src/shapes/factories.ts
 var import_fabric3 = require("#fabric");
 
-// src/shapes/paths.ts
-var HEART_PATH = "M 0 13 Q -1 13 -4 11 C -12 5 -17 -3 -12 -10 C -9 -14 -2 -13 0 -7 C 2 -13 9 -14 12 -10 C 17 -3 11 5 4 11 Q 1 13 0 13 Z";
-var HEXAGON_PATH = "M-2 -23.3453C-0.7624 -24.0598 0.7624 -24.0598 2 -23.3453L19.2176 -13.4047C20.4552 -12.6902 21.2176 -11.3697 21.2176 -9.9406V10.4406C21.2176 11.8697 20.4552 13.1902 19.2176 13.9047L2 23.8453C0.7624 24.5598 -0.7624 24.5598 -2 23.8453L-19.2176 13.9047C-20.4552 13.1902 -21.2176 11.8697 -21.2176 10.4406V-9.9406C-21.2176 -11.3697 -20.4552 -12.6902 -19.2176 -13.4047L-2 -23.3453Z";
+// src/shapes/generated/paths.ts
+var SHAPE_PATHS = [
+  { id: "heart", d: "M50 89.71Q47.06 89.71 38.24 83.82C14.71 66.18 0 42.65 14.71 22.06 23.53 10.3 44.12 13.24 50 30.88 55.88 13.24 76.47 10.3 85.29 22.06 100 42.65 82.35 66.18 61.76 83.82Q52.94 89.71 50 89.71Z", width: 100, height: 79.41 },
+  { id: "hexagon", d: "M45.84 1.48C48.41 0 51.58 0 54.15 1.48L89.94 22.14C92.51 23.63 94.09 26.37 94.09 29.34V71.7C94.09 74.67 92.51 77.41 89.94 78.9L54.15 99.55C51.58 101.04 48.41 101.04 45.84 99.55L10.06 78.9C7.49 77.41 5.91 74.67 5.91 71.7V29.34C5.91 26.37 7.49 23.63 10.06 22.14L45.84 1.48Z", width: 88.19, height: 100 },
+  { id: "octogon", d: "M90.45 30.39l-20.84-20.84A4.15 4.15 0 0 0 66.67 8.33H33.33a4.15 4.15 0 0 0-2.94 1.22l-20.84 20.84A4.15 4.15 0 0 0 8.33 33.33v33.34c0 1.11 0.44 2.17 1.22 2.94l20.84 20.84A4.15 4.15 0 0 0 33.33 91.67h33.34c1.11 0 2.17-0.44 2.94-1.22l20.84-20.84A4.15 4.15 0 0 0 91.67 66.67V33.33a4.15 4.15 0 0 0-1.22-2.94z", width: 100, height: 100 },
+  { id: "pentagon", d: "M99.44 43.4L51.17 0.76c-0.63-0.55-1.57-0.56-2.2 0L0.57 42.98c-0.51 0.45-0.7 1.15-0.48 1.8l18.33 53.75c0.23 0.68 0.87 1.13 1.58 1.12h59.92c0.71 0 1.34-0.45 1.58-1.12l18.41-53.33C100.13 44.56 99.94 43.85 99.44 43.4z", width: 100, height: 100 }
+];
 
 // src/controls/cropControls.ts
 var import_fabric2 = require("#fabric");
@@ -499,34 +503,66 @@ function createRoundedRect(options) {
   return rect;
 }
 function createCircle(options) {
-  return new import_fabric3.Circle({
+  const circle = new import_fabric3.Circle({
     id: "circle",
     originX: "center",
     originY: "center",
     ...options
   });
+  circle.on("resizing", () => {
+    const size = Math.min(circle.width, circle.height);
+    circle.radius = size / 2;
+    circle.width = size;
+    circle.height = size;
+  });
+  return circle;
 }
-function createHeart(options) {
-  const minSize = Math.min(options?.height || 40, options?.width || 40) / 2;
-  const scaleFactor = minSize / 14;
-  return new import_fabric3.Path(HEART_PATH, {
-    id: "heart",
-    originX: "center",
-    originY: "center",
-    stroke: "#000000",
-    fill: "",
-    scaleX: scaleFactor,
-    scaleY: scaleFactor,
-    ...options
+function installPathResizeHandler(path) {
+  const naturalW = path.width;
+  const naturalH = path.height;
+  path.on("resizing", () => {
+    path.scaleX *= path.width / naturalW;
+    path.scaleY *= path.height / naturalH;
+    path.width = naturalW;
+    path.height = naturalH;
   });
 }
-function createHexagon(options) {
-  return new import_fabric3.Path(HEXAGON_PATH, {
-    id: "hexagon",
+function createPathShape(shapeId, options) {
+  const shapePath = SHAPE_PATHS.find((s) => s.id === shapeId);
+  if (!shapePath) {
+    throw new Error(`Unknown path shape: "${shapeId}". Available: ${SHAPE_PATHS.map((s) => s.id).join(", ")}`);
+  }
+  const path = new import_fabric3.Path(shapePath.d, {
+    id: shapeId,
     originX: "center",
     originY: "center",
     ...options
   });
+  const naturalW = path.width;
+  const naturalH = path.height;
+  const hasW = options?.width != null;
+  const hasH = options?.height != null;
+  const ratio = naturalW / naturalH;
+  let targetW;
+  let targetH;
+  if (hasW && hasH) {
+    targetW = options.width;
+    targetH = options.height;
+  } else if (hasW) {
+    targetW = options.width;
+    targetH = targetW / ratio;
+  } else if (hasH) {
+    targetH = options.height;
+    targetW = targetH * ratio;
+  } else {
+    const scale = DEFAULT_SIZE / Math.max(naturalW, naturalH);
+    targetW = naturalW * scale;
+    targetH = naturalH * scale;
+  }
+  path.scaleX = targetW / naturalW;
+  path.scaleY = targetH / naturalH;
+  installPathResizeHandler(path);
+  return path;
 }
 async function createImage(url, options) {
   const img = await import_fabric3.FabricImage.fromURL(url, { crossOrigin: "anonymous" });
@@ -544,55 +580,51 @@ async function createImage(url, options) {
   addCropControls(img);
   return img;
 }
-function createShape(shapeType, options) {
-  const { fill, stroke, left, top, height, width, radius } = options;
+var DEFAULT_SIZE = 300;
+function createShape(shapeType, options = {}) {
+  const { fill, stroke, left, top } = options;
   const strokeWidth = stroke ? 4 : 0;
+  const w = options.width ?? DEFAULT_SIZE;
+  const h = options.height ?? DEFAULT_SIZE;
   switch (shapeType) {
     case "rect":
-      return createRect({ fill, stroke, left, top, height, width, strokeWidth });
+      return createRect({ fill, stroke, left, top, height: h, width: w, strokeWidth });
     case "rounded":
-      return createRoundedRect({ fill, stroke, left, top, height, width, strokeWidth });
-    case "circle":
+      return createRoundedRect({ fill, stroke, left, top, height: h, width: w, strokeWidth });
+    case "circle": {
+      const radius = Math.min(w, h) / 2;
       return createCircle({ radius, fill, stroke, left, top, strokeWidth });
-    case "heart":
-      return createHeart({
-        fill,
-        stroke,
-        left,
-        top,
-        height,
-        width,
-        strokeWidth: radius ? strokeWidth / (radius / 14) : strokeWidth,
-        scaleY: radius ? radius / 14 : 1,
-        scaleX: radius ? radius / 14 : 1
-      });
-    case "hexagon":
-      return createHexagon({
-        fill,
-        stroke,
-        left,
-        top,
-        height,
-        width,
-        strokeWidth: radius ? strokeWidth / (radius / 24) : strokeWidth,
-        scaleY: radius ? radius / 24 : 1,
-        scaleX: radius ? radius / 24 : 1
-      });
+    }
     default:
-      return createRect({ fill, stroke, left, top, height, width, strokeWidth });
+      if (SHAPE_PATHS.some((s) => s.id === shapeType)) {
+        return createPathShape(shapeType, { fill, stroke, left, top, height: options.height, width: options.width, strokeWidth });
+      }
+      return createRect({ fill, stroke, left, top, height: h, width: w, strokeWidth });
   }
+}
+function getShapeCatalog() {
+  return [
+    { id: "rect", path: "M0 0H100V100H0Z", viewBox: "0 0 100 100" },
+    { id: "rounded", path: "M15 0H85Q100 0 100 15V85Q100 100 85 100H15Q0 100 0 85V15Q0 0 15 0Z", viewBox: "0 0 100 100" },
+    { id: "circle", path: "M50 0A50 50 0 1 1 50 100A50 50 0 1 1 50 0Z", viewBox: "0 0 100 100" },
+    ...SHAPE_PATHS.map((s) => ({ id: s.id, path: s.d, viewBox: "0 0 100 100" }))
+  ];
 }
 
 // src/shapes/shapeWheel.ts
-var SHAPE_WHEEL = [
-  "rect",
-  "rounded",
-  "circle",
-  "heart",
-  "hexagon"
-];
+function shapeIds() {
+  return getShapeCatalog().map((s) => s.id);
+}
 function isValidShape(id) {
-  return SHAPE_WHEEL.includes(id);
+  return shapeIds().includes(id);
+}
+
+// src/layout/geometry.ts
+function scaledSize(obj) {
+  return {
+    w: obj.width * (obj.scaleX || 1),
+    h: obj.height * (obj.scaleY || 1)
+  };
 }
 
 // src/locking.ts
@@ -794,7 +826,7 @@ var ImageFrame = class _ImageFrame extends import_fabric4.Group {
    * Cycle vers la forme de clip suivante
    */
   nextClipShape() {
-    const shapes = ["rect", "rounded", "circle", "heart", "hexagon"];
+    const shapes = getShapeCatalog().map((s) => s.id);
     const currentIndex = this.clipShape ? shapes.indexOf(this.clipShape) : -1;
     this.applyClipShape(shapes[(currentIndex + 1) % shapes.length]);
   }
@@ -839,16 +871,12 @@ var ImageFrame = class _ImageFrame extends import_fabric4.Group {
           ry: minSize * 0.15
         });
         break;
-      case "heart":
-        this.clipPath = createHeart({
-          scaleX: minSize / 28,
-          scaleY: minSize / 28
-        });
-        break;
-      case "hexagon":
-        this.clipPath = createHexagon({
-          scaleX: minSize / 48,
-          scaleY: minSize / 48
+      default:
+        this.clipPath = createPathShape(shapeType, {
+          width: this.frameWidth,
+          height: this.frameHeight,
+          left: 0,
+          top: 0
         });
         break;
     }
@@ -1292,9 +1320,8 @@ var LayerManager = class {
   async replaceShapeWithImage(shape, imageUrl) {
     const shapeId = shape.id || "";
     const clipShape = isValidShape(shapeId) ? shapeId : "rect";
-    const displayedWidth = shape.width * (shape.scaleX || 1);
-    const displayedHeight = shape.height * (shape.scaleY || 1);
-    const center = shape.getCenterPoint();
+    const { w: displayedWidth, h: displayedHeight } = scaledSize(shape);
+    const center = shape.getRelativeCenterPoint();
     const zIndex = this.canvas.getObjects().indexOf(shape);
     const img = await import_fabric5.FabricImage.fromURL(imageUrl, { crossOrigin: "anonymous" });
     const frame = new ImageFrame(img, {
@@ -1322,13 +1349,17 @@ var LayerManager = class {
     const {
       left = 100,
       top = 100,
-      width = 300,
-      height = 300,
       fill = "#ffffff",
       shapeType = "rect",
       layerId = this.generateId()
     } = options;
-    const shape = createShape(shapeType, { fill, left, top, width, height, radius: Math.min(width, height) / 2 });
+    const shape = createShape(shapeType, {
+      fill,
+      left,
+      top,
+      width: options.width,
+      height: options.height
+    });
     shape.set({ layerId, layerType: "shape" });
     this.add(shape);
     return shape;
@@ -1397,6 +1428,7 @@ var LayerManager = class {
       case "Path":
       case "path":
         obj = await import_fabric5.Path.fromObject(layer);
+        installPathResizeHandler(obj);
         break;
       case "Circle":
       case "circle":
@@ -1430,7 +1462,7 @@ var LayerManager = class {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   detectLegacyClipShape(clipPath) {
     if (!clipPath) return void 0;
-    if (clipPath.id && ["rounded", "circle", "heart", "hexagon"].includes(clipPath.id)) {
+    if (clipPath.id && isValidShape(clipPath.id)) {
       return clipPath.id;
     }
     const type = clipPath.type?.toLowerCase();

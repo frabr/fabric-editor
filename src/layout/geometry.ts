@@ -15,16 +15,29 @@ export function scaledSize(obj: FabricObject): { w: number; h: number } {
   };
 }
 
+/**
+ * Set the visual size of a shape, dispatching to the correct native model:
+ * - Rect/RoundedRect: sets width/height directly
+ * - Circle: derives radius, keeps scale at 1
+ * - Path: adjusts scaleX/scaleY (path coordinates are immutable)
+ */
+export function setShapeSize(obj: FabricObject, w: number, h: number): void {
+  if (obj.type === "circle") {
+    const r = Math.min(w, h) / 2;
+    (obj as any).radius = r;
+    obj.set({ width: r * 2, height: r * 2 });
+  } else if (obj.type === "path") {
+    obj.set({ scaleX: w / obj.width, scaleY: h / obj.height });
+  } else {
+    obj.set({ width: w, height: h });
+  }
+}
+
 /** Top-left corner in canvas coordinates, regardless of originX/Y. */
 export function topLeft(obj: FabricObject): { x: number; y: number } {
   const { w, h } = scaledSize(obj);
-  let x = obj.left;
-  let y = obj.top;
-  if (obj.originX === "center") x -= w / 2;
-  else if (obj.originX === "right") x -= w;
-  if (obj.originY === "center") y -= h / 2;
-  else if (obj.originY === "bottom") y -= h;
-  return { x, y };
+  const center = obj.getRelativeCenterPoint();
+  return { x: center.x - w / 2, y: center.y - h / 2 };
 }
 
 /** Hit-test: is a point inside an object's bounding box (with optional margin)? */

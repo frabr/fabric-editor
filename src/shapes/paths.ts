@@ -1,4 +1,8 @@
-// Constantes SVG pour les formes complexes
+/**
+ * @legacy Use src/shapes/generated/paths.ts instead.
+ * These raw path strings are kept only for backward compatibility
+ * with legacy createHeart/createHexagon/clipStrategies.
+ */
 
 export const HEART_PATH =
   "M 0 13 Q -1 13 -4 11 C -12 5 -17 -3 -12 -10 C -9 -14 -2 -13 0 -7 C 2 -13 9 -14 12 -10 C 17 -3 11 5 4 11 Q 1 13 0 13 Z";

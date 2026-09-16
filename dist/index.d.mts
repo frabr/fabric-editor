@@ -192,15 +192,18 @@ declare function isPositionLocked(obj: FabricObject): boolean;
  * When both X and Y are fixed: text also shrinks (fontSize) if it overflows.
  *
  * Single pass, deterministic, no solver.
+ *
+ * Note: user-initiated resize is handled by ResizeSession, not here.
+ * This module only handles programmatic relayout (content changes, mode
+ * changes, move, etc.).
  */
 
 /**
  * Run the layout pass on the given set of objects.
- * Objects are mutated in-place.
- *
- * @param preview — si true, skip normalizeScale (pour le live preview pendant un resize)
+ * Objects are mutated in-place. This is for programmatic relayout only
+ * (content changes, mode/margin/anchor changes, move).
  */
-declare function runLayout(objects: FabricObject[], preview?: boolean): void;
+declare function runLayout(objects: FabricObject[]): void;
 
 /**
  * Layout system types — "springs & struts" model.
@@ -259,6 +262,35 @@ declare const MIN_PAD = 8;
 interface AttachSnapshot {
     shape: Record<string, any>;
     text: Record<string, any>;
+}
+
+/**
+ * ResizeSession — encapsulates one user-initiated resize interaction.
+ *
+ * Created by the LayoutManager on the first `object:resizing` event,
+ * fed with each subsequent scaling frame, and committed on `object:modified`.
+ *
+ * Separates the user's resize intent (which axes, what size) from
+ * the programmatic layout reconciliation that runs on every frame.
+ */
+
+declare class ResizeSession {
+    private container;
+    private layout;
+    private axes;
+    /** User-intended size — only updated on axes the user controls. */
+    private userW;
+    private userH;
+    constructor(container: FabricObject, corner?: string);
+    /**
+     * Called on each `object:resizing` frame.
+     * Controls already set width/height directly (no scale involved).
+     */
+    handleResizing(objects: FabricObject[]): void;
+    /**
+     * Called on `object:modified`. Captures minSize from the user's intent.
+     */
+    commit(objects: FabricObject[]): void;
 }
 
 /**
@@ -421,7 +453,7 @@ interface ShapeLayerOptions {
     layerId?: string;
     shapeType?: ShapeType;
 }
-type ShapeType = "rect" | "rounded" | "circle" | "heart" | "hexagon";
+type ShapeType = "rect" | "rounded" | "circle" | (string & {});
 interface ObjectControlsConfig {
     type: string;
     options: ControlOption[];
@@ -1124,11 +1156,12 @@ declare class LayoutManager {
     private callbacks;
     private guides;
     private dtl;
+    private resizeSession;
     constructor(canvas: DesignCanvas, callbacks?: LayoutManagerCallbacks, guideColor?: string);
     /** Set or update callbacks after construction (merges with existing). */
     setCallbacks(callbacks: LayoutManagerCallbacks): void;
-    /** Run layout on all canvas objects. */
-    relayout(preview?: boolean): void;
+    /** Run layout on all canvas objects (programmatic relayout). */
+    relayout(): void;
     /** Update layout mode on the currently selected container. */
     setMode(obj: FabricObject, mode: "hug" | "hug-y" | "fixed"): void;
     /** Update a margin on a child layout object. */
@@ -1139,11 +1172,11 @@ declare class LayoutManager {
     dispose(): void;
     private onMovingBound;
     private onModifiedBound;
-    private onScalingBound;
+    private onResizingBound;
     private setupEventListeners;
     private onMoving;
     private onModified;
-    private onScaling;
+    private onResizing;
     private handleIdleMoving;
     private handlePendingMoving;
     private startPending;
@@ -1283,16 +1316,15 @@ declare class FabricEditor {
      */
     loadFonts(fonts: FontsConfig): Promise<void>;
     /**
-     * Bascule le clip de l'objet sélectionné vers la forme suivante
+     * @legacy Use ImageFrame.nextClipShape() directly.
      */
     switchClip(): void;
     /**
-     * Bascule la forme de l'objet sélectionné vers la forme suivante
+     * @legacy Shape switching is no longer supported.
      */
     switchShape(): void;
     /**
-     * Change la forme de l'objet sélectionné vers un type précis.
-     * Pour les shapes : remplace l'objet. Pour les ImageFrames : change le clipShape.
+     * @legacy Shape switching is no longer supported.
      */
     changeShape(shapeType: ShapeType): void;
     /**
@@ -1506,24 +1538,6 @@ declare class ImageDropHandler {
     private addImage;
 }
 
-declare const HEART_PATH = "M 0 13 Q -1 13 -4 11 C -12 5 -17 -3 -12 -10 C -9 -14 -2 -13 0 -7 C 2 -13 9 -14 12 -10 C 17 -3 11 5 4 11 Q 1 13 0 13 Z";
-declare const HEXAGON_PATH = "M-2 -23.3453C-0.7624 -24.0598 0.7624 -24.0598 2 -23.3453L19.2176 -13.4047C20.4552 -12.6902 21.2176 -11.3697 21.2176 -9.9406V10.4406C21.2176 11.8697 20.4552 13.1902 19.2176 13.9047L2 23.8453C0.7624 24.5598 -0.7624 24.5598 -2 23.8453L-19.2176 13.9047C-20.4552 13.1902 -21.2176 11.8697 -21.2176 10.4406V-9.9406C-21.2176 -11.3697 -20.4552 -12.6902 -19.2176 -13.4047L-2 -23.3453Z";
-
-/**
- * Retourne la forme suivante dans le cycle
- * @param currentId - ID de la forme actuelle (ou undefined pour commencer)
- * @returns La forme suivante dans le cycle
- */
-declare function nextShape(currentId?: ShapeType): ShapeType;
-/**
- * Vérifie si un ID est une forme valide
- */
-declare function isValidShape(id: string): id is ShapeType;
-/**
- * Retourne la liste des formes disponibles
- */
-declare function getAvailableShapes(): readonly ShapeType[];
-
 /**
  * Crée un rectangle basique
  */
@@ -1538,13 +1552,28 @@ declare function createRoundedRect(options?: Partial<TOptions<RectProps>>): Rect
  */
 declare function createCircle(options?: Partial<TOptions<CircleProps>>): Circle;
 /**
- * Crée une forme cœur à partir d'un path SVG
+ * @legacy Use createPathShape("heart", ...) instead.
  */
 declare function createHeart(options?: Partial<TOptions<PathProps>>): Path;
 /**
- * Crée une forme hexagone à partir d'un path SVG
+ * @legacy Use createPathShape("hexagon", ...) instead.
  */
 declare function createHexagon(options?: Partial<TOptions<PathProps>>): Path;
+/**
+ * Install the resizing handler on a Path shape so that width/height changes
+ * from the resize controls are converted back to scaleX/scaleY.
+ * Can be called on paths created by factories or deserialized via Path.fromObject().
+ */
+declare function installPathResizeHandler(path: Path): void;
+/**
+ * Crée une forme Path à partir d'un ShapePath normalisé.
+ * Factory générique — remplace createHeart/createHexagon.
+ *
+ * - Sans dimension : proportions naturelles de la forme.
+ * - Une seule dimension (width ou height) : scale uniforme, l'autre est calculée.
+ * - Les deux : scale par axe pour remplir la box demandée.
+ */
+declare function createPathShape(shapeId: string, options?: Partial<TOptions<PathProps>>): Path;
 /**
  * Crée une image avec les contrôles de crop
  */
@@ -1556,16 +1585,66 @@ interface CreateShapeOptions {
     top?: number;
     height?: number;
     width?: number;
-    radius?: number;
 }
 /**
- * Factory générique pour créer une forme par son type
+ * Factory générique pour créer une forme par son type.
+ *
+ * width/height sont optionnels :
+ * - rect/rounded/circle : default 300x300
+ * - path shapes : une seule dimension donnée → l'autre est calculée
+ *   proportionnellement ; aucune → axe principal = 300
  */
-declare function createShape(shapeType: ShapeType, options: CreateShapeOptions): FabricObject;
+declare function createShape(shapeType: ShapeType, options?: CreateShapeOptions): FabricObject;
+interface ShapeCatalogEntry {
+    id: ShapeType;
+    /** SVG path `d` attribute for preview rendering, or null for built-in primitives. */
+    path: string | null;
+    /** viewBox to use when rendering the preview SVG (e.g. "0 0 100 100"). */
+    viewBox: string;
+}
+/** All shapes available for creation via createShape(), with preview data. */
+declare function getShapeCatalog(): ShapeCatalogEntry[];
 /**
- * Convertit un objet existant vers une nouvelle forme
+ * @legacy Shape switching is no longer supported.
  */
 declare function switchShape(obj: FabricObject, nextShapeType: ShapeType): FabricObject;
+
+interface ShapePath {
+    /** Shape identifier (derived from SVG filename). */
+    id: string;
+    /** Path data normalized and centered within a 100x100 bounding box. */
+    d: string;
+    /** Actual width of the path within the 100x100 box. */
+    width: number;
+    /** Actual height of the path within the 100x100 box. */
+    height: number;
+}
+declare const SHAPE_PATHS: ShapePath[];
+
+/**
+ * @legacy Use src/shapes/generated/paths.ts instead.
+ * These raw path strings are kept only for backward compatibility
+ * with legacy createHeart/createHexagon/clipStrategies.
+ */
+declare const HEART_PATH = "M 0 13 Q -1 13 -4 11 C -12 5 -17 -3 -12 -10 C -9 -14 -2 -13 0 -7 C 2 -13 9 -14 12 -10 C 17 -3 11 5 4 11 Q 1 13 0 13 Z";
+declare const HEXAGON_PATH = "M-2 -23.3453C-0.7624 -24.0598 0.7624 -24.0598 2 -23.3453L19.2176 -13.4047C20.4552 -12.6902 21.2176 -11.3697 21.2176 -9.9406V10.4406C21.2176 11.8697 20.4552 13.1902 19.2176 13.9047L2 23.8453C0.7624 24.5598 -0.7624 24.5598 -2 23.8453L-19.2176 13.9047C-20.4552 13.1902 -21.2176 11.8697 -21.2176 10.4406V-9.9406C-21.2176 -11.3697 -20.4552 -12.6902 -19.2176 -13.4047L-2 -23.3453Z";
+
+/**
+ * @legacy Shape cycling UI. Built on top of getShapeCatalog().
+ */
+
+/**
+ * Retourne la forme suivante dans le cycle
+ */
+declare function nextShape(currentId?: ShapeType): ShapeType;
+/**
+ * Vérifie si un ID est une forme valide
+ */
+declare function isValidShape(id: string): id is ShapeType;
+/**
+ * Retourne la liste des formes disponibles
+ */
+declare function getAvailableShapes(): ShapeType[];
 
 /**
  * Calcule les facteurs d'anti-scale pour maintenir les proportions d'un clip
@@ -1583,6 +1662,12 @@ declare function switchShape(obj: FabricObject, nextShapeType: ShapeType): Fabri
  * antiScale(obj) // Retourne [0.5, 1] pour compenser
  */
 declare function antiScale(obj: FabricObject): [number, number];
+
+/**
+ * @legacy Replaced by ImageFrame's own clip system (_applyClip, applyClipShape, cycleClipShape).
+ * These standalone clip functions use on("scaling") (old model).
+ * Rewired to use the new shape factories underneath.
+ */
 
 /**
  * Applique un clip circulaire à un objet
@@ -1666,4 +1751,4 @@ declare function fabricToHtml(layers: LayerData[], options: HtmlRenderOptions): 
  */
 declare function layerToHtmlStandalone(layer: LayerData, zIndex: number): HtmlLayerOutput;
 
-export { AttachSession, type AttachSnapshot, CanvasGuides, type ChildLayout, type ContainerLayout, type ControlOption, CustomTextbox, DesignCanvas, type EditorConfig, FabricEditor, type FontConfig, type FontsConfig, HEART_PATH, HEXAGON_PATH, type HistoryCallbacks, HistoryManager, type HistoryState, type HtmlLayerOutput, type HtmlRenderOptions, ImageDropHandler, ImageFrame, type ImageLayerOptions, type LayerData, LayerManager, type LayoutData, LayoutManager, type LayoutManagerCallbacks, type LockMode$1 as LockMode, MIN_PAD, MaskManager, type ObjectControlsConfig, PendingUploadsManager, PersistenceManager, type ResizeSnapResult, type SaveOptions, type SaveResult, type SelectionCallbacks, SelectionManager, type ShapeLayerOptions, type ShapeType, type SizeMode, type SnappingConfig, SnappingManager, type TextLayerOptions, addCircleClip, addCropControls, addHeartClip, addHexagonClip, addRoundedClip, antiScale, applyClip, applyLockMode, clampTopLeft, createCircle, createHeart, createHexagon, createImage, createRect, createRoundedRect, createShape, fabricToHtml, getAvailableShapes, getLockMode, getNextLockMode, hasExceededOffset, isChildLayout, isContainerLayout, isContentLocked, isPositionLocked, isStyleLocked, isValidShape, layerToHtmlStandalone, nextShape, pointInObject, removeCropControls, runLayout, scaledSize, switchClip, switchShape, topLeft, wrapContainerAroundChild };
+export { AttachSession, type AttachSnapshot, CanvasGuides, type ChildLayout, type ContainerLayout, type ControlOption, CustomTextbox, DesignCanvas, type EditorConfig, FabricEditor, type FontConfig, type FontsConfig, HEART_PATH, HEXAGON_PATH, type HistoryCallbacks, HistoryManager, type HistoryState, type HtmlLayerOutput, type HtmlRenderOptions, ImageDropHandler, ImageFrame, type ImageLayerOptions, type LayerData, LayerManager, type LayoutData, LayoutManager, type LayoutManagerCallbacks, type LockMode$1 as LockMode, MIN_PAD, MaskManager, type ObjectControlsConfig, PendingUploadsManager, PersistenceManager, ResizeSession, type ResizeSnapResult, SHAPE_PATHS, type SaveOptions, type SaveResult, type SelectionCallbacks, SelectionManager, type ShapeCatalogEntry, type ShapeLayerOptions, type ShapePath, type ShapeType, type SizeMode, type SnappingConfig, SnappingManager, type TextLayerOptions, addCircleClip, addCropControls, addHeartClip, addHexagonClip, addRoundedClip, antiScale, applyClip, applyLockMode, clampTopLeft, createCircle, createHeart, createHexagon, createImage, createPathShape, createRect, createRoundedRect, createShape, fabricToHtml, getAvailableShapes, getLockMode, getNextLockMode, getShapeCatalog, hasExceededOffset, installPathResizeHandler, isChildLayout, isContainerLayout, isContentLocked, isPositionLocked, isStyleLocked, isValidShape, layerToHtmlStandalone, nextShape, pointInObject, removeCropControls, runLayout, scaledSize, switchClip, switchShape, topLeft, wrapContainerAroundChild };

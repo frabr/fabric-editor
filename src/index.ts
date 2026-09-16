@@ -29,10 +29,20 @@ export {
   createRect,
   createRoundedRect,
   createCircle,
-  createHeart,
-  createHexagon,
   createImage,
   createShape,
+  createPathShape,
+  installPathResizeHandler,
+  getShapeCatalog,
+  type ShapeCatalogEntry,
+  SHAPE_PATHS,
+  type ShapePath,
+} from "./shapes";
+
+// @legacy — shape switching, old path strings, standalone clip functions
+export {
+  createHeart,
+  createHexagon,
   switchShape,
   nextShape,
   isValidShape,
@@ -40,8 +50,6 @@ export {
   HEART_PATH,
   HEXAGON_PATH,
 } from "./shapes";
-
-// Clipping
 export {
   antiScale,
   addCircleClip,

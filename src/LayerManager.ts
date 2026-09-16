@@ -8,8 +8,9 @@ import {
 } from "#fabric";
 import type { DesignCanvas } from "./DesignCanvas";
 import { CustomTextbox } from "./controls/CustomTextbox";
-import { createRect, createShape, createImage } from "./shapes/factories";
+import { createRect, createShape, createImage, installPathResizeHandler } from "./shapes/factories";
 import { isValidShape } from "./shapes";
+import { scaledSize } from "./layout/geometry";
 import { applyLockMode, getLockMode, type LockMode } from "./locking";
 import { ImageFrame, type ImageFrameData } from "./ImageFrame";
 import type { LayerData, TextLayerOptions, ImageLayerOptions, ShapeLayerOptions, ShapeType } from "./types";
@@ -318,12 +319,11 @@ export class LayerManager {
   ): Promise<ImageFrame> {
     // Déterminer le clipShape depuis l'id de la shape (les factories le positionnent)
     const shapeId = (shape as { id?: string }).id || "";
-    const clipShape = isValidShape(shapeId) ? shapeId : "rect";
+    const clipShape: ShapeType = isValidShape(shapeId) ? shapeId : "rect";
 
     // Récupérer les dimensions affichées (scaled)
-    const displayedWidth = shape.width * (shape.scaleX || 1);
-    const displayedHeight = shape.height * (shape.scaleY || 1);
-    const center = shape.getCenterPoint();
+    const { w: displayedWidth, h: displayedHeight } = scaledSize(shape);
+    const center = shape.getRelativeCenterPoint();
 
     // Sauvegarder le z-index
     const zIndex = this.canvas.getObjects().indexOf(shape);
@@ -362,14 +362,16 @@ export class LayerManager {
     const {
       left = 100,
       top = 100,
-      width = 300,
-      height = 300,
       fill = "#ffffff",
       shapeType = "rect",
       layerId = this.generateId(),
     } = options;
 
-    const shape = createShape(shapeType, { fill, left, top, width, height, radius: Math.min(width, height) / 2 });
+    const shape = createShape(shapeType, {
+      fill, left, top,
+      width: options.width,
+      height: options.height,
+    });
     shape.set({ layerId, layerType: "shape" });
 
     this.add(shape);
@@ -457,6 +459,7 @@ export class LayerManager {
       case "Path":
       case "path":
         obj = (await Path.fromObject(layer)) as unknown as FabricObject;
+        installPathResizeHandler(obj as unknown as import("#fabric").Path);
         break;
 
       case "Circle":
@@ -500,7 +503,7 @@ export class LayerManager {
     if (!clipPath) return undefined;
 
     // 1. Priorité à l'ID custom si présent
-    if (clipPath.id && ["rounded", "circle", "heart", "hexagon"].includes(clipPath.id)) {
+    if (clipPath.id && isValidShape(clipPath.id)) {
       return clipPath.id as ShapeType;
     }
 

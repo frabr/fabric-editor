@@ -18,6 +18,7 @@ import {
 } from "./types";
 import {
   scaledSize,
+  setShapeSize,
   isTextObject,
   measureChildren,
   syncCoords,
@@ -41,8 +42,9 @@ export class ResizeSession {
     this.layout = container.get("layout") as ContainerLayout;
     this.axes = cornerToAxes(corner);
 
-    this.userW = container.width;
-    this.userH = container.height;
+    const { w, h } = scaledSize(container);
+    this.userW = w;
+    this.userH = h;
   }
 
   /**
@@ -54,8 +56,7 @@ export class ResizeSession {
     const modeX = layout.sizeMode.x;
     const modeY = layout.sizeMode.y;
 
-    const currentW = container.width;
-    const currentH = container.height;
+    const { w: currentW, h: currentH } = scaledSize(container);
 
     // Update user size only on axes the user is dragging.
     if (axes.x) this.userW = currentW;
@@ -84,7 +85,7 @@ export class ResizeSession {
     }
 
     // Apply resolved size directly.
-    container.set({ width: finalW, height: finalH });
+    setShapeSize(container, finalW, finalH);
 
     positionChildren(children, container.left, container.top, finalW, finalH);
     syncCoords(container, children);
@@ -98,11 +99,12 @@ export class ResizeSession {
     const modeX = layout.sizeMode.x;
     const modeY = layout.sizeMode.y;
 
+    const { w: containerW, h: containerH } = scaledSize(container);
     if (!layout.minSize) layout.minSize = { w: 0, h: 0 };
     if (modeX === "hug") layout.minSize.w = this.userW;
-    if (modeX === "fixed") layout.minSize.w = container.width;
+    if (modeX === "fixed") layout.minSize.w = containerW;
     if (modeY === "hug") layout.minSize.h = this.userH;
-    if (modeY === "fixed") layout.minSize.h = container.height;
+    if (modeY === "fixed") layout.minSize.h = containerH;
   }
 }
 

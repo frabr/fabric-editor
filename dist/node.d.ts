@@ -254,7 +254,7 @@ interface ShapeLayerOptions {
     layerId?: string;
     shapeType?: ShapeType;
 }
-type ShapeType = "rect" | "rounded" | "circle" | "heart" | "hexagon";
+type ShapeType = "rect" | "rounded" | "circle" | (string & {});
 interface SaveOptions {
     rasterize?: boolean;
     ajaxCall?: boolean;

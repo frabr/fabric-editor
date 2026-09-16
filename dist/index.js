@@ -145,6 +145,8 @@ __export(index_exports, {
   MaskManager: () => MaskManager,
   PendingUploadsManager: () => PendingUploadsManager,
   PersistenceManager: () => PersistenceManager,
+  ResizeSession: () => ResizeSession,
+  SHAPE_PATHS: () => SHAPE_PATHS,
   SelectionManager: () => SelectionManager,
   SnappingManager: () => SnappingManager,
   addCircleClip: () => addCircleClip,
@@ -160,6 +162,7 @@ __export(index_exports, {
   createHeart: () => createHeart,
   createHexagon: () => createHexagon,
   createImage: () => createImage,
+  createPathShape: () => createPathShape,
   createRect: () => createRect,
   createRoundedRect: () => createRoundedRect,
   createShape: () => createShape,
@@ -167,7 +170,9 @@ __export(index_exports, {
   getAvailableShapes: () => getAvailableShapes,
   getLockMode: () => getLockMode,
   getNextLockMode: () => getNextLockMode,
+  getShapeCatalog: () => getShapeCatalog,
   hasExceededOffset: () => hasExceededOffset,
+  installPathResizeHandler: () => installPathResizeHandler,
   isChildLayout: () => isChildLayout,
   isContainerLayout: () => isContainerLayout,
   isContentLocked: () => isContentLocked,
@@ -528,9 +533,13 @@ var CustomTextbox = class extends import_fabric2.Textbox {
 // src/shapes/factories.ts
 var import_fabric4 = require("#fabric");
 
-// src/shapes/paths.ts
-var HEART_PATH = "M 0 13 Q -1 13 -4 11 C -12 5 -17 -3 -12 -10 C -9 -14 -2 -13 0 -7 C 2 -13 9 -14 12 -10 C 17 -3 11 5 4 11 Q 1 13 0 13 Z";
-var HEXAGON_PATH = "M-2 -23.3453C-0.7624 -24.0598 0.7624 -24.0598 2 -23.3453L19.2176 -13.4047C20.4552 -12.6902 21.2176 -11.3697 21.2176 -9.9406V10.4406C21.2176 11.8697 20.4552 13.1902 19.2176 13.9047L2 23.8453C0.7624 24.5598 -0.7624 24.5598 -2 23.8453L-19.2176 13.9047C-20.4552 13.1902 -21.2176 11.8697 -21.2176 10.4406V-9.9406C-21.2176 -11.3697 -20.4552 -12.6902 -19.2176 -13.4047L-2 -23.3453Z";
+// src/shapes/generated/paths.ts
+var SHAPE_PATHS = [
+  { id: "heart", d: "M50 89.71Q47.06 89.71 38.24 83.82C14.71 66.18 0 42.65 14.71 22.06 23.53 10.3 44.12 13.24 50 30.88 55.88 13.24 76.47 10.3 85.29 22.06 100 42.65 82.35 66.18 61.76 83.82Q52.94 89.71 50 89.71Z", width: 100, height: 79.41 },
+  { id: "hexagon", d: "M45.84 1.48C48.41 0 51.58 0 54.15 1.48L89.94 22.14C92.51 23.63 94.09 26.37 94.09 29.34V71.7C94.09 74.67 92.51 77.41 89.94 78.9L54.15 99.55C51.58 101.04 48.41 101.04 45.84 99.55L10.06 78.9C7.49 77.41 5.91 74.67 5.91 71.7V29.34C5.91 26.37 7.49 23.63 10.06 22.14L45.84 1.48Z", width: 88.19, height: 100 },
+  { id: "octogon", d: "M90.45 30.39l-20.84-20.84A4.15 4.15 0 0 0 66.67 8.33H33.33a4.15 4.15 0 0 0-2.94 1.22l-20.84 20.84A4.15 4.15 0 0 0 8.33 33.33v33.34c0 1.11 0.44 2.17 1.22 2.94l20.84 20.84A4.15 4.15 0 0 0 33.33 91.67h33.34c1.11 0 2.17-0.44 2.94-1.22l20.84-20.84A4.15 4.15 0 0 0 91.67 66.67V33.33a4.15 4.15 0 0 0-1.22-2.94z", width: 100, height: 100 },
+  { id: "pentagon", d: "M99.44 43.4L51.17 0.76c-0.63-0.55-1.57-0.56-2.2 0L0.57 42.98c-0.51 0.45-0.7 1.15-0.48 1.8l18.33 53.75c0.23 0.68 0.87 1.13 1.58 1.12h59.92c0.71 0 1.34-0.45 1.58-1.12l18.41-53.33C100.13 44.56 99.94 43.85 99.44 43.4z", width: 100, height: 100 }
+];
 
 // src/controls/cropControls.ts
 var import_fabric3 = require("#fabric");
@@ -676,34 +685,72 @@ function createRoundedRect(options) {
   return rect;
 }
 function createCircle(options) {
-  return new import_fabric4.Circle({
+  const circle = new import_fabric4.Circle({
     id: "circle",
     originX: "center",
     originY: "center",
     ...options
   });
+  circle.on("resizing", () => {
+    const size = Math.min(circle.width, circle.height);
+    circle.radius = size / 2;
+    circle.width = size;
+    circle.height = size;
+  });
+  return circle;
 }
 function createHeart(options) {
-  const minSize = Math.min(options?.height || 40, options?.width || 40) / 2;
-  const scaleFactor = minSize / 14;
-  return new import_fabric4.Path(HEART_PATH, {
-    id: "heart",
-    originX: "center",
-    originY: "center",
-    stroke: "#000000",
-    fill: "",
-    scaleX: scaleFactor,
-    scaleY: scaleFactor,
-    ...options
-  });
+  return createPathShape("heart", options);
 }
 function createHexagon(options) {
-  return new import_fabric4.Path(HEXAGON_PATH, {
-    id: "hexagon",
+  return createPathShape("hexagon", options);
+}
+function installPathResizeHandler(path) {
+  const naturalW = path.width;
+  const naturalH = path.height;
+  path.on("resizing", () => {
+    path.scaleX *= path.width / naturalW;
+    path.scaleY *= path.height / naturalH;
+    path.width = naturalW;
+    path.height = naturalH;
+  });
+}
+function createPathShape(shapeId, options) {
+  const shapePath = SHAPE_PATHS.find((s) => s.id === shapeId);
+  if (!shapePath) {
+    throw new Error(`Unknown path shape: "${shapeId}". Available: ${SHAPE_PATHS.map((s) => s.id).join(", ")}`);
+  }
+  const path = new import_fabric4.Path(shapePath.d, {
+    id: shapeId,
     originX: "center",
     originY: "center",
     ...options
   });
+  const naturalW = path.width;
+  const naturalH = path.height;
+  const hasW = options?.width != null;
+  const hasH = options?.height != null;
+  const ratio = naturalW / naturalH;
+  let targetW;
+  let targetH;
+  if (hasW && hasH) {
+    targetW = options.width;
+    targetH = options.height;
+  } else if (hasW) {
+    targetW = options.width;
+    targetH = targetW / ratio;
+  } else if (hasH) {
+    targetH = options.height;
+    targetW = targetH * ratio;
+  } else {
+    const scale = DEFAULT_SIZE / Math.max(naturalW, naturalH);
+    targetW = naturalW * scale;
+    targetH = naturalH * scale;
+  }
+  path.scaleX = targetW / naturalW;
+  path.scaleY = targetH / naturalH;
+  installPathResizeHandler(path);
+  return path;
 }
 async function createImage(url, options) {
   const img = await import_fabric4.FabricImage.fromURL(url, { crossOrigin: "anonymous" });
@@ -721,43 +768,35 @@ async function createImage(url, options) {
   addCropControls(img);
   return img;
 }
-function createShape(shapeType, options) {
-  const { fill, stroke, left, top, height, width, radius } = options;
+var DEFAULT_SIZE = 300;
+function createShape(shapeType, options = {}) {
+  const { fill, stroke, left, top } = options;
   const strokeWidth = stroke ? 4 : 0;
+  const w = options.width ?? DEFAULT_SIZE;
+  const h = options.height ?? DEFAULT_SIZE;
   switch (shapeType) {
     case "rect":
-      return createRect({ fill, stroke, left, top, height, width, strokeWidth });
+      return createRect({ fill, stroke, left, top, height: h, width: w, strokeWidth });
     case "rounded":
-      return createRoundedRect({ fill, stroke, left, top, height, width, strokeWidth });
-    case "circle":
+      return createRoundedRect({ fill, stroke, left, top, height: h, width: w, strokeWidth });
+    case "circle": {
+      const radius = Math.min(w, h) / 2;
       return createCircle({ radius, fill, stroke, left, top, strokeWidth });
-    case "heart":
-      return createHeart({
-        fill,
-        stroke,
-        left,
-        top,
-        height,
-        width,
-        strokeWidth: radius ? strokeWidth / (radius / 14) : strokeWidth,
-        scaleY: radius ? radius / 14 : 1,
-        scaleX: radius ? radius / 14 : 1
-      });
-    case "hexagon":
-      return createHexagon({
-        fill,
-        stroke,
-        left,
-        top,
-        height,
-        width,
-        strokeWidth: radius ? strokeWidth / (radius / 24) : strokeWidth,
-        scaleY: radius ? radius / 24 : 1,
-        scaleX: radius ? radius / 24 : 1
-      });
+    }
     default:
-      return createRect({ fill, stroke, left, top, height, width, strokeWidth });
+      if (SHAPE_PATHS.some((s) => s.id === shapeType)) {
+        return createPathShape(shapeType, { fill, stroke, left, top, height: options.height, width: options.width, strokeWidth });
+      }
+      return createRect({ fill, stroke, left, top, height: h, width: w, strokeWidth });
   }
+}
+function getShapeCatalog() {
+  return [
+    { id: "rect", path: "M0 0H100V100H0Z", viewBox: "0 0 100 100" },
+    { id: "rounded", path: "M15 0H85Q100 0 100 15V85Q100 100 85 100H15Q0 100 0 85V15Q0 0 15 0Z", viewBox: "0 0 100 100" },
+    { id: "circle", path: "M50 0A50 50 0 1 1 50 100A50 50 0 1 1 50 0Z", viewBox: "0 0 100 100" },
+    ...SHAPE_PATHS.map((s) => ({ id: s.id, path: s.d, viewBox: "0 0 100 100" }))
+  ];
 }
 function switchShape(obj, nextShapeType) {
   const { fill, stroke, left, top } = obj;
@@ -778,31 +817,98 @@ function switchShape(obj, nextShapeType) {
     left,
     top,
     height,
-    width,
-    radius
+    width
   });
 }
 
+// src/shapes/paths.ts
+var HEART_PATH = "M 0 13 Q -1 13 -4 11 C -12 5 -17 -3 -12 -10 C -9 -14 -2 -13 0 -7 C 2 -13 9 -14 12 -10 C 17 -3 11 5 4 11 Q 1 13 0 13 Z";
+var HEXAGON_PATH = "M-2 -23.3453C-0.7624 -24.0598 0.7624 -24.0598 2 -23.3453L19.2176 -13.4047C20.4552 -12.6902 21.2176 -11.3697 21.2176 -9.9406V10.4406C21.2176 11.8697 20.4552 13.1902 19.2176 13.9047L2 23.8453C0.7624 24.5598 -0.7624 24.5598 -2 23.8453L-19.2176 13.9047C-20.4552 13.1902 -21.2176 11.8697 -21.2176 10.4406V-9.9406C-21.2176 -11.3697 -20.4552 -12.6902 -19.2176 -13.4047L-2 -23.3453Z";
+
 // src/shapes/shapeWheel.ts
-var SHAPE_WHEEL = [
-  "rect",
-  "rounded",
-  "circle",
-  "heart",
-  "hexagon"
-];
+function shapeIds() {
+  return getShapeCatalog().map((s) => s.id);
+}
 function nextShape(currentId) {
-  if (!currentId) return "rounded";
-  const currentIndex = SHAPE_WHEEL.indexOf(currentId);
-  if (currentIndex === -1) return "rounded";
-  const nextIndex = (currentIndex + 1) % SHAPE_WHEEL.length;
-  return SHAPE_WHEEL[nextIndex];
+  const ids = shapeIds();
+  if (!currentId) return ids[1] ?? ids[0];
+  const idx = ids.indexOf(currentId);
+  if (idx === -1) return ids[1] ?? ids[0];
+  return ids[(idx + 1) % ids.length];
 }
 function isValidShape(id) {
-  return SHAPE_WHEEL.includes(id);
+  return shapeIds().includes(id);
 }
 function getAvailableShapes() {
-  return SHAPE_WHEEL;
+  return shapeIds();
+}
+
+// src/layout/geometry.ts
+function scaledSize(obj) {
+  return {
+    w: obj.width * (obj.scaleX || 1),
+    h: obj.height * (obj.scaleY || 1)
+  };
+}
+function setShapeSize(obj, w, h) {
+  if (obj.type === "circle") {
+    const r = Math.min(w, h) / 2;
+    obj.radius = r;
+    obj.set({ width: r * 2, height: r * 2 });
+  } else if (obj.type === "path") {
+    obj.set({ scaleX: w / obj.width, scaleY: h / obj.height });
+  } else {
+    obj.set({ width: w, height: h });
+  }
+}
+function topLeft(obj) {
+  const { w, h } = scaledSize(obj);
+  const center = obj.getRelativeCenterPoint();
+  return { x: center.x - w / 2, y: center.y - h / 2 };
+}
+function pointInObject(point, obj, margin = 0) {
+  const tl = topLeft(obj);
+  const { w, h } = scaledSize(obj);
+  return point.x >= tl.x - margin && point.x <= tl.x + w + margin && point.y >= tl.y - margin && point.y <= tl.y + h + margin;
+}
+var TEXT_TYPES = ["i-text", "textbox"];
+function isTextObject(obj) {
+  return TEXT_TYPES.includes(obj.type);
+}
+function clampTopLeft(obj, reference, padding) {
+  const tl = topLeft(obj);
+  const refTl = topLeft(reference);
+  return {
+    x: Math.max(refTl.x + padding, tl.x),
+    y: Math.max(refTl.y + padding, tl.y)
+  };
+}
+function hasExceededOffset(current, origin, offsetX, offsetY, margin) {
+  const dx = current.x - origin.x;
+  const dy = current.y - origin.y;
+  return offsetX > 0 && dx < -(offsetX + margin) || offsetX < 0 && dx > -offsetX + margin || offsetY > 0 && dy < -(offsetY + margin) || offsetY < 0 && dy > -offsetY + margin;
+}
+function measureChildren(children) {
+  let w = 0;
+  let h = 0;
+  for (const { obj, cl } of children) {
+    const { w: childW, h: childH } = scaledSize(obj);
+    w = Math.max(w, cl.margins.left + childW + cl.margins.right);
+    h = Math.max(h, cl.margins.top + childH + cl.margins.bottom);
+  }
+  return { w, h };
+}
+function syncCoords(container, children) {
+  container.setCoords();
+  for (const { obj } of children) {
+    obj.setCoords();
+  }
+}
+function cornerToAxes(corner) {
+  if (!corner) return { x: true, y: true };
+  const hasX = corner.includes("l") || corner.includes("r");
+  const hasY = corner.includes("t") || corner.includes("b");
+  return { x: hasX, y: hasY };
 }
 
 // src/locking.ts
@@ -1021,7 +1127,7 @@ var ImageFrame = class _ImageFrame extends import_fabric5.Group {
    * Cycle vers la forme de clip suivante
    */
   nextClipShape() {
-    const shapes = ["rect", "rounded", "circle", "heart", "hexagon"];
+    const shapes = getShapeCatalog().map((s) => s.id);
     const currentIndex = this.clipShape ? shapes.indexOf(this.clipShape) : -1;
     this.applyClipShape(shapes[(currentIndex + 1) % shapes.length]);
   }
@@ -1066,16 +1172,12 @@ var ImageFrame = class _ImageFrame extends import_fabric5.Group {
           ry: minSize * 0.15
         });
         break;
-      case "heart":
-        this.clipPath = createHeart({
-          scaleX: minSize / 28,
-          scaleY: minSize / 28
-        });
-        break;
-      case "hexagon":
-        this.clipPath = createHexagon({
-          scaleX: minSize / 48,
-          scaleY: minSize / 48
+      default:
+        this.clipPath = createPathShape(shapeType, {
+          width: this.frameWidth,
+          height: this.frameHeight,
+          left: 0,
+          top: 0
         });
         break;
     }
@@ -1519,9 +1621,8 @@ var LayerManager = class {
   async replaceShapeWithImage(shape, imageUrl) {
     const shapeId = shape.id || "";
     const clipShape = isValidShape(shapeId) ? shapeId : "rect";
-    const displayedWidth = shape.width * (shape.scaleX || 1);
-    const displayedHeight = shape.height * (shape.scaleY || 1);
-    const center = shape.getCenterPoint();
+    const { w: displayedWidth, h: displayedHeight } = scaledSize(shape);
+    const center = shape.getRelativeCenterPoint();
     const zIndex = this.canvas.getObjects().indexOf(shape);
     const img = await import_fabric6.FabricImage.fromURL(imageUrl, { crossOrigin: "anonymous" });
     const frame = new ImageFrame(img, {
@@ -1549,13 +1650,17 @@ var LayerManager = class {
     const {
       left = 100,
       top = 100,
-      width = 300,
-      height = 300,
       fill = "#ffffff",
       shapeType = "rect",
       layerId = this.generateId()
     } = options;
-    const shape = createShape(shapeType, { fill, left, top, width, height, radius: Math.min(width, height) / 2 });
+    const shape = createShape(shapeType, {
+      fill,
+      left,
+      top,
+      width: options.width,
+      height: options.height
+    });
     shape.set({ layerId, layerType: "shape" });
     this.add(shape);
     return shape;
@@ -1624,6 +1729,7 @@ var LayerManager = class {
       case "Path":
       case "path":
         obj = await import_fabric6.Path.fromObject(layer);
+        installPathResizeHandler(obj);
         break;
       case "Circle":
       case "circle":
@@ -1657,7 +1763,7 @@ var LayerManager = class {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   detectLegacyClipShape(clipPath) {
     if (!clipPath) return void 0;
-    if (clipPath.id && ["rounded", "circle", "heart", "hexagon"].includes(clipPath.id)) {
+    if (clipPath.id && isValidShape(clipPath.id)) {
       return clipPath.id;
     }
     const type = clipPath.type?.toLowerCase();
@@ -1891,7 +1997,7 @@ var SelectionManager = class {
     this.canvas.on("selection:updated", this.handleSelection.bind(this));
     this.canvas.on("selection:cleared", this.handleDeselection.bind(this));
     this.canvas.on("object:moving", this.handleTransformStart.bind(this));
-    this.canvas.on("object:scaling", this.handleTransformStart.bind(this));
+    this.canvas.on("object:resizing", this.handleTransformStart.bind(this));
     this.canvas.on("object:rotating", this.handleTransformStart.bind(this));
     this.canvas.on("object:modified", this.handleModified.bind(this));
   }
@@ -2027,7 +2133,7 @@ var SelectionManager = class {
     this.canvas.off("selection:updated");
     this.canvas.off("selection:cleared");
     this.canvas.off("object:moving");
-    this.canvas.off("object:scaling");
+    this.canvas.off("object:resizing");
     this.canvas.off("object:rotating");
     this.canvas.off("object:modified");
   }
@@ -2395,46 +2501,6 @@ var HistoryManager = class {
 // src/ui/guides.ts
 var import_fabric9 = require("#fabric");
 
-// src/layout/geometry.ts
-function scaledSize(obj) {
-  return {
-    w: obj.width * (obj.scaleX || 1),
-    h: obj.height * (obj.scaleY || 1)
-  };
-}
-function topLeft(obj) {
-  const { w, h } = scaledSize(obj);
-  let x = obj.left;
-  let y = obj.top;
-  if (obj.originX === "center") x -= w / 2;
-  else if (obj.originX === "right") x -= w;
-  if (obj.originY === "center") y -= h / 2;
-  else if (obj.originY === "bottom") y -= h;
-  return { x, y };
-}
-function pointInObject(point, obj, margin = 0) {
-  const tl = topLeft(obj);
-  const { w, h } = scaledSize(obj);
-  return point.x >= tl.x - margin && point.x <= tl.x + w + margin && point.y >= tl.y - margin && point.y <= tl.y + h + margin;
-}
-var TEXT_TYPES = ["i-text", "textbox"];
-function isTextObject(obj) {
-  return TEXT_TYPES.includes(obj.type);
-}
-function clampTopLeft(obj, reference, padding) {
-  const tl = topLeft(obj);
-  const refTl = topLeft(reference);
-  return {
-    x: Math.max(refTl.x + padding, tl.x),
-    y: Math.max(refTl.y + padding, tl.y)
-  };
-}
-function hasExceededOffset(current, origin, offsetX, offsetY, margin) {
-  const dx = current.x - origin.x;
-  const dy = current.y - origin.y;
-  return offsetX > 0 && dx < -(offsetX + margin) || offsetX < 0 && dx > -offsetX + margin || offsetY > 0 && dy < -(offsetY + margin) || offsetY < 0 && dy > -offsetY + margin;
-}
-
 // src/ui/color.ts
 function parseHex(hex) {
   const h = hex.replace("#", "");
@@ -2657,7 +2723,7 @@ var SnappingManager = class {
   }
   setupEventListeners() {
     this.canvas.on("object:moving", (e) => this.handleObjectMoving(e));
-    this.canvas.on("object:scaling", (e) => this.handleObjectScaling(e.target));
+    this.canvas.on("object:resizing", (e) => this.handleObjectScaling(e.target));
     this.canvas.on("object:modified", () => {
       this.guides.clearAndRender();
       this.snapState = null;
@@ -2963,7 +3029,7 @@ var SnappingManager = class {
   dispose() {
     this.guides.clear();
     this.canvas.off("object:moving");
-    this.canvas.off("object:scaling");
+    this.canvas.off("object:resizing");
     this.canvas.off("object:modified");
     this.canvas.off("selection:cleared");
   }
@@ -2972,8 +3038,64 @@ var SnappingManager = class {
 // src/LayoutManager.ts
 var import_fabric10 = require("#fabric");
 
-// src/layout/reconcile.ts
-function resolveChildren(objects, containerId) {
+// src/layout/resize-session.ts
+var ResizeSession = class {
+  constructor(container, corner) {
+    this.container = container;
+    this.layout = container.get("layout");
+    this.axes = cornerToAxes(corner);
+    const { w, h } = scaledSize(container);
+    this.userW = w;
+    this.userH = h;
+  }
+  /**
+   * Called on each `object:resizing` frame.
+   * Controls already set width/height directly (no scale involved).
+   */
+  handleResizing(objects) {
+    const { container, layout, axes } = this;
+    const modeX = layout.sizeMode.x;
+    const modeY = layout.sizeMode.y;
+    const { w: currentW, h: currentH } = scaledSize(container);
+    if (axes.x) this.userW = currentW;
+    if (axes.y) this.userH = currentH;
+    const children = resolveContainerChildren(objects, container);
+    if (children.length === 0) return;
+    prepareTextChildren(children, modeX, currentW);
+    const { w: requiredW, h: requiredH } = measureChildren(children);
+    let finalW;
+    if (modeX === "hug") {
+      finalW = axes.x ? Math.max(this.userW, requiredW) : requiredW;
+    } else {
+      finalW = currentW;
+    }
+    let finalH;
+    if (modeY === "hug") {
+      finalH = axes.y ? Math.max(this.userH, requiredH) : requiredH;
+    } else {
+      finalH = currentH;
+    }
+    setShapeSize(container, finalW, finalH);
+    positionChildren(children, container.left, container.top, finalW, finalH);
+    syncCoords(container, children);
+  }
+  /**
+   * Called on `object:modified`. Captures minSize from the user's intent.
+   */
+  commit(objects) {
+    const { container, layout } = this;
+    const modeX = layout.sizeMode.x;
+    const modeY = layout.sizeMode.y;
+    const { w: containerW, h: containerH } = scaledSize(container);
+    if (!layout.minSize) layout.minSize = { w: 0, h: 0 };
+    if (modeX === "hug") layout.minSize.w = this.userW;
+    if (modeX === "fixed") layout.minSize.w = containerW;
+    if (modeY === "hug") layout.minSize.h = this.userH;
+    if (modeY === "fixed") layout.minSize.h = containerH;
+  }
+};
+function resolveContainerChildren(objects, container) {
+  const containerId = container.get("layerId");
   const out = [];
   for (const obj of objects) {
     const cl = obj.get("layout");
@@ -2983,59 +3105,6 @@ function resolveChildren(objects, containerId) {
   }
   return out;
 }
-function normalizeScale(obj, layout) {
-  const sx = obj.scaleX || 1;
-  const sy = obj.scaleY || 1;
-  if (sx === 1 && sy === 1) return;
-  const newW = obj.width * sx;
-  const newH = obj.height * sy;
-  obj.set({ width: newW, height: newH, scaleX: 1, scaleY: 1 });
-  const modeX = layout.sizeMode.x;
-  const modeY = layout.sizeMode.y;
-  if (modeX === "hug" || modeY === "hug") {
-    if (!layout.minSize) layout.minSize = { w: 0, h: 0 };
-    if (modeX === "hug") layout.minSize.w = newW;
-    if (modeY === "hug") layout.minSize.h = newH;
-  }
-}
-function runLayout(objects, preview = false) {
-  for (const obj of objects) {
-    const layout = obj.get("layout");
-    if (!layout || !isContainerLayout(layout)) continue;
-    const containerId = obj.get("layerId");
-    const children = resolveChildren(objects, containerId);
-    if (children.length === 0) continue;
-    layoutContainer(obj, layout, children, preview);
-  }
-}
-function layoutContainer(container, layout, children, preview = false) {
-  if (preview) {
-    const { w, h } = scaledSize(container);
-    positionChildren(children, container.left, container.top, w, h);
-    syncCoords(container, children);
-    return;
-  }
-  const modeX = layout.sizeMode.x;
-  const modeY = layout.sizeMode.y;
-  normalizeScale(container, layout);
-  const { w: rawW, h: rawH } = scaledSize(container);
-  const minW = layout.minSize?.w ?? 0;
-  const minH = layout.minSize?.h ?? 0;
-  const currentW = Math.max(rawW, minW);
-  const currentH = Math.max(rawH, minH);
-  const bothFixed = modeX === "fixed" && modeY === "fixed";
-  if (!bothFixed) restoreTextFontSizes(children);
-  prepareTextChildren(children, modeX, currentW);
-  const { w: requiredW, h: requiredH } = measureChildren(children);
-  const finalW = modeX === "hug" ? Math.max(requiredW, minW) : currentW;
-  const finalH = modeY === "hug" ? Math.max(requiredH, minH) : currentH;
-  applyContainerSize(container, finalW, finalH);
-  if (bothFixed) {
-    shrinkOverflowingText(children, finalW, finalH);
-  }
-  positionChildren(children, container.left, container.top, finalW, finalH);
-  syncCoords(container, children);
-}
 function prepareTextChildren(children, modeX, containerW) {
   for (const { obj, cl } of children) {
     if (!isTextObject(obj)) continue;
@@ -3044,7 +3113,7 @@ function prepareTextChildren(children, modeX, containerW) {
     t.set({ textAlign: anchorX === "right" ? "right" : "left" });
     if (modeX === "fixed") {
       const availW = containerW - cl.margins.left - cl.margins.right;
-      obj.set({ width: availW / (obj.scaleX || 1) });
+      obj.set({ width: availW });
     } else {
       obj.set({ width: 1e4 });
     }
@@ -3053,33 +3122,6 @@ function prepareTextChildren(children, modeX, containerW) {
       const realW = Math.ceil(t.calcTextWidth());
       obj.set({ width: realW });
       t.initDimensions();
-    }
-  }
-}
-function measureChildren(children) {
-  let w = 0;
-  let h = 0;
-  for (const { obj, cl } of children) {
-    const { w: childW, h: childH } = scaledSize(obj);
-    w = Math.max(w, cl.margins.left + childW + cl.margins.right);
-    h = Math.max(h, cl.margins.top + childH + cl.margins.bottom);
-  }
-  return { w, h };
-}
-function applyContainerSize(container, finalW, finalH) {
-  container.set({
-    width: finalW / (container.scaleX || 1),
-    height: finalH / (container.scaleY || 1)
-  });
-}
-function shrinkOverflowingText(children, containerW, containerH) {
-  for (const { obj, cl } of children) {
-    if (!isTextObject(obj)) continue;
-    const availW = containerW - cl.margins.left - cl.margins.right;
-    const availH = containerH - cl.margins.top - cl.margins.bottom;
-    const { h: childH } = scaledSize(obj);
-    if (childH > availH) {
-      shrinkTextToFit(obj, availW, availH);
     }
   }
 }
@@ -3093,10 +3135,47 @@ function positionChildren(children, containerLeft, containerTop, containerW, con
     obj.set({ left, top });
   }
 }
-function syncCoords(container, children) {
-  container.setCoords();
-  for (const { obj } of children) {
-    obj.setCoords();
+
+// src/layout/reconcile.ts
+function runLayout(objects) {
+  for (const obj of objects) {
+    const layout = obj.get("layout");
+    if (!layout || !isContainerLayout(layout)) continue;
+    const children = resolveContainerChildren(objects, obj);
+    if (children.length === 0) continue;
+    layoutContainer(obj, layout, children);
+  }
+}
+function layoutContainer(container, layout, children) {
+  const modeX = layout.sizeMode.x;
+  const modeY = layout.sizeMode.y;
+  const minW = layout.minSize?.w ?? 0;
+  const minH = layout.minSize?.h ?? 0;
+  const { w: visW, h: visH } = scaledSize(container);
+  const currentW = Math.max(visW, minW);
+  const currentH = Math.max(visH, minH);
+  const bothFixed = modeX === "fixed" && modeY === "fixed";
+  if (!bothFixed) restoreTextFontSizes(children);
+  prepareTextChildren(children, modeX, currentW);
+  const { w: requiredW, h: requiredH } = measureChildren(children);
+  const finalW = modeX === "hug" ? Math.max(requiredW, minW) : currentW;
+  const finalH = modeY === "hug" ? Math.max(requiredH, minH) : currentH;
+  setShapeSize(container, finalW, finalH);
+  if (bothFixed) {
+    shrinkOverflowingText(children, finalW, finalH);
+  }
+  positionChildren(children, container.left, container.top, finalW, finalH);
+  syncCoords(container, children);
+}
+function shrinkOverflowingText(children, containerW, containerH) {
+  for (const { obj, cl } of children) {
+    if (!isTextObject(obj)) continue;
+    const availW = containerW - cl.margins.left - cl.margins.right;
+    const availH = containerH - cl.margins.top - cl.margins.bottom;
+    const { h: childH } = scaledSize(obj);
+    if (childH > availH) {
+      shrinkTextToFit(obj, availW, availH);
+    }
   }
 }
 function restoreTextFontSizes(children) {
@@ -3125,7 +3204,7 @@ function shrinkTextToFit(obj, availW, availH) {
     const ratioH = availH / Math.max(textH, 1);
     fontSize = Math.max(minFontSize, Math.floor(fontSize * Math.min(ratioW, ratioH)));
     t.fontSize = fontSize;
-    obj.set({ width: availW / (obj.scaleX || 1) });
+    obj.set({ width: availW });
     t.initDimensions();
   }
 }
@@ -3296,26 +3375,32 @@ function takeSnapshot(shape, text) {
   };
 }
 function normalizeShapeOrigin(shape) {
-  const sTL = topLeft(shape);
-  const sx = shape.scaleX || 1;
-  const sy = shape.scaleY || 1;
-  shape.set({
-    left: sTL.x,
-    top: sTL.y,
-    originX: "left",
-    originY: "top",
-    width: shape.width * sx,
-    height: shape.height * sy,
-    scaleX: 1,
-    scaleY: 1
-  });
+  const center = shape.getRelativeCenterPoint();
+  const { w, h } = scaledSize(shape);
+  const newLeft = center.x - w / 2;
+  const newTop = center.y - h / 2;
+  if (shape.type === "path") {
+    shape.set({ left: newLeft, top: newTop, originX: "left", originY: "top" });
+  } else {
+    const sx = shape.scaleX || 1;
+    const sy = shape.scaleY || 1;
+    shape.set({
+      left: newLeft,
+      top: newTop,
+      originX: "left",
+      originY: "top",
+      width: shape.width * sx,
+      height: shape.height * sy,
+      scaleX: 1,
+      scaleY: 1
+    });
+  }
   shape.setCoords();
 }
 function computeInitialLayout(shape, text) {
   const sTL = topLeft(shape);
   const tTL = topLeft(text);
-  const shapeW = shape.width;
-  const shapeH = shape.height;
+  const { w: shapeW, h: shapeH } = scaledSize(shape);
   const textW = text.width * (text.scaleX || 1);
   const padX = Math.max(MIN_PAD, Math.round(tTL.x - sTL.x));
   const padY = Math.max(MIN_PAD, Math.round(tTL.y - sTL.y));
@@ -3354,7 +3439,7 @@ function wrapContainerAroundChild(child, container) {
   const minH = containerLayout.minSize?.h ?? 0;
   const requiredW = padLeft + childW + padLeft;
   const requiredH = padTop + childH + padTop;
-  container.set({ width: Math.max(requiredW, minW), height: Math.max(requiredH, minH) });
+  setShapeSize(container, Math.max(requiredW, minW), Math.max(requiredH, minH));
   container.setCoords();
 }
 
@@ -3363,10 +3448,11 @@ var ANCHOR_DELAY_MS = 300;
 var LayoutManager2 = class {
   constructor(canvas, callbacks = {}, guideColor) {
     this.dtl = { phase: "idle", cooldownUntil: 0 };
+    this.resizeSession = null;
     // ── Event wiring ──────────────────────────────────────────────────
     this.onMovingBound = (e) => this.onMoving(e);
     this.onModifiedBound = (e) => this.onModified(e);
-    this.onScalingBound = (e) => this.onScaling(e);
+    this.onResizingBound = (e) => this.onResizing(e);
     this.canvas = canvas;
     this.callbacks = callbacks;
     this.guides = new CanvasGuides(canvas, guideColor);
@@ -3377,9 +3463,9 @@ var LayoutManager2 = class {
     this.callbacks = { ...this.callbacks, ...callbacks };
   }
   // ── Public API ────────────────────────────────────────────────────
-  /** Run layout on all canvas objects. */
-  relayout(preview = false) {
-    runLayout(this.canvas.getObjects(), preview);
+  /** Run layout on all canvas objects (programmatic relayout). */
+  relayout() {
+    runLayout(this.canvas.getObjects());
     this.canvas.renderAll();
   }
   /** Update layout mode on the currently selected container. */
@@ -3425,19 +3511,19 @@ var LayoutManager2 = class {
     this.resetToIdle();
     this.canvas.off("object:moving", this.onMovingBound);
     this.canvas.off("object:modified", this.onModifiedBound);
-    this.canvas.off("object:scaling", this.onScalingBound);
+    this.canvas.off("object:resizing", this.onResizingBound);
   }
   setupEventListeners() {
     this.canvas.on("object:moving", this.onMovingBound);
     this.canvas.on("object:modified", this.onModifiedBound);
-    this.canvas.on("object:scaling", this.onScalingBound);
+    this.canvas.on("object:resizing", this.onResizingBound);
   }
   // ── Canvas event handlers ─────────────────────────────────────────
   onMoving(e) {
     const obj = e.target;
     const layout = obj.get?.("layout");
     if (layout && isContainerLayout(layout)) {
-      this.relayout(true);
+      this.relayout();
       return;
     }
     if (layout && isChildLayout(layout) && this.dtl.phase !== "anchored") {
@@ -3476,6 +3562,10 @@ var LayoutManager2 = class {
     const obj = e.target;
     const layout = obj.get?.("layout");
     if (layout && isContainerLayout(layout)) {
+      if (this.resizeSession) {
+        this.resizeSession.commit(this.canvas.getObjects());
+        this.resizeSession = null;
+      }
       this.relayout();
       this.callbacks.onLayoutChanged?.();
       return;
@@ -3498,11 +3588,15 @@ var LayoutManager2 = class {
     }
     this.resetToIdle();
   }
-  onScaling(e) {
-    const layout = e.target?.get?.("layout");
-    if (layout && isContainerLayout(layout)) {
-      this.relayout(true);
+  onResizing(e) {
+    const target = e.target;
+    const layout = target?.get?.("layout");
+    if (!layout || !isContainerLayout(layout)) return;
+    if (!this.resizeSession) {
+      this.resizeSession = new ResizeSession(target, e.transform?.corner);
     }
+    this.resizeSession.handleResizing(this.canvas.getObjects());
+    this.canvas.renderAll();
   }
   // ── State machine: IDLE → PENDING ─────────────────────────────────
   handleIdleMoving(textObj, cursor) {
@@ -3620,20 +3714,24 @@ function addCircleClip(obj) {
 }
 function addHeartClip(obj) {
   function scale() {
-    const minSize = Math.min(obj.height, obj.width) / 2;
-    const scaleFactor = minSize / 14;
-    const heart = createHeart({ scaleX: scaleFactor, scaleY: scaleFactor });
-    obj.clipPath = heart;
+    obj.clipPath = createPathShape("heart", {
+      width: obj.width,
+      height: obj.height,
+      left: 0,
+      top: 0
+    });
   }
   scale();
   obj.on("scaling", scale);
 }
 function addHexagonClip(obj) {
   function scale() {
-    const minSize = Math.min(obj.height, obj.width) / 2;
-    const scaleFactor = minSize / 24;
-    const hexa = createHexagon({ scaleX: scaleFactor, scaleY: scaleFactor });
-    obj.clipPath = hexa;
+    obj.clipPath = createPathShape("hexagon", {
+      width: obj.width,
+      height: obj.height,
+      left: 0,
+      top: 0
+    });
   }
   scale();
   obj.on("scaling", scale);
@@ -3655,28 +3753,23 @@ function addRoundedClip(obj) {
   scale();
   obj.on("scaling", scale);
 }
+function addPathClip(obj, shapeId) {
+  function scale() {
+    obj.clipPath = createPathShape(shapeId, {
+      width: obj.width,
+      height: obj.height,
+      left: 0,
+      top: 0
+    });
+  }
+  scale();
+  obj.on("scaling", scale);
+}
 function switchClip(obj) {
   obj.off("scaling");
   const clipPath = obj.clipPath;
   const currentShape = clipPath?.id;
-  const nextShapeType = nextShape(currentShape);
-  switch (nextShapeType) {
-    case "rect":
-      obj.clipPath = void 0;
-      break;
-    case "rounded":
-      addRoundedClip(obj);
-      break;
-    case "circle":
-      addCircleClip(obj);
-      break;
-    case "heart":
-      addHeartClip(obj);
-      break;
-    case "hexagon":
-      addHexagonClip(obj);
-      break;
-  }
+  applyClip(obj, nextShape(currentShape));
 }
 function applyClip(obj, shapeType) {
   obj.off("scaling");
@@ -3690,11 +3783,8 @@ function applyClip(obj, shapeType) {
     case "circle":
       addCircleClip(obj);
       break;
-    case "heart":
-      addHeartClip(obj);
-      break;
-    case "hexagon":
-      addHexagonClip(obj);
+    default:
+      addPathClip(obj, shapeType);
       break;
   }
 }
@@ -3790,6 +3880,35 @@ function installControlRenderer(gc, hoverProgress) {
 }
 var HIT_DEPTH = 14;
 var CORNER_INSET = 20;
+var RESIZING = "resizing";
+var {
+  changeWidth: _changeWidth,
+  changeHeight: _changeHeight,
+  changeObjectWidth,
+  changeObjectHeight
+} = import_fabric11.controlsUtils;
+function fireResizing(target, e, transform, x, y) {
+  target.fire("resizing");
+  target.canvas?.fire("object:resizing", { target, e, transform, pointer: { x, y } });
+}
+var wrapResize = (handler) => (eventData, transform, x, y) => {
+  const result = handler(eventData, transform, x, y);
+  if (result) fireResizing(transform.target, eventData, transform, x, y);
+  return result;
+};
+var changeWidth = wrapResize(_changeWidth);
+var changeHeight = wrapResize(_changeHeight);
+var resizeBoth = (eventData, transform, x, y) => {
+  const { target, originX, originY } = transform;
+  const constraint = target.getPositionByOrigin(originX, originY);
+  const changedW = changeObjectWidth(eventData, transform, x, y);
+  const changedH = changeObjectHeight(eventData, transform, x, y);
+  target.setPositionByOrigin(constraint, transform.originX, transform.originY);
+  if (changedW || changedH) {
+    fireResizing(target, eventData, transform, x, y);
+  }
+  return changedW || changedH;
+};
 function installControlHitAreas(canvas) {
   const createSideRotationControl = () => new import_fabric11.Control({
     x: 0.5,
@@ -3806,6 +3925,27 @@ function installControlHitAreas(canvas) {
     if (!obj?.controls) return;
     if (obj.controls.mtr) {
       obj.controls.mtr = createSideRotationControl();
+    }
+    const edgeMap = {
+      ml: changeWidth,
+      mr: changeWidth,
+      mt: changeHeight,
+      mb: changeHeight
+    };
+    const resizingActionName = () => RESIZING;
+    for (const [key, handler] of Object.entries(edgeMap)) {
+      const ctrl = obj.controls[key];
+      if (!ctrl) continue;
+      ctrl.actionHandler = handler;
+      ctrl.actionName = RESIZING;
+      ctrl.getActionName = resizingActionName;
+    }
+    for (const key of ["tl", "tr", "bl", "br"]) {
+      const ctrl = obj.controls[key];
+      if (!ctrl) continue;
+      ctrl.actionHandler = resizeBoth;
+      ctrl.actionName = RESIZING;
+      ctrl.getActionName = resizingActionName;
     }
     for (const key of ["mt", "mb", "ml", "mr"]) {
       const ctrl = obj.controls[key];
@@ -4264,7 +4404,7 @@ var _FabricEditor = class _FabricEditor {
     fontFaces?.forEach((f) => document?.fonts?.add(f));
   }
   /**
-   * Bascule le clip de l'objet sélectionné vers la forme suivante
+   * @legacy Use ImageFrame.nextClipShape() directly.
    */
   switchClip() {
     const obj = this.selection.current;
@@ -4281,7 +4421,7 @@ var _FabricEditor = class _FabricEditor {
     }
   }
   /**
-   * Bascule la forme de l'objet sélectionné vers la forme suivante
+   * @legacy Shape switching is no longer supported.
    */
   switchShape() {
     const obj = this.selection.current;
@@ -4291,8 +4431,7 @@ var _FabricEditor = class _FabricEditor {
     this.changeShape(nextShapeType);
   }
   /**
-   * Change la forme de l'objet sélectionné vers un type précis.
-   * Pour les shapes : remplace l'objet. Pour les ImageFrames : change le clipShape.
+   * @legacy Shape switching is no longer supported.
    */
   changeShape(shapeType) {
     const obj = this.selection.current;
@@ -4328,7 +4467,7 @@ var _FabricEditor = class _FabricEditor {
     if (!obj) return;
     const { stroke, fill } = obj;
     obj.set({ fill: stroke, stroke: fill });
-    obj.strokeWidth = obj.stroke ? 4 / obj.scaleY : 0;
+    obj.strokeWidth = obj.stroke ? 4 : 0;
     this.canvas.renderAll();
   }
   /**
@@ -4430,7 +4569,7 @@ var _FabricEditor = class _FabricEditor {
     };
   }
 };
-console.log("[fabric-editor] \u2713 linked local build 2");
+console.log("[fabric-editor] \u2713 linked local build 3");
 /**
  * Étend FabricObject pour inclure layerId dans la sérialisation
  */
@@ -5077,33 +5216,16 @@ function getClipPathCss(shapeType, width, height) {
       const radius = minSize * 0.15;
       return `inset(0 round ${radius}px)`;
     }
-    case "heart":
-    case "hexagon":
-      return void 0;
     default:
       return void 0;
   }
 }
-var SVG_PATH_INFO = {
-  heart: {
-    path: HEART_PATH,
-    // Dans Fabric: scaleX = minSize / 28, donc la taille de référence est 28
-    // Le path est carré (28x28) pour le scaling
-    width: 28,
-    height: 28,
-    centerX: 0,
-    centerY: -0.5
-    // (13 + -14) / 2 = -0.5
-  },
-  hexagon: {
-    path: HEXAGON_PATH,
-    // Dans Fabric: scaleX = minSize / 48, donc la taille de référence est 48
-    width: 48,
-    height: 48,
-    centerX: 0,
-    centerY: 0
-  }
-};
+var SVG_PATH_INFO = Object.fromEntries(
+  SHAPE_PATHS.map((s) => [
+    s.id,
+    { path: s.d, width: s.width, height: s.height, centerX: 50, centerY: 50 }
+  ])
+);
 function getInlineSvgClip(shapeType, frameWidth, frameHeight, clipId) {
   const pathInfo = SVG_PATH_INFO[shapeType];
   if (!pathInfo) return void 0;
@@ -5159,7 +5281,7 @@ function imageFrameToHtml(layer, zIndex) {
   if (clipPathCss) {
     containerStyles["clip-path"] = clipPathCss;
     useOverflowHidden = false;
-  } else if (clipShape === "heart" || clipShape === "hexagon") {
+  } else if (clipShape && clipShape !== "rect") {
     inlineSvgClip = getInlineSvgClip(clipShape, frameWidth, frameHeight, clipId) || "";
     if (inlineSvgClip) {
       containerStyles["clip-path"] = `url(#${clipId})`;
@@ -5285,6 +5407,8 @@ function layerToHtmlStandalone(layer, zIndex) {
   MaskManager,
   PendingUploadsManager,
   PersistenceManager,
+  ResizeSession,
+  SHAPE_PATHS,
   SelectionManager,
   SnappingManager,
   addCircleClip,
@@ -5300,6 +5424,7 @@ function layerToHtmlStandalone(layer, zIndex) {
   createHeart,
   createHexagon,
   createImage,
+  createPathShape,
   createRect,
   createRoundedRect,
   createShape,
@@ -5307,7 +5432,9 @@ function layerToHtmlStandalone(layer, zIndex) {
   getAvailableShapes,
   getLockMode,
   getNextLockMode,
+  getShapeCatalog,
   hasExceededOffset,
+  installPathResizeHandler,
   isChildLayout,
   isContainerLayout,
   isContentLocked,

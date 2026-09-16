@@ -1,14 +1,20 @@
 // Shapes module - création et gestion des formes
 
-export { HEART_PATH, HEXAGON_PATH } from "./paths";
-export { nextShape, isValidShape, getAvailableShapes } from "./shapeWheel";
 export {
   createRect,
   createRoundedRect,
   createCircle,
-  createHeart,
-  createHexagon,
   createImage,
   createShape,
-  switchShape,
+  createPathShape,
+  installPathResizeHandler,
+  getShapeCatalog,
+  type ShapeCatalogEntry,
 } from "./factories";
+
+export { SHAPE_PATHS, type ShapePath } from "./generated/paths";
+
+// @legacy — shape switching and old path strings
+export { HEART_PATH, HEXAGON_PATH } from "./paths";
+export { nextShape, isValidShape, getAvailableShapes } from "./shapeWheel";
+export { createHeart, createHexagon, switchShape } from "./factories";

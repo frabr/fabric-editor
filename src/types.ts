@@ -82,8 +82,8 @@ export interface ShapeLayerOptions {
   shapeType?: ShapeType;
 }
 
-// Types de formes disponibles
-export type ShapeType = "rect" | "rounded" | "circle" | "heart" | "hexagon";
+// Built-in shape types + any path shape ID from src/shapes/svgs/
+export type ShapeType = "rect" | "rounded" | "circle" | (string & {});
 
 // Contrôles disponibles par type d'objet
 export interface ObjectControlsConfig {

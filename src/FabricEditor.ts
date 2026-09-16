@@ -24,7 +24,7 @@ import type { EditorConfig, LayerData, FontsConfig, ShapeType } from "./types";
 export class FabricEditor {
   // TODO: remove — validation log pour vérifier que le link: est live
   static {
-    console.log("[fabric-editor] ✓ linked local build 2");
+    console.log("[fabric-editor] ✓ linked local build 3");
   }
 
   readonly canvas: DesignCanvas;
@@ -485,7 +485,7 @@ export class FabricEditor {
   }
 
   /**
-   * Bascule le clip de l'objet sélectionné vers la forme suivante
+   * @legacy Use ImageFrame.nextClipShape() directly.
    */
   switchClip(): void {
     const obj = this.selection.current;
@@ -506,7 +506,7 @@ export class FabricEditor {
   }
 
   /**
-   * Bascule la forme de l'objet sélectionné vers la forme suivante
+   * @legacy Shape switching is no longer supported.
    */
   switchShape(): void {
     const obj = this.selection.current;
@@ -518,8 +518,7 @@ export class FabricEditor {
   }
 
   /**
-   * Change la forme de l'objet sélectionné vers un type précis.
-   * Pour les shapes : remplace l'objet. Pour les ImageFrames : change le clipShape.
+   * @legacy Shape switching is no longer supported.
    */
   changeShape(shapeType: ShapeType): void {
     const obj = this.selection.current;

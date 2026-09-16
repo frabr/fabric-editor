@@ -12,9 +12,9 @@ import {
 import type { ShapeType, LockMode } from "./types";
 import {
   createCircle,
-  createHeart,
-  createHexagon,
   createRoundedRect,
+  createPathShape,
+  getShapeCatalog,
 } from "./shapes/factories";
 import type { SnappingManager } from "./SnappingManager";
 
@@ -306,7 +306,7 @@ export class ImageFrame extends Group {
    * Cycle vers la forme de clip suivante
    */
   nextClipShape(): void {
-    const shapes: ShapeType[] = ["rect", "rounded", "circle", "heart", "hexagon"];
+    const shapes = getShapeCatalog().map((s) => s.id);
     const currentIndex = this.clipShape ? shapes.indexOf(this.clipShape) : -1;
     this.applyClipShape(shapes[(currentIndex + 1) % shapes.length]);
   }
@@ -357,16 +357,12 @@ export class ImageFrame extends Group {
           ry: minSize * 0.15,
         });
         break;
-      case "heart":
-        this.clipPath = createHeart({
-          scaleX: minSize / 28,
-          scaleY: minSize / 28,
-        });
-        break;
-      case "hexagon":
-        this.clipPath = createHexagon({
-          scaleX: minSize / 48,
-          scaleY: minSize / 48,
+      default:
+        this.clipPath = createPathShape(shapeType, {
+          width: this.frameWidth,
+          height: this.frameHeight,
+          left: 0,
+          top: 0,
         });
         break;
     }

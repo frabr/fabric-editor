@@ -1,5 +1,5 @@
 import type { ShapeType } from "../types";
-import { HEART_PATH, HEXAGON_PATH } from "../shapes/paths";
+import { SHAPE_PATHS } from "../shapes/generated/paths";
 
 /**
  * Génère le CSS clip-path pour une forme simple (circle, rounded)
@@ -35,12 +35,8 @@ export function getClipPathCss(
       return `inset(0 round ${radius}px)`;
     }
 
-    case "heart":
-    case "hexagon":
-      // Ces formes nécessitent un SVG inline, géré par getInlineSvgClip
-      return undefined;
-
     default:
+      // Path shapes (heart, hexagon, etc.) use SVG inline via getInlineSvgClip
       return undefined;
   }
 }
@@ -50,33 +46,22 @@ export function getClipPathCss(
  */
 interface SvgPathInfo {
   path: string;
-  // Dimensions du path original (bounding box)
+  /** Actual width of the path within the 100x100 box. */
   width: number;
+  /** Actual height of the path within the 100x100 box. */
   height: number;
-  // Centre du path (pour le positionnement)
+  /** Center is always 50,50 (paths are centered in the box). */
   centerX: number;
   centerY: number;
 }
 
-const SVG_PATH_INFO: Record<string, SvgPathInfo> = {
-  heart: {
-    path: HEART_PATH,
-    // Dans Fabric: scaleX = minSize / 28, donc la taille de référence est 28
-    // Le path est carré (28x28) pour le scaling
-    width: 28,
-    height: 28,
-    centerX: 0,
-    centerY: -0.5, // (13 + -14) / 2 = -0.5
-  },
-  hexagon: {
-    path: HEXAGON_PATH,
-    // Dans Fabric: scaleX = minSize / 48, donc la taille de référence est 48
-    width: 48,
-    height: 48,
-    centerX: 0,
-    centerY: 0,
-  },
-};
+/** Build lookup from generated normalized paths (centered in 100x100 box). */
+const SVG_PATH_INFO: Record<string, SvgPathInfo> = Object.fromEntries(
+  SHAPE_PATHS.map((s) => [
+    s.id,
+    { path: s.d, width: s.width, height: s.height, centerX: 50, centerY: 50 },
+  ]),
+);
 
 /**
  * Génère un SVG inline pour le clip-path de formes complexes (heart, hexagon)
