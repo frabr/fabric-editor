@@ -39,7 +39,8 @@
   },
   "dependencies": {
     "canvas": "^3.2.1",
-    "fabric": "^7.1.0"
+    "fabric": "^7.1.0",
+    "yoga-layout": "^3.2.1"
   },
   "devDependencies": {
     "@types/node": "^25.0.8",

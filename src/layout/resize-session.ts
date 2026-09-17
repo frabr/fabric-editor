@@ -7,30 +7,28 @@
  * Separates the user's resize intent (which axes, what size) from
  * the programmatic layout reconciliation that runs on every frame.
  */
-import type { FabricObject, FabricText } from "#fabric";
+import type { FabricObject } from "#fabric";
 import {
-  isChildLayout,
   type LayoutData,
-  type ChildLayout,
-  type ContainerLayout,
+  type ContainerData,
   type ResolvedChild,
   type SizeMode,
 } from "./types";
 import {
   scaledSize,
   setShapeSize,
-  isTextObject,
-  measureChildren,
   syncCoords,
+  topLeft,
   cornerToAxes,
   type ResizeAxes,
 } from "./geometry";
+import { yogaLayout } from "./yoga-engine";
 
 // ── ResizeSession ───────────────────────────────────────────────────
 
 export class ResizeSession {
   private container: FabricObject;
-  private layout: ContainerLayout;
+  private containerData: ContainerData;
   private axes: ResizeAxes;
 
   /** User-intended size — only updated on axes the user controls. */
@@ -39,7 +37,8 @@ export class ResizeSession {
 
   constructor(container: FabricObject, corner?: string) {
     this.container = container;
-    this.layout = container.get("layout") as ContainerLayout;
+    const layout = container.get("layout") as LayoutData;
+    this.containerData = layout.container!;
     this.axes = cornerToAxes(corner);
 
     const { w, h } = scaledSize(container);
@@ -52,9 +51,8 @@ export class ResizeSession {
    * Controls already set width/height directly (no scale involved).
    */
   handleResizing(objects: FabricObject[]): void {
-    const { container, layout, axes } = this;
-    const modeX = layout.sizeMode.x;
-    const modeY = layout.sizeMode.y;
+    const { container, containerData, axes } = this;
+    const cd = containerData;
 
     const { w: currentW, h: currentH } = scaledSize(container);
 
@@ -62,11 +60,18 @@ export class ResizeSession {
     if (axes.x) this.userW = currentW;
     if (axes.y) this.userH = currentH;
 
-    const children = resolveContainerChildren(objects, container);
+    const children = sortChildrenByOrder(resolveContainerChildren(objects, container));
     if (children.length === 0) return;
 
-    prepareTextChildren(children, modeX, currentW);
-    const { w: requiredW, h: requiredH } = measureChildren(children);
+    // Use true top-left (handles center-origin shapes like FabRect)
+    const tl = topLeft(container);
+
+    const { w: requiredW, h: requiredH } = yogaLayout(
+      children, tl.x, tl.y, currentW, currentH, cd,
+    );
+
+    const modeX = cd.sizeMode.x;
+    const modeY = cd.sizeMode.y;
 
     // Axes hug: content = floor. User can grow beyond if dragging that axis.
     // Axes fixed: user decides entirely.
@@ -84,10 +89,10 @@ export class ResizeSession {
       finalH = currentH;
     }
 
-    // Apply resolved size directly.
+    // Apply resolved size and re-position with final dimensions.
     setShapeSize(container, finalW, finalH);
-
-    positionChildren(children, container.left, container.top, finalW, finalH);
+    const tl2 = topLeft(container);
+    yogaLayout(children, tl2.x, tl2.y, finalW, finalH, cd);
     syncCoords(container, children);
   }
 
@@ -95,21 +100,24 @@ export class ResizeSession {
    * Called on `object:modified`. Captures minSize from the user's intent.
    */
   commit(objects: FabricObject[]): void {
-    const { container, layout } = this;
-    const modeX = layout.sizeMode.x;
-    const modeY = layout.sizeMode.y;
+    const { container, containerData } = this;
+    const modeX = containerData.sizeMode.x;
+    const modeY = containerData.sizeMode.y;
 
     const { w: containerW, h: containerH } = scaledSize(container);
-    if (!layout.minSize) layout.minSize = { w: 0, h: 0 };
-    if (modeX === "hug") layout.minSize.w = this.userW;
-    if (modeX === "fixed") layout.minSize.w = containerW;
-    if (modeY === "hug") layout.minSize.h = this.userH;
-    if (modeY === "fixed") layout.minSize.h = containerH;
+    if (!containerData.minSize) containerData.minSize = { w: 0, h: 0 };
+    if (modeX === "hug") containerData.minSize.w = this.userW;
+    if (modeX === "fixed") containerData.minSize.w = containerW;
+    if (modeY === "hug") containerData.minSize.h = this.userH;
+    if (modeY === "fixed") containerData.minSize.h = containerH;
   }
 }
 
-// ── Shared layout operations (used by both ResizeSession and runLayout) ──
+// ── Shared helpers (used by sessions and reconcile) ─────────────────
 
+/**
+ * Find all children of a container from the canvas objects.
+ */
 export function resolveContainerChildren(
   objects: FabricObject[],
   container: FabricObject,
@@ -117,64 +125,24 @@ export function resolveContainerChildren(
   const containerId = container.get("layerId") as string;
   const out: ResolvedChild[] = [];
   for (const obj of objects) {
-    const cl = obj.get("layout") as LayoutData | undefined;
-    if (cl && isChildLayout(cl) && cl.parentId === containerId) {
-      out.push({ obj, cl });
+    const layout = obj.get("layout") as LayoutData | undefined;
+    if (!layout?.child) continue;
+    if (layout.child.parentId === containerId) {
+      out.push({ obj, cl: layout.child });
     }
   }
   return out;
 }
 
-export function prepareTextChildren(
-  children: ResolvedChild[],
-  modeX: SizeMode,
-  containerW: number,
-): void {
-  for (const { obj, cl } of children) {
-    if (!isTextObject(obj)) continue;
-
-    const t = obj as unknown as FabricText;
-    const anchorX = cl.anchorX ?? "left";
-
-    t.set({ textAlign: anchorX === "right" ? "right" : "left" });
-
-    if (modeX === "fixed") {
-      const availW = containerW - cl.margins.left - cl.margins.right;
-      obj.set({ width: availW });
-    } else {
-      obj.set({ width: 10000 });
-    }
-
-    t.initDimensions();
-
-    if (modeX === "hug") {
-      const realW = Math.ceil(t.calcTextWidth());
-      obj.set({ width: realW });
-      t.initDimensions();
-    }
-  }
-}
-
-export function positionChildren(
-  children: ResolvedChild[],
-  containerLeft: number,
-  containerTop: number,
-  containerW: number,
-  containerH: number,
-): void {
-  for (const { obj, cl } of children) {
-    const anchorX = cl.anchorX ?? "left";
-    const anchorY = cl.anchorY ?? "top";
-    const { w: childW, h: childH } = scaledSize(obj);
-
-    const left = anchorX === "left"
-      ? containerLeft + cl.margins.left
-      : containerLeft + containerW - cl.margins.right - childW;
-
-    const top = anchorY === "top"
-      ? containerTop + cl.margins.top
-      : containerTop + containerH - cl.margins.bottom - childH;
-
-    obj.set({ left, top });
-  }
+/**
+ * Sort children by their `order` property (lower first).
+ * Children without `order` keep their relative position (stable sort).
+ */
+export function sortChildrenByOrder(children: ResolvedChild[]): ResolvedChild[] {
+  if (children.length <= 1) return children;
+  return [...children].sort((a, b) => {
+    const orderA = a.cl.order ?? Infinity;
+    const orderB = b.cl.order ?? Infinity;
+    return orderA - orderB;
+  });
 }

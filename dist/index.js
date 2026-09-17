@@ -1,7 +1,9 @@
 "use strict";
+var __create = Object.create;
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
 var __getOwnPropNames = Object.getOwnPropertyNames;
+var __getProtoOf = Object.getPrototypeOf;
 var __hasOwnProp = Object.prototype.hasOwnProperty;
 var __esm = (fn, res) => function __init() {
   return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
@@ -18,6 +20,14 @@ var __copyProps = (to, from, except, desc) => {
   }
   return to;
 };
+var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__getProtoOf(mod)) : {}, __copyProps(
+  // If the importer is in node compatibility mode or this is not an ESM
+  // file that has been converted to a CommonJS file using a Babel-
+  // compatible transform (i.e. "__esModule" has not been set), then set
+  // "default" to the CommonJS "module.exports" for node compatibility.
+  isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target,
+  mod
+));
 var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
 // src/PendingUploadsManager.ts
@@ -129,8 +139,8 @@ var init_PendingUploadsManager = __esm({
 // src/index.ts
 var index_exports = {};
 __export(index_exports, {
-  AttachSession: () => AttachSession,
   CanvasGuides: () => CanvasGuides,
+  ContainerizeSession: () => ContainerizeSession,
   CustomTextbox: () => CustomTextbox,
   DesignCanvas: () => DesignCanvas,
   FabCircle: () => FabCircle,
@@ -142,6 +152,7 @@ __export(index_exports, {
   HistoryManager: () => HistoryManager,
   ImageDropHandler: () => ImageDropHandler,
   ImageFrame: () => ImageFrame,
+  InsertChildSession: () => InsertChildSession,
   LayerManager: () => LayerManager,
   LayoutManager: () => LayoutManager2,
   MIN_PAD: () => MIN_PAD,
@@ -173,12 +184,16 @@ __export(index_exports, {
   getNextLockMode: () => getNextLockMode,
   getShapeCatalog: () => getShapeCatalog,
   hasExceededOffset: () => hasExceededOffset,
+  initYoga: () => initYoga,
+  isChild: () => isChild,
   isChildLayout: () => isChildLayout,
+  isContainer: () => isContainer,
   isContainerLayout: () => isContainerLayout,
   isContentLocked: () => isContentLocked,
   isPositionLocked: () => isPositionLocked,
   isStyleLocked: () => isStyleLocked,
   isValidShape: () => isValidShape,
+  isYogaReady: () => isYogaReady,
   layerToHtmlStandalone: () => layerToHtmlStandalone,
   nextShape: () => nextShape,
   pointInObject: () => pointInObject,
@@ -188,7 +203,8 @@ __export(index_exports, {
   switchClip: () => switchClip,
   switchShape: () => switchShape,
   topLeft: () => topLeft,
-  wrapContainerAroundChild: () => wrapContainerAroundChild
+  wrapContainerAroundChild: () => wrapContainerAroundChild,
+  yogaLayout: () => yogaLayout
 });
 module.exports = __toCommonJS(index_exports);
 
@@ -321,6 +337,15 @@ var import_fabric9 = require("#fabric");
 
 // src/controls/CustomTextbox.ts
 var import_fabric2 = require("#fabric");
+
+// src/shapes/controlsMixin.ts
+function installControlOptions(proto, controls) {
+  proto.getControlOptions = function() {
+    return controls;
+  };
+}
+
+// src/controls/CustomTextbox.ts
 var CustomTextbox = class extends import_fabric2.Textbox {
   constructor(text, options) {
     const hasExplicitWidth = options?.width != null;
@@ -529,6 +554,7 @@ var CustomTextbox = class extends import_fabric2.Textbox {
     };
   }
 };
+installControlOptions(CustomTextbox.prototype, ["color", "font"]);
 
 // src/shapes/factories.ts
 var import_fabric7 = require("#fabric");
@@ -736,6 +762,7 @@ var FabRect = class extends import_fabric4.Rect {
 FabRect.type = "Rect";
 FabRect.customProperties = ["layerId", "layerType", "lockMode", "lockContent"];
 installLockMethods(FabRect.prototype);
+installControlOptions(FabRect.prototype, ["outline", "clip", "color", "corner_radius"]);
 import_fabric4.classRegistry.setClass(FabRect, "Rect");
 
 // src/shapes/FabCircle.ts
@@ -804,6 +831,7 @@ var FabCircle = class extends import_fabric5.Circle {
 FabCircle.type = "Circle";
 FabCircle.customProperties = ["layerId", "layerType", "lockMode", "lockContent"];
 installLockMethods(FabCircle.prototype);
+installControlOptions(FabCircle.prototype, ["outline", "clip", "color"]);
 import_fabric5.classRegistry.setClass(FabCircle, "Circle");
 
 // src/shapes/FabPath.ts
@@ -904,6 +932,7 @@ _FabPath.type = "Path";
 _FabPath.customProperties = ["layerId", "layerType", "lockMode", "lockContent"];
 var FabPath = _FabPath;
 installLockMethods(FabPath.prototype);
+installControlOptions(FabPath.prototype, ["outline", "clip", "color"]);
 import_fabric6.classRegistry.setClass(FabPath, "Path");
 
 // src/shapes/factories.ts
@@ -1046,16 +1075,6 @@ function hasExceededOffset(current, origin, offsetX, offsetY, margin) {
   const dx = current.x - origin.x;
   const dy = current.y - origin.y;
   return offsetX > 0 && dx < -(offsetX + margin) || offsetX < 0 && dx > -offsetX + margin || offsetY > 0 && dy < -(offsetY + margin) || offsetY < 0 && dy > -offsetY + margin;
-}
-function measureChildren(children) {
-  let w = 0;
-  let h = 0;
-  for (const { obj, cl } of children) {
-    const { w: childW, h: childH } = scaledSize(obj);
-    w = Math.max(w, cl.margins.left + childW + cl.margins.right);
-    h = Math.max(h, cl.margins.top + childH + cl.margins.bottom);
-  }
-  return { w, h };
 }
 function syncCoords(container, children) {
   container.setCoords();
@@ -1569,6 +1588,7 @@ var ImageFrame = class _ImageFrame extends import_fabric8.Group {
     });
   }
 };
+installControlOptions(ImageFrame.prototype, ["clip"]);
 import_fabric8.classRegistry.setClass(ImageFrame);
 import_fabric8.classRegistry.setClass(ImageFrame, "ImageFrame");
 
@@ -1990,30 +2010,6 @@ var LayerManager = class {
 
 // src/SelectionManager.ts
 var import_fabric10 = require("#fabric");
-
-// src/layout/types.ts
-function isContainerLayout(l) {
-  return "role" in l && l.role === "container";
-}
-function isChildLayout(l) {
-  return "parentId" in l;
-}
-var MIN_PAD = 8;
-
-// src/SelectionManager.ts
-var OBJECT_CONTROLS = {
-  // Formes créées par l'éditeur (layerType: "shape")
-  shape: ["outline", "clip", "color"],
-  // Types Fabric.js natifs (fallback)
-  rect: ["outline", "clip", "color"],
-  circle: ["outline", "clip", "color"],
-  path: ["outline", "clip", "color"],
-  image: ["clip"],
-  imageframe: ["clip"],
-  // ImageFrame : permet de changer la forme du clip
-  group: [],
-  "i-text": ["color", "font"]
-};
 var SelectionManager = class {
   constructor(canvas) {
     this.canvas = canvas;
@@ -2101,10 +2097,10 @@ var SelectionManager = class {
    */
   resolveTarget(obj) {
     const layout = obj.get("layout");
-    if (!layout || !isChildLayout(layout)) return obj;
-    if (this._activeGroupId === layout.parentId) return obj;
+    if (!layout?.child) return obj;
+    if (this._activeGroupId === layout.child.parentId) return obj;
     const parent = this.canvas.getObjects().find(
-      (o) => o.get("layerId") === layout.parentId
+      (o) => o.get("layerId") === layout.child.parentId
     );
     return parent ?? obj;
   }
@@ -2114,9 +2110,10 @@ var SelectionManager = class {
   getAvailableControls() {
     const obj = this.current;
     if (!obj) return [];
-    const layerType = obj.layerType;
-    const type = (layerType || obj.type || "").toLowerCase();
-    return OBJECT_CONTROLS[type] || [];
+    if (typeof obj.getControlOptions === "function") {
+      return obj.getControlOptions();
+    }
+    return [];
   }
   /**
    * Vérifie si un contrôle est disponible pour l'objet sélectionné
@@ -2194,7 +2191,7 @@ var SelectionManager = class {
     }
     const targetLayout = target.get("layout");
     if (this._activeGroupId) {
-      const isChildOfGroup = targetLayout && isChildLayout(targetLayout) && targetLayout.parentId === this._activeGroupId;
+      const isChildOfGroup = targetLayout?.child && targetLayout.child.parentId === this._activeGroupId;
       const isTheContainer = target.get("layerId") === this._activeGroupId;
       if (!isChildOfGroup && !isTheContainer) {
         this._activeGroupId = null;
@@ -2204,13 +2201,13 @@ var SelectionManager = class {
     const currentObj = this.current;
     if (!currentObj) return;
     const currentLayout = currentObj.get("layout");
-    if (!currentLayout || !("role" in currentLayout)) return;
+    if (!currentLayout?.container) return;
     const currentId = currentObj.get("layerId");
     if (target === currentObj) {
       this._activeGroupId = currentId;
       return;
     }
-    if (targetLayout && isChildLayout(targetLayout) && targetLayout.parentId === currentId) {
+    if (targetLayout?.child && targetLayout.child.parentId === currentId) {
       this._activeGroupId = currentId;
     }
   }
@@ -2798,8 +2795,9 @@ var CanvasGuides = class {
     });
   }
   /**
-   * Show layout guides: a dashed outline around the container and
-   * hatched overlays for each non-zero margin zone.
+   * Show layout guides: a dashed outline around the container,
+   * hatched overlays for each non-zero margin zone, and anchor
+   * indicators (`<-->`) on the edges where the child is pinned.
    */
   showLayoutGuides(container, child) {
     this.clear();
@@ -2815,19 +2813,117 @@ var CanvasGuides = class {
       strokeWidth: 2,
       strokeDashArray: [6, 4]
     });
-    const layout = child.get?.("layout");
-    if (!layout || !isChildLayout(layout)) return;
-    const m = layout.margins;
+    const containerLayout = container.get?.("layout");
+    const p = containerLayout?.container?.padding;
+    if (!p) return;
     const hatch = this.hatchPattern;
     const border = hexAlpha(this.color, 0.3);
-    if (m.left > 0)
-      this.addRect({ left: ctl.x, top: ctl.y, width: m.left, height: ch, fill: hatch, stroke: border, strokeWidth: 0.5 });
-    if (m.right > 0)
-      this.addRect({ left: ctl.x + cw - m.right, top: ctl.y, width: m.right, height: ch, fill: hatch, stroke: border, strokeWidth: 0.5 });
-    if (m.top > 0)
-      this.addRect({ left: ctl.x + m.left, top: ctl.y, width: cw - m.left - m.right, height: m.top, fill: hatch, stroke: border, strokeWidth: 0.5 });
-    if (m.bottom > 0)
-      this.addRect({ left: ctl.x + m.left, top: ctl.y + ch - m.bottom, width: cw - m.left - m.right, height: m.bottom, fill: hatch, stroke: border, strokeWidth: 0.5 });
+    if (p.left > 0)
+      this.addRect({ left: ctl.x, top: ctl.y, width: p.left, height: ch, fill: hatch, stroke: border, strokeWidth: 0.5 });
+    if (p.right > 0)
+      this.addRect({ left: ctl.x + cw - p.right, top: ctl.y, width: p.right, height: ch, fill: hatch, stroke: border, strokeWidth: 0.5 });
+    if (p.top > 0)
+      this.addRect({ left: ctl.x + p.left, top: ctl.y, width: cw - p.left - p.right, height: p.top, fill: hatch, stroke: border, strokeWidth: 0.5 });
+    if (p.bottom > 0)
+      this.addRect({ left: ctl.x + p.left, top: ctl.y + ch - p.bottom, width: cw - p.left - p.right, height: p.bottom, fill: hatch, stroke: border, strokeWidth: 0.5 });
+    const childTL = topLeft(child);
+    const { w: childW, h: childH } = scaledSize(child);
+    if (p.left > 0) {
+      this.addAnchorArrow("horizontal", ctl.x, childTL.y + childH / 2, p.left);
+    }
+    if (p.top > 0) {
+      this.addAnchorArrow("vertical", childTL.x + childW / 2, ctl.y, p.top);
+    }
+  }
+  /**
+   * Show insert-session guides: a dashed container outline + a hatched
+   * gap indicator between the new child and its nearest neighbor.
+   * No margin-to-edge indicators (those are for ContainerizeSession).
+   */
+  showInsertGuides(container, children, direction) {
+    this.clear();
+    const { w: cw, h: ch } = scaledSize(container);
+    const ctl = topLeft(container);
+    this.addRect({
+      left: ctl.x,
+      top: ctl.y,
+      width: cw,
+      height: ch,
+      fill: "transparent",
+      stroke: this.color,
+      strokeWidth: 2,
+      strokeDashArray: [6, 4]
+    });
+    if (children.length < 2) return;
+    const isColumn = direction === "column";
+    const hatch = this.hatchPattern;
+    const border = hexAlpha(this.color, 0.3);
+    const sorted = [...children].map((obj) => ({ obj, tl: topLeft(obj), size: scaledSize(obj) })).sort(
+      (a, b) => isColumn ? a.tl.y - b.tl.y : a.tl.x - b.tl.x
+    );
+    for (let i = 0; i < sorted.length - 1; i++) {
+      const curr = sorted[i];
+      const next = sorted[i + 1];
+      if (isColumn) {
+        const gapTop = curr.tl.y + curr.size.h;
+        const gapBottom = next.tl.y;
+        const gapH = gapBottom - gapTop;
+        if (gapH > 1) {
+          this.addRect({
+            left: ctl.x,
+            top: gapTop,
+            width: cw,
+            height: gapH,
+            fill: hatch,
+            stroke: border,
+            strokeWidth: 0.5
+          });
+          this.addAnchorArrow("vertical", ctl.x + cw / 2, gapTop, gapH);
+        }
+      } else {
+        const gapLeft = curr.tl.x + curr.size.w;
+        const gapRight = next.tl.x;
+        const gapW = gapRight - gapLeft;
+        if (gapW > 1) {
+          this.addRect({
+            left: gapLeft,
+            top: ctl.y,
+            width: gapW,
+            height: ch,
+            fill: hatch,
+            stroke: border,
+            strokeWidth: 0.5
+          });
+          this.addAnchorArrow("horizontal", gapLeft, ctl.y + ch / 2, gapW);
+        }
+      }
+    }
+  }
+  /**
+   * Draw a `<-->` anchor indicator: a line with chevrons at each end.
+   *
+   * - "horizontal": draws left-to-right from (x, y) with given length
+   * - "vertical": draws top-to-bottom from (x, y) with given length
+   */
+  addAnchorArrow(orientation, x, y, length) {
+    if (length < 4) return;
+    const chevron = Math.min(5, length / 3);
+    const stroke = this.color;
+    const sw = 1.5;
+    const opts = { stroke, strokeWidth: sw, strokeDashArray: [] };
+    if (orientation === "horizontal") {
+      this.addLine([x, y, x + length, y], opts);
+      this.addLine([x + chevron, y - chevron, x, y], opts);
+      this.addLine([x + chevron, y + chevron, x, y], opts);
+      this.addLine([x + length - chevron, y - chevron, x + length, y], opts);
+      this.addLine([x + length - chevron, y + chevron, x + length, y], opts);
+    } else {
+      this.addLine([x, y, x, y + length], opts);
+      this.addLine([x - chevron, y + chevron, x, y], opts);
+      this.addLine([x + chevron, y + chevron, x, y], opts);
+      this.addLine([x - chevron, y + length - chevron, x, y + length], opts);
+      this.addLine([x + chevron, y + length - chevron, x, y + length], opts);
+    }
   }
   /**
    * Show snap alignment lines (horizontal/vertical) spanning the full canvas.
@@ -3216,11 +3312,209 @@ var SnappingManager = class {
 // src/LayoutManager.ts
 var import_fabric13 = require("#fabric");
 
+// src/layout/yoga-engine.ts
+var yoga = null;
+async function initYoga() {
+  if (yoga) return;
+  const { loadYoga } = await import("yoga-layout/load");
+  yoga = await loadYoga();
+}
+function isYogaReady() {
+  return yoga !== null;
+}
+function getYoga() {
+  if (!yoga) throw new Error("Yoga not initialized. Call initYoga() first.");
+  return yoga;
+}
+function yogaLayout(children, containerLeft, containerTop, containerW, containerH, cd) {
+  if (children.length === 0) return { w: 0, h: 0 };
+  const Y = getYoga();
+  const modeX = cd.sizeMode.x;
+  const modeY = cd.sizeMode.y;
+  const direction = cd.flexDirection ?? "column";
+  const isColumn = direction === "column";
+  const root = Y.Node.create();
+  root.setFlexDirection(
+    isColumn ? Y.FLEX_DIRECTION_COLUMN : Y.FLEX_DIRECTION_ROW
+  );
+  const alignItems = cd.alignItems ?? "flex-start";
+  root.setAlignItems(mapAlignItems(alignItems, Y));
+  const justify = cd.justifyContent ?? "flex-start";
+  root.setJustifyContent(mapJustifyContent(justify, Y));
+  const gap = cd.gap ?? 0;
+  if (gap > 0) {
+    if (isColumn) {
+      root.setGap(Y.GUTTER_ROW, gap);
+    } else {
+      root.setGap(Y.GUTTER_COLUMN, gap);
+    }
+  }
+  const pad = cd.padding;
+  if (pad) {
+    root.setPadding(Y.EDGE_TOP, pad.top);
+    root.setPadding(Y.EDGE_RIGHT, pad.right);
+    root.setPadding(Y.EDGE_BOTTOM, pad.bottom);
+    root.setPadding(Y.EDGE_LEFT, pad.left);
+  }
+  if (modeX === "fixed") {
+    root.setWidth(containerW);
+  } else {
+    root.setWidthAuto();
+  }
+  if (modeY === "fixed") {
+    root.setHeight(containerH);
+  } else {
+    root.setHeightAuto();
+  }
+  const yogaNodes = [];
+  for (let i = 0; i < children.length; i++) {
+    const { obj, cl } = children[i];
+    const node = Y.Node.create();
+    const alignSelf = cl.alignSelf ?? "auto";
+    if (alignSelf !== "auto") {
+      node.setAlignSelf(mapAlignSelf(alignSelf, Y));
+    }
+    const flexGrow = cl.flexGrow ?? 0;
+    if (flexGrow > 0) {
+      node.setFlexGrow(flexGrow);
+    }
+    node.setFlexShrink(1);
+    if (isTextObject(obj)) {
+      setupTextMeasure(node, obj, Y);
+    } else {
+      const { w: w2, h: h2 } = scaledSize(obj);
+      const effectiveAlign = alignSelf !== "auto" ? alignSelf : alignItems;
+      const willStretch = effectiveAlign === "stretch";
+      if (isColumn) {
+        node.setHeight(h2);
+        if (!willStretch || modeX === "hug") {
+          node.setWidth(w2);
+        }
+      } else {
+        node.setWidth(w2);
+        if (!willStretch || modeY === "hug") {
+          node.setHeight(h2);
+        }
+      }
+      if (flexGrow > 0) {
+        if (isColumn) {
+          node.setHeightAuto();
+        } else {
+          node.setWidthAuto();
+        }
+      }
+    }
+    root.insertChild(node, i);
+    yogaNodes.push(node);
+  }
+  root.calculateLayout(
+    modeX === "fixed" ? containerW : void 0,
+    modeY === "fixed" ? containerH : void 0
+  );
+  for (let i = 0; i < children.length; i++) {
+    const { obj } = children[i];
+    const node = yogaNodes[i];
+    const left = containerLeft + node.getComputedLeft();
+    const top = containerTop + node.getComputedTop();
+    const computedW = node.getComputedWidth();
+    const computedH = node.getComputedHeight();
+    const currentSize = scaledSize(obj);
+    if (!isTextObject(obj)) {
+      const scaleX = obj.scaleX || 1;
+      const scaleY = obj.scaleY || 1;
+      if (Math.abs(computedW - currentSize.w) > 0.5) {
+        obj.set({ width: computedW / scaleX });
+      }
+      if (Math.abs(computedH - currentSize.h) > 0.5) {
+        obj.set({ height: computedH / scaleY });
+      }
+    }
+    const { w: childW, h: childH } = scaledSize(obj);
+    const objLeft = obj.originX === "center" ? left + childW / 2 : obj.originX === "right" ? left + childW : left;
+    const objTop = obj.originY === "center" ? top + childH / 2 : obj.originY === "bottom" ? top + childH : top;
+    obj.set({ left: objLeft, top: objTop });
+  }
+  const w = root.getComputedWidth();
+  const h = root.getComputedHeight();
+  root.freeRecursive();
+  return { w, h };
+}
+function mapAlignItems(align, Y) {
+  switch (align) {
+    case "stretch":
+      return Y.ALIGN_STRETCH;
+    case "flex-start":
+      return Y.ALIGN_FLEX_START;
+    case "flex-end":
+      return Y.ALIGN_FLEX_END;
+    case "center":
+      return Y.ALIGN_CENTER;
+    default:
+      return Y.ALIGN_FLEX_START;
+  }
+}
+function mapAlignSelf(align, Y) {
+  switch (align) {
+    case "stretch":
+      return Y.ALIGN_STRETCH;
+    case "flex-start":
+      return Y.ALIGN_FLEX_START;
+    case "flex-end":
+      return Y.ALIGN_FLEX_END;
+    case "center":
+      return Y.ALIGN_CENTER;
+    default:
+      return Y.ALIGN_AUTO;
+  }
+}
+function mapJustifyContent(justify, Y) {
+  switch (justify) {
+    case "flex-start":
+      return Y.JUSTIFY_FLEX_START;
+    case "flex-end":
+      return Y.JUSTIFY_FLEX_END;
+    case "center":
+      return Y.JUSTIFY_CENTER;
+    case "space-between":
+      return Y.JUSTIFY_SPACE_BETWEEN;
+    case "space-around":
+      return Y.JUSTIFY_SPACE_AROUND;
+    default:
+      return Y.JUSTIFY_FLEX_START;
+  }
+}
+function setupTextMeasure(node, obj, Y) {
+  const t = obj;
+  node.setMeasureFunc(
+    (width, widthMode, _height, _heightMode) => {
+      if (widthMode === Y.MEASURE_MODE_EXACTLY) {
+        t.set({ width });
+        t.initDimensions();
+      } else if (widthMode === Y.MEASURE_MODE_AT_MOST) {
+        t.set({ width: 1e4 });
+        t.initDimensions();
+        const naturalW = Math.ceil(t.calcTextWidth());
+        t.set({ width: Math.min(naturalW, width) });
+        t.initDimensions();
+      } else {
+        t.set({ width: 1e4 });
+        t.initDimensions();
+        const naturalW = Math.ceil(t.calcTextWidth());
+        t.set({ width: naturalW });
+        t.initDimensions();
+      }
+      const { w, h } = scaledSize(obj);
+      return { width: w, height: h };
+    }
+  );
+}
+
 // src/layout/resize-session.ts
 var ResizeSession = class {
   constructor(container, corner) {
     this.container = container;
-    this.layout = container.get("layout");
+    const layout = container.get("layout");
+    this.containerData = layout.container;
     this.axes = cornerToAxes(corner);
     const { w, h } = scaledSize(container);
     this.userW = w;
@@ -3231,16 +3525,24 @@ var ResizeSession = class {
    * Controls already set width/height directly (no scale involved).
    */
   handleResizing(objects) {
-    const { container, layout, axes } = this;
-    const modeX = layout.sizeMode.x;
-    const modeY = layout.sizeMode.y;
+    const { container, containerData, axes } = this;
+    const cd = containerData;
     const { w: currentW, h: currentH } = scaledSize(container);
     if (axes.x) this.userW = currentW;
     if (axes.y) this.userH = currentH;
-    const children = resolveContainerChildren(objects, container);
+    const children = sortChildrenByOrder(resolveContainerChildren(objects, container));
     if (children.length === 0) return;
-    prepareTextChildren(children, modeX, currentW);
-    const { w: requiredW, h: requiredH } = measureChildren(children);
+    const tl = topLeft(container);
+    const { w: requiredW, h: requiredH } = yogaLayout(
+      children,
+      tl.x,
+      tl.y,
+      currentW,
+      currentH,
+      cd
+    );
+    const modeX = cd.sizeMode.x;
+    const modeY = cd.sizeMode.y;
     let finalW;
     if (modeX === "hug") {
       finalW = axes.x ? Math.max(this.userW, requiredW) : requiredW;
@@ -3254,102 +3556,125 @@ var ResizeSession = class {
       finalH = currentH;
     }
     setShapeSize(container, finalW, finalH);
-    positionChildren(children, container.left, container.top, finalW, finalH);
+    const tl2 = topLeft(container);
+    yogaLayout(children, tl2.x, tl2.y, finalW, finalH, cd);
     syncCoords(container, children);
   }
   /**
    * Called on `object:modified`. Captures minSize from the user's intent.
    */
   commit(objects) {
-    const { container, layout } = this;
-    const modeX = layout.sizeMode.x;
-    const modeY = layout.sizeMode.y;
+    const { container, containerData } = this;
+    const modeX = containerData.sizeMode.x;
+    const modeY = containerData.sizeMode.y;
     const { w: containerW, h: containerH } = scaledSize(container);
-    if (!layout.minSize) layout.minSize = { w: 0, h: 0 };
-    if (modeX === "hug") layout.minSize.w = this.userW;
-    if (modeX === "fixed") layout.minSize.w = containerW;
-    if (modeY === "hug") layout.minSize.h = this.userH;
-    if (modeY === "fixed") layout.minSize.h = containerH;
+    if (!containerData.minSize) containerData.minSize = { w: 0, h: 0 };
+    if (modeX === "hug") containerData.minSize.w = this.userW;
+    if (modeX === "fixed") containerData.minSize.w = containerW;
+    if (modeY === "hug") containerData.minSize.h = this.userH;
+    if (modeY === "fixed") containerData.minSize.h = containerH;
   }
 };
 function resolveContainerChildren(objects, container) {
   const containerId = container.get("layerId");
   const out = [];
   for (const obj of objects) {
-    const cl = obj.get("layout");
-    if (cl && isChildLayout(cl) && cl.parentId === containerId) {
-      out.push({ obj, cl });
+    const layout = obj.get("layout");
+    if (!layout?.child) continue;
+    if (layout.child.parentId === containerId) {
+      out.push({ obj, cl: layout.child });
     }
   }
   return out;
 }
-function prepareTextChildren(children, modeX, containerW) {
-  for (const { obj, cl } of children) {
-    if (!isTextObject(obj)) continue;
-    const t = obj;
-    const anchorX = cl.anchorX ?? "left";
-    t.set({ textAlign: anchorX === "right" ? "right" : "left" });
-    if (modeX === "fixed") {
-      const availW = containerW - cl.margins.left - cl.margins.right;
-      obj.set({ width: availW });
-    } else {
-      obj.set({ width: 1e4 });
-    }
-    t.initDimensions();
-    if (modeX === "hug") {
-      const realW = Math.ceil(t.calcTextWidth());
-      obj.set({ width: realW });
-      t.initDimensions();
-    }
-  }
-}
-function positionChildren(children, containerLeft, containerTop, containerW, containerH) {
-  for (const { obj, cl } of children) {
-    const anchorX = cl.anchorX ?? "left";
-    const anchorY = cl.anchorY ?? "top";
-    const { w: childW, h: childH } = scaledSize(obj);
-    const left = anchorX === "left" ? containerLeft + cl.margins.left : containerLeft + containerW - cl.margins.right - childW;
-    const top = anchorY === "top" ? containerTop + cl.margins.top : containerTop + containerH - cl.margins.bottom - childH;
-    obj.set({ left, top });
-  }
+function sortChildrenByOrder(children) {
+  if (children.length <= 1) return children;
+  return [...children].sort((a, b) => {
+    const orderA = a.cl.order ?? Infinity;
+    const orderB = b.cl.order ?? Infinity;
+    return orderA - orderB;
+  });
 }
 
 // src/layout/reconcile.ts
 function runLayout(objects) {
+  const containers = [];
   for (const obj of objects) {
     const layout = obj.get("layout");
-    if (!layout || !isContainerLayout(layout)) continue;
-    const children = resolveContainerChildren(objects, obj);
+    if (layout?.container) {
+      containers.push({ obj, cd: layout.container });
+    }
+  }
+  containers.sort((a, b) => {
+    const aLayout = a.obj.get("layout");
+    const bLayout = b.obj.get("layout");
+    const aIsNested = aLayout.child ? 1 : 0;
+    const bIsNested = bLayout.child ? 1 : 0;
+    return bIsNested - aIsNested;
+  });
+  for (const { obj, cd } of containers) {
+    const children = sortChildrenByOrder(resolveContainerChildren(objects, obj));
     if (children.length === 0) continue;
-    layoutContainer(obj, layout, children);
+    layoutContainer(obj, cd, children);
+    relayoutSubContainers(children, objects);
   }
 }
-function layoutContainer(container, layout, children) {
-  const modeX = layout.sizeMode.x;
-  const modeY = layout.sizeMode.y;
-  const minW = layout.minSize?.w ?? 0;
-  const minH = layout.minSize?.h ?? 0;
+function relayoutSingle(container, cd, allObjects) {
+  const children = sortChildrenByOrder(resolveContainerChildren(allObjects, container));
+  if (children.length === 0) return;
+  layoutContainer(container, cd, children);
+  relayoutSubContainers(children, allObjects);
+}
+function relayoutSubContainers(children, allObjects) {
+  for (const { obj } of children) {
+    const childLayout = obj.get("layout");
+    if (!childLayout?.container) continue;
+    const subChildren = sortChildrenByOrder(resolveContainerChildren(allObjects, obj));
+    if (subChildren.length === 0) continue;
+    const tl = topLeft(obj);
+    const { w, h } = scaledSize(obj);
+    yogaLayout(subChildren, tl.x, tl.y, w, h, childLayout.container);
+    syncCoords(obj, subChildren);
+    relayoutSubContainers(subChildren, allObjects);
+  }
+}
+function layoutContainer(container, cd, children) {
+  const modeX = cd.sizeMode.x;
+  const modeY = cd.sizeMode.y;
+  const minW = cd.minSize?.w ?? 0;
+  const minH = cd.minSize?.h ?? 0;
   const { w: visW, h: visH } = scaledSize(container);
   const currentW = Math.max(visW, minW);
   const currentH = Math.max(visH, minH);
   const bothFixed = modeX === "fixed" && modeY === "fixed";
   if (!bothFixed) restoreTextFontSizes(children);
-  prepareTextChildren(children, modeX, currentW);
-  const { w: requiredW, h: requiredH } = measureChildren(children);
+  const tl = topLeft(container);
+  const { w: requiredW, h: requiredH } = yogaLayout(
+    children,
+    tl.x,
+    tl.y,
+    currentW,
+    currentH,
+    cd
+  );
   const finalW = modeX === "hug" ? Math.max(requiredW, minW) : currentW;
   const finalH = modeY === "hug" ? Math.max(requiredH, minH) : currentH;
   setShapeSize(container, finalW, finalH);
   if (bothFixed) {
-    shrinkOverflowingText(children, finalW, finalH);
+    shrinkOverflowingText(children, finalW, finalH, cd);
   }
-  positionChildren(children, container.left, container.top, finalW, finalH);
+  if (finalW !== currentW || finalH !== currentH) {
+    const tl2 = topLeft(container);
+    yogaLayout(children, tl2.x, tl2.y, finalW, finalH, cd);
+  }
   syncCoords(container, children);
 }
-function shrinkOverflowingText(children, containerW, containerH) {
-  for (const { obj, cl } of children) {
+function shrinkOverflowingText(children, containerW, containerH, cd) {
+  const pad = cd.padding ?? { top: 0, right: 0, bottom: 0, left: 0 };
+  const availW = containerW - pad.left - pad.right;
+  const availH = containerH - pad.top - pad.bottom;
+  for (const { obj } of children) {
     if (!isTextObject(obj)) continue;
-    const availW = containerW - cl.margins.left - cl.margins.right;
-    const availH = containerH - cl.margins.top - cl.margins.bottom;
     const { h: childH } = scaledSize(obj);
     if (childH > availH) {
       shrinkTextToFit(obj, availW, availH);
@@ -3387,9 +3712,24 @@ function shrinkTextToFit(obj, availW, availH) {
   }
 }
 
-// src/layout/attach-session.ts
+// src/layout/types.ts
+function isContainer(l) {
+  return l.container != null;
+}
+function isChild(l) {
+  return l.child != null;
+}
+function isContainerLayout(l) {
+  return isContainer(l);
+}
+function isChildLayout(l) {
+  return isChild(l);
+}
+var MIN_PAD = 8;
+
+// src/layout/containerize-session.ts
 var EXIT_MARGIN = 5;
-var AttachSession = class _AttachSession {
+var ContainerizeSession = class _ContainerizeSession {
   constructor(canvas, shape, text, cursor) {
     this.canvas = canvas;
     this.shape = shape;
@@ -3398,9 +3738,7 @@ var AttachSession = class _AttachSession {
     this._isReattach = false;
     this.snapshot = takeSnapshot(shape, text);
     normalizeShapeOrigin(shape);
-    const { containerLayout, childLayout } = computeInitialLayout(shape, text);
-    shape.set("layout", containerLayout);
-    text.set("layout", childLayout);
+    applyInitialLayout(shape, text);
     const clampedPos = clampTopLeft(text, shape, MIN_PAD);
     const preTL = topLeft(text);
     this.clampDx = clampedPos.x - preTL.x;
@@ -3412,6 +3750,10 @@ var AttachSession = class _AttachSession {
       text.setCoords();
     }
     wrapContainerAroundChild(text, shape);
+    const textLayout = text.get?.("layout");
+    if (textLayout?.container) {
+      relayoutSingle(text, textLayout.container, canvas.getObjects());
+    }
   }
   /**
    * Create a session for repositioning a child that is already attached.
@@ -3419,7 +3761,7 @@ var AttachSession = class _AttachSession {
    * On exit (rollback), the child is detached instead of restored.
    */
   static reattach(canvas, shape, text, cursor) {
-    const session = Object.create(_AttachSession.prototype);
+    const session = Object.create(_ContainerizeSession.prototype);
     session.canvas = canvas;
     session.shape = shape;
     session.text = text;
@@ -3446,6 +3788,10 @@ var AttachSession = class _AttachSession {
       this.text.setCoords();
     }
     wrapContainerAroundChild(this.text, this.shape);
+    const childLayout = this.text.get?.("layout");
+    if (childLayout?.container) {
+      relayoutSingle(this.text, childLayout.container, this.canvas.getObjects());
+    }
     return "anchored";
   }
   /** Finalize the attach. Returns a cleanup function for the "changed" listener. */
@@ -3459,17 +3805,29 @@ var AttachSession = class _AttachSession {
       return () => {
       };
     }
-    const relayout = () => {
-      runLayout(this.canvas.getObjects());
-      this.canvas.renderAll();
+    if (isTextObject(this.text)) {
+      const relayout = () => {
+        runLayout(this.canvas.getObjects());
+        this.canvas.renderAll();
+      };
+      this.text.on("changed", relayout);
+      return () => this.text.off("changed", relayout);
+    }
+    return () => {
     };
-    this.text.on("changed", relayout);
-    return () => this.text.off("changed", relayout);
   }
   /** Undo anchor: restore snapshot, reverse grab offset. */
   rollback() {
     if (this._isReattach) {
-      this.text.set("layout", void 0);
+      const layout = this.text.get?.("layout");
+      if (layout) {
+        delete layout.child;
+        if (!layout.container) {
+          this.text.set("layout", void 0);
+        } else {
+          this.text.set("layout", { ...layout });
+        }
+      }
       this.shape.set({
         width: this.snapshot.shape.width,
         height: this.snapshot.shape.height
@@ -3563,50 +3921,401 @@ function normalizeShapeOrigin(shape) {
   });
   shape.setCoords();
 }
-function computeInitialLayout(shape, text) {
+function applyInitialLayout(shape, child) {
   const sTL = topLeft(shape);
-  const tTL = topLeft(text);
+  const cTL = topLeft(child);
   const { w: shapeW, h: shapeH } = scaledSize(shape);
-  const textW = text.width * (text.scaleX || 1);
-  const padX = Math.max(MIN_PAD, Math.round(tTL.x - sTL.x));
-  const padY = Math.max(MIN_PAD, Math.round(tTL.y - sTL.y));
-  const naturalW = text.calcTextWidth ? Math.ceil(text.calcTextWidth()) : textW;
-  const textWraps = textW < naturalW - 2;
-  const modeX = textWraps ? "fixed" : "hug";
+  const childW = child.width * (child.scaleX || 1);
+  const padX = Math.max(MIN_PAD, Math.round(cTL.x - sTL.x));
+  const padY = Math.max(MIN_PAD, Math.round(cTL.y - sTL.y));
+  let modeX = "hug";
+  if (isTextObject(child)) {
+    const naturalW = child.calcTextWidth ? Math.ceil(child.calcTextWidth()) : childW;
+    const textWraps = childW < naturalW - 2;
+    if (textWraps) modeX = "fixed";
+  }
   const containerId = shape.get?.("layerId");
-  return {
-    containerLayout: {
-      role: "container",
-      sizeMode: { x: modeX, y: "hug" },
-      minSize: { w: shapeW, h: shapeH }
-    },
-    childLayout: {
-      parentId: containerId,
-      margins: { left: padX, right: padX, top: padY, bottom: padY },
-      anchorX: "left",
-      anchorY: "top"
-    }
+  const shapeLayout = shape.get?.("layout") ?? {};
+  shapeLayout.container = {
+    sizeMode: { x: modeX, y: "hug" },
+    minSize: { w: shapeW, h: shapeH },
+    padding: { top: padY, right: padX, bottom: padY, left: padX }
   };
+  shape.set("layout", { ...shapeLayout });
+  const childLayout = child.get?.("layout") ?? {};
+  childLayout.child = {
+    parentId: containerId
+  };
+  child.set("layout", { ...childLayout });
 }
 function wrapContainerAroundChild(child, container) {
-  const cl = child.get?.("layout");
+  const childLayout = child.get?.("layout");
   const containerLayout = container.get?.("layout");
-  if (!cl || !containerLayout) return;
+  if (!childLayout?.child || !containerLayout?.container) return;
+  const cd = containerLayout.container;
   const { w: childW, h: childH } = scaledSize(child);
   const sTL = topLeft(container);
   const tTL = topLeft(child);
   const padLeft = Math.max(MIN_PAD, Math.round(tTL.x - sTL.x));
   const padTop = Math.max(MIN_PAD, Math.round(tTL.y - sTL.y));
-  cl.margins = { left: padLeft, right: padLeft, top: padTop, bottom: padTop };
-  cl.anchorX = "left";
-  cl.anchorY = "top";
-  child.set("layout", { ...cl });
-  const minW = containerLayout.minSize?.w ?? 0;
-  const minH = containerLayout.minSize?.h ?? 0;
+  cd.padding = { top: padTop, right: padLeft, bottom: padTop, left: padLeft };
+  container.set("layout", { ...containerLayout });
+  const minW = cd.minSize?.w ?? 0;
+  const minH = cd.minSize?.h ?? 0;
   const requiredW = padLeft + childW + padLeft;
   const requiredH = padTop + childH + padTop;
   setShapeSize(container, Math.max(requiredW, minW), Math.max(requiredH, minH));
   container.setCoords();
+}
+
+// src/layout/insert-child-session.ts
+var EXIT_MARGIN2 = 5;
+var InsertChildSession = class _InsertChildSession {
+  constructor(canvas, container, newChild, cursor) {
+    /** Current decided direction — cached for hysteresis. null = not yet decided. */
+    this._currentDirection = null;
+    /** Last computed order — for hysteresis. */
+    this._lastOrder = null;
+    this.canvas = canvas;
+    this._container = container;
+    this.newChild = newChild;
+    this._isReattach = false;
+    const { w: cw, h: ch } = scaledSize(container);
+    this.snapshot = {
+      containerW: cw,
+      containerH: ch,
+      containerLeft: container.left,
+      containerTop: container.top,
+      containerLayout: cloneLayout(container),
+      childLeft: newChild.left,
+      childTop: newChild.top,
+      childLayout: cloneLayout(newChild)
+    };
+    const existing = sortChildrenByOrder(resolveContainerChildren(canvas.getObjects(), container));
+    const cd = container.get?.("layout")?.container;
+    this._decidingDirection = existing.length === 1 && !cd?.flexDirection;
+    for (let i = 0; i < existing.length; i++) {
+      if (existing[i].cl.order == null) {
+        existing[i].cl.order = i;
+        const childLayout = existing[i].obj.get?.("layout");
+        if (childLayout?.child) {
+          childLayout.child.order = i;
+          existing[i].obj.set("layout", { ...childLayout });
+        }
+      }
+    }
+    const containerId = container.get?.("layerId");
+    const childData = {
+      parentId: containerId
+    };
+    const existingChildLayout = newChild.get?.("layout") ?? {};
+    newChild.set("layout", { ...existingChildLayout, child: childData });
+    const tTL = topLeft(newChild);
+    newChild.set({ left: tTL.x, top: tTL.y, originX: "left", originY: "top" });
+    newChild.setCoords();
+    this.updateFromCursor(cursor);
+  }
+  /**
+   * Create a session for repositioning a child that is already in the container.
+   * On rollback (drag outside), the child is detached from the container.
+   */
+  static reattach(canvas, container, child, cursor) {
+    const session = Object.create(_InsertChildSession.prototype);
+    session.canvas = canvas;
+    session._container = container;
+    session.newChild = child;
+    session._isReattach = true;
+    session._currentDirection = null;
+    session._lastOrder = null;
+    const { w: cw, h: ch } = scaledSize(container);
+    session.snapshot = {
+      containerW: cw,
+      containerH: ch,
+      containerLeft: container.left,
+      containerTop: container.top,
+      containerLayout: cloneLayout(container),
+      childLeft: child.left,
+      childTop: child.top,
+      childLayout: cloneLayout(child)
+    };
+    const allChildren = sortChildrenByOrder(resolveContainerChildren(canvas.getObjects(), container));
+    session._decidingDirection = allChildren.length <= 2;
+    for (let i = 0; i < allChildren.length; i++) {
+      if (allChildren[i].cl.order == null) {
+        allChildren[i].cl.order = i;
+        const cl = allChildren[i].obj.get?.("layout");
+        if (cl?.child) {
+          cl.child.order = i;
+          allChildren[i].obj.set("layout", { ...cl });
+        }
+      }
+    }
+    session.updateFromCursor(cursor);
+    return session;
+  }
+  handleMoving(cursor) {
+    if (this.shouldExit(cursor)) {
+      this.rollback();
+      return "exited";
+    }
+    this.updateFromCursor(cursor);
+    return "anchored";
+  }
+  commit() {
+    const layout = this._container.get?.("layout");
+    const cd = layout.container;
+    const { w, h } = scaledSize(this._container);
+    if (!cd.minSize) cd.minSize = { w: 0, h: 0 };
+    cd.minSize.w = w;
+    cd.minSize.h = h;
+    runLayout(this.canvas.getObjects());
+    this.canvas.renderAll();
+    if (this._isReattach) {
+      return () => {
+      };
+    }
+    if (isTextObject(this.newChild)) {
+      const relayout = () => {
+        runLayout(this.canvas.getObjects());
+        this.canvas.renderAll();
+      };
+      this.newChild.on("changed", relayout);
+      return () => this.newChild.off("changed", relayout);
+    }
+    return () => {
+    };
+  }
+  rollback() {
+    if (this._isReattach) {
+      const layout = this.newChild.get?.("layout");
+      if (layout) {
+        delete layout.child;
+        if (!layout.container) {
+          this.newChild.set("layout", void 0);
+        } else {
+          this.newChild.set("layout", { ...layout });
+        }
+      }
+      this._container.set("layout", this.snapshot.containerLayout ?? void 0);
+      this._container.set({ left: this.snapshot.containerLeft, top: this.snapshot.containerTop });
+      setShapeSize(this._container, this.snapshot.containerW, this.snapshot.containerH);
+      this._container.setCoords();
+      this.newChild.setCoords();
+      const remaining = resolveContainerChildren(this.canvas.getObjects(), this._container);
+      if (remaining.length <= 1) {
+        const cLayout = this._container.get?.("layout");
+        if (cLayout?.container) {
+          delete cLayout.container.flexDirection;
+          delete cLayout.container.gap;
+          this._container.set("layout", { ...cLayout });
+        }
+      }
+      runLayout(this.canvas.getObjects());
+      this.canvas.renderAll();
+      return;
+    }
+    this.newChild.set("layout", this.snapshot.childLayout ?? void 0);
+    this.newChild.set({ left: this.snapshot.childLeft, top: this.snapshot.childTop });
+    this.newChild.setCoords();
+    this._container.set("layout", this.snapshot.containerLayout ?? void 0);
+    this._container.set({ left: this.snapshot.containerLeft, top: this.snapshot.containerTop });
+    setShapeSize(this._container, this.snapshot.containerW, this.snapshot.containerH);
+    this._container.setCoords();
+    runLayout(this.canvas.getObjects());
+    this.canvas.renderAll();
+  }
+  get container() {
+    return this._container;
+  }
+  get child() {
+    return this.newChild;
+  }
+  // ── Private ───────────────────────────────────────────────────────
+  shouldExit(cursor) {
+    return !pointInObject(cursor, this._container, EXIT_MARGIN2);
+  }
+  /**
+   * Session decides direction + order from cursor, then asks yoga
+   * to preview positions. Only OTHER children are repositioned;
+   * the dragged child stays under the cursor.
+   */
+  updateFromCursor(cursor) {
+    const containerLayout = this._container.get?.("layout");
+    const cd = containerLayout.container;
+    const allChildren = sortChildrenByOrder(
+      resolveContainerChildren(this.canvas.getObjects(), this._container)
+    );
+    const otherChildren = allChildren.filter((c) => c.obj !== this.newChild);
+    const isColumn = (cd.flexDirection ?? "column") === "column";
+    if (this._decidingDirection && otherChildren.length === 1) {
+      const direction = this.detectDirection(cursor, otherChildren[0]);
+      cd.flexDirection = direction;
+      const dirIsColumn = direction === "column";
+      const insertOrder = this.computeInsertOrder(cursor, otherChildren, dirIsColumn);
+      const gap = this.computeGap(cursor, otherChildren, insertOrder, dirIsColumn);
+      cd.gap = gap;
+      this._container.set("layout", { ...containerLayout });
+      const layout = this.newChild.get?.("layout");
+      if (layout?.child) {
+        layout.child.order = insertOrder;
+        this.newChild.set("layout", { ...layout });
+      }
+    } else {
+      const insertOrder = this.computeInsertOrder(cursor, otherChildren, isColumn);
+      const layout = this.newChild.get?.("layout");
+      if (layout?.child) {
+        layout.child.order = insertOrder;
+        this.newChild.set("layout", { ...layout });
+      }
+    }
+    this.previewLayout(allChildren);
+  }
+  /**
+   * Detect flex direction from cursor position relative to the existing child.
+   * The key insight: we measure where the cursor is relative to the child's
+   * bounding box edges, not its center. This way "bottom-right of child"
+   * correctly detects that dy > dx when the cursor is clearly below.
+   *
+   * Hysteresis: once a direction is chosen, require a clear margin to switch.
+   */
+  detectDirection(cursor, existingChild) {
+    const childTL = topLeft(existingChild.obj);
+    const { w: childW, h: childH } = scaledSize(existingChild.obj);
+    const dx = Math.max(0, cursor.x - (childTL.x + childW), childTL.x - cursor.x);
+    const dy = Math.max(0, cursor.y - (childTL.y + childH), childTL.y - cursor.y);
+    if (this._currentDirection === null) {
+      this._currentDirection = dy >= dx ? "column" : "row";
+      return this._currentDirection;
+    }
+    const SWITCH_RATIO = 1.3;
+    if (this._currentDirection === "column" && dx > dy * SWITCH_RATIO) {
+      this._currentDirection = "row";
+    } else if (this._currentDirection === "row" && dy > dx * SWITCH_RATIO) {
+      this._currentDirection = "column";
+    }
+    return this._currentDirection;
+  }
+  /**
+   * Compute the insertion order based on cursor position in the main axis.
+   * Uses the midpoint between consecutive children as the decision boundary.
+   * Hysteresis: once an order is chosen, the cursor must cross a neighboring
+   * boundary to change it (no flickering near boundaries).
+   */
+  computeInsertOrder(cursor, existingChildren, isColumn) {
+    if (existingChildren.length === 0) return 0;
+    const cursorPos = isColumn ? cursor.y : cursor.x;
+    const slots = [];
+    for (let i = 0; i <= existingChildren.length; i++) {
+      const prevChild = i > 0 ? existingChildren[i - 1] : null;
+      const nextChild = i < existingChildren.length ? existingChildren[i] : null;
+      let start = -Infinity;
+      let end = Infinity;
+      if (prevChild) {
+        const tl = topLeft(prevChild.obj);
+        const size = scaledSize(prevChild.obj);
+        const prevEnd = isColumn ? tl.y + size.h : tl.x + size.w;
+        start = prevEnd;
+      }
+      if (nextChild) {
+        const tl = topLeft(nextChild.obj);
+        const nextStart = isColumn ? tl.y : tl.x;
+        end = nextStart;
+      }
+      let order;
+      if (i === 0) {
+        const firstOrder = existingChildren[0].cl.order ?? 0;
+        order = firstOrder - 1;
+      } else if (i === existingChildren.length) {
+        const lastOrder = existingChildren[existingChildren.length - 1].cl.order ?? existingChildren.length - 1;
+        order = lastOrder + 1;
+      } else {
+        const prevOrder = existingChildren[i - 1].cl.order ?? i - 1;
+        const nextOrder = existingChildren[i].cl.order ?? i;
+        order = (prevOrder + nextOrder) / 2;
+      }
+      slots.push({ order, boundaryStart: start, boundaryEnd: end });
+    }
+    for (let i = 0; i < slots.length - 1; i++) {
+      const midpoint = (slots[i].boundaryEnd + slots[i + 1].boundaryStart) / 2;
+      if (isFinite(midpoint) && cursorPos < midpoint) {
+        this._lastOrder = slots[i].order;
+        return slots[i].order;
+      }
+    }
+    const lastSlot = slots[slots.length - 1];
+    this._lastOrder = lastSlot.order;
+    return lastSlot.order;
+  }
+  /**
+   * Compute the gap between children from the cursor's distance to the
+   * nearest neighbor in the main axis. The gap is the space between the
+   * cursor and the nearest edge of an existing child, minus the new child's
+   * half-size (since the cursor is roughly at the child's center).
+   */
+  computeGap(cursor, existingChildren, insertOrder, isColumn) {
+    if (existingChildren.length === 0) return 0;
+    const cursorPos = isColumn ? cursor.y : cursor.x;
+    const newChildSize = scaledSize(this.newChild);
+    const newChildHalf = isColumn ? newChildSize.h / 2 : newChildSize.w / 2;
+    let minDist = Infinity;
+    for (const child of existingChildren) {
+      const childOrder = child.cl.order ?? 0;
+      const tl = topLeft(child.obj);
+      const size = scaledSize(child.obj);
+      let edge;
+      if (childOrder < insertOrder) {
+        edge = isColumn ? tl.y + size.h : tl.x + size.w;
+        const dist = cursorPos - newChildHalf - edge;
+        if (dist >= 0 && dist < minDist) minDist = dist;
+      } else {
+        edge = isColumn ? tl.y : tl.x;
+        const dist = edge - (cursorPos + newChildHalf);
+        if (dist >= 0 && dist < minDist) minDist = dist;
+      }
+    }
+    return isFinite(minDist) ? Math.max(0, Math.round(minDist)) : 0;
+  }
+  /**
+   * Ask yoga to compute positions for ALL children including the dragged one.
+   * Yoga positions everyone into their flex slots — the dragged child snaps
+   * to its computed position. The session controls direction + order, yoga
+   * just calculates where things go.
+   *
+   * Container grows if needed (never shrinks during session).
+   */
+  previewLayout(allChildren) {
+    const containerLayout = this._container.get?.("layout");
+    const cd = containerLayout.container;
+    const { w: currentW, h: currentH } = scaledSize(this._container);
+    const minW = cd.minSize?.w ?? 0;
+    const minH = cd.minSize?.h ?? 0;
+    const containerTL = topLeft(this._container);
+    const modeX = cd.sizeMode.x;
+    const modeY = cd.sizeMode.y;
+    const measureW = modeX === "hug" ? minW : currentW;
+    const measureH = modeY === "hug" ? minH : currentH;
+    const { w: requiredW, h: requiredH } = yogaLayout(
+      allChildren,
+      containerTL.x,
+      containerTL.y,
+      measureW,
+      measureH,
+      cd
+    );
+    const finalW = modeX === "hug" ? Math.max(requiredW, minW) : currentW;
+    const finalH = modeY === "hug" ? Math.max(requiredH, minH) : currentH;
+    if (finalW !== currentW || finalH !== currentH) {
+      setShapeSize(this._container, finalW, finalH);
+      const tl2 = topLeft(this._container);
+      yogaLayout(allChildren, tl2.x, tl2.y, finalW, finalH, cd);
+    }
+    syncCoords(this._container, allChildren);
+    relayoutSubContainers(allChildren, this.canvas.getObjects());
+  }
+};
+function cloneLayout(obj) {
+  const layout = obj.get?.("layout");
+  return layout ? JSON.parse(JSON.stringify(layout)) : void 0;
 }
 
 // src/LayoutManager.ts
@@ -3637,37 +4346,73 @@ var LayoutManager2 = class {
   /** Update layout mode on the currently selected container. */
   setMode(obj, mode) {
     const layout = obj.get("layout");
-    if (!layout || !isContainerLayout(layout)) return;
+    if (!layout?.container) return;
     switch (mode) {
       case "hug":
-        layout.sizeMode = { x: "hug", y: "hug" };
+        layout.container.sizeMode = { x: "hug", y: "hug" };
         break;
       case "hug-y":
-        layout.sizeMode = { x: "fixed", y: "hug" };
+        layout.container.sizeMode = { x: "fixed", y: "hug" };
         break;
       case "fixed":
-        layout.sizeMode = { x: "fixed", y: "fixed" };
+        layout.container.sizeMode = { x: "fixed", y: "fixed" };
         break;
     }
     obj.set("layout", { ...layout });
     this.relayout();
     this.callbacks.onLayoutChanged?.();
   }
-  /** Update a margin on a child layout object. */
-  setMargin(obj, side, value) {
+  /** Update padding on a container. */
+  setPadding(obj, side, value) {
     const layout = obj.get("layout");
-    if (!layout || !isChildLayout(layout)) return;
-    layout.margins[side] = value;
+    if (!layout?.container) return;
+    if (!layout.container.padding) layout.container.padding = { top: 0, right: 0, bottom: 0, left: 0 };
+    layout.container.padding[side] = value;
     obj.set("layout", { ...layout });
     this.relayout();
     this.callbacks.onLayoutChanged?.();
   }
-  /** Update anchor on a child layout object. */
-  setAnchor(obj, anchorX, anchorY) {
+  /** Update alignSelf on a child layout object. */
+  setAlignSelf(obj, value) {
     const layout = obj.get("layout");
-    if (!layout || !isChildLayout(layout)) return;
-    layout.anchorX = anchorX;
-    layout.anchorY = anchorY;
+    if (!layout?.child) return;
+    layout.child.alignSelf = value;
+    obj.set("layout", { ...layout });
+    this.relayout();
+    this.callbacks.onLayoutChanged?.();
+  }
+  /** Update gap on a container. */
+  setGap(obj, value) {
+    const layout = obj.get("layout");
+    if (!layout?.container) return;
+    layout.container.gap = Math.max(0, value);
+    obj.set("layout", { ...layout });
+    this.relayout();
+    this.callbacks.onLayoutChanged?.();
+  }
+  /** Update flex direction on a container. */
+  setFlexDirection(obj, direction) {
+    const layout = obj.get("layout");
+    if (!layout?.container) return;
+    layout.container.flexDirection = direction;
+    obj.set("layout", { ...layout });
+    this.relayout();
+    this.callbacks.onLayoutChanged?.();
+  }
+  /** Update alignItems on a container. */
+  setAlignItems(obj, value) {
+    const layout = obj.get("layout");
+    if (!layout?.container) return;
+    layout.container.alignItems = value;
+    obj.set("layout", { ...layout });
+    this.relayout();
+    this.callbacks.onLayoutChanged?.();
+  }
+  /** Update justifyContent on a container. */
+  setJustifyContent(obj, value) {
+    const layout = obj.get("layout");
+    if (!layout?.container) return;
+    layout.container.justifyContent = value;
     obj.set("layout", { ...layout });
     this.relayout();
     this.callbacks.onLayoutChanged?.();
@@ -3688,29 +4433,36 @@ var LayoutManager2 = class {
   onMoving(e) {
     const obj = e.target;
     const layout = obj.get?.("layout");
-    if (layout && isContainerLayout(layout)) {
-      this.relayout();
-      return;
+    if (layout?.container) {
+      const isSessionChild = this.dtl.phase === "anchored" && this.dtl.session.child === obj;
+      if (!isSessionChild) {
+        relayoutSingle(obj, layout.container, this.canvas.getObjects());
+        this.canvas.renderAll();
+      }
     }
-    if (layout && isChildLayout(layout) && this.dtl.phase !== "anchored") {
+    if (layout?.child && this.dtl.phase !== "anchored") {
       const activeGroup = this.callbacks.getActiveGroupId?.();
-      if (activeGroup === layout.parentId) {
+      if (activeGroup === layout.child.parentId) {
         const container = this.canvas.getObjects().find(
-          (o) => o.get("layerId") === layout.parentId
+          (o) => o.get("layerId") === layout.child.parentId
         );
         if (container) {
           const cursor2 = this.canvas.getScenePoint(e.e);
-          const session = AttachSession.reattach(this.canvas, container, obj, cursor2);
-          this.guides.showLayoutGuides(session.container, session.child);
+          const siblings = resolveContainerChildren(this.canvas.getObjects(), container).filter((c) => c.obj !== obj);
+          let session;
+          if (siblings.length > 0) {
+            session = InsertChildSession.reattach(this.canvas, container, obj, cursor2);
+          } else {
+            session = ContainerizeSession.reattach(this.canvas, container, obj, cursor2);
+          }
+          this.showSessionGuides(session);
           this.canvas.renderAll();
           this.dtl = { phase: "anchored", session, cooldownUntil: 0 };
         }
         return;
       }
     }
-    if (!isTextObject(obj)) return;
-    const textLayout = obj.get?.("layout");
-    if (textLayout && "parentId" in textLayout && this.dtl.phase !== "anchored") return;
+    if (layout?.child && this.dtl.phase !== "anchored") return;
     const cursor = this.canvas.getScenePoint(e.e);
     switch (this.dtl.phase) {
       case "anchored":
@@ -3727,16 +4479,15 @@ var LayoutManager2 = class {
   onModified(e) {
     const obj = e.target;
     const layout = obj.get?.("layout");
-    if (layout && isContainerLayout(layout)) {
+    if (layout?.container) {
       if (this.resizeSession) {
         this.resizeSession.commit(this.canvas.getObjects());
         this.resizeSession = null;
       }
       this.relayout();
       this.callbacks.onLayoutChanged?.();
-      return;
+      if (this.dtl.phase !== "anchored" && this.dtl.phase !== "pending") return;
     }
-    if (!isTextObject(obj)) return;
     if (this.dtl.phase === "anchored") {
       this.doCommit();
       return;
@@ -3757,7 +4508,7 @@ var LayoutManager2 = class {
   onResizing(e) {
     const target = e.target;
     const layout = target?.get?.("layout");
-    if (!layout || !isContainerLayout(layout)) return;
+    if (!layout?.container) return;
     if (!this.resizeSession) {
       this.resizeSession = new ResizeSession(target, e.transform?.corner);
     }
@@ -3765,24 +4516,24 @@ var LayoutManager2 = class {
     this.canvas.renderAll();
   }
   // ── State machine: IDLE → PENDING ─────────────────────────────────
-  handleIdleMoving(textObj, cursor) {
+  handleIdleMoving(draggedObj, cursor) {
     if (Date.now() < this.dtl.cooldownUntil) return;
-    const shape = this.findShapeUnderPoint(cursor);
+    const shape = this.findShapeUnderPoint(cursor, draggedObj);
     if (shape) {
-      this.startPending(textObj, shape, cursor);
+      this.startPending(draggedObj, shape, cursor);
     }
   }
   // ── State machine: PENDING ────────────────────────────────────────
-  handlePendingMoving(_textObj, cursor) {
+  handlePendingMoving(_draggedObj, cursor) {
     if (this.dtl.phase !== "pending") return;
-    const shape = this.findShapeUnderPoint(cursor);
+    const shape = this.findShapeUnderPoint(cursor, _draggedObj);
     if (shape !== this.dtl.target) {
       this.resetToIdle();
       return;
     }
     this.dtl.cursor = cursor;
   }
-  startPending(textObj, shape, cursor) {
+  startPending(draggedObj, shape, cursor) {
     this.guides.showHintHighlight(shape);
     this.canvas.renderAll();
     const timer = setTimeout(() => this.doAnchor(), ANCHOR_DELAY_MS);
@@ -3790,7 +4541,7 @@ var LayoutManager2 = class {
       phase: "pending",
       timer,
       target: shape,
-      source: textObj,
+      source: draggedObj,
       cursor,
       cooldownUntil: this.dtl.cooldownUntil
     };
@@ -3798,9 +4549,17 @@ var LayoutManager2 = class {
   // ── State machine: ANCHOR (PENDING → ANCHORED) ───────────────────
   doAnchor() {
     if (this.dtl.phase !== "pending") return;
-    const { target: shape, source: text, cursor } = this.dtl;
-    const session = new AttachSession(this.canvas, shape, text, cursor);
-    this.guides.showLayoutGuides(session.container, session.child);
+    const { target: shape, source: child, cursor } = this.dtl;
+    const shapeLayout = shape.get?.("layout");
+    const alreadyContainer = shapeLayout?.container != null;
+    const existingChildren = alreadyContainer ? resolveContainerChildren(this.canvas.getObjects(), shape) : [];
+    let session;
+    if (alreadyContainer && existingChildren.length > 0) {
+      session = new InsertChildSession(this.canvas, shape, child, cursor);
+    } else {
+      session = new ContainerizeSession(this.canvas, shape, child, cursor);
+    }
+    this.showSessionGuides(session);
     this.canvas.renderAll();
     this.dtl = {
       phase: "anchored",
@@ -3817,7 +4576,7 @@ var LayoutManager2 = class {
       this.resetToIdle(Date.now() + 1e3);
       return;
     }
-    this.guides.showLayoutGuides(session.container, session.child);
+    this.showSessionGuides(session);
     this.canvas.renderAll();
   }
   // ── State machine: COMMIT ─────────────────────────────────────────
@@ -3838,13 +4597,29 @@ var LayoutManager2 = class {
     }
     this.dtl = { phase: "idle", cooldownUntil: cooldownUntil || this.dtl.cooldownUntil };
   }
+  // ── Guide rendering ───────────────────────────────────────────────
+  showSessionGuides(session) {
+    if (session instanceof InsertChildSession) {
+      const allChildren = resolveContainerChildren(this.canvas.getObjects(), session.container);
+      const childObjs = allChildren.map((c) => c.obj);
+      const layout = session.container.get?.("layout");
+      const direction = layout?.container?.flexDirection ?? "column";
+      this.guides.showInsertGuides(session.container, childObjs, direction);
+    } else {
+      this.guides.showLayoutGuides(session.container, session.child);
+    }
+  }
   // ── Shape hit-testing ─────────────────────────────────────────────
-  findShapeUnderPoint(point) {
+  findShapeUnderPoint(point, exclude) {
     const objects = this.canvas.getObjects().slice().reverse();
+    const activeGroup = this.callbacks.getActiveGroupId?.();
     for (const obj of objects) {
+      if (obj === exclude) continue;
       if (obj.excludeFromExport) continue;
       const layout = obj.get?.("layout");
-      if (layout && "parentId" in layout) continue;
+      if (layout?.child) {
+        if (!activeGroup || layout.child.parentId !== activeGroup) continue;
+      }
       if (obj.get?.("layerId") === "originalImage") continue;
       const layerType = obj.layerType;
       if (layerType !== "shape" && !(obj instanceof import_fabric13.Rect)) continue;
@@ -4210,6 +4985,7 @@ var _FabricEditor = class _FabricEditor {
   async init() {
     if (this._initialized) return;
     this._initialized = true;
+    await initYoga();
     if (this.config.fonts && Object.keys(this.config.fonts).length > 0) {
       await this.loadFonts(this.config.fonts);
     }
@@ -4621,6 +5397,82 @@ var _FabricEditor = class _FabricEditor {
     obj.set({ opacity: opacity / 100 });
     this.canvas.renderAll();
   }
+  // ==================== Stroke controls ====================
+  /**
+   * Enable or disable stroke on the selected object.
+   * When enabling, restores previous stroke color or defaults to black.
+   */
+  setStrokeEnabled(enabled) {
+    const obj = this.selection.current;
+    if (!obj) return;
+    if (enabled) {
+      obj.set({ stroke: obj.stroke || "#000000", strokeWidth: obj.strokeWidth || 4 });
+    } else {
+      obj.set({ stroke: null, strokeWidth: 0 });
+    }
+    this.canvas.renderAll();
+  }
+  /**
+   * Set stroke width on the selected object.
+   */
+  setStrokeWidth(width) {
+    const obj = this.selection.current;
+    if (!obj) return;
+    obj.set({ strokeWidth: width });
+    if (width > 0 && !obj.stroke) {
+      obj.set({ stroke: "#000000" });
+    }
+    this.canvas.renderAll();
+  }
+  /**
+   * Set stroke color on the selected object. Accepts any CSS color (hex, rgba).
+   */
+  setStrokeColor(color) {
+    const obj = this.selection.current;
+    if (!obj) return;
+    obj.set({ stroke: color });
+    if (!obj.strokeWidth) {
+      obj.set({ strokeWidth: 4 });
+    }
+    this.canvas.renderAll();
+  }
+  // ==================== Fill controls ====================
+  /**
+   * Set fill color (solid) on the selected object.
+   * Unlike changeColor(), always sets fill regardless of stroke state.
+   */
+  setFillColor(color) {
+    const obj = this.selection.current;
+    if (!obj) return;
+    obj.set({ fill: color });
+    this.canvas.renderAll();
+  }
+  /**
+   * Set a linear gradient fill on the selected object.
+   */
+  setFillGradient(color1, color2, angleDeg) {
+    const obj = this.selection.current;
+    if (!obj) return;
+    const rad = angleDeg * Math.PI / 180;
+    const cos = Math.cos(rad);
+    const sin = Math.sin(rad);
+    const gradient = new import_fabric15.Gradient({
+      type: "linear",
+      gradientUnits: "percentage",
+      coords: {
+        x1: 0.5 - cos / 2,
+        y1: 0.5 - sin / 2,
+        x2: 0.5 + cos / 2,
+        y2: 0.5 + sin / 2
+      },
+      colorStops: [
+        { offset: 0, color: color1 },
+        { offset: 1, color: color2 }
+      ]
+    });
+    obj.set({ fill: gradient });
+    this.canvas.renderAll();
+  }
   /**
    * Change la police de l'objet texte sélectionné
    */
@@ -4697,7 +5549,6 @@ var _FabricEditor = class _FabricEditor {
     };
   }
 };
-console.log("[fabric-editor] \u2713 linked local build 3");
 /**
  * Étend FabricObject pour inclure layerId dans la sérialisation
  */
@@ -5110,6 +5961,23 @@ function buildPositionStyles(left, top, zIndex, options) {
 function stylesToString(styles) {
   return Object.entries(styles).map(([key, value]) => `${key}: ${value}`).join("; ");
 }
+function fillToCss(fill) {
+  if (!fill) return "transparent";
+  if (typeof fill === "string") return fill;
+  if (fill.type === "linear" && Array.isArray(fill.colorStops)) {
+    const coords = fill.coords;
+    let angle = 180;
+    if (coords) {
+      const dx = (coords.x2 ?? 0.5) - (coords.x1 ?? 0.5);
+      const dy = (coords.y2 ?? 0.5) - (coords.y1 ?? 0.5);
+      angle = Math.round(Math.atan2(dy, dx) * 180 / Math.PI + 90);
+      if (angle < 0) angle += 360;
+    }
+    const stops = fill.colorStops.map((s) => `${s.color} ${Math.round(s.offset * 100)}%`).join(", ");
+    return `linear-gradient(${angle}deg, ${stops})`;
+  }
+  return "transparent";
+}
 function escapeHtml(text) {
   return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
 }
@@ -5217,7 +6085,7 @@ function rectToHtml(layer, zIndex) {
     styles.transform = transform;
     styles["transform-origin"] = getTransformOrigin(originX, originY);
   }
-  styles.background = fill || "transparent";
+  styles.background = fillToCss(fill);
   if (opacity !== 1) {
     styles.opacity = String(opacity);
   }
@@ -5263,7 +6131,7 @@ function circleToHtml(layer, zIndex) {
     styles["transform-origin"] = getTransformOrigin(originX, originY);
   }
   styles["border-radius"] = "50%";
-  styles.background = fill || "transparent";
+  styles.background = fillToCss(fill);
   if (opacity !== 1) {
     styles.opacity = String(opacity);
   }
@@ -5519,8 +6387,8 @@ function layerToHtmlStandalone(layer, zIndex) {
 }
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {
-  AttachSession,
   CanvasGuides,
+  ContainerizeSession,
   CustomTextbox,
   DesignCanvas,
   FabCircle,
@@ -5532,6 +6400,7 @@ function layerToHtmlStandalone(layer, zIndex) {
   HistoryManager,
   ImageDropHandler,
   ImageFrame,
+  InsertChildSession,
   LayerManager,
   LayoutManager,
   MIN_PAD,
@@ -5563,12 +6432,16 @@ function layerToHtmlStandalone(layer, zIndex) {
   getNextLockMode,
   getShapeCatalog,
   hasExceededOffset,
+  initYoga,
+  isChild,
   isChildLayout,
+  isContainer,
   isContainerLayout,
   isContentLocked,
   isPositionLocked,
   isStyleLocked,
   isValidShape,
+  isYogaReady,
   layerToHtmlStandalone,
   nextShape,
   pointInObject,
@@ -5578,6 +6451,7 @@ function layerToHtmlStandalone(layer, zIndex) {
   switchClip,
   switchShape,
   topLeft,
-  wrapContainerAroundChild
+  wrapContainerAroundChild,
+  yogaLayout
 });
 //# sourceMappingURL=index.js.map

@@ -1,7 +1,7 @@
 import { ActiveSelection, type FabricObject } from "#fabric";
 import type { DesignCanvas } from "./DesignCanvas";
 import { isPositionLocked } from "./locking";
-import { isChildLayout, type LayoutData } from "./layout/types";
+import type { LayoutData } from "./layout/types";
 import type { SelectionCallbacks, ControlOption } from "./types";
 import type { Controllable } from "./shapes/controlsMixin";
 
@@ -107,14 +107,14 @@ export class SelectionManager {
    */
   resolveTarget(obj: FabricObject): FabricObject {
     const layout = obj.get("layout") as LayoutData | undefined;
-    if (!layout || !isChildLayout(layout)) return obj;
+    if (!layout?.child) return obj;
 
     // We're inside this child's group → target the child directly
-    if (this._activeGroupId === layout.parentId) return obj;
+    if (this._activeGroupId === layout.child.parentId) return obj;
 
     // Not inside the group → redirect to the parent container
     const parent = this.canvas.getObjects().find(
-      (o) => o.get("layerId") === layout.parentId,
+      (o) => o.get("layerId") === layout.child!.parentId,
     );
     return parent ?? obj;
   }
@@ -219,8 +219,8 @@ export class SelectionManager {
 
     // If we're inside a group, check if the click is still within it
     if (this._activeGroupId) {
-      const isChildOfGroup = targetLayout && isChildLayout(targetLayout)
-        && targetLayout.parentId === this._activeGroupId;
+      const isChildOfGroup = targetLayout?.child
+        && targetLayout.child.parentId === this._activeGroupId;
       const isTheContainer = target.get("layerId") === this._activeGroupId;
 
       if (!isChildOfGroup && !isTheContainer) {
@@ -235,7 +235,7 @@ export class SelectionManager {
     if (!currentObj) return;
 
     const currentLayout = currentObj.get("layout") as LayoutData | undefined;
-    if (!currentLayout || !("role" in currentLayout)) return;
+    if (!currentLayout?.container) return;
 
     const currentId = currentObj.get("layerId") as string;
 
@@ -245,7 +245,7 @@ export class SelectionManager {
       return;
     }
 
-    if (targetLayout && isChildLayout(targetLayout) && targetLayout.parentId === currentId) {
+    if (targetLayout?.child && targetLayout.child.parentId === currentId) {
       this._activeGroupId = currentId;
     }
   }

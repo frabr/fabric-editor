@@ -1,17 +1,16 @@
 import { FabricObject, Rect } from "#fabric";
 import type { DesignCanvas } from "./DesignCanvas";
 import { CanvasGuides } from "./ui/guides";
-import { runLayout } from "./layout/reconcile";
+import { runLayout, relayoutSingle } from "./layout/reconcile";
 import { ResizeSession } from "./layout/resize-session";
 import {
-  isContainerLayout,
-  isChildLayout,
-  type ContainerLayout,
-  type ChildLayout,
   type LayoutData,
+  type LayoutSession,
 } from "./layout/types";
 import { pointInObject, isTextObject } from "./layout/geometry";
-import { AttachSession } from "./layout/attach-session";
+import { resolveContainerChildren } from "./layout/resize-session";
+import { ContainerizeSession } from "./layout/containerize-session";
+import { InsertChildSession } from "./layout/insert-child-session";
 
 // ── Types ───────────────────────────────────────────────────────────
 
@@ -42,7 +41,7 @@ interface PendingState {
 
 interface AnchoredState {
   phase: "anchored";
-  session: AttachSession;
+  session: LayoutSession;
   cooldownUntil: number;
 }
 
@@ -93,18 +92,18 @@ export class LayoutManager {
 
   /** Update layout mode on the currently selected container. */
   setMode(obj: FabricObject, mode: "hug" | "hug-y" | "fixed"): void {
-    const layout = obj.get("layout") as ContainerLayout | undefined;
-    if (!layout || !isContainerLayout(layout)) return;
+    const layout = obj.get("layout") as LayoutData | undefined;
+    if (!layout?.container) return;
 
     switch (mode) {
       case "hug":
-        layout.sizeMode = { x: "hug", y: "hug" };
+        layout.container.sizeMode = { x: "hug", y: "hug" };
         break;
       case "hug-y":
-        layout.sizeMode = { x: "fixed", y: "hug" };
+        layout.container.sizeMode = { x: "fixed", y: "hug" };
         break;
       case "fixed":
-        layout.sizeMode = { x: "fixed", y: "fixed" };
+        layout.container.sizeMode = { x: "fixed", y: "fixed" };
         break;
     }
     obj.set("layout", { ...layout });
@@ -113,25 +112,73 @@ export class LayoutManager {
     this.callbacks.onLayoutChanged?.();
   }
 
-  /** Update a margin on a child layout object. */
-  setMargin(obj: FabricObject, side: string, value: number): void {
-    const layout = obj.get("layout") as ChildLayout | undefined;
-    if (!layout || !isChildLayout(layout)) return;
+  /** Update padding on a container. */
+  setPadding(obj: FabricObject, side: string, value: number): void {
+    const layout = obj.get("layout") as LayoutData | undefined;
+    if (!layout?.container) return;
 
-    (layout.margins as Record<string, number>)[side] = value;
+    if (!layout.container.padding) layout.container.padding = { top: 0, right: 0, bottom: 0, left: 0 };
+    (layout.container.padding as Record<string, number>)[side] = value;
     obj.set("layout", { ...layout });
 
     this.relayout();
     this.callbacks.onLayoutChanged?.();
   }
 
-  /** Update anchor on a child layout object. */
-  setAnchor(obj: FabricObject, anchorX: string, anchorY: string): void {
-    const layout = obj.get("layout") as ChildLayout | undefined;
-    if (!layout || !isChildLayout(layout)) return;
+  /** Update alignSelf on a child layout object. */
+  setAlignSelf(obj: FabricObject, value: string): void {
+    const layout = obj.get("layout") as LayoutData | undefined;
+    if (!layout?.child) return;
 
-    layout.anchorX = anchorX as "left" | "right";
-    layout.anchorY = anchorY as "top" | "bottom";
+    layout.child.alignSelf = value as any;
+    obj.set("layout", { ...layout });
+
+    this.relayout();
+    this.callbacks.onLayoutChanged?.();
+  }
+
+  /** Update gap on a container. */
+  setGap(obj: FabricObject, value: number): void {
+    const layout = obj.get("layout") as LayoutData | undefined;
+    if (!layout?.container) return;
+
+    layout.container.gap = Math.max(0, value);
+    obj.set("layout", { ...layout });
+
+    this.relayout();
+    this.callbacks.onLayoutChanged?.();
+  }
+
+  /** Update flex direction on a container. */
+  setFlexDirection(obj: FabricObject, direction: "column" | "row"): void {
+    const layout = obj.get("layout") as LayoutData | undefined;
+    if (!layout?.container) return;
+
+    layout.container.flexDirection = direction;
+    obj.set("layout", { ...layout });
+
+    this.relayout();
+    this.callbacks.onLayoutChanged?.();
+  }
+
+  /** Update alignItems on a container. */
+  setAlignItems(obj: FabricObject, value: string): void {
+    const layout = obj.get("layout") as LayoutData | undefined;
+    if (!layout?.container) return;
+
+    layout.container.alignItems = value as any;
+    obj.set("layout", { ...layout });
+
+    this.relayout();
+    this.callbacks.onLayoutChanged?.();
+  }
+
+  /** Update justifyContent on a container. */
+  setJustifyContent(obj: FabricObject, value: string): void {
+    const layout = obj.get("layout") as LayoutData | undefined;
+    if (!layout?.container) return;
+
+    layout.container.justifyContent = value as any;
     obj.set("layout", { ...layout });
 
     this.relayout();
@@ -163,24 +210,39 @@ export class LayoutManager {
   private onMoving(e: any): void {
     const obj = e.target;
 
-    // Container being dragged → reposition children (no resize, just move)
     const layout = obj.get?.("layout") as LayoutData | undefined;
-    if (layout && isContainerLayout(layout)) {
-      this.relayout();
-      return;
+
+    // Container being dragged → reposition its children (not the full canvas,
+    // otherwise runLayout would snap this container back to its flex position
+    // if it's also a child of another container).
+    if (layout?.container) {
+      const isSessionChild = this.dtl.phase === "anchored" && this.dtl.session.child === obj;
+      if (!isSessionChild) {
+        relayoutSingle(obj, layout.container, this.canvas.getObjects());
+        this.canvas.renderAll();
+      }
+      // Don't return — the container can also be dragged into another shape
     }
 
     // Child being dragged inside active group → start reattach session
-    if (layout && isChildLayout(layout) && this.dtl.phase !== "anchored") {
+    if (layout?.child && this.dtl.phase !== "anchored") {
       const activeGroup = this.callbacks.getActiveGroupId?.();
-      if (activeGroup === layout.parentId) {
+      if (activeGroup === layout.child.parentId) {
         const container = this.canvas.getObjects().find(
-          (o) => o.get("layerId") === layout.parentId,
+          (o) => o.get("layerId") === layout.child!.parentId,
         );
         if (container) {
           const cursor = this.canvas.getScenePoint(e.e);
-          const session = AttachSession.reattach(this.canvas, container, obj, cursor);
-          this.guides.showLayoutGuides(session.container, session.child);
+          // Check if container has other children → use InsertChildSession for reorder
+          const siblings = resolveContainerChildren(this.canvas.getObjects(), container)
+            .filter(c => c.obj !== obj);
+          let session: LayoutSession;
+          if (siblings.length > 0) {
+            session = InsertChildSession.reattach(this.canvas, container, obj, cursor);
+          } else {
+            session = ContainerizeSession.reattach(this.canvas, container, obj, cursor);
+          }
+          this.showSessionGuides(session);
           this.canvas.renderAll();
           this.dtl = { phase: "anchored", session, cooldownUntil: 0 };
         }
@@ -188,12 +250,8 @@ export class LayoutManager {
       }
     }
 
-    // Only handle text objects for drag-to-layout
-    if (!isTextObject(obj)) return;
-
-    // Already-attached text that isn't in group-edit mode → ignore
-    const textLayout = obj.get?.("layout");
-    if (textLayout && "parentId" in textLayout && this.dtl.phase !== "anchored") return;
+    // Already-attached child that isn't in group-edit mode → ignore
+    if (layout?.child && this.dtl.phase !== "anchored") return;
 
     const cursor = this.canvas.getScenePoint(e.e);
 
@@ -215,18 +273,16 @@ export class LayoutManager {
 
     // Container modified → commit resize session if active, then relayout
     const layout = obj.get?.("layout") as LayoutData | undefined;
-    if (layout && isContainerLayout(layout)) {
+    if (layout?.container) {
       if (this.resizeSession) {
         this.resizeSession.commit(this.canvas.getObjects());
         this.resizeSession = null;
       }
       this.relayout();
       this.callbacks.onLayoutChanged?.();
-      return;
+      // Don't return if we have an active dtl session — fall through to commit it
+      if (this.dtl.phase !== "anchored" && this.dtl.phase !== "pending") return;
     }
-
-    // Only handle text objects for drag-to-layout
-    if (!isTextObject(obj)) return;
 
     if (this.dtl.phase === "anchored") {
       this.doCommit();
@@ -250,8 +306,8 @@ export class LayoutManager {
 
   private onResizing(e: any): void {
     const target = e.target;
-    const layout = target?.get?.("layout");
-    if (!layout || !isContainerLayout(layout)) return;
+    const layout = target?.get?.("layout") as LayoutData | undefined;
+    if (!layout?.container) return;
 
     // Create session on first resizing frame
     if (!this.resizeSession) {
@@ -264,21 +320,21 @@ export class LayoutManager {
 
   // ── State machine: IDLE → PENDING ─────────────────────────────────
 
-  private handleIdleMoving(textObj: FabricObject, cursor: { x: number; y: number }): void {
+  private handleIdleMoving(draggedObj: FabricObject, cursor: { x: number; y: number }): void {
     if (Date.now() < this.dtl.cooldownUntil) return;
 
-    const shape = this.findShapeUnderPoint(cursor);
+    const shape = this.findShapeUnderPoint(cursor, draggedObj);
     if (shape) {
-      this.startPending(textObj, shape, cursor);
+      this.startPending(draggedObj, shape, cursor);
     }
   }
 
   // ── State machine: PENDING ────────────────────────────────────────
 
-  private handlePendingMoving(_textObj: FabricObject, cursor: { x: number; y: number }): void {
+  private handlePendingMoving(_draggedObj: FabricObject, cursor: { x: number; y: number }): void {
     if (this.dtl.phase !== "pending") return;
 
-    const shape = this.findShapeUnderPoint(cursor);
+    const shape = this.findShapeUnderPoint(cursor, _draggedObj);
     if (shape !== this.dtl.target) {
       this.resetToIdle();
       return;
@@ -287,7 +343,7 @@ export class LayoutManager {
     this.dtl.cursor = cursor;
   }
 
-  private startPending(textObj: FabricObject, shape: FabricObject, cursor: { x: number; y: number }): void {
+  private startPending(draggedObj: FabricObject, shape: FabricObject, cursor: { x: number; y: number }): void {
     this.guides.showHintHighlight(shape);
     this.canvas.renderAll();
 
@@ -297,7 +353,7 @@ export class LayoutManager {
       phase: "pending",
       timer,
       target: shape,
-      source: textObj,
+      source: draggedObj,
       cursor,
       cooldownUntil: this.dtl.cooldownUntil,
     };
@@ -307,11 +363,22 @@ export class LayoutManager {
 
   private doAnchor(): void {
     if (this.dtl.phase !== "pending") return;
-    const { target: shape, source: text, cursor } = this.dtl;
+    const { target: shape, source: child, cursor } = this.dtl;
 
-    const session = new AttachSession(this.canvas, shape, text, cursor);
+    const shapeLayout = shape.get?.("layout") as LayoutData | undefined;
+    const alreadyContainer = shapeLayout?.container != null;
+    const existingChildren = alreadyContainer
+      ? resolveContainerChildren(this.canvas.getObjects(), shape)
+      : [];
 
-    this.guides.showLayoutGuides(session.container, session.child);
+    let session: LayoutSession;
+    if (alreadyContainer && existingChildren.length > 0) {
+      session = new InsertChildSession(this.canvas, shape, child, cursor);
+    } else {
+      session = new ContainerizeSession(this.canvas, shape, child, cursor);
+    }
+
+    this.showSessionGuides(session);
     this.canvas.renderAll();
 
     this.dtl = {
@@ -333,7 +400,7 @@ export class LayoutManager {
       return;
     }
 
-    this.guides.showLayoutGuides(session.container, session.child);
+    this.showSessionGuides(session);
     this.canvas.renderAll();
   }
 
@@ -362,15 +429,37 @@ export class LayoutManager {
     this.dtl = { phase: "idle", cooldownUntil: cooldownUntil || this.dtl.cooldownUntil };
   }
 
+  // ── Guide rendering ───────────────────────────────────────────────
+
+  private showSessionGuides(session: LayoutSession): void {
+    if (session instanceof InsertChildSession) {
+      // InsertChildSession: show gap between children
+      const allChildren = resolveContainerChildren(this.canvas.getObjects(), session.container);
+      const childObjs = allChildren.map(c => c.obj);
+      const layout = session.container.get?.("layout") as LayoutData | undefined;
+      const direction = layout?.container?.flexDirection ?? "column";
+      this.guides.showInsertGuides(session.container, childObjs, direction);
+    } else {
+      // ContainerizeSession: show margin guides
+      this.guides.showLayoutGuides(session.container, session.child);
+    }
+  }
+
   // ── Shape hit-testing ─────────────────────────────────────────────
 
-  private findShapeUnderPoint(point: { x: number; y: number }): FabricObject | null {
+  private findShapeUnderPoint(point: { x: number; y: number }, exclude?: FabricObject): FabricObject | null {
     const objects = this.canvas.getObjects().slice().reverse();
+    const activeGroup = this.callbacks.getActiveGroupId?.();
 
     for (const obj of objects) {
+      if (obj === exclude) continue;
       if ((obj as any).excludeFromExport) continue;
-      const layout = obj.get?.("layout");
-      if (layout && "parentId" in layout) continue;
+      const layout = obj.get?.("layout") as LayoutData | undefined;
+      if (layout?.child) {
+        // Allow child shapes as targets when in group-edit mode
+        // (enables nesting: drag into a child shape to make it a sub-container)
+        if (!activeGroup || layout.child.parentId !== activeGroup) continue;
+      }
       if ((obj.get?.("layerId") as string) === "originalImage") continue;
       const layerType = (obj as any).layerType;
       if (layerType !== "shape" && !(obj instanceof Rect)) continue;

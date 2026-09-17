@@ -1,3 +1,4 @@
+import * as _fabric from '#fabric';
 import { Canvas, FabricObject, TPointerEvent, Textbox, Group, FabricImage, Pattern, Rect, TOptions, RectProps, Circle, CircleProps, Path, PathProps } from '#fabric';
 
 /**
@@ -178,11 +179,119 @@ declare function isContentLocked(obj: FabricObject): boolean;
 declare function isPositionLocked(obj: FabricObject): boolean;
 
 /**
- * Layout reconciliation — "springs & struts" model.
+ * Layout system types — Flexbox model backed by Yoga.
+ *
+ * Every participating Fabric object carries a single `layout: LayoutData`
+ * property with two independent, optional blocks:
+ *
+ * - `container`: present when the object has children (is a parent)
+ * - `child`: present when the object is inside another container
+ *
+ * Both can coexist — a nested container is both a parent and a child.
+ *
+ * Outside a container, objects are positioned absolutely by Fabric.
+ * Inside a container, objects follow Flexbox rules (Yoga engine).
+ */
+/**
+ * Size mode per axis:
+ * - "hug": container adapts to content
+ * - "fixed": container keeps its size, content must adapt (shrink/clip)
+ */
+type SizeMode = "hug" | "fixed";
+/** Cross-axis alignment for a single child (maps to Yoga alignSelf). */
+type AlignSelf = "auto" | "stretch" | "flex-start" | "flex-end" | "center";
+/** Main-axis distribution (maps to Yoga justifyContent). */
+type JustifyContent = "flex-start" | "flex-end" | "center" | "space-between" | "space-around";
+/** Cross-axis alignment for all children (maps to Yoga alignItems). */
+type AlignItems = "stretch" | "flex-start" | "flex-end" | "center";
+/** Flex direction (maps to Yoga flexDirection). */
+type FlexDirection = "column" | "row";
+/** "I am a parent" — present when the object has children. */
+interface ContainerData {
+    sizeMode: {
+        x: SizeMode;
+        y: SizeMode;
+    };
+    /** Minimum size set by manual resize. Container never shrinks below this. */
+    minSize?: {
+        w: number;
+        h: number;
+    };
+    /** Overflow behavior when content exceeds fixed size. */
+    overflow?: "clip" | "shrink";
+    /** Flex direction: column (vertical, default) or row (horizontal). */
+    flexDirection?: FlexDirection;
+    /** Gap between children in the main axis direction (pixels). */
+    gap?: number;
+    /** Padding between container edges and children. */
+    padding?: {
+        top: number;
+        right: number;
+        bottom: number;
+        left: number;
+    };
+    /** Cross-axis alignment for children (default: "flex-start"). */
+    alignItems?: AlignItems;
+    /** Main-axis distribution (default: "flex-start"). */
+    justifyContent?: JustifyContent;
+}
+/** "I am a child" — present when the object is inside a container. */
+interface ChildData {
+    parentId: string;
+    /** Override the container's alignItems for this child. */
+    alignSelf?: AlignSelf;
+    /** How much this child grows to fill remaining space (default: 0). */
+    flexGrow?: number;
+    /** Position in the flex flow (lower = earlier). Children without order go by insertion order. */
+    order?: number;
+}
+/** The `layout` property on any participating Fabric object. */
+interface LayoutData {
+    container?: ContainerData;
+    child?: ChildData;
+}
+/** Resolved child: a Fabric object paired with its ChildData. */
+interface ResolvedChild {
+    obj: _fabric.FabricObject;
+    cl: ChildData;
+}
+declare function isContainer(l: LayoutData): boolean;
+declare function isChild(l: LayoutData): boolean;
+/** @deprecated Use `layout.container != null` instead. */
+type ContainerLayout = LayoutData & {
+    container: ContainerData;
+};
+/** @deprecated Use `layout.child != null` instead. */
+type ChildLayout = ChildData;
+/** @deprecated Use `isContainer` instead. */
+declare function isContainerLayout(l: LayoutData): boolean;
+/** @deprecated Use `isChild` instead. */
+declare function isChildLayout(l: LayoutData): boolean;
+/** Common interface for layout sessions (ContainerizeSession, InsertChildSession). */
+interface LayoutSession {
+    handleMoving(cursor: {
+        x: number;
+        y: number;
+    }): "anchored" | "exited";
+    commit(): () => void;
+    rollback(): void;
+    readonly container: _fabric.FabricObject;
+    readonly child: _fabric.FabricObject;
+}
+/** Minimum padding between a child and its container edges. */
+declare const MIN_PAD = 8;
+/** Snapshot of shape + text properties before attach, used for rollback. */
+interface AttachSnapshot {
+    shape: Record<string, any>;
+    text: Record<string, any>;
+}
+
+/**
+ * Layout reconciliation — Flexbox model backed by Yoga.
  *
  * Takes the declared layout state (container/child relationships, size modes,
- * margins) and resolves concrete positions and dimensions. Idempotent:
- * running it twice on the same state produces the same result.
+ * margins, flex props) and resolves concrete positions and dimensions.
+ * Idempotent: running it twice on the same state produces the same result.
  *
  * Supports two size modes per axis:
  * - "hug": container adapts to content (bottom-up)
@@ -206,65 +315,6 @@ declare function isPositionLocked(obj: FabricObject): boolean;
 declare function runLayout(objects: FabricObject[]): void;
 
 /**
- * Layout system types — "springs & struts" model.
- *
- * A container is a regular Fabric object with `layout.role === "container"`.
- * A child is any Fabric object with `layout.parentId` pointing to a container's layerId.
- *
- * The layout block is stored as a custom property on each Fabric object and
- * survives serialization via toObject(["layout"]).
- */
-/**
- * Size mode per axis:
- * - "hug": container adapts to content
- * - "fixed": container keeps its size, content must adapt (shrink/clip)
- */
-type SizeMode = "hug" | "fixed";
-/** Layout block carried by a **container**. */
-interface ContainerLayout {
-    role: "container";
-    sizeMode: {
-        x: SizeMode;
-        y: SizeMode;
-    };
-    /** Taille minimum définie par resize manuel. Le container ne descendra
-     *  jamais en dessous, même si le contenu est plus petit. */
-    minSize?: {
-        w: number;
-        h: number;
-    };
-    /** Overflow behavior when content exceeds fixed size */
-    overflow?: "clip" | "shrink";
-}
-type AnchorX = "left" | "right";
-type AnchorY = "top" | "bottom";
-/** Layout block carried by a **child** (element inside a container). */
-interface ChildLayout {
-    parentId: string;
-    margins: {
-        left: number;
-        right: number;
-        top: number;
-        bottom: number;
-    };
-    /** Point d'ancrage horizontal (défaut: "left") */
-    anchorX?: AnchorX;
-    /** Point d'ancrage vertical (défaut: "top") */
-    anchorY?: AnchorY;
-}
-/** Union — the `layout` property on any participating Fabric object. */
-type LayoutData = ContainerLayout | ChildLayout;
-declare function isContainerLayout(l: LayoutData): l is ContainerLayout;
-declare function isChildLayout(l: LayoutData): l is ChildLayout;
-/** Minimum padding between a child and its container edges. */
-declare const MIN_PAD = 8;
-/** Snapshot of shape + text properties before attach, used for rollback. */
-interface AttachSnapshot {
-    shape: Record<string, any>;
-    text: Record<string, any>;
-}
-
-/**
  * ResizeSession — encapsulates one user-initiated resize interaction.
  *
  * Created by the LayoutManager on the first `object:resizing` event,
@@ -276,7 +326,7 @@ interface AttachSnapshot {
 
 declare class ResizeSession {
     private container;
-    private layout;
+    private containerData;
     private axes;
     /** User-intended size — only updated on axes the user controls. */
     private userW;
@@ -338,14 +388,15 @@ declare function hasExceededOffset(current: {
 }, offsetX: number, offsetY: number, margin: number): boolean;
 
 /**
- * AttachSession — encapsulates one drag-to-layout interaction.
+ * ContainerizeSession — encapsulates the "first attach" interaction.
  *
- * Created by the LayoutManager when a text enters a shape, destroyed
- * after commit or rollback. The LayoutManager never sees the internals
- * (snapshot, clamp offsets, etc.) — it just drives the session.
+ * Transforms a plain shape into a layout container when any object (text,
+ * shape, or another container) is dragged into it. Establishes padding,
+ * size mode, and the initial container/child relationship.
+ * Created by the LayoutManager, destroyed after commit or rollback.
  */
 
-declare class AttachSession {
+declare class ContainerizeSession {
     private canvas;
     private shape;
     private text;
@@ -367,7 +418,7 @@ declare class AttachSession {
     static reattach(canvas: DesignCanvas, shape: FabricObject, text: FabricObject, cursor: {
         x: number;
         y: number;
-    }): AttachSession;
+    }): ContainerizeSession;
     /** During drag: clamp text, resize container, check for exit. */
     handleMoving(cursor: {
         x: number;
@@ -383,8 +434,120 @@ declare class AttachSession {
     get child(): FabricObject;
     private shouldExit;
 }
-/** Resize container to wrap around its child, updating margins from current position. */
+/** Resize container to wrap around its child, updating padding from current position. */
 declare function wrapContainerAroundChild(child: FabricObject, container: FabricObject): void;
+
+/**
+ * InsertChildSession — encapsulates adding a child to an existing container.
+ *
+ * Unlike ContainerizeSession (which transforms a shape into a container),
+ * this session adds an additional child into a container that already has
+ * children.
+ *
+ * Design principle: the SESSION controls all decisions (direction, order,
+ * margins). Yoga is used only as a "calculator" — we ask it to preview
+ * where children would go given the current parameters, and we apply
+ * the result only to the OTHER children (not the one being dragged).
+ * The dragged child stays under the cursor. No feedback loops.
+ *
+ * Key behavior when inserting the **second** child:
+ * - The container's flexDirection is undecided at this point.
+ * - Cursor position relative to the existing child determines direction:
+ *   above/below → column, left/right → row.
+ * - This is re-evaluated on every drag frame.
+ *
+ * For containers that already have a direction (3rd child+), the cursor
+ * determines insertion order (before/after existing children).
+ */
+
+declare class InsertChildSession implements LayoutSession {
+    private canvas;
+    private _container;
+    private newChild;
+    private snapshot;
+    /** Whether this is a reattach (repositioning existing child) vs new insertion. */
+    private _isReattach;
+    /** Whether this insertion is deciding the container's flex direction (2nd child). */
+    private _decidingDirection;
+    /** Current decided direction — cached for hysteresis. null = not yet decided. */
+    private _currentDirection;
+    constructor(canvas: DesignCanvas, container: FabricObject, newChild: FabricObject, cursor: {
+        x: number;
+        y: number;
+    });
+    /**
+     * Create a session for repositioning a child that is already in the container.
+     * On rollback (drag outside), the child is detached from the container.
+     */
+    static reattach(canvas: DesignCanvas, container: FabricObject, child: FabricObject, cursor: {
+        x: number;
+        y: number;
+    }): InsertChildSession;
+    handleMoving(cursor: {
+        x: number;
+        y: number;
+    }): "anchored" | "exited";
+    commit(): () => void;
+    rollback(): void;
+    get container(): FabricObject;
+    get child(): FabricObject;
+    private shouldExit;
+    /**
+     * Session decides direction + order from cursor, then asks yoga
+     * to preview positions. Only OTHER children are repositioned;
+     * the dragged child stays under the cursor.
+     */
+    private updateFromCursor;
+    /**
+     * Detect flex direction from cursor position relative to the existing child.
+     * The key insight: we measure where the cursor is relative to the child's
+     * bounding box edges, not its center. This way "bottom-right of child"
+     * correctly detects that dy > dx when the cursor is clearly below.
+     *
+     * Hysteresis: once a direction is chosen, require a clear margin to switch.
+     */
+    private detectDirection;
+    /** Last computed order — for hysteresis. */
+    private _lastOrder;
+    /**
+     * Compute the insertion order based on cursor position in the main axis.
+     * Uses the midpoint between consecutive children as the decision boundary.
+     * Hysteresis: once an order is chosen, the cursor must cross a neighboring
+     * boundary to change it (no flickering near boundaries).
+     */
+    private computeInsertOrder;
+    /**
+     * Compute the gap between children from the cursor's distance to the
+     * nearest neighbor in the main axis. The gap is the space between the
+     * cursor and the nearest edge of an existing child, minus the new child's
+     * half-size (since the cursor is roughly at the child's center).
+     */
+    private computeGap;
+    /**
+     * Ask yoga to compute positions for ALL children including the dragged one.
+     * Yoga positions everyone into their flex slots — the dragged child snaps
+     * to its computed position. The session controls direction + order, yoga
+     * just calculates where things go.
+     *
+     * Container grows if needed (never shrinks during session).
+     */
+    private previewLayout;
+}
+
+declare function initYoga(): Promise<void>;
+declare function isYogaReady(): boolean;
+/**
+ * Compute layout positions for children within a container using Yoga.
+ *
+ * Children must be sorted by `order` (lower first, then insertion order).
+ * Each child is positioned and its Fabric object is updated in-place.
+ *
+ * Returns the required container size (for hug mode).
+ */
+declare function yogaLayout(children: ResolvedChild[], containerLeft: number, containerTop: number, containerW: number, containerH: number, cd: ContainerData): {
+    w: number;
+    h: number;
+};
 
 interface EditorConfig {
     width: number;
@@ -411,7 +574,7 @@ interface LayerData {
     scaleX?: number;
     scaleY?: number;
     angle?: number;
-    fill?: string;
+    fill?: string | Record<string, unknown>;
     stroke?: string;
     strokeWidth?: number;
     opacity?: number;
@@ -458,7 +621,7 @@ interface ObjectControlsConfig {
     type: string;
     options: ControlOption[];
 }
-type ControlOption = "clip" | "color" | "font" | "outline";
+type ControlOption = "clip" | "color" | "font" | "outline" | "corner_radius";
 interface SelectionCallbacks {
     onSelect?: (object: FabricObject) => void;
     onDeselect?: () => void;
@@ -1175,10 +1338,18 @@ declare class LayoutManager {
     relayout(): void;
     /** Update layout mode on the currently selected container. */
     setMode(obj: FabricObject, mode: "hug" | "hug-y" | "fixed"): void;
-    /** Update a margin on a child layout object. */
-    setMargin(obj: FabricObject, side: string, value: number): void;
-    /** Update anchor on a child layout object. */
-    setAnchor(obj: FabricObject, anchorX: string, anchorY: string): void;
+    /** Update padding on a container. */
+    setPadding(obj: FabricObject, side: string, value: number): void;
+    /** Update alignSelf on a child layout object. */
+    setAlignSelf(obj: FabricObject, value: string): void;
+    /** Update gap on a container. */
+    setGap(obj: FabricObject, value: number): void;
+    /** Update flex direction on a container. */
+    setFlexDirection(obj: FabricObject, direction: "column" | "row"): void;
+    /** Update alignItems on a container. */
+    setAlignItems(obj: FabricObject, value: string): void;
+    /** Update justifyContent on a container. */
+    setJustifyContent(obj: FabricObject, value: string): void;
     /** Clean up event listeners. */
     dispose(): void;
     private onMovingBound;
@@ -1195,6 +1366,7 @@ declare class LayoutManager {
     private handleAnchoredMoving;
     private doCommit;
     private resetToIdle;
+    private showSessionGuides;
     private findShapeUnderPoint;
 }
 
@@ -1351,6 +1523,28 @@ declare class FabricEditor {
      */
     changeOpacity(opacity: number): void;
     /**
+     * Enable or disable stroke on the selected object.
+     * When enabling, restores previous stroke color or defaults to black.
+     */
+    setStrokeEnabled(enabled: boolean): void;
+    /**
+     * Set stroke width on the selected object.
+     */
+    setStrokeWidth(width: number): void;
+    /**
+     * Set stroke color on the selected object. Accepts any CSS color (hex, rgba).
+     */
+    setStrokeColor(color: string): void;
+    /**
+     * Set fill color (solid) on the selected object.
+     * Unlike changeColor(), always sets fill regardless of stroke state.
+     */
+    setFillColor(color: string): void;
+    /**
+     * Set a linear gradient fill on the selected object.
+     */
+    setFillGradient(color1: string, color2: string, angleDeg: number): void;
+    /**
      * Change la police de l'objet texte sélectionné
      */
     changeFont(fontFamily: string, fontWeight?: string): void;
@@ -1441,10 +1635,24 @@ declare class CanvasGuides {
      */
     showHintHighlight(shape: FabricObject): void;
     /**
-     * Show layout guides: a dashed outline around the container and
-     * hatched overlays for each non-zero margin zone.
+     * Show layout guides: a dashed outline around the container,
+     * hatched overlays for each non-zero margin zone, and anchor
+     * indicators (`<-->`) on the edges where the child is pinned.
      */
     showLayoutGuides(container: FabricObject, child: FabricObject): void;
+    /**
+     * Show insert-session guides: a dashed container outline + a hatched
+     * gap indicator between the new child and its nearest neighbor.
+     * No margin-to-edge indicators (those are for ContainerizeSession).
+     */
+    showInsertGuides(container: FabricObject, children: FabricObject[], direction: "column" | "row"): void;
+    /**
+     * Draw a `<-->` anchor indicator: a line with chevrons at each end.
+     *
+     * - "horizontal": draws left-to-right from (x, y) with given length
+     * - "vertical": draws top-to-bottom from (x, y) with given length
+     */
+    private addAnchorArrow;
     /**
      * Show snap alignment lines (horizontal/vertical) spanning the full canvas.
      */
@@ -1560,7 +1768,11 @@ interface Lockable {
     isContentLocked(): boolean;
 }
 
-declare class FabRect extends Rect implements Lockable {
+interface Controllable {
+    getControlOptions(): ControlOption[];
+}
+
+declare class FabRect extends Rect implements Lockable, Controllable {
     static type: string;
     static customProperties: string[];
     lockMode: LockMode$1;
@@ -1571,6 +1783,7 @@ declare class FabRect extends Rect implements Lockable {
     isPositionLocked: () => boolean;
     isStyleLocked: () => boolean;
     isContentLocked: () => boolean;
+    getControlOptions: () => ControlOption[];
     constructor(options?: Partial<TOptions<RectProps>>);
     setCornerRadius(radius: number): void;
     getCornerRadius(): number;
@@ -1581,7 +1794,7 @@ declare class FabRect extends Rect implements Lockable {
     setSize(w: number, h: number): void;
 }
 
-declare class FabCircle extends Circle implements Lockable {
+declare class FabCircle extends Circle implements Lockable, Controllable {
     static type: string;
     static customProperties: string[];
     lockMode: LockMode$1;
@@ -1592,6 +1805,7 @@ declare class FabCircle extends Circle implements Lockable {
     isPositionLocked: () => boolean;
     isStyleLocked: () => boolean;
     isContentLocked: () => boolean;
+    getControlOptions: () => ControlOption[];
     /** Natural diameter — stays fixed, scale absorbs sizing. */
     private _naturalSize;
     constructor(options?: Partial<TOptions<CircleProps>>);
@@ -1602,7 +1816,7 @@ declare class FabCircle extends Circle implements Lockable {
     setSize(w: number, h: number): void;
 }
 
-declare class FabPath extends Path implements Lockable {
+declare class FabPath extends Path implements Lockable, Controllable {
     static type: string;
     static customProperties: string[];
     lockMode: LockMode$1;
@@ -1613,6 +1827,7 @@ declare class FabPath extends Path implements Lockable {
     isPositionLocked: () => boolean;
     isStyleLocked: () => boolean;
     isContentLocked: () => boolean;
+    getControlOptions: () => ControlOption[];
     private _naturalW;
     private _naturalH;
     constructor(path: string | any[], options?: Partial<TOptions<PathProps>>);
@@ -1827,4 +2042,4 @@ declare function fabricToHtml(layers: LayerData[], options: HtmlRenderOptions): 
  */
 declare function layerToHtmlStandalone(layer: LayerData, zIndex: number): HtmlLayerOutput;
 
-export { AttachSession, type AttachSnapshot, CanvasGuides, type ChildLayout, type ContainerLayout, type ControlOption, CustomTextbox, DesignCanvas, type EditorConfig, FabCircle, FabPath, FabRect, FabricEditor, type FontConfig, type FontsConfig, HEART_PATH, HEXAGON_PATH, type HistoryCallbacks, HistoryManager, type HistoryState, type HtmlLayerOutput, type HtmlRenderOptions, ImageDropHandler, ImageFrame, type ImageLayerOptions, type LayerData, LayerManager, type LayoutData, LayoutManager, type LayoutManagerCallbacks, type LockMode$1 as LockMode, type Lockable, MIN_PAD, MaskManager, type ObjectControlsConfig, PendingUploadsManager, PersistenceManager, ResizeSession, type ResizeSnapResult, SHAPE_PATHS, type SaveOptions, type SaveResult, type SelectionCallbacks, SelectionManager, type ShapeCatalogEntry, type ShapeLayerOptions, type ShapePath, type ShapeType, type SizeMode, type SnappingConfig, SnappingManager, type TextLayerOptions, addCircleClip, addCropControls, addHeartClip, addHexagonClip, antiScale, applyClip, applyLockMode, clampTopLeft, createCircle, createHeart, createHexagon, createImage, createPathShape, createRect, createShape, fabricToHtml, getAvailableShapes, getLockMode, getNextLockMode, getShapeCatalog, hasExceededOffset, isChildLayout, isContainerLayout, isContentLocked, isPositionLocked, isStyleLocked, isValidShape, layerToHtmlStandalone, nextShape, pointInObject, removeCropControls, runLayout, scaledSize, switchClip, switchShape, topLeft, wrapContainerAroundChild };
+export { type AlignItems, type AlignSelf, type AttachSnapshot, CanvasGuides, type ChildData, type ChildLayout, type ContainerData, type ContainerLayout, ContainerizeSession, type ControlOption, type Controllable, CustomTextbox, DesignCanvas, type EditorConfig, FabCircle, FabPath, FabRect, FabricEditor, type FlexDirection, type FontConfig, type FontsConfig, HEART_PATH, HEXAGON_PATH, type HistoryCallbacks, HistoryManager, type HistoryState, type HtmlLayerOutput, type HtmlRenderOptions, ImageDropHandler, ImageFrame, type ImageLayerOptions, InsertChildSession, type JustifyContent, type LayerData, LayerManager, type LayoutData, LayoutManager, type LayoutManagerCallbacks, type LayoutSession, type LockMode$1 as LockMode, type Lockable, MIN_PAD, MaskManager, type ObjectControlsConfig, PendingUploadsManager, PersistenceManager, ResizeSession, type ResizeSnapResult, SHAPE_PATHS, type SaveOptions, type SaveResult, type SelectionCallbacks, SelectionManager, type ShapeCatalogEntry, type ShapeLayerOptions, type ShapePath, type ShapeType, type SizeMode, type SnappingConfig, SnappingManager, type TextLayerOptions, addCircleClip, addCropControls, addHeartClip, addHexagonClip, antiScale, applyClip, applyLockMode, clampTopLeft, createCircle, createHeart, createHexagon, createImage, createPathShape, createRect, createShape, fabricToHtml, getAvailableShapes, getLockMode, getNextLockMode, getShapeCatalog, hasExceededOffset, initYoga, isChild, isChildLayout, isContainer, isContainerLayout, isContentLocked, isPositionLocked, isStyleLocked, isValidShape, isYogaReady, layerToHtmlStandalone, nextShape, pointInObject, removeCropControls, runLayout, scaledSize, switchClip, switchShape, topLeft, wrapContainerAroundChild, yogaLayout };

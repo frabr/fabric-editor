@@ -149,13 +149,18 @@ declare class CustomTextbox extends Textbox {
 type LockMode$1 = "free" | "position" | "full";
 
 /**
- * Layout system types — "springs & struts" model.
+ * Layout system types — Flexbox model backed by Yoga.
  *
- * A container is a regular Fabric object with `layout.role === "container"`.
- * A child is any Fabric object with `layout.parentId` pointing to a container's layerId.
+ * Every participating Fabric object carries a single `layout: LayoutData`
+ * property with two independent, optional blocks:
  *
- * The layout block is stored as a custom property on each Fabric object and
- * survives serialization via toObject(["layout"]).
+ * - `container`: present when the object has children (is a parent)
+ * - `child`: present when the object is inside another container
+ *
+ * Both can coexist — a nested container is both a parent and a child.
+ *
+ * Outside a container, objects are positioned absolutely by Fabric.
+ * Inside a container, objects follow Flexbox rules (Yoga engine).
  */
 /**
  * Size mode per axis:
@@ -163,40 +168,58 @@ type LockMode$1 = "free" | "position" | "full";
  * - "fixed": container keeps its size, content must adapt (shrink/clip)
  */
 type SizeMode = "hug" | "fixed";
-/** Layout block carried by a **container**. */
-interface ContainerLayout {
-    role: "container";
+/** Cross-axis alignment for a single child (maps to Yoga alignSelf). */
+type AlignSelf = "auto" | "stretch" | "flex-start" | "flex-end" | "center";
+/** Main-axis distribution (maps to Yoga justifyContent). */
+type JustifyContent = "flex-start" | "flex-end" | "center" | "space-between" | "space-around";
+/** Cross-axis alignment for all children (maps to Yoga alignItems). */
+type AlignItems = "stretch" | "flex-start" | "flex-end" | "center";
+/** Flex direction (maps to Yoga flexDirection). */
+type FlexDirection = "column" | "row";
+/** "I am a parent" — present when the object has children. */
+interface ContainerData {
     sizeMode: {
         x: SizeMode;
         y: SizeMode;
     };
-    /** Taille minimum définie par resize manuel. Le container ne descendra
-     *  jamais en dessous, même si le contenu est plus petit. */
+    /** Minimum size set by manual resize. Container never shrinks below this. */
     minSize?: {
         w: number;
         h: number;
     };
-    /** Overflow behavior when content exceeds fixed size */
+    /** Overflow behavior when content exceeds fixed size. */
     overflow?: "clip" | "shrink";
-}
-type AnchorX = "left" | "right";
-type AnchorY = "top" | "bottom";
-/** Layout block carried by a **child** (element inside a container). */
-interface ChildLayout {
-    parentId: string;
-    margins: {
-        left: number;
-        right: number;
+    /** Flex direction: column (vertical, default) or row (horizontal). */
+    flexDirection?: FlexDirection;
+    /** Gap between children in the main axis direction (pixels). */
+    gap?: number;
+    /** Padding between container edges and children. */
+    padding?: {
         top: number;
+        right: number;
         bottom: number;
+        left: number;
     };
-    /** Point d'ancrage horizontal (défaut: "left") */
-    anchorX?: AnchorX;
-    /** Point d'ancrage vertical (défaut: "top") */
-    anchorY?: AnchorY;
+    /** Cross-axis alignment for children (default: "flex-start"). */
+    alignItems?: AlignItems;
+    /** Main-axis distribution (default: "flex-start"). */
+    justifyContent?: JustifyContent;
 }
-/** Union — the `layout` property on any participating Fabric object. */
-type LayoutData = ContainerLayout | ChildLayout;
+/** "I am a child" — present when the object is inside a container. */
+interface ChildData {
+    parentId: string;
+    /** Override the container's alignItems for this child. */
+    alignSelf?: AlignSelf;
+    /** How much this child grows to fill remaining space (default: 0). */
+    flexGrow?: number;
+    /** Position in the flex flow (lower = earlier). Children without order go by insertion order. */
+    order?: number;
+}
+/** The `layout` property on any participating Fabric object. */
+interface LayoutData {
+    container?: ContainerData;
+    child?: ChildData;
+}
 
 interface FontConfig {
     family: string;
@@ -212,7 +235,7 @@ interface LayerData {
     scaleX?: number;
     scaleY?: number;
     angle?: number;
-    fill?: string;
+    fill?: string | Record<string, unknown>;
     stroke?: string;
     strokeWidth?: number;
     opacity?: number;

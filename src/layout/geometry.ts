@@ -87,20 +87,6 @@ export function hasExceededOffset(
   );
 }
 
-/** Measure the bounding box that children need (margins included). */
-export function measureChildren(
-  children: ResolvedChild[],
-): { w: number; h: number } {
-  let w = 0;
-  let h = 0;
-  for (const { obj, cl } of children) {
-    const { w: childW, h: childH } = scaledSize(obj);
-    w = Math.max(w, cl.margins.left + childW + cl.margins.right);
-    h = Math.max(h, cl.margins.top + childH + cl.margins.bottom);
-  }
-  return { w, h };
-}
-
 /** Refresh Fabric's internal coordinate caches. */
 export function syncCoords(
   container: FabricObject,

@@ -17,6 +17,7 @@ import { LayerManager } from "./LayerManager";
 import { PersistenceManager } from "./PersistenceManager";
 import { HistoryManager } from "./HistoryManager";
 import type { LayerData, FontConfig } from "./types";
+import { initYoga } from "./layout/yoga-engine";
 
 /**
  * Configuration pour l'éditeur Node.js
@@ -84,6 +85,7 @@ export class NodeEditor {
     backgroundImageUrl: string,
     layers: LayerData[] = []
   ): Promise<void> {
+    await initYoga();
     await this.layers.loadBackgroundImage(backgroundImageUrl);
 
     if (layers.length > 0) {

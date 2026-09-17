@@ -126,6 +126,15 @@ import {
 
 // src/controls/CustomTextbox.ts
 import { Textbox, Point } from "#fabric";
+
+// src/shapes/controlsMixin.ts
+function installControlOptions(proto, controls) {
+  proto.getControlOptions = function() {
+    return controls;
+  };
+}
+
+// src/controls/CustomTextbox.ts
 var CustomTextbox = class extends Textbox {
   constructor(text, options) {
     const hasExplicitWidth = options?.width != null;
@@ -334,6 +343,7 @@ var CustomTextbox = class extends Textbox {
     };
   }
 };
+installControlOptions(CustomTextbox.prototype, ["color", "font"]);
 
 // src/shapes/factories.ts
 import {
@@ -538,6 +548,7 @@ var FabRect = class extends Rect {
 FabRect.type = "Rect";
 FabRect.customProperties = ["layerId", "layerType", "lockMode", "lockContent"];
 installLockMethods(FabRect.prototype);
+installControlOptions(FabRect.prototype, ["outline", "clip", "color", "corner_radius"]);
 classRegistry.setClass(FabRect, "Rect");
 
 // src/shapes/FabCircle.ts
@@ -606,6 +617,7 @@ var FabCircle = class extends Circle {
 FabCircle.type = "Circle";
 FabCircle.customProperties = ["layerId", "layerType", "lockMode", "lockContent"];
 installLockMethods(FabCircle.prototype);
+installControlOptions(FabCircle.prototype, ["outline", "clip", "color"]);
 classRegistry2.setClass(FabCircle, "Circle");
 
 // src/shapes/FabPath.ts
@@ -706,6 +718,7 @@ _FabPath.type = "Path";
 _FabPath.customProperties = ["layerId", "layerType", "lockMode", "lockContent"];
 var FabPath = _FabPath;
 installLockMethods(FabPath.prototype);
+installControlOptions(FabPath.prototype, ["outline", "clip", "color"]);
 classRegistry3.setClass(FabPath, "Path");
 
 // src/shapes/factories.ts
@@ -1266,6 +1279,7 @@ var ImageFrame = class _ImageFrame extends Group {
     });
   }
 };
+installControlOptions(ImageFrame.prototype, ["clip"]);
 classRegistry4.setClass(ImageFrame);
 classRegistry4.setClass(ImageFrame, "ImageFrame");
 
@@ -1941,6 +1955,14 @@ var HistoryManager = class {
   }
 };
 
+// src/layout/yoga-engine.ts
+var yoga = null;
+async function initYoga() {
+  if (yoga) return;
+  const { loadYoga } = await import("yoga-layout/load");
+  yoga = await loadYoga();
+}
+
 // src/node.ts
 var require2 = createRequire(import.meta.url);
 var _NodeEditor = class _NodeEditor {
@@ -1965,6 +1987,7 @@ var _NodeEditor = class _NodeEditor {
    * Initialise l'éditeur avec une image de fond et des calques optionnels
    */
   async initialize(backgroundImageUrl, layers = []) {
+    await initYoga();
     await this.layers.loadBackgroundImage(backgroundImageUrl);
     if (layers.length > 0) {
       await this.layers.loadLayers(layers);

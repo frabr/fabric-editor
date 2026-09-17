@@ -1,4 +1,4 @@
-import { FabricObject, FabricImage, Point } from "#fabric";
+import { FabricObject, FabricImage, Point, Gradient } from "#fabric";
 import { DesignCanvas } from "./DesignCanvas";
 import { LayerManager } from "./LayerManager";
 import { SelectionManager } from "./SelectionManager";
@@ -14,6 +14,7 @@ import { isPositionLocked } from "./locking";
 import { applyControlStyle } from "./ui/controls";
 import { hexAlpha } from "./ui/color";
 import type { EditorConfig, LayerData, FontsConfig, ShapeType } from "./types";
+import { initYoga } from "./layout/yoga-engine";
 
 /**
  * Éditeur d'images basé sur Fabric.js
@@ -22,11 +23,6 @@ import type { EditorConfig, LayerData, FontsConfig, ShapeType } from "./types";
  * pour l'édition d'images avec calques.
  */
 export class FabricEditor {
-  // TODO: remove — validation log pour vérifier que le link: est live
-  static {
-    console.log("[fabric-editor] ✓ linked local build 3");
-  }
-
   readonly canvas: DesignCanvas;
   readonly layers: LayerManager;
   readonly selection: SelectionManager;
@@ -92,6 +88,7 @@ export class FabricEditor {
   async init(): Promise<void> {
     if (this._initialized) return;
     this._initialized = true;
+    await initYoga();
     if (this.config.fonts && Object.keys(this.config.fonts).length > 0) {
       await this.loadFonts(this.config.fonts);
     }
@@ -592,6 +589,89 @@ export class FabricEditor {
     if (!obj) return;
 
     obj.set({ opacity: opacity / 100 });
+    this.canvas.renderAll();
+  }
+
+  // ==================== Stroke controls ====================
+
+  /**
+   * Enable or disable stroke on the selected object.
+   * When enabling, restores previous stroke color or defaults to black.
+   */
+  setStrokeEnabled(enabled: boolean): void {
+    const obj = this.selection.current;
+    if (!obj) return;
+    if (enabled) {
+      obj.set({ stroke: obj.stroke || "#000000", strokeWidth: obj.strokeWidth || 4 });
+    } else {
+      obj.set({ stroke: null, strokeWidth: 0 });
+    }
+    this.canvas.renderAll();
+  }
+
+  /**
+   * Set stroke width on the selected object.
+   */
+  setStrokeWidth(width: number): void {
+    const obj = this.selection.current;
+    if (!obj) return;
+    obj.set({ strokeWidth: width });
+    if (width > 0 && !obj.stroke) {
+      obj.set({ stroke: "#000000" });
+    }
+    this.canvas.renderAll();
+  }
+
+  /**
+   * Set stroke color on the selected object. Accepts any CSS color (hex, rgba).
+   */
+  setStrokeColor(color: string): void {
+    const obj = this.selection.current;
+    if (!obj) return;
+    obj.set({ stroke: color });
+    if (!obj.strokeWidth) {
+      obj.set({ strokeWidth: 4 });
+    }
+    this.canvas.renderAll();
+  }
+
+  // ==================== Fill controls ====================
+
+  /**
+   * Set fill color (solid) on the selected object.
+   * Unlike changeColor(), always sets fill regardless of stroke state.
+   */
+  setFillColor(color: string): void {
+    const obj = this.selection.current;
+    if (!obj) return;
+    obj.set({ fill: color });
+    this.canvas.renderAll();
+  }
+
+  /**
+   * Set a linear gradient fill on the selected object.
+   */
+  setFillGradient(color1: string, color2: string, angleDeg: number): void {
+    const obj = this.selection.current;
+    if (!obj) return;
+    const rad = (angleDeg * Math.PI) / 180;
+    const cos = Math.cos(rad);
+    const sin = Math.sin(rad);
+    const gradient = new Gradient({
+      type: "linear",
+      gradientUnits: "percentage",
+      coords: {
+        x1: 0.5 - cos / 2,
+        y1: 0.5 - sin / 2,
+        x2: 0.5 + cos / 2,
+        y2: 0.5 + sin / 2,
+      },
+      colorStops: [
+        { offset: 0, color: color1 },
+        { offset: 1, color: color2 },
+      ],
+    });
+    obj.set({ fill: gradient });
     this.canvas.renderAll();
   }
 

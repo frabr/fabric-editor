@@ -1,7 +1,9 @@
-export { runLayout } from "./reconcile";
-export { ResizeSession } from "./resize-session";
-export type { LayoutData, ContainerLayout, ChildLayout, SizeMode, AnchorX, AnchorY, AttachSnapshot, ResolvedChild } from "./types";
-export { isContainerLayout, isChildLayout, MIN_PAD } from "./types";
-export { scaledSize, topLeft, pointInObject, isTextObject, clampTopLeft, hasExceededOffset, measureChildren, syncCoords, cornerToAxes } from "./geometry";
+export { runLayout, relayoutSingle, relayoutSubContainers } from "./reconcile";
+export { ResizeSession, sortChildrenByOrder, resolveContainerChildren } from "./resize-session";
+export type { LayoutData, ContainerData, ChildData, ContainerLayout, ChildLayout, SizeMode, AlignSelf, AlignItems, JustifyContent, FlexDirection, AttachSnapshot, ResolvedChild, LayoutSession } from "./types";
+export { isContainer, isChild, isContainerLayout, isChildLayout, MIN_PAD } from "./types";
+export { scaledSize, topLeft, pointInObject, isTextObject, clampTopLeft, hasExceededOffset, syncCoords, cornerToAxes } from "./geometry";
 export type { ResizeAxes } from "./geometry";
-export { AttachSession, wrapContainerAroundChild } from "./attach-session";
+export { ContainerizeSession, wrapContainerAroundChild } from "./containerize-session";
+export { InsertChildSession } from "./insert-child-session";
+export { initYoga, isYogaReady, yogaLayout } from "./yoga-engine";

@@ -1,7 +1,9 @@
 "use strict";
+var __create = Object.create;
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
 var __getOwnPropNames = Object.getOwnPropertyNames;
+var __getProtoOf = Object.getPrototypeOf;
 var __hasOwnProp = Object.prototype.hasOwnProperty;
 var __esm = (fn, res) => function __init() {
   return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
@@ -18,6 +20,14 @@ var __copyProps = (to, from, except, desc) => {
   }
   return to;
 };
+var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__getProtoOf(mod)) : {}, __copyProps(
+  // If the importer is in node compatibility mode or this is not an ESM
+  // file that has been converted to a CommonJS file using a Babel-
+  // compatible transform (i.e. "__esModule" has not been set), then set
+  // "default" to the CommonJS "module.exports" for node compatibility.
+  isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target,
+  mod
+));
 var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
 // src/PendingUploadsManager.ts
@@ -146,6 +156,15 @@ var import_fabric8 = require("#fabric");
 
 // src/controls/CustomTextbox.ts
 var import_fabric = require("#fabric");
+
+// src/shapes/controlsMixin.ts
+function installControlOptions(proto, controls) {
+  proto.getControlOptions = function() {
+    return controls;
+  };
+}
+
+// src/controls/CustomTextbox.ts
 var CustomTextbox = class extends import_fabric.Textbox {
   constructor(text, options) {
     const hasExplicitWidth = options?.width != null;
@@ -354,6 +373,7 @@ var CustomTextbox = class extends import_fabric.Textbox {
     };
   }
 };
+installControlOptions(CustomTextbox.prototype, ["color", "font"]);
 
 // src/shapes/factories.ts
 var import_fabric6 = require("#fabric");
@@ -554,6 +574,7 @@ var FabRect = class extends import_fabric3.Rect {
 FabRect.type = "Rect";
 FabRect.customProperties = ["layerId", "layerType", "lockMode", "lockContent"];
 installLockMethods(FabRect.prototype);
+installControlOptions(FabRect.prototype, ["outline", "clip", "color", "corner_radius"]);
 import_fabric3.classRegistry.setClass(FabRect, "Rect");
 
 // src/shapes/FabCircle.ts
@@ -622,6 +643,7 @@ var FabCircle = class extends import_fabric4.Circle {
 FabCircle.type = "Circle";
 FabCircle.customProperties = ["layerId", "layerType", "lockMode", "lockContent"];
 installLockMethods(FabCircle.prototype);
+installControlOptions(FabCircle.prototype, ["outline", "clip", "color"]);
 import_fabric4.classRegistry.setClass(FabCircle, "Circle");
 
 // src/shapes/FabPath.ts
@@ -722,6 +744,7 @@ _FabPath.type = "Path";
 _FabPath.customProperties = ["layerId", "layerType", "lockMode", "lockContent"];
 var FabPath = _FabPath;
 installLockMethods(FabPath.prototype);
+installControlOptions(FabPath.prototype, ["outline", "clip", "color"]);
 import_fabric5.classRegistry.setClass(FabPath, "Path");
 
 // src/shapes/factories.ts
@@ -1276,6 +1299,7 @@ var ImageFrame = class _ImageFrame extends import_fabric7.Group {
     });
   }
 };
+installControlOptions(ImageFrame.prototype, ["clip"]);
 import_fabric7.classRegistry.setClass(ImageFrame);
 import_fabric7.classRegistry.setClass(ImageFrame, "ImageFrame");
 
@@ -1951,6 +1975,14 @@ var HistoryManager = class {
   }
 };
 
+// src/layout/yoga-engine.ts
+var yoga = null;
+async function initYoga() {
+  if (yoga) return;
+  const { loadYoga } = await import("yoga-layout/load");
+  yoga = await loadYoga();
+}
+
 // src/node.ts
 var import_meta = {};
 var require2 = (0, import_module.createRequire)(import_meta.url);
@@ -1976,6 +2008,7 @@ var _NodeEditor = class _NodeEditor {
    * Initialise l'éditeur avec une image de fond et des calques optionnels
    */
   async initialize(backgroundImageUrl, layers = []) {
+    await initYoga();
     await this.layers.loadBackgroundImage(backgroundImageUrl);
     if (layers.length > 0) {
       await this.layers.loadLayers(layers);

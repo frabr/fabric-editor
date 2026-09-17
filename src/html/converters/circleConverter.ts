@@ -4,6 +4,7 @@ import {
   buildTransform,
   stylesToString,
   getTransformOrigin,
+  fillToCss,
 } from "../cssUtils";
 
 /**
@@ -50,7 +51,7 @@ export function circleToHtml(layer: CircleLayerData, zIndex: number): HtmlLayerO
   styles["border-radius"] = "50%";
 
   // Couleurs
-  styles.background = fill || "transparent";
+  styles.background = fillToCss(fill);
 
   if (opacity !== 1) {
     styles.opacity = String(opacity);

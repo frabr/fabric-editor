@@ -1,11 +1,16 @@
 /**
- * Layout system types — "springs & struts" model.
+ * Layout system types — Flexbox model backed by Yoga.
  *
- * A container is a regular Fabric object with `layout.role === "container"`.
- * A child is any Fabric object with `layout.parentId` pointing to a container's layerId.
+ * Every participating Fabric object carries a single `layout: LayoutData`
+ * property with two independent, optional blocks:
  *
- * The layout block is stored as a custom property on each Fabric object and
- * survives serialization via toObject(["layout"]).
+ * - `container`: present when the object has children (is a parent)
+ * - `child`: present when the object is inside another container
+ *
+ * Both can coexist — a nested container is both a parent and a child.
+ *
+ * Outside a container, objects are positioned absolutely by Fabric.
+ * Inside a container, objects follow Flexbox rules (Yoga engine).
  */
 
 /**
@@ -15,45 +20,96 @@
  */
 export type SizeMode = "hug" | "fixed";
 
-/** Layout block carried by a **container**. */
-export interface ContainerLayout {
-  role: "container";
+/** Cross-axis alignment for a single child (maps to Yoga alignSelf). */
+export type AlignSelf = "auto" | "stretch" | "flex-start" | "flex-end" | "center";
+
+/** Main-axis distribution (maps to Yoga justifyContent). */
+export type JustifyContent = "flex-start" | "flex-end" | "center" | "space-between" | "space-around";
+
+/** Cross-axis alignment for all children (maps to Yoga alignItems). */
+export type AlignItems = "stretch" | "flex-start" | "flex-end" | "center";
+
+/** Flex direction (maps to Yoga flexDirection). */
+export type FlexDirection = "column" | "row";
+
+/** "I am a parent" — present when the object has children. */
+export interface ContainerData {
   sizeMode: { x: SizeMode; y: SizeMode };
-  /** Taille minimum définie par resize manuel. Le container ne descendra
-   *  jamais en dessous, même si le contenu est plus petit. */
+  /** Minimum size set by manual resize. Container never shrinks below this. */
   minSize?: { w: number; h: number };
-  /** Overflow behavior when content exceeds fixed size */
+  /** Overflow behavior when content exceeds fixed size. */
   overflow?: "clip" | "shrink";
+  /** Flex direction: column (vertical, default) or row (horizontal). */
+  flexDirection?: FlexDirection;
+  /** Gap between children in the main axis direction (pixels). */
+  gap?: number;
+  /** Padding between container edges and children. */
+  padding?: { top: number; right: number; bottom: number; left: number };
+  /** Cross-axis alignment for children (default: "flex-start"). */
+  alignItems?: AlignItems;
+  /** Main-axis distribution (default: "flex-start"). */
+  justifyContent?: JustifyContent;
 }
 
-export type AnchorX = "left" | "right";
-export type AnchorY = "top" | "bottom";
-
-/** Layout block carried by a **child** (element inside a container). */
-export interface ChildLayout {
+/** "I am a child" — present when the object is inside a container. */
+export interface ChildData {
   parentId: string;
-  margins: { left: number; right: number; top: number; bottom: number };
-  /** Point d'ancrage horizontal (défaut: "left") */
-  anchorX?: AnchorX;
-  /** Point d'ancrage vertical (défaut: "top") */
-  anchorY?: AnchorY;
+  /** Override the container's alignItems for this child. */
+  alignSelf?: AlignSelf;
+  /** How much this child grows to fill remaining space (default: 0). */
+  flexGrow?: number;
+  /** Position in the flex flow (lower = earlier). Children without order go by insertion order. */
+  order?: number;
 }
 
-/** Union — the `layout` property on any participating Fabric object. */
-export type LayoutData = ContainerLayout | ChildLayout;
+/** The `layout` property on any participating Fabric object. */
+export interface LayoutData {
+  container?: ContainerData;
+  child?: ChildData;
+}
 
-/** Resolved child: a Fabric object paired with its ChildLayout. */
+/** Resolved child: a Fabric object paired with its ChildData. */
 export interface ResolvedChild {
   obj: import("#fabric").FabricObject;
-  cl: ChildLayout;
+  cl: ChildData;
 }
 
-export function isContainerLayout(l: LayoutData): l is ContainerLayout {
-  return "role" in l && l.role === "container";
+// ── Type guards ────────────────────────────────────────────────────
+
+export function isContainer(l: LayoutData): boolean {
+  return l.container != null;
 }
 
-export function isChildLayout(l: LayoutData): l is ChildLayout {
-  return "parentId" in l;
+export function isChild(l: LayoutData): boolean {
+  return l.child != null;
+}
+
+// ── Deprecated aliases (to be removed) ─────────────────────────────
+
+/** @deprecated Use `layout.container != null` instead. */
+export type ContainerLayout = LayoutData & { container: ContainerData };
+/** @deprecated Use `layout.child != null` instead. */
+export type ChildLayout = ChildData;
+
+/** @deprecated Use `isContainer` instead. */
+export function isContainerLayout(l: LayoutData): boolean {
+  return isContainer(l);
+}
+
+/** @deprecated Use `isChild` instead. */
+export function isChildLayout(l: LayoutData): boolean {
+  return isChild(l);
+}
+
+// ── Session interface ───────────────────────────────────────────────
+
+/** Common interface for layout sessions (ContainerizeSession, InsertChildSession). */
+export interface LayoutSession {
+  handleMoving(cursor: { x: number; y: number }): "anchored" | "exited";
+  commit(): () => void;
+  rollback(): void;
+  readonly container: import("#fabric").FabricObject;
+  readonly child: import("#fabric").FabricObject;
 }
 
 // ── Layout constants ────────────────────────────────────────────────

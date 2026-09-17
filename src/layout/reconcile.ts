@@ -1,9 +1,9 @@
 /**
- * Layout reconciliation — "springs & struts" model.
+ * Layout reconciliation — Flexbox model backed by Yoga.
  *
  * Takes the declared layout state (container/child relationships, size modes,
- * margins) and resolves concrete positions and dimensions. Idempotent:
- * running it twice on the same state produces the same result.
+ * margins, flex props) and resolves concrete positions and dimensions.
+ * Idempotent: running it twice on the same state produces the same result.
  *
  * Supports two size modes per axis:
  * - "hug": container adapts to content (bottom-up)
@@ -19,17 +19,10 @@
  * changes, move, etc.).
  */
 import type { FabricObject, FabricText } from "#fabric";
-import {
-  isContainerLayout,
-  type LayoutData,
-  type ContainerLayout,
-} from "./types";
-import { scaledSize, setShapeSize, isTextObject, measureChildren, syncCoords } from "./geometry";
-import {
-  resolveContainerChildren,
-  prepareTextChildren,
-  positionChildren,
-} from "./resize-session";
+import { type LayoutData, type ContainerData, type ChildData } from "./types";
+import { scaledSize, setShapeSize, isTextObject, syncCoords, topLeft } from "./geometry";
+import { resolveContainerChildren, sortChildrenByOrder } from "./resize-session";
+import { yogaLayout } from "./yoga-engine";
 
 // ── public entry point ───────────────────────────────────────────────
 
@@ -39,14 +32,71 @@ import {
  * (content changes, mode/margin/anchor changes, move).
  */
 export function runLayout(objects: FabricObject[]): void {
+  // Collect all containers
+  const containers: { obj: FabricObject; cd: ContainerData }[] = [];
   for (const obj of objects) {
     const layout = obj.get("layout") as LayoutData | undefined;
-    if (!layout || !isContainerLayout(layout)) continue;
+    if (layout?.container) {
+      containers.push({ obj, cd: layout.container });
+    }
+  }
 
-    const children = resolveContainerChildren(objects, obj);
+  // Sort bottom-up: nested containers (those with child block) go first,
+  // so their size is resolved before their parent lays them out.
+  containers.sort((a, b) => {
+    const aLayout = a.obj.get("layout") as LayoutData;
+    const bLayout = b.obj.get("layout") as LayoutData;
+    const aIsNested = aLayout.child ? 1 : 0;
+    const bIsNested = bLayout.child ? 1 : 0;
+    return bIsNested - aIsNested;
+  });
+
+  for (const { obj, cd } of containers) {
+    const children = sortChildrenByOrder(resolveContainerChildren(objects, obj));
     if (children.length === 0) continue;
 
-    layoutContainer(obj, layout, children);
+    layoutContainer(obj, cd, children);
+    relayoutSubContainers(children, objects);
+  }
+}
+
+/**
+ * Run layout on a single container (not the full canvas).
+ * Used during drag sessions when we need to update a sub-container's
+ * children without triggering a global relayout.
+ */
+export function relayoutSingle(
+  container: FabricObject,
+  cd: ContainerData,
+  allObjects: FabricObject[],
+): void {
+  const children = sortChildrenByOrder(resolveContainerChildren(allObjects, container));
+  if (children.length === 0) return;
+  layoutContainer(container, cd, children);
+  relayoutSubContainers(children, allObjects);
+}
+
+/**
+ * Recursively reposition children that are themselves containers.
+ * After a parent is laid out, each sub-container's children need
+ * repositioning because the sub-container's position changed.
+ */
+export function relayoutSubContainers(
+  children: { obj: FabricObject; cl: ChildData }[],
+  allObjects: FabricObject[],
+): void {
+  for (const { obj } of children) {
+    const childLayout = obj.get("layout") as LayoutData | undefined;
+    if (!childLayout?.container) continue;
+    const subChildren = sortChildrenByOrder(resolveContainerChildren(allObjects, obj));
+    if (subChildren.length === 0) continue;
+
+    const tl = topLeft(obj);
+    const { w, h } = scaledSize(obj);
+    yogaLayout(subChildren, tl.x, tl.y, w, h, childLayout.container);
+    syncCoords(obj, subChildren);
+    // Recurse deeper
+    relayoutSubContainers(subChildren, allObjects);
   }
 }
 
@@ -54,14 +104,14 @@ export function runLayout(objects: FabricObject[]): void {
 
 function layoutContainer(
   container: FabricObject,
-  layout: ContainerLayout,
-  children: { obj: FabricObject; cl: import("./types").ChildLayout }[],
+  cd: ContainerData,
+  children: { obj: FabricObject; cl: ChildData }[],
 ): void {
-  const modeX = layout.sizeMode.x;
-  const modeY = layout.sizeMode.y;
+  const modeX = cd.sizeMode.x;
+  const modeY = cd.sizeMode.y;
 
-  const minW = layout.minSize?.w ?? 0;
-  const minH = layout.minSize?.h ?? 0;
+  const minW = cd.minSize?.w ?? 0;
+  const minH = cd.minSize?.h ?? 0;
 
   const { w: visW, h: visH } = scaledSize(container);
   const currentW = Math.max(visW, minW);
@@ -71,9 +121,13 @@ function layoutContainer(
 
   if (!bothFixed) restoreTextFontSizes(children);
 
-  prepareTextChildren(children, modeX, currentW);
+  // Use true top-left (handles center-origin shapes like FabRect)
+  const tl = topLeft(container);
 
-  const { w: requiredW, h: requiredH } = measureChildren(children);
+  // Yoga computes positions + sizes in a single pass (text measure via setMeasureFunc)
+  const { w: requiredW, h: requiredH } = yogaLayout(
+    children, tl.x, tl.y, currentW, currentH, cd,
+  );
 
   const finalW = modeX === "hug" ? Math.max(requiredW, minW) : currentW;
   const finalH = modeY === "hug" ? Math.max(requiredH, minH) : currentH;
@@ -81,10 +135,14 @@ function layoutContainer(
   setShapeSize(container, finalW, finalH);
 
   if (bothFixed) {
-    shrinkOverflowingText(children, finalW, finalH);
+    shrinkOverflowingText(children, finalW, finalH, cd);
   }
 
-  positionChildren(children, container.left, container.top, finalW, finalH);
+  // Re-run with final dimensions if hug mode changed the size
+  if (finalW !== currentW || finalH !== currentH) {
+    const tl2 = topLeft(container);
+    yogaLayout(children, tl2.x, tl2.y, finalW, finalH, cd);
+  }
 
   syncCoords(container, children);
 }
@@ -92,15 +150,18 @@ function layoutContainer(
 
 /** Shrink text children that overflow when both axes are fixed. */
 function shrinkOverflowingText(
-  children: { obj: FabricObject; cl: import("./types").ChildLayout }[],
+  children: { obj: FabricObject; cl: ChildData }[],
   containerW: number,
-  containerH: number
+  containerH: number,
+  cd: ContainerData,
 ): void {
-  for (const { obj, cl } of children) {
+  const pad = cd.padding ?? { top: 0, right: 0, bottom: 0, left: 0 };
+  const availW = containerW - pad.left - pad.right;
+  const availH = containerH - pad.top - pad.bottom;
+
+  for (const { obj } of children) {
     if (!isTextObject(obj)) continue;
 
-    const availW = containerW - cl.margins.left - cl.margins.right;
-    const availH = containerH - cl.margins.top - cl.margins.bottom;
     const { h: childH } = scaledSize(obj);
 
     if (childH > availH) {
@@ -113,7 +174,7 @@ function shrinkOverflowingText(
 
 /** Restaurer la fontSize originale des textes qui avaient été shrinkés. */
 function restoreTextFontSizes(
-  children: { obj: FabricObject; cl: import("./types").ChildLayout }[],
+  children: { obj: FabricObject; cl: ChildData }[],
 ): void {
   for (const { obj } of children) {
     if (!isTextObject(obj)) continue;

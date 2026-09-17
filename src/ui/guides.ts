@@ -1,6 +1,6 @@
 import { FabricObject, Line, Rect, Pattern } from "#fabric";
 import type { DesignCanvas } from "../DesignCanvas";
-import { isChildLayout, type ChildLayout } from "../layout/types";
+import type { LayoutData } from "../layout/types";
 import { scaledSize, topLeft } from "../layout/geometry";
 import { hexAlpha } from "./color";
 
@@ -142,8 +142,9 @@ export class CanvasGuides {
   }
 
   /**
-   * Show layout guides: a dashed outline around the container and
-   * hatched overlays for each non-zero margin zone.
+   * Show layout guides: a dashed outline around the container,
+   * hatched overlays for each non-zero margin zone, and anchor
+   * indicators (`<-->`) on the edges where the child is pinned.
    */
   showLayoutGuides(container: FabricObject, child: FabricObject): void {
     this.clear();
@@ -160,22 +161,146 @@ export class CanvasGuides {
       strokeDashArray: [6, 4],
     });
 
-    // Margin zones (hatched)
-    const layout = child.get?.("layout") as ChildLayout | undefined;
-    if (!layout || !isChildLayout(layout)) return;
-    const m = layout.margins;
+    // Padding zones (hatched)
+    const containerLayout = container.get?.("layout") as LayoutData | undefined;
+    const p = containerLayout?.container?.padding;
+    if (!p) return;
 
     const hatch = this.hatchPattern;
     const border = hexAlpha(this.color, 0.3);
 
-    if (m.left > 0)
-      this.addRect({ left: ctl.x, top: ctl.y, width: m.left, height: ch, fill: hatch, stroke: border, strokeWidth: 0.5 });
-    if (m.right > 0)
-      this.addRect({ left: ctl.x + cw - m.right, top: ctl.y, width: m.right, height: ch, fill: hatch, stroke: border, strokeWidth: 0.5 });
-    if (m.top > 0)
-      this.addRect({ left: ctl.x + m.left, top: ctl.y, width: cw - m.left - m.right, height: m.top, fill: hatch, stroke: border, strokeWidth: 0.5 });
-    if (m.bottom > 0)
-      this.addRect({ left: ctl.x + m.left, top: ctl.y + ch - m.bottom, width: cw - m.left - m.right, height: m.bottom, fill: hatch, stroke: border, strokeWidth: 0.5 });
+    if (p.left > 0)
+      this.addRect({ left: ctl.x, top: ctl.y, width: p.left, height: ch, fill: hatch, stroke: border, strokeWidth: 0.5 });
+    if (p.right > 0)
+      this.addRect({ left: ctl.x + cw - p.right, top: ctl.y, width: p.right, height: ch, fill: hatch, stroke: border, strokeWidth: 0.5 });
+    if (p.top > 0)
+      this.addRect({ left: ctl.x + p.left, top: ctl.y, width: cw - p.left - p.right, height: p.top, fill: hatch, stroke: border, strokeWidth: 0.5 });
+    if (p.bottom > 0)
+      this.addRect({ left: ctl.x + p.left, top: ctl.y + ch - p.bottom, width: cw - p.left - p.right, height: p.bottom, fill: hatch, stroke: border, strokeWidth: 0.5 });
+
+    // Padding arrows
+    const childTL = topLeft(child);
+    const { w: childW, h: childH } = scaledSize(child);
+
+    if (p.left > 0) {
+      this.addAnchorArrow("horizontal", ctl.x, childTL.y + childH / 2, p.left);
+    }
+    if (p.top > 0) {
+      this.addAnchorArrow("vertical", childTL.x + childW / 2, ctl.y, p.top);
+    }
+  }
+
+  /**
+   * Show insert-session guides: a dashed container outline + a hatched
+   * gap indicator between the new child and its nearest neighbor.
+   * No margin-to-edge indicators (those are for ContainerizeSession).
+   */
+  showInsertGuides(
+    container: FabricObject,
+    children: FabricObject[],
+    direction: "column" | "row",
+  ): void {
+    this.clear();
+
+    const { w: cw, h: ch } = scaledSize(container);
+    const ctl = topLeft(container);
+
+    // Dashed container outline
+    this.addRect({
+      left: ctl.x, top: ctl.y,
+      width: cw, height: ch,
+      fill: "transparent",
+      stroke: this.color, strokeWidth: 2,
+      strokeDashArray: [6, 4],
+    });
+
+    if (children.length < 2) return;
+
+    const isColumn = direction === "column";
+    const hatch = this.hatchPattern;
+    const border = hexAlpha(this.color, 0.3);
+
+    // Sort children by position in main axis
+    const sorted = [...children]
+      .map(obj => ({ obj, tl: topLeft(obj), size: scaledSize(obj) }))
+      .sort((a, b) => isColumn
+        ? a.tl.y - b.tl.y
+        : a.tl.x - b.tl.x,
+      );
+
+    // Draw gap zones between consecutive children
+    for (let i = 0; i < sorted.length - 1; i++) {
+      const curr = sorted[i];
+      const next = sorted[i + 1];
+
+      if (isColumn) {
+        const gapTop = curr.tl.y + curr.size.h;
+        const gapBottom = next.tl.y;
+        const gapH = gapBottom - gapTop;
+        if (gapH > 1) {
+          this.addRect({
+            left: ctl.x, top: gapTop,
+            width: cw, height: gapH,
+            fill: hatch, stroke: border, strokeWidth: 0.5,
+          });
+          // Arrow showing the gap distance
+          this.addAnchorArrow("vertical", ctl.x + cw / 2, gapTop, gapH);
+        }
+      } else {
+        const gapLeft = curr.tl.x + curr.size.w;
+        const gapRight = next.tl.x;
+        const gapW = gapRight - gapLeft;
+        if (gapW > 1) {
+          this.addRect({
+            left: gapLeft, top: ctl.y,
+            width: gapW, height: ch,
+            fill: hatch, stroke: border, strokeWidth: 0.5,
+          });
+          // Arrow showing the gap distance
+          this.addAnchorArrow("horizontal", gapLeft, ctl.y + ch / 2, gapW);
+        }
+      }
+    }
+  }
+
+  /**
+   * Draw a `<-->` anchor indicator: a line with chevrons at each end.
+   *
+   * - "horizontal": draws left-to-right from (x, y) with given length
+   * - "vertical": draws top-to-bottom from (x, y) with given length
+   */
+  private addAnchorArrow(
+    orientation: "horizontal" | "vertical",
+    x: number,
+    y: number,
+    length: number,
+  ): void {
+    if (length < 4) return;
+
+    const chevron = Math.min(5, length / 3);
+    const stroke = this.color;
+    const sw = 1.5;
+    const opts = { stroke, strokeWidth: sw, strokeDashArray: [] as number[] };
+
+    if (orientation === "horizontal") {
+      // Main line
+      this.addLine([x, y, x + length, y], opts);
+      // Left chevron <
+      this.addLine([x + chevron, y - chevron, x, y], opts);
+      this.addLine([x + chevron, y + chevron, x, y], opts);
+      // Right chevron >
+      this.addLine([x + length - chevron, y - chevron, x + length, y], opts);
+      this.addLine([x + length - chevron, y + chevron, x + length, y], opts);
+    } else {
+      // Main line
+      this.addLine([x, y, x, y + length], opts);
+      // Top chevron ^
+      this.addLine([x - chevron, y + chevron, x, y], opts);
+      this.addLine([x + chevron, y + chevron, x, y], opts);
+      // Bottom chevron v
+      this.addLine([x - chevron, y + length - chevron, x, y + length], opts);
+      this.addLine([x + chevron, y + length - chevron, x, y + length], opts);
+    }
   }
 
   /**

@@ -33,7 +33,7 @@ export interface LayerData {
   scaleX?: number;
   scaleY?: number;
   angle?: number;
-  fill?: string;
+  fill?: string | Record<string, unknown>;
   stroke?: string;
   strokeWidth?: number;
   opacity?: number;
