@@ -65,7 +65,7 @@ export class CanvasGuides {
     stroke?: string;
     strokeWidth?: number;
     strokeDashArray?: number[];
-  }): void {
+  }, insertAbove?: FabricObject): void {
     const rect = new Rect({
       left: opts.left,
       top: opts.top,
@@ -82,6 +82,13 @@ export class CanvasGuides {
       excludeFromExport: true,
     });
     this.objects.push(rect);
+    if (insertAbove) {
+      const idx = this.canvas.getObjects().indexOf(insertAbove);
+      if (idx >= 0) {
+        this.canvas.insertAt(idx + 1, rect);
+        return;
+      }
+    }
     this.canvas.add(rect);
   }
 
@@ -111,7 +118,7 @@ export class CanvasGuides {
    * arbitrary rectangle.  Useful anywhere a region needs to be visually
    * "claimed" — e.g. hinting that a shape is about to become a container.
    */
-  showHatchOverlay(rect: { left: number; top: number; width: number; height: number }): void {
+  showHatchOverlay(rect: { left: number; top: number; width: number; height: number }, insertAbove?: FabricObject): void {
     const border = hexAlpha(this.color, 0.3);
     this.addRect({
       left: rect.left, top: rect.top,
@@ -119,18 +126,23 @@ export class CanvasGuides {
       fill: this.hatchPattern,
       stroke: border,
       strokeWidth: 0.5,
-    });
+    }, insertAbove);
   }
 
   /**
    * Show a dashed hover hint around a shape (used during PENDING state
    * in drag-to-layout to signal that anchoring is about to happen).
+   *
+   * When `insertAbove` is provided, guides are inserted in the z-order
+   * just above that object instead of on top of everything — this
+   * prevents the overlay from covering the shape's children.
    */
-  showHintHighlight(shape: FabricObject): void {
+  showHintHighlight(shape: FabricObject, insertAbove?: FabricObject): void {
     this.clear();
     const { w, h } = scaledSize(shape);
     const tl = topLeft(shape);
-    this.showHatchOverlay({ left: tl.x, top: tl.y, width: w, height: h });
+    const above = insertAbove ?? undefined;
+    this.showHatchOverlay({ left: tl.x, top: tl.y, width: w, height: h }, above);
     // Dashed border on top for extra visibility
     this.addRect({
       left: tl.x, top: tl.y,
@@ -138,7 +150,7 @@ export class CanvasGuides {
       stroke: this.strokeColor,
       strokeWidth: 1.5,
       strokeDashArray: [6, 4],
-    });
+    }, above);
   }
 
   /**

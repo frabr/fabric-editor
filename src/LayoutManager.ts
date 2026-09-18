@@ -43,6 +43,10 @@ interface AnchoredState {
   phase: "anchored";
   session: LayoutSession;
   cooldownUntil: number;
+  /** The dragged object (needed to recreate sessions on depth pop). */
+  source: FabricObject;
+  /** The outermost container from the original hit-test (for depth pop). */
+  root: FabricObject | null;
 }
 
 type DtlState = IdleState | PendingState | AnchoredState;
@@ -244,7 +248,7 @@ export class LayoutManager {
           }
           this.showSessionGuides(session);
           this.canvas.renderAll();
-          this.dtl = { phase: "anchored", session, cooldownUntil: 0 };
+          this.dtl = { phase: "anchored", session, cooldownUntil: 0, source: obj, root: null };
         }
         return;
       }
@@ -325,7 +329,10 @@ export class LayoutManager {
 
     const shape = this.findShapeUnderPoint(cursor, draggedObj);
     if (shape) {
-      this.startPending(draggedObj, shape, cursor);
+      // Find the deepest penetrable descendant under the cursor.
+      // This is the most visually obvious target for the user.
+      const deepest = this.findDeepestPenetrable(cursor, shape, draggedObj);
+      this.startPending(draggedObj, deepest, cursor, shape);
     }
   }
 
@@ -334,17 +341,31 @@ export class LayoutManager {
   private handlePendingMoving(_draggedObj: FabricObject, cursor: { x: number; y: number }): void {
     if (this.dtl.phase !== "pending") return;
 
+    // Re-resolve deepest target under cursor each frame
     const shape = this.findShapeUnderPoint(cursor, _draggedObj);
-    if (shape !== this.dtl.target) {
+    if (!shape) {
       this.resetToIdle();
+      return;
+    }
+    const deepest = this.findDeepestPenetrable(cursor, shape, _draggedObj);
+    if (deepest !== this.dtl.target) {
+      // Target changed — restart pending on the new target
+      clearTimeout(this.dtl.timer);
+      this.startPending(_draggedObj, deepest, cursor, shape);
       return;
     }
 
     this.dtl.cursor = cursor;
   }
 
-  private startPending(draggedObj: FabricObject, shape: FabricObject, cursor: { x: number; y: number }): void {
-    this.guides.showHintHighlight(shape);
+  private startPending(
+    draggedObj: FabricObject,
+    target: FabricObject,
+    cursor: { x: number; y: number },
+    root: FabricObject,
+  ): void {
+    // Insert guides just above the target in z-order so children aren't covered
+    this.guides.showHintHighlight(target, target);
     this.canvas.renderAll();
 
     const timer = setTimeout(() => this.doAnchor(), ANCHOR_DELAY_MS);
@@ -352,32 +373,108 @@ export class LayoutManager {
     this.dtl = {
       phase: "pending",
       timer,
-      target: shape,
+      target,
       source: draggedObj,
       cursor,
       cooldownUntil: this.dtl.cooldownUntil,
     };
   }
 
-  // ── State machine: ANCHOR (PENDING → ANCHORED) ───────────────────
+  // ── State machine: ANCHOR (PENDING → ANCHORED) ────────────────────
 
   private doAnchor(): void {
     if (this.dtl.phase !== "pending") return;
-    const { target: shape, source: child, cursor } = this.dtl;
+    const { target, source: child, cursor } = this.dtl;
 
-    const shapeLayout = shape.get?.("layout") as LayoutData | undefined;
-    const alreadyContainer = shapeLayout?.container != null;
-    const existingChildren = alreadyContainer
-      ? resolveContainerChildren(this.canvas.getObjects(), shape)
-      : [];
+    // Find the root (outermost container) for depth-pop support
+    const root = this.findShapeUnderPoint(cursor, child);
+    this.anchorOn(target, child, cursor, root);
+  }
 
-    let session: LayoutSession;
-    if (alreadyContainer && existingChildren.length > 0) {
-      session = new InsertChildSession(this.canvas, shape, child, cursor);
-    } else {
-      session = new ContainerizeSession(this.canvas, shape, child, cursor);
+  // ── State machine: ANCHORED (during drag) ─────────────────────────
+
+  private handleAnchoredMoving(cursor: { x: number; y: number }): void {
+    if (this.dtl.phase !== "anchored") return;
+    const { session, source, root } = this.dtl;
+
+    const result = session.handleMoving(cursor);
+    if (result === "exited") {
+      // Session already rolled back internally.
+      // If we're nested inside a root container, pop up to the parent.
+      if (root && session.container !== root) {
+        const parent = this.findParentContainer(session.container);
+        if (parent && pointInObject(cursor, parent)) {
+          this.anchorOn(parent, source, cursor, root);
+          return;
+        }
+      }
+      this.resetToIdle(Date.now() + 1000);
+      return;
     }
 
+    this.showSessionGuides(session);
+    this.canvas.renderAll();
+  }
+
+  // ── Depth helpers ─────────────────────────────────────────────────
+
+  /**
+   * Walk down from `root` to find the deepest penetrable descendant under
+   * the cursor. Returns `root` itself if no children qualify.
+   */
+  private findDeepestPenetrable(
+    cursor: { x: number; y: number },
+    root: FabricObject,
+    exclude: FabricObject,
+  ): FabricObject {
+    let current = root;
+    for (;;) {
+      const child = this.findPenetrableChild(cursor, current, exclude);
+      if (!child) return current;
+      current = child;
+    }
+  }
+
+  /**
+   * Find the first penetrable child of `container` under the cursor.
+   * A penetrable child is a shape (not text) that could become a container.
+   */
+  private findPenetrableChild(
+    cursor: { x: number; y: number },
+    container: FabricObject,
+    exclude: FabricObject,
+  ): FabricObject | null {
+    const layout = container.get?.("layout") as LayoutData | undefined;
+    if (!layout?.container) return null;
+    const children = resolveContainerChildren(this.canvas.getObjects(), container);
+    for (const { obj } of children) {
+      if (obj === exclude) continue;
+      const layerType = (obj as any).layerType;
+      if (layerType !== "shape" && !(obj instanceof Rect)) continue;
+      if (pointInObject(cursor, obj)) return obj;
+    }
+    return null;
+  }
+
+  /** Find the parent container of `obj` by looking up its `child.parentId`. */
+  private findParentContainer(obj: FabricObject): FabricObject | null {
+    const layout = obj.get?.("layout") as LayoutData | undefined;
+    if (!layout?.child) return null;
+    return this.canvas.getObjects().find(
+      (o) => o.get("layerId") === layout.child!.parentId,
+    ) ?? null;
+  }
+
+  /** Transition to ANCHORED: create a session on the target and go live. */
+  private anchorOn(
+    target: FabricObject,
+    child: FabricObject,
+    cursor: { x: number; y: number },
+    root: FabricObject | null = null,
+  ): void {
+    const session = this.createSession(target, child, cursor);
+
+    this.guides.clear();
     this.showSessionGuides(session);
     this.canvas.renderAll();
 
@@ -385,23 +482,27 @@ export class LayoutManager {
       phase: "anchored",
       session,
       cooldownUntil: this.dtl.cooldownUntil,
+      source: child,
+      root,
     };
   }
 
-  // ── State machine: ANCHORED (during drag) ─────────────────────────
+  /** Create the appropriate session type for a target container. */
+  private createSession(
+    target: FabricObject,
+    child: FabricObject,
+    cursor: { x: number; y: number },
+  ): LayoutSession {
+    const targetLayout = target.get?.("layout") as LayoutData | undefined;
+    const alreadyContainer = targetLayout?.container != null;
+    const existingChildren = alreadyContainer
+      ? resolveContainerChildren(this.canvas.getObjects(), target)
+      : [];
 
-  private handleAnchoredMoving(cursor: { x: number; y: number }): void {
-    if (this.dtl.phase !== "anchored") return;
-    const { session } = this.dtl;
-
-    const result = session.handleMoving(cursor);
-    if (result === "exited") {
-      this.resetToIdle(Date.now() + 1000);
-      return;
+    if (alreadyContainer && existingChildren.length > 0) {
+      return new InsertChildSession(this.canvas, target, child, cursor);
     }
-
-    this.showSessionGuides(session);
-    this.canvas.renderAll();
+    return new ContainerizeSession(this.canvas, target, child, cursor);
   }
 
   // ── State machine: COMMIT ─────────────────────────────────────────

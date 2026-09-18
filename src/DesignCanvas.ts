@@ -80,6 +80,10 @@ export class DesignCanvas {
     this.originalFabricCanvas.add(...objects);
   }
 
+  insertAt(index: number, ...objects: FabricObject[]): void {
+    this.originalFabricCanvas.insertAt(index, ...objects);
+  }
+
   remove(...objects: FabricObject[]): void {
     this.originalFabricCanvas.remove(...objects);
   }

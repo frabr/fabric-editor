@@ -122,6 +122,21 @@ export class ContainerizeSession {
       relayoutSingle(this.text, childLayout.container, this.canvas.getObjects());
     }
 
+    // If this container is itself a child, bubble up so the parent accommodates the new size
+    const shapeLayout = this.shape.get?.("layout") as LayoutData | undefined;
+    if (shapeLayout?.child) {
+      const allObjects = this.canvas.getObjects();
+      const parent = allObjects.find(
+        (o) => o.get("layerId") === shapeLayout.child!.parentId,
+      );
+      if (parent) {
+        const pLayout = parent.get?.("layout") as LayoutData | undefined;
+        if (pLayout?.container) {
+          relayoutSingle(parent, pLayout.container, allObjects);
+        }
+      }
+    }
+
     return "anchored";
   }
 
