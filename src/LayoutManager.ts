@@ -23,10 +23,52 @@ export interface LayoutManagerCallbacks {
   getActiveGroupId?: () => string | null;
 }
 
-// ── Discriminated union for drag-to-layout state ────────────────────
+/**
+ * Drag-to-layout state machine
+ * ─────────────────────────────
+ * Governs what happens when a dragged object hovers over a potential
+ * container. Four phases, strictly sequential:
+ *
+ *   IDLE → HOVERING → PENDING → ANCHORED
+ *
+ * IDLE      Nothing happening. Hit-test runs each frame to detect
+ *           a shape under the cursor.
+ *
+ * HOVERING  A shape was detected but we wait silently (no visual
+ *           feedback) for HOVER_DELAY_MS. This lets the user drag
+ *           across containers without triggering anything. If the
+ *           cursor leaves the shape, we go back to IDLE.
+ *
+ * PENDING   The hover timer fired. We show the hint highlight
+ *           (hatched overlay + dashed border) and start a second
+ *           timer (ANCHOR_DELAY_MS). The user sees "this shape is
+ *           about to become the target". If the deepest target
+ *           changes, the pending timer restarts. If the cursor
+ *           leaves, we go back to IDLE.
+ *
+ * ANCHORED  The pending timer fired. A layout session is created
+ *           (ContainerizeSession or InsertChildSession) and the
+ *           child snaps into the container with live layout. On
+ *           exit: if nested, we pop to the parent (back to
+ *           ANCHORED on the parent); otherwise back to IDLE with
+ *           a cooldown.
+ *
+ * Depth resolution: during HOVERING and PENDING, we resolve the
+ * deepest penetrable descendant under the cursor (bottom-up) so
+ * the most nested valid target is always preferred.
+ */
 
 interface IdleState {
   phase: "idle";
+  cooldownUntil: number;
+}
+
+interface HoveringState {
+  phase: "hovering";
+  timer: ReturnType<typeof setTimeout>;
+  target: FabricObject;
+  source: FabricObject;
+  cursor: { x: number; y: number };
   cooldownUntil: number;
 }
 
@@ -49,11 +91,14 @@ interface AnchoredState {
   root: FabricObject | null;
 }
 
-type DtlState = IdleState | PendingState | AnchoredState;
+type DtlState = IdleState | HoveringState | PendingState | AnchoredState;
 
 // ── Constants ───────────────────────────────────────────────────────
 
-const ANCHOR_DELAY_MS = 300;
+/** Silent hover before any visual feedback. */
+const HOVER_DELAY_MS = 700;
+/** Visual hint before anchoring. */
+const ANCHOR_DELAY_MS = 500;
 
 // ── LayoutManager ───────────────────────────────────────────────────
 
@@ -266,6 +311,9 @@ export class LayoutManager {
       case "pending":
         this.handlePendingMoving(obj, cursor);
         break;
+      case "hovering":
+        this.handleHoveringMoving(obj, cursor);
+        break;
       case "idle":
         this.handleIdleMoving(obj, cursor);
         break;
@@ -322,36 +370,78 @@ export class LayoutManager {
     this.canvas.renderAll();
   }
 
-  // ── State machine: IDLE → PENDING ─────────────────────────────────
+  // ── State machine: IDLE → HOVERING ────────────────────────────────
 
   private handleIdleMoving(draggedObj: FabricObject, cursor: { x: number; y: number }): void {
     if (Date.now() < this.dtl.cooldownUntil) return;
 
     const shape = this.findShapeUnderPoint(cursor, draggedObj);
     if (shape) {
-      // Find the deepest penetrable descendant under the cursor.
-      // This is the most visually obvious target for the user.
       const deepest = this.findDeepestPenetrable(cursor, shape, draggedObj);
-      this.startPending(draggedObj, deepest, cursor, shape);
+      this.startHovering(draggedObj, deepest, cursor);
     }
   }
 
-  // ── State machine: PENDING ────────────────────────────────────────
+  // ── State machine: HOVERING (silent) ─────────────────────────────
 
-  private handlePendingMoving(_draggedObj: FabricObject, cursor: { x: number; y: number }): void {
-    if (this.dtl.phase !== "pending") return;
+  private handleHoveringMoving(draggedObj: FabricObject, cursor: { x: number; y: number }): void {
+    if (this.dtl.phase !== "hovering") return;
 
-    // Re-resolve deepest target under cursor each frame
-    const shape = this.findShapeUnderPoint(cursor, _draggedObj);
+    const shape = this.findShapeUnderPoint(cursor, draggedObj);
     if (!shape) {
       this.resetToIdle();
       return;
     }
-    const deepest = this.findDeepestPenetrable(cursor, shape, _draggedObj);
+
+    const deepest = this.findDeepestPenetrable(cursor, shape, draggedObj);
+    if (deepest !== this.dtl.target) {
+      clearTimeout(this.dtl.timer);
+      this.startHovering(draggedObj, deepest, cursor);
+      return;
+    }
+
+    this.dtl.cursor = cursor;
+  }
+
+  private startHovering(
+    draggedObj: FabricObject,
+    target: FabricObject,
+    cursor: { x: number; y: number },
+  ): void {
+    const timer = setTimeout(() => this.promoteToP(), HOVER_DELAY_MS);
+
+    this.dtl = {
+      phase: "hovering",
+      timer,
+      target,
+      source: draggedObj,
+      cursor,
+      cooldownUntil: this.dtl.cooldownUntil,
+    };
+  }
+
+  /** HOVERING timer fired → show guides and move to PENDING. */
+  private promoteToP(): void {
+    if (this.dtl.phase !== "hovering") return;
+    const { target, source, cursor } = this.dtl;
+    this.startPending(source, target, cursor);
+  }
+
+  // ── State machine: PENDING (visual hint) ─────────────────────────
+
+  private handlePendingMoving(draggedObj: FabricObject, cursor: { x: number; y: number }): void {
+    if (this.dtl.phase !== "pending") return;
+
+    const shape = this.findShapeUnderPoint(cursor, draggedObj);
+    if (!shape) {
+      this.resetToIdle();
+      return;
+    }
+    const deepest = this.findDeepestPenetrable(cursor, shape, draggedObj);
     if (deepest !== this.dtl.target) {
       // Target changed — restart pending on the new target
       clearTimeout(this.dtl.timer);
-      this.startPending(_draggedObj, deepest, cursor, shape);
+      this.startPending(draggedObj, deepest, cursor);
       return;
     }
 
@@ -362,9 +452,7 @@ export class LayoutManager {
     draggedObj: FabricObject,
     target: FabricObject,
     cursor: { x: number; y: number },
-    root: FabricObject,
   ): void {
-    // Insert guides just above the target in z-order so children aren't covered
     this.guides.showHintHighlight(target, target);
     this.canvas.renderAll();
 
@@ -472,6 +560,14 @@ export class LayoutManager {
     cursor: { x: number; y: number },
     root: FabricObject | null = null,
   ): void {
+    // Ensure the child renders above the container (z-index)
+    const objects = this.canvas.getObjects();
+    const containerIdx = objects.indexOf(target);
+    const childIdx = objects.indexOf(child);
+    if (containerIdx >= 0 && childIdx >= 0 && childIdx < containerIdx) {
+      this.canvas.moveObjectTo(child, containerIdx);
+    }
+
     const session = this.createSession(target, child, cursor);
 
     this.guides.clear();
@@ -524,7 +620,7 @@ export class LayoutManager {
 
   private resetToIdle(cooldownUntil = 0): void {
     this.guides.clear();
-    if (this.dtl.phase === "pending") {
+    if (this.dtl.phase === "pending" || this.dtl.phase === "hovering") {
       clearTimeout(this.dtl.timer);
     }
     this.dtl = { phase: "idle", cooldownUntil: cooldownUntil || this.dtl.cooldownUntil };
