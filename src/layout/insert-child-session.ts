@@ -26,7 +26,7 @@ import type { LayoutSession, LayoutData, ChildData, FlexDirection } from "./type
 import { scaledSize, setShapeSize, topLeft, syncCoords, pointInObject, isTextObject } from "./geometry";
 import { resolveContainerChildren, sortChildrenByOrder } from "./resize-session";
 import { yogaLayout } from "./yoga-engine";
-import { runLayout, relayoutSingle, relayoutSubContainers } from "./reconcile";
+import { runLayout, relayoutSingle, relayoutSubContainers, bubbleUpLayout } from "./reconcile";
 import { LayoutAnimator } from "./layout-animator";
 
 // ── Constants ────────────────────────────────────────────────────────
@@ -580,22 +580,9 @@ export class InsertChildSession implements LayoutSession {
     // Recursively reposition sub-containers (their position may have changed)
     relayoutSubContainers(allChildren, this.canvas.getObjects());
 
-    // If this container is itself a child, bubble up: the parent needs to
-    // accommodate the new size (e.g. grow in hug mode).
+    // Bubble up the entire ancestor chain so all parents accommodate the new size
     if (finalW !== currentW || finalH !== currentH) {
-      const parentLayout = this._container.get?.("layout") as LayoutData | undefined;
-      if (parentLayout?.child) {
-        const allObjects = this.canvas.getObjects();
-        const parent = allObjects.find(
-          (o) => o.get("layerId") === parentLayout.child!.parentId,
-        );
-        if (parent) {
-          const pLayout = parent.get?.("layout") as LayoutData | undefined;
-          if (pLayout?.container) {
-            relayoutSingle(parent, pLayout.container, allObjects);
-          }
-        }
-      }
+      bubbleUpLayout(this._container, this.canvas.getObjects());
     }
   }
 

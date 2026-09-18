@@ -77,6 +77,31 @@ export function relayoutSingle(
 }
 
 /**
+ * Bubble layout changes upward through the entire ancestor chain.
+ * Starting from `container`, walks up via child→parentId links,
+ * calling relayoutSingle on each ancestor so it accommodates the
+ * new size of its child.
+ */
+export function bubbleUpLayout(container: FabricObject, allObjects: FabricObject[]): void {
+  let current = container;
+  for (;;) {
+    const layout = current.get?.("layout") as LayoutData | undefined;
+    if (!layout?.child) return;
+
+    const parent = allObjects.find(
+      (o) => o.get("layerId") === layout.child!.parentId,
+    );
+    if (!parent) return;
+
+    const pLayout = parent.get?.("layout") as LayoutData | undefined;
+    if (!pLayout?.container) return;
+
+    relayoutSingle(parent, pLayout.container, allObjects);
+    current = parent;
+  }
+}
+
+/**
  * Recursively reposition children that are themselves containers.
  * After a parent is laid out, each sub-container's children need
  * repositioning because the sub-container's position changed.
