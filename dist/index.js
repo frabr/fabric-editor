@@ -1825,6 +1825,7 @@ var LayerManager = class {
     const center = shape.getRelativeCenterPoint();
     const zIndex = this.canvas.getObjects().indexOf(shape);
     const img = await import_fabric9.FabricImage.fromURL(imageUrl, { crossOrigin: "anonymous" });
+    const cornerRadius = shape instanceof FabRect ? shape.getCornerRadius() : 0;
     const frame = new ImageFrame(img, {
       left: center.x,
       top: center.y,
@@ -1832,7 +1833,8 @@ var LayerManager = class {
       layerId: shape.layerId || this.generateId(),
       clipShape,
       frameWidth: displayedWidth,
-      frameHeight: displayedHeight
+      frameHeight: displayedHeight,
+      cornerRadius
     });
     this.canvas.remove(shape);
     this.canvas.add(frame);

@@ -334,6 +334,10 @@ export class LayerManager {
     // Charger l'image
     const img = await FabricImage.fromURL(imageUrl, { crossOrigin: "anonymous" });
 
+    // Récupérer le corner radius si c'est un FabRect
+    const cornerRadius =
+      shape instanceof FabRect ? shape.getCornerRadius() : 0;
+
     // Créer l'ImageFrame aux dimensions de la shape
     const frame = new ImageFrame(img, {
       left: center.x,
@@ -343,6 +347,7 @@ export class LayerManager {
       clipShape,
       frameWidth: displayedWidth,
       frameHeight: displayedHeight,
+      cornerRadius,
     });
 
     // Supprimer la shape et insérer l'ImageFrame au même z-index
