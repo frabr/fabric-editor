@@ -112,6 +112,23 @@ export function yogaLayout(
     root.setHeightAuto();
   }
 
+  // ── Restore intrinsic sizes ──────────────────────────────────
+  // Children that were shrunk in a previous pass need their original
+  // size restored so Yoga can measure the true space requirement.
+  // Yoga may shrink them again if space is still tight.
+  for (const { obj } of children) {
+    if (isTextObject(obj)) continue;
+    const ext = obj as any;
+    if (ext._layoutIntrinsicW != null) {
+      obj.set({ width: ext._layoutIntrinsicW });
+      delete ext._layoutIntrinsicW;
+    }
+    if (ext._layoutIntrinsicH != null) {
+      obj.set({ height: ext._layoutIntrinsicH });
+      delete ext._layoutIntrinsicH;
+    }
+  }
+
   // ── Build child nodes ────────────────────────────────────────
   const yogaNodes: YogaNode[] = [];
 
@@ -187,7 +204,7 @@ export function yogaLayout(
     const left = containerLeft + node.getComputedLeft();
     const top = containerTop + node.getComputedTop();
 
-    // Update the child's width/height if Yoga stretched it
+    // Update the child's width/height if Yoga stretched or shrunk it
     const computedW = node.getComputedWidth();
     const computedH = node.getComputedHeight();
     const currentSize = scaledSize(obj);
@@ -195,6 +212,17 @@ export function yogaLayout(
     if (!isTextObject(obj)) {
       const scaleX = obj.scaleX || 1;
       const scaleY = obj.scaleY || 1;
+
+      // Preserve intrinsic size when Yoga shrinks the child.
+      // This lets the child grow back when space becomes available.
+      const ext = obj as any;
+      if (computedW < currentSize.w - 0.5 && ext._layoutIntrinsicW == null) {
+        ext._layoutIntrinsicW = obj.width;
+      }
+      if (computedH < currentSize.h - 0.5 && ext._layoutIntrinsicH == null) {
+        ext._layoutIntrinsicH = obj.height;
+      }
+
       if (Math.abs(computedW - currentSize.w) > 0.5) {
         obj.set({ width: computedW / scaleX });
       }
