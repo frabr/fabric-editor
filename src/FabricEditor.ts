@@ -77,6 +77,7 @@ export class FabricEditor {
     if (config.transparent) {
       this.canvas.backgroundColor = "transparent";
     }
+
   }
 
   private _initialized = false;
@@ -684,6 +685,100 @@ export class FabricEditor {
 
     obj.set({ fontFamily, fontWeight: fontWeight || "normal" });
     this.canvas.requestRenderAll();
+  }
+
+  // ── Clipboard (copy / paste) ──────────────────────────────────────
+
+  private _clipboard: any[] | null = null;
+
+  /**
+   * Copy the current selection to an internal clipboard.
+   * If the selected object is a layout container, its children are copied too.
+   */
+  copySelection(): void {
+    const selected = this.selection.selected;
+    if (selected.length === 0) return;
+
+    const allObjects = this.canvas.getObjects();
+    const toCopy: FabricObject[] = [];
+
+    for (const obj of selected) {
+      toCopy.push(obj);
+      // If this object is a layout container, also copy its children
+      const id = obj.get("layerId") as string | undefined;
+      if (id) {
+        for (const other of allObjects) {
+          if (other.get("layout")?.child?.parentId === id && !toCopy.includes(other)) {
+            toCopy.push(other);
+          }
+        }
+      }
+    }
+
+    this._clipboard = toCopy.map((obj) =>
+      obj.toObject(["layerId", "lockMode", "lockContent", "layout"])
+    );
+  }
+
+  /**
+   * Paste clipboard contents onto the canvas.
+   * Generates fresh layerIds and remaps parent/child references.
+   * Offsets pasted objects by 20px so they don't overlap the originals.
+   */
+  async pasteClipboard(): Promise<FabricObject[]> {
+    if (!this._clipboard?.length) return [];
+
+    const OFFSET = 20;
+
+    // Build an ID remapping table: old layerId → new layerId
+    const idMap = new Map<string, string>();
+    for (const data of this._clipboard) {
+      if (data.layerId) {
+        idMap.set(data.layerId, `layer_${Date.now()}_${Math.floor(Math.random() * 1000)}`);
+      }
+    }
+
+    // Deep-clone each layer, assign new IDs, remap layout references, offset position
+    const cloned: any[] = this._clipboard.map((data) => {
+      const copy = JSON.parse(JSON.stringify(data));
+
+      // Assign new layerId
+      if (copy.layerId && idMap.has(copy.layerId)) {
+        copy.layerId = idMap.get(copy.layerId);
+      }
+
+      // Remap layout.child.parentId
+      if (copy.layout?.child?.parentId) {
+        const newParent = idMap.get(copy.layout.child.parentId);
+        if (newParent) copy.layout.child.parentId = newParent;
+      }
+
+      // Offset position
+      if (typeof copy.left === "number") copy.left += OFFSET;
+      if (typeof copy.top === "number") copy.top += OFFSET;
+
+      // Clear lock so pasted objects are freely editable
+      delete copy.lockMode;
+
+      return copy;
+    });
+
+    // Deserialize and add each object
+    const objects: FabricObject[] = [];
+    for (const data of cloned) {
+      const obj = await this.layers.deserialize(data);
+      if (obj) {
+        this.layers.add(obj);
+        objects.push(obj);
+      }
+    }
+
+    // Select the pasted objects
+    if (objects.length === 1) {
+      this.canvas.setActiveObject(objects[0]);
+    }
+    this.canvas.renderAll();
+    return objects;
   }
 
   /**

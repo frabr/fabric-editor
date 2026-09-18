@@ -408,7 +408,7 @@ export class LayerManager {
    * Désérialise un calque depuis ses données JSON
    * Les images legacy (type "Image") sont automatiquement migrées vers ImageFrame
    */
-  private async deserialize(layer: LayerData): Promise<FabricObject | null> {
+  async deserialize(layer: LayerData): Promise<FabricObject | null> {
     let obj: FabricObject | null = null;
 
     switch (layer.type) {
