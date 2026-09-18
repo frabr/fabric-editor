@@ -264,6 +264,9 @@ var DesignCanvas = class {
   add(...objects) {
     this.originalFabricCanvas.add(...objects);
   }
+  insertAt(index, ...objects) {
+    this.originalFabricCanvas.insertAt(index, ...objects);
+  }
   remove(...objects) {
     this.originalFabricCanvas.remove(...objects);
   }
@@ -2722,7 +2725,7 @@ var CanvasGuides = class {
     this.canvas.add(line);
   }
   /** Add a rectangle guide (highlight zone, margin indicator, etc.). */
-  addRect(opts) {
+  addRect(opts, insertAbove) {
     const rect = new import_fabric12.Rect({
       left: opts.left,
       top: opts.top,
@@ -2739,6 +2742,13 @@ var CanvasGuides = class {
       excludeFromExport: true
     });
     this.objects.push(rect);
+    if (insertAbove) {
+      const idx = this.canvas.getObjects().indexOf(insertAbove);
+      if (idx >= 0) {
+        this.canvas.insertAt(idx + 1, rect);
+        return;
+      }
+    }
     this.canvas.add(rect);
   }
   /** Remove all guides added by this instance. */
@@ -2763,7 +2773,7 @@ var CanvasGuides = class {
    * arbitrary rectangle.  Useful anywhere a region needs to be visually
    * "claimed" — e.g. hinting that a shape is about to become a container.
    */
-  showHatchOverlay(rect) {
+  showHatchOverlay(rect, insertAbove) {
     const border = hexAlpha(this.color, 0.3);
     this.addRect({
       left: rect.left,
@@ -2773,17 +2783,22 @@ var CanvasGuides = class {
       fill: this.hatchPattern,
       stroke: border,
       strokeWidth: 0.5
-    });
+    }, insertAbove);
   }
   /**
    * Show a dashed hover hint around a shape (used during PENDING state
    * in drag-to-layout to signal that anchoring is about to happen).
+   *
+   * When `insertAbove` is provided, guides are inserted in the z-order
+   * just above that object instead of on top of everything — this
+   * prevents the overlay from covering the shape's children.
    */
-  showHintHighlight(shape) {
+  showHintHighlight(shape, insertAbove) {
     this.clear();
     const { w, h } = scaledSize(shape);
     const tl = topLeft(shape);
-    this.showHatchOverlay({ left: tl.x, top: tl.y, width: w, height: h });
+    const above = insertAbove ?? void 0;
+    this.showHatchOverlay({ left: tl.x, top: tl.y, width: w, height: h }, above);
     this.addRect({
       left: tl.x,
       top: tl.y,
@@ -2792,7 +2807,7 @@ var CanvasGuides = class {
       stroke: this.strokeColor,
       strokeWidth: 1.5,
       strokeDashArray: [6, 4]
-    });
+    }, above);
   }
   /**
    * Show layout guides: a dashed outline around the container,
@@ -3366,6 +3381,18 @@ function yogaLayout(children, containerLeft, containerTop, containerW, container
   } else {
     root.setHeightAuto();
   }
+  for (const { obj } of children) {
+    if (isTextObject(obj)) continue;
+    const ext = obj;
+    if (ext._layoutIntrinsicW != null) {
+      obj.set({ width: ext._layoutIntrinsicW });
+      delete ext._layoutIntrinsicW;
+    }
+    if (ext._layoutIntrinsicH != null) {
+      obj.set({ height: ext._layoutIntrinsicH });
+      delete ext._layoutIntrinsicH;
+    }
+  }
   const yogaNodes = [];
   for (let i = 0; i < children.length; i++) {
     const { obj, cl } = children[i];
@@ -3422,6 +3449,13 @@ function yogaLayout(children, containerLeft, containerTop, containerW, container
     if (!isTextObject(obj)) {
       const scaleX = obj.scaleX || 1;
       const scaleY = obj.scaleY || 1;
+      const ext = obj;
+      if (computedW < currentSize.w - 0.5 && ext._layoutIntrinsicW == null) {
+        ext._layoutIntrinsicW = obj.width;
+      }
+      if (computedH < currentSize.h - 0.5 && ext._layoutIntrinsicH == null) {
+        ext._layoutIntrinsicH = obj.height;
+      }
       if (Math.abs(computedW - currentSize.w) > 0.5) {
         obj.set({ width: computedW / scaleX });
       }
@@ -3625,6 +3659,21 @@ function relayoutSingle(container, cd, allObjects) {
   layoutContainer(container, cd, children);
   relayoutSubContainers(children, allObjects);
 }
+function bubbleUpLayout(container, allObjects) {
+  let current = container;
+  for (; ; ) {
+    const layout = current.get?.("layout");
+    if (!layout?.child) return;
+    const parent = allObjects.find(
+      (o) => o.get("layerId") === layout.child.parentId
+    );
+    if (!parent) return;
+    const pLayout = parent.get?.("layout");
+    if (!pLayout?.container) return;
+    relayoutSingle(parent, pLayout.container, allObjects);
+    current = parent;
+  }
+}
 function relayoutSubContainers(children, allObjects) {
   for (const { obj } of children) {
     const childLayout = obj.get("layout");
@@ -3792,6 +3841,7 @@ var ContainerizeSession = class _ContainerizeSession {
     if (childLayout?.container) {
       relayoutSingle(this.text, childLayout.container, this.canvas.getObjects());
     }
+    bubbleUpLayout(this.shape, this.canvas.getObjects());
     return "anchored";
   }
   /** Finalize the attach. Returns a cleanup function for the "changed" listener. */
@@ -3968,18 +4018,139 @@ function wrapContainerAroundChild(child, container) {
   container.setCoords();
 }
 
+// src/layout/layout-animator.ts
+function easeOutCubic(t) {
+  return 1 - (1 - t) ** 3;
+}
+var DEFAULT_DURATION_MS = 180;
+var EPSILON = 0.5;
+var LayoutAnimator = class {
+  constructor(canvas) {
+    this.animations = /* @__PURE__ */ new Map();
+    this.rafId = null;
+    this.canvas = canvas;
+  }
+  /**
+   * Animate an object from `from` to the position Yoga just wrote
+   * (`obj.left`, `obj.top`).  The object is immediately set to `from`
+   * so the visual transition starts there, while `toLeft/toTop` records
+   * where Yoga wants it.
+   */
+  animate(obj, fromLeft, fromTop, duration = DEFAULT_DURATION_MS) {
+    const toLeft = obj.left;
+    const toTop = obj.top;
+    if (Math.abs(toLeft - fromLeft) < EPSILON && Math.abs(toTop - fromTop) < EPSILON) {
+      return;
+    }
+    const existing = this.animations.get(obj);
+    if (existing) {
+      const elapsed = performance.now() - existing.startTime;
+      const t = Math.min(elapsed / existing.duration, 1);
+      const e = easeOutCubic(t);
+      fromLeft = existing.fromLeft + (existing.toLeft - existing.fromLeft) * e;
+      fromTop = existing.fromTop + (existing.toTop - existing.fromTop) * e;
+      if (Math.abs(toLeft - existing.toLeft) < EPSILON && Math.abs(toTop - existing.toTop) < EPSILON) {
+        return;
+      }
+    }
+    this.animations.set(obj, {
+      fromLeft,
+      fromTop,
+      toLeft,
+      toTop,
+      startTime: performance.now(),
+      duration
+    });
+    obj.set({ left: fromLeft, top: fromTop });
+    this.ensureLoop();
+  }
+  /** Return the Yoga target for a mid-animation object, or null. */
+  getTarget(obj) {
+    const entry = this.animations.get(obj);
+    return entry ? { left: entry.toLeft, top: entry.toTop } : null;
+  }
+  /**
+   * Write every animated object's target into obj.left/top so that
+   * code reading positions sees stable values, not mid-interpolation.
+   * The next tick() resumes visual interpolation normally.
+   *
+   * @param exclude — object to skip (e.g. the dragged child, whose
+   *   position is set by Fabric's drag handler and should not be overwritten).
+   */
+  flushToTargets(exclude) {
+    for (const [obj, entry] of this.animations) {
+      if (obj !== exclude) {
+        obj.set({ left: entry.toLeft, top: entry.toTop });
+      }
+    }
+  }
+  /** Cancel all running animations, leaving objects at their Yoga target. */
+  cancelAll() {
+    for (const [obj, entry] of this.animations) {
+      obj.set({ left: entry.toLeft, top: entry.toTop });
+      obj.setCoords();
+    }
+    this.animations.clear();
+    this.stopLoop();
+  }
+  dispose() {
+    this.animations.clear();
+    this.stopLoop();
+  }
+  // ── RAF loop ─────────────────────────────────────────────────────
+  ensureLoop() {
+    if (this.rafId !== null) return;
+    this.rafId = requestAnimationFrame((ts) => this.tick(ts));
+  }
+  stopLoop() {
+    if (this.rafId !== null) {
+      cancelAnimationFrame(this.rafId);
+      this.rafId = null;
+    }
+  }
+  tick(_ts) {
+    this.rafId = null;
+    const now = performance.now();
+    const done = [];
+    for (const [obj, entry] of this.animations) {
+      const elapsed = now - entry.startTime;
+      const t = Math.min(elapsed / entry.duration, 1);
+      const e = easeOutCubic(t);
+      const left = entry.fromLeft + (entry.toLeft - entry.fromLeft) * e;
+      const top = entry.fromTop + (entry.toTop - entry.fromTop) * e;
+      obj.set({ left, top });
+      if (t >= 1) {
+        done.push(obj);
+      }
+    }
+    for (const obj of done) {
+      this.animations.delete(obj);
+      obj.setCoords();
+    }
+    this.canvas.requestRenderAll();
+    if (this.animations.size > 0) {
+      this.rafId = requestAnimationFrame((ts) => this.tick(ts));
+    }
+  }
+};
+
 // src/layout/insert-child-session.ts
 var EXIT_MARGIN2 = 5;
 var InsertChildSession = class _InsertChildSession {
   constructor(canvas, container, newChild, cursor) {
     /** Current decided direction — cached for hysteresis. null = not yet decided. */
     this._currentDirection = null;
+    /** Sibling positions at anchor time — stable reference for gap calculation. */
+    this._siblingAnchors = /* @__PURE__ */ new Map();
+    /** Last Yoga-computed position of the dragged child (not the cursor position). */
+    this._lastDraggedYogaPos = null;
     /** Last computed order — for hysteresis. */
     this._lastOrder = null;
     this.canvas = canvas;
     this._container = container;
     this.newChild = newChild;
     this._isReattach = false;
+    this._animator = new LayoutAnimator(canvas);
     const { w: cw, h: ch } = scaledSize(container);
     this.snapshot = {
       containerW: cw,
@@ -4004,6 +4175,11 @@ var InsertChildSession = class _InsertChildSession {
         }
       }
     }
+    for (const { obj } of existing) {
+      const tl = topLeft(obj);
+      const sz = scaledSize(obj);
+      this._siblingAnchors.set(obj, { left: tl.x, top: tl.y, w: sz.w, h: sz.h });
+    }
     const containerId = container.get?.("layerId");
     const childData = {
       parentId: containerId
@@ -4027,6 +4203,7 @@ var InsertChildSession = class _InsertChildSession {
     session._isReattach = true;
     session._currentDirection = null;
     session._lastOrder = null;
+    session._animator = new LayoutAnimator(canvas);
     const { w: cw, h: ch } = scaledSize(container);
     session.snapshot = {
       containerW: cw,
@@ -4050,6 +4227,14 @@ var InsertChildSession = class _InsertChildSession {
         }
       }
     }
+    session._siblingAnchors = /* @__PURE__ */ new Map();
+    for (const { obj } of allChildren) {
+      if (obj !== child) {
+        const tl = topLeft(obj);
+        const sz = scaledSize(obj);
+        session._siblingAnchors.set(obj, { left: tl.x, top: tl.y, w: sz.w, h: sz.h });
+      }
+    }
     session.updateFromCursor(cursor);
     return session;
   }
@@ -4068,7 +4253,17 @@ var InsertChildSession = class _InsertChildSession {
     if (!cd.minSize) cd.minSize = { w: 0, h: 0 };
     cd.minSize.w = w;
     cd.minSize.h = h;
+    const allChildren = resolveContainerChildren(this.canvas.getObjects(), this._container);
+    const positionsBefore = /* @__PURE__ */ new Map();
+    for (const { obj } of allChildren) {
+      positionsBefore.set(obj, { left: obj.left, top: obj.top });
+    }
     runLayout(this.canvas.getObjects());
+    for (const [obj, before] of positionsBefore) {
+      if (obj.left !== before.left || obj.top !== before.top) {
+        this._animator.animate(obj, before.left, before.top);
+      }
+    }
     this.canvas.renderAll();
     if (this._isReattach) {
       return () => {
@@ -4086,6 +4281,7 @@ var InsertChildSession = class _InsertChildSession {
     };
   }
   rollback() {
+    this._animator.cancelAll();
     if (this._isReattach) {
       const layout = this.newChild.get?.("layout");
       if (layout) {
@@ -4140,6 +4336,7 @@ var InsertChildSession = class _InsertChildSession {
    * the dragged child stays under the cursor.
    */
   updateFromCursor(cursor) {
+    this._animator.flushToTargets(this.newChild);
     const containerLayout = this._container.get?.("layout");
     const cd = containerLayout.container;
     const allChildren = sortChildrenByOrder(
@@ -4179,10 +4376,13 @@ var InsertChildSession = class _InsertChildSession {
    * Hysteresis: once a direction is chosen, require a clear margin to switch.
    */
   detectDirection(cursor, existingChild) {
-    const childTL = topLeft(existingChild.obj);
-    const { w: childW, h: childH } = scaledSize(existingChild.obj);
-    const dx = Math.max(0, cursor.x - (childTL.x + childW), childTL.x - cursor.x);
-    const dy = Math.max(0, cursor.y - (childTL.y + childH), childTL.y - cursor.y);
+    const anchor = this._siblingAnchors.get(existingChild.obj);
+    const childX = anchor ? anchor.left : topLeft(existingChild.obj).x;
+    const childY = anchor ? anchor.top : topLeft(existingChild.obj).y;
+    const childW = anchor ? anchor.w : scaledSize(existingChild.obj).w;
+    const childH = anchor ? anchor.h : scaledSize(existingChild.obj).h;
+    const dx = Math.max(0, cursor.x - (childX + childW), childX - cursor.x);
+    const dy = Math.max(0, cursor.y - (childY + childH), childY - cursor.y);
     if (this._currentDirection === null) {
       this._currentDirection = dy >= dx ? "column" : "row";
       return this._currentDirection;
@@ -4197,54 +4397,50 @@ var InsertChildSession = class _InsertChildSession {
   }
   /**
    * Compute the insertion order based on cursor position in the main axis.
-   * Uses the midpoint between consecutive children as the decision boundary.
-   * Hysteresis: once an order is chosen, the cursor must cross a neighboring
-   * boundary to change it (no flickering near boundaries).
+   * The swap threshold is the **far edge** of each sibling — the dragged
+   * child swaps once it fully passes the sibling.
+   *
+   * Uses anchored sibling positions to avoid feedback loops with Yoga.
    */
   computeInsertOrder(cursor, existingChildren, isColumn) {
     if (existingChildren.length === 0) return 0;
     const cursorPos = isColumn ? cursor.y : cursor.x;
     const slots = [];
     for (let i = 0; i <= existingChildren.length; i++) {
-      const prevChild = i > 0 ? existingChildren[i - 1] : null;
-      const nextChild = i < existingChildren.length ? existingChildren[i] : null;
-      let start = -Infinity;
-      let end = Infinity;
-      if (prevChild) {
-        const tl = topLeft(prevChild.obj);
-        const size = scaledSize(prevChild.obj);
-        const prevEnd = isColumn ? tl.y + size.h : tl.x + size.w;
-        start = prevEnd;
-      }
-      if (nextChild) {
-        const tl = topLeft(nextChild.obj);
-        const nextStart = isColumn ? tl.y : tl.x;
-        end = nextStart;
-      }
       let order;
       if (i === 0) {
-        const firstOrder = existingChildren[0].cl.order ?? 0;
-        order = firstOrder - 1;
+        order = (existingChildren[0].cl.order ?? 0) - 1;
       } else if (i === existingChildren.length) {
-        const lastOrder = existingChildren[existingChildren.length - 1].cl.order ?? existingChildren.length - 1;
-        order = lastOrder + 1;
+        order = (existingChildren[existingChildren.length - 1].cl.order ?? existingChildren.length - 1) + 1;
       } else {
         const prevOrder = existingChildren[i - 1].cl.order ?? i - 1;
         const nextOrder = existingChildren[i].cl.order ?? i;
         order = (prevOrder + nextOrder) / 2;
       }
-      slots.push({ order, boundaryStart: start, boundaryEnd: end });
+      let boundary;
+      if (i > 0) {
+        const prev = existingChildren[i - 1];
+        const anchor = this._siblingAnchors.get(prev.obj);
+        if (anchor) {
+          boundary = isColumn ? anchor.top + anchor.h : anchor.left + anchor.w;
+        } else {
+          const tl = topLeft(prev.obj);
+          const sz = scaledSize(prev.obj);
+          boundary = isColumn ? tl.y + sz.h : tl.x + sz.w;
+        }
+      } else {
+        boundary = -Infinity;
+      }
+      slots.push({ order, boundary });
     }
-    for (let i = 0; i < slots.length - 1; i++) {
-      const midpoint = (slots[i].boundaryEnd + slots[i + 1].boundaryStart) / 2;
-      if (isFinite(midpoint) && cursorPos < midpoint) {
+    for (let i = slots.length - 1; i >= 0; i--) {
+      if (cursorPos >= slots[i].boundary) {
         this._lastOrder = slots[i].order;
         return slots[i].order;
       }
     }
-    const lastSlot = slots[slots.length - 1];
-    this._lastOrder = lastSlot.order;
-    return lastSlot.order;
+    this._lastOrder = slots[0].order;
+    return slots[0].order;
   }
   /**
    * Compute the gap between children from the cursor's distance to the
@@ -4259,19 +4455,17 @@ var InsertChildSession = class _InsertChildSession {
     const newChildHalf = isColumn ? newChildSize.h / 2 : newChildSize.w / 2;
     let minDist = Infinity;
     for (const child of existingChildren) {
+      const anchor = this._siblingAnchors.get(child.obj);
+      if (!anchor) continue;
+      const farEdge = isColumn ? anchor.top + anchor.h : anchor.left + anchor.w;
       const childOrder = child.cl.order ?? 0;
-      const tl = topLeft(child.obj);
-      const size = scaledSize(child.obj);
-      let edge;
+      let dist;
       if (childOrder < insertOrder) {
-        edge = isColumn ? tl.y + size.h : tl.x + size.w;
-        const dist = cursorPos - newChildHalf - edge;
-        if (dist >= 0 && dist < minDist) minDist = dist;
+        dist = cursorPos - newChildHalf - farEdge;
       } else {
-        edge = isColumn ? tl.y : tl.x;
-        const dist = edge - (cursorPos + newChildHalf);
-        if (dist >= 0 && dist < minDist) minDist = dist;
+        dist = farEdge - (cursorPos + newChildHalf);
       }
+      if (dist >= 0 && dist < minDist) minDist = dist;
     }
     return isFinite(minDist) ? Math.max(0, Math.round(minDist)) : 0;
   }
@@ -4290,6 +4484,7 @@ var InsertChildSession = class _InsertChildSession {
     const minW = cd.minSize?.w ?? 0;
     const minH = cd.minSize?.h ?? 0;
     const containerTL = topLeft(this._container);
+    const positionsBefore = this.captureChildPositions(allChildren);
     const modeX = cd.sizeMode.x;
     const modeY = cd.sizeMode.y;
     const measureW = modeX === "hug" ? minW : currentW;
@@ -4310,7 +4505,31 @@ var InsertChildSession = class _InsertChildSession {
       yogaLayout(allChildren, tl2.x, tl2.y, finalW, finalH, cd);
     }
     syncCoords(this._container, allChildren);
+    this._lastDraggedYogaPos = { left: this.newChild.left, top: this.newChild.top };
+    for (const [obj, before] of positionsBefore) {
+      if (obj.left !== before.left || obj.top !== before.top) {
+        this._animator.animate(obj, before.left, before.top);
+      }
+    }
     relayoutSubContainers(allChildren, this.canvas.getObjects());
+    if (finalW !== currentW || finalH !== currentH) {
+      bubbleUpLayout(this._container, this.canvas.getObjects());
+    }
+  }
+  /** Snapshot all children positions using animator targets when available. */
+  captureChildPositions(allChildren) {
+    const map = /* @__PURE__ */ new Map();
+    for (const { obj } of allChildren) {
+      const target = this._animator.getTarget(obj);
+      if (target) {
+        map.set(obj, target);
+      } else if (obj === this.newChild && this._lastDraggedYogaPos) {
+        map.set(obj, this._lastDraggedYogaPos);
+      } else {
+        map.set(obj, { left: obj.left, top: obj.top });
+      }
+    }
+    return map;
   }
 };
 function cloneLayout(obj) {
@@ -4319,7 +4538,8 @@ function cloneLayout(obj) {
 }
 
 // src/LayoutManager.ts
-var ANCHOR_DELAY_MS = 300;
+var HOVER_DELAY_MS = 700;
+var ANCHOR_DELAY_MS = 500;
 var LayoutManager2 = class {
   constructor(canvas, callbacks = {}, guideColor) {
     this.dtl = { phase: "idle", cooldownUntil: 0 };
@@ -4457,7 +4677,7 @@ var LayoutManager2 = class {
           }
           this.showSessionGuides(session);
           this.canvas.renderAll();
-          this.dtl = { phase: "anchored", session, cooldownUntil: 0 };
+          this.dtl = { phase: "anchored", session, cooldownUntil: 0, source: obj, root: null };
         }
         return;
       }
@@ -4470,6 +4690,9 @@ var LayoutManager2 = class {
         break;
       case "pending":
         this.handlePendingMoving(obj, cursor);
+        break;
+      case "hovering":
+        this.handleHoveringMoving(obj, cursor);
         break;
       case "idle":
         this.handleIdleMoving(obj, cursor);
@@ -4515,69 +4738,169 @@ var LayoutManager2 = class {
     this.resizeSession.handleResizing(this.canvas.getObjects());
     this.canvas.renderAll();
   }
-  // ── State machine: IDLE → PENDING ─────────────────────────────────
+  // ── State machine: IDLE → HOVERING ────────────────────────────────
   handleIdleMoving(draggedObj, cursor) {
     if (Date.now() < this.dtl.cooldownUntil) return;
     const shape = this.findShapeUnderPoint(cursor, draggedObj);
     if (shape) {
-      this.startPending(draggedObj, shape, cursor);
+      const deepest = this.findDeepestPenetrable(cursor, shape, draggedObj);
+      this.startHovering(draggedObj, deepest, cursor);
     }
   }
-  // ── State machine: PENDING ────────────────────────────────────────
-  handlePendingMoving(_draggedObj, cursor) {
-    if (this.dtl.phase !== "pending") return;
-    const shape = this.findShapeUnderPoint(cursor, _draggedObj);
-    if (shape !== this.dtl.target) {
+  // ── State machine: HOVERING (silent) ─────────────────────────────
+  handleHoveringMoving(draggedObj, cursor) {
+    if (this.dtl.phase !== "hovering") return;
+    const shape = this.findShapeUnderPoint(cursor, draggedObj);
+    if (!shape) {
       this.resetToIdle();
+      return;
+    }
+    const deepest = this.findDeepestPenetrable(cursor, shape, draggedObj);
+    if (deepest !== this.dtl.target) {
+      clearTimeout(this.dtl.timer);
+      this.startHovering(draggedObj, deepest, cursor);
       return;
     }
     this.dtl.cursor = cursor;
   }
-  startPending(draggedObj, shape, cursor) {
-    this.guides.showHintHighlight(shape);
-    this.canvas.renderAll();
-    const timer = setTimeout(() => this.doAnchor(), ANCHOR_DELAY_MS);
+  startHovering(draggedObj, target, cursor) {
+    const timer = setTimeout(() => this.promoteToP(), HOVER_DELAY_MS);
     this.dtl = {
-      phase: "pending",
+      phase: "hovering",
       timer,
-      target: shape,
+      target,
       source: draggedObj,
       cursor,
       cooldownUntil: this.dtl.cooldownUntil
     };
   }
-  // ── State machine: ANCHOR (PENDING → ANCHORED) ───────────────────
-  doAnchor() {
+  /** HOVERING timer fired → show guides and move to PENDING. */
+  promoteToP() {
+    if (this.dtl.phase !== "hovering") return;
+    const { target, source, cursor } = this.dtl;
+    this.startPending(source, target, cursor);
+  }
+  // ── State machine: PENDING (visual hint) ─────────────────────────
+  handlePendingMoving(draggedObj, cursor) {
     if (this.dtl.phase !== "pending") return;
-    const { target: shape, source: child, cursor } = this.dtl;
-    const shapeLayout = shape.get?.("layout");
-    const alreadyContainer = shapeLayout?.container != null;
-    const existingChildren = alreadyContainer ? resolveContainerChildren(this.canvas.getObjects(), shape) : [];
-    let session;
-    if (alreadyContainer && existingChildren.length > 0) {
-      session = new InsertChildSession(this.canvas, shape, child, cursor);
-    } else {
-      session = new ContainerizeSession(this.canvas, shape, child, cursor);
+    const shape = this.findShapeUnderPoint(cursor, draggedObj);
+    if (!shape) {
+      this.resetToIdle();
+      return;
     }
-    this.showSessionGuides(session);
+    const deepest = this.findDeepestPenetrable(cursor, shape, draggedObj);
+    if (deepest !== this.dtl.target) {
+      clearTimeout(this.dtl.timer);
+      this.startPending(draggedObj, deepest, cursor);
+      return;
+    }
+    this.dtl.cursor = cursor;
+  }
+  startPending(draggedObj, target, cursor) {
+    this.guides.showHintHighlight(target, target);
     this.canvas.renderAll();
+    const timer = setTimeout(() => this.doAnchor(), ANCHOR_DELAY_MS);
     this.dtl = {
-      phase: "anchored",
-      session,
+      phase: "pending",
+      timer,
+      target,
+      source: draggedObj,
+      cursor,
       cooldownUntil: this.dtl.cooldownUntil
     };
+  }
+  // ── State machine: ANCHOR (PENDING → ANCHORED) ────────────────────
+  doAnchor() {
+    if (this.dtl.phase !== "pending") return;
+    const { target, source: child, cursor } = this.dtl;
+    const root = this.findShapeUnderPoint(cursor, child);
+    this.anchorOn(target, child, cursor, root);
   }
   // ── State machine: ANCHORED (during drag) ─────────────────────────
   handleAnchoredMoving(cursor) {
     if (this.dtl.phase !== "anchored") return;
-    const { session } = this.dtl;
+    const { session, source, root } = this.dtl;
     const result = session.handleMoving(cursor);
     if (result === "exited") {
+      if (root && session.container !== root) {
+        const parent = this.findParentContainer(session.container);
+        if (parent && pointInObject(cursor, parent)) {
+          this.anchorOn(parent, source, cursor, root);
+          return;
+        }
+      }
       this.resetToIdle(Date.now() + 1e3);
       return;
     }
     this.showSessionGuides(session);
     this.canvas.renderAll();
+  }
+  // ── Depth helpers ─────────────────────────────────────────────────
+  /**
+   * Walk down from `root` to find the deepest penetrable descendant under
+   * the cursor. Returns `root` itself if no children qualify.
+   */
+  findDeepestPenetrable(cursor, root, exclude) {
+    let current = root;
+    for (; ; ) {
+      const child = this.findPenetrableChild(cursor, current, exclude);
+      if (!child) return current;
+      current = child;
+    }
+  }
+  /**
+   * Find the first penetrable child of `container` under the cursor.
+   * A penetrable child is a shape (not text) that could become a container.
+   */
+  findPenetrableChild(cursor, container, exclude) {
+    const layout = container.get?.("layout");
+    if (!layout?.container) return null;
+    const children = resolveContainerChildren(this.canvas.getObjects(), container);
+    for (const { obj } of children) {
+      if (obj === exclude) continue;
+      const layerType = obj.layerType;
+      if (layerType !== "shape" && !(obj instanceof import_fabric13.Rect)) continue;
+      if (pointInObject(cursor, obj)) return obj;
+    }
+    return null;
+  }
+  /** Find the parent container of `obj` by looking up its `child.parentId`. */
+  findParentContainer(obj) {
+    const layout = obj.get?.("layout");
+    if (!layout?.child) return null;
+    return this.canvas.getObjects().find(
+      (o) => o.get("layerId") === layout.child.parentId
+    ) ?? null;
+  }
+  /** Transition to ANCHORED: create a session on the target and go live. */
+  anchorOn(target, child, cursor, root = null) {
+    const objects = this.canvas.getObjects();
+    const containerIdx = objects.indexOf(target);
+    const childIdx = objects.indexOf(child);
+    if (containerIdx >= 0 && childIdx >= 0 && childIdx < containerIdx) {
+      this.canvas.moveObjectTo(child, containerIdx);
+    }
+    const session = this.createSession(target, child, cursor);
+    this.guides.clear();
+    this.showSessionGuides(session);
+    this.canvas.renderAll();
+    this.dtl = {
+      phase: "anchored",
+      session,
+      cooldownUntil: this.dtl.cooldownUntil,
+      source: child,
+      root
+    };
+  }
+  /** Create the appropriate session type for a target container. */
+  createSession(target, child, cursor) {
+    const targetLayout = target.get?.("layout");
+    const alreadyContainer = targetLayout?.container != null;
+    const existingChildren = alreadyContainer ? resolveContainerChildren(this.canvas.getObjects(), target) : [];
+    if (alreadyContainer && existingChildren.length > 0) {
+      return new InsertChildSession(this.canvas, target, child, cursor);
+    }
+    return new ContainerizeSession(this.canvas, target, child, cursor);
   }
   // ── State machine: COMMIT ─────────────────────────────────────────
   doCommit() {
@@ -4592,7 +4915,7 @@ var LayoutManager2 = class {
   // ── Reset ─────────────────────────────────────────────────────────
   resetToIdle(cooldownUntil = 0) {
     this.guides.clear();
-    if (this.dtl.phase === "pending") {
+    if (this.dtl.phase === "pending" || this.dtl.phase === "hovering") {
       clearTimeout(this.dtl.timer);
     }
     this.dtl = { phase: "idle", cooldownUntil: cooldownUntil || this.dtl.cooldownUntil };
@@ -4949,6 +5272,8 @@ var _FabricEditor = class _FabricEditor {
     this._resizeObserver = null;
     this._resizeCallbacks = [];
     this._initialized = false;
+    // ── Clipboard (copy / paste) ──────────────────────────────────────
+    this._clipboard = null;
     this.config = config;
     const gc = config.guideColor ?? "#d946ef";
     this.canvas = new DesignCanvas(canvasElement, {
@@ -5426,11 +5751,12 @@ var _FabricEditor = class _FabricEditor {
   }
   /**
    * Set stroke color on the selected object. Accepts any CSS color (hex, rgba).
+   * Resets global opacity to 1 so per-channel rgba alpha is authoritative.
    */
   setStrokeColor(color) {
     const obj = this.selection.current;
     if (!obj) return;
-    obj.set({ stroke: color });
+    obj.set({ stroke: color, opacity: 1 });
     if (!obj.strokeWidth) {
       obj.set({ strokeWidth: 4 });
     }
@@ -5440,11 +5766,12 @@ var _FabricEditor = class _FabricEditor {
   /**
    * Set fill color (solid) on the selected object.
    * Unlike changeColor(), always sets fill regardless of stroke state.
+   * Resets global opacity to 1 so per-channel rgba alpha is authoritative.
    */
   setFillColor(color) {
     const obj = this.selection.current;
     if (!obj) return;
-    obj.set({ fill: color });
+    obj.set({ fill: color, opacity: 1 });
     this.canvas.renderAll();
   }
   /**
@@ -5470,7 +5797,7 @@ var _FabricEditor = class _FabricEditor {
         { offset: 1, color: color2 }
       ]
     });
-    obj.set({ fill: gradient });
+    obj.set({ fill: gradient, opacity: 1 });
     this.canvas.renderAll();
   }
   /**
@@ -5481,6 +5808,92 @@ var _FabricEditor = class _FabricEditor {
     if (!obj || obj.type !== "i-text") return;
     obj.set({ fontFamily, fontWeight: fontWeight || "normal" });
     this.canvas.requestRenderAll();
+  }
+  // ── Shadow ────────────────────────────────────────────────────────
+  setShadow(opts) {
+    const obj = this.selection.current;
+    if (!obj) return;
+    const existing = obj.shadow;
+    const shadow = new import_fabric15.Shadow({
+      color: opts.color ?? existing?.color ?? "rgba(0,0,0,0.5)",
+      blur: opts.blur ?? existing?.blur ?? 10,
+      offsetX: opts.offsetX ?? existing?.offsetX ?? 5,
+      offsetY: opts.offsetY ?? existing?.offsetY ?? 5
+    });
+    obj.set("shadow", shadow);
+    this.canvas.requestRenderAll();
+  }
+  removeShadow() {
+    const obj = this.selection.current;
+    if (!obj) return;
+    obj.set("shadow", null);
+    this.canvas.requestRenderAll();
+  }
+  /**
+   * Copy the current selection to an internal clipboard.
+   * If the selected object is a layout container, its children are copied too.
+   */
+  copySelection() {
+    const selected = this.selection.selected;
+    if (selected.length === 0) return;
+    const allObjects = this.canvas.getObjects();
+    const toCopy = [];
+    for (const obj of selected) {
+      toCopy.push(obj);
+      const id = obj.get("layerId");
+      if (id) {
+        for (const other of allObjects) {
+          if (other.get("layout")?.child?.parentId === id && !toCopy.includes(other)) {
+            toCopy.push(other);
+          }
+        }
+      }
+    }
+    this._clipboard = toCopy.map(
+      (obj) => obj.toObject(["layerId", "lockMode", "lockContent", "layout"])
+    );
+  }
+  /**
+   * Paste clipboard contents onto the canvas.
+   * Generates fresh layerIds and remaps parent/child references.
+   * Offsets pasted objects by 20px so they don't overlap the originals.
+   */
+  async pasteClipboard() {
+    if (!this._clipboard?.length) return [];
+    const OFFSET = 20;
+    const idMap = /* @__PURE__ */ new Map();
+    for (const data of this._clipboard) {
+      if (data.layerId) {
+        idMap.set(data.layerId, `layer_${Date.now()}_${Math.floor(Math.random() * 1e3)}`);
+      }
+    }
+    const cloned = this._clipboard.map((data) => {
+      const copy = JSON.parse(JSON.stringify(data));
+      if (copy.layerId && idMap.has(copy.layerId)) {
+        copy.layerId = idMap.get(copy.layerId);
+      }
+      if (copy.layout?.child?.parentId) {
+        const newParent = idMap.get(copy.layout.child.parentId);
+        if (newParent) copy.layout.child.parentId = newParent;
+      }
+      if (typeof copy.left === "number") copy.left += OFFSET;
+      if (typeof copy.top === "number") copy.top += OFFSET;
+      delete copy.lockMode;
+      return copy;
+    });
+    const objects = [];
+    for (const data of cloned) {
+      const obj = await this.layers.deserialize(data);
+      if (obj) {
+        this.layers.add(obj);
+        objects.push(obj);
+      }
+    }
+    if (objects.length === 1) {
+      this.canvas.setActiveObject(objects[0]);
+    }
+    this.canvas.renderAll();
+    return objects;
   }
   /**
    * Supprime l'objet ou les objets sélectionnés

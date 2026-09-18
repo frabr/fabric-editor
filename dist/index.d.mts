@@ -37,6 +37,7 @@ declare class DesignCanvas {
     adjustGrabOffset(dx: number, dy: number): void;
     getObjects(): FabricObject[];
     add(...objects: FabricObject[]): void;
+    insertAt(index: number, ...objects: FabricObject[]): void;
     remove(...objects: FabricObject[]): void;
     renderAll(): void;
     requestRenderAll(): void;
@@ -471,6 +472,12 @@ declare class InsertChildSession implements LayoutSession {
     private _decidingDirection;
     /** Current decided direction — cached for hysteresis. null = not yet decided. */
     private _currentDirection;
+    /** Animator for smooth sibling/child transitions. */
+    private _animator;
+    /** Sibling positions at anchor time — stable reference for gap calculation. */
+    private _siblingAnchors;
+    /** Last Yoga-computed position of the dragged child (not the cursor position). */
+    private _lastDraggedYogaPos;
     constructor(canvas: DesignCanvas, container: FabricObject, newChild: FabricObject, cursor: {
         x: number;
         y: number;
@@ -511,9 +518,10 @@ declare class InsertChildSession implements LayoutSession {
     private _lastOrder;
     /**
      * Compute the insertion order based on cursor position in the main axis.
-     * Uses the midpoint between consecutive children as the decision boundary.
-     * Hysteresis: once an order is chosen, the cursor must cross a neighboring
-     * boundary to change it (no flickering near boundaries).
+     * The swap threshold is the **far edge** of each sibling — the dragged
+     * child swaps once it fully passes the sibling.
+     *
+     * Uses anchored sibling positions to avoid feedback loops with Yoga.
      */
     private computeInsertOrder;
     /**
@@ -532,6 +540,8 @@ declare class InsertChildSession implements LayoutSession {
      * Container grows if needed (never shrinks during session).
      */
     private previewLayout;
+    /** Snapshot all children positions using animator targets when available. */
+    private captureChildPositions;
 }
 
 declare function initYoga(): Promise<void>;
@@ -866,7 +876,7 @@ declare class LayerManager {
      * Désérialise un calque depuis ses données JSON
      * Les images legacy (type "Image") sont automatiquement migrées vers ImageFrame
      */
-    private deserialize;
+    deserialize(layer: LayerData): Promise<FabricObject | null>;
     /**
      * Applique un mode de verrouillage à un objet
      * Délègue à la fonction du module locking.ts
@@ -1360,10 +1370,30 @@ declare class LayoutManager {
     private onModified;
     private onResizing;
     private handleIdleMoving;
+    private handleHoveringMoving;
+    private startHovering;
+    /** HOVERING timer fired → show guides and move to PENDING. */
+    private promoteToP;
     private handlePendingMoving;
     private startPending;
     private doAnchor;
     private handleAnchoredMoving;
+    /**
+     * Walk down from `root` to find the deepest penetrable descendant under
+     * the cursor. Returns `root` itself if no children qualify.
+     */
+    private findDeepestPenetrable;
+    /**
+     * Find the first penetrable child of `container` under the cursor.
+     * A penetrable child is a shape (not text) that could become a container.
+     */
+    private findPenetrableChild;
+    /** Find the parent container of `obj` by looking up its `child.parentId`. */
+    private findParentContainer;
+    /** Transition to ANCHORED: create a session on the target and go live. */
+    private anchorOn;
+    /** Create the appropriate session type for a target container. */
+    private createSession;
     private doCommit;
     private resetToIdle;
     private showSessionGuides;
@@ -1533,11 +1563,13 @@ declare class FabricEditor {
     setStrokeWidth(width: number): void;
     /**
      * Set stroke color on the selected object. Accepts any CSS color (hex, rgba).
+     * Resets global opacity to 1 so per-channel rgba alpha is authoritative.
      */
     setStrokeColor(color: string): void;
     /**
      * Set fill color (solid) on the selected object.
      * Unlike changeColor(), always sets fill regardless of stroke state.
+     * Resets global opacity to 1 so per-channel rgba alpha is authoritative.
      */
     setFillColor(color: string): void;
     /**
@@ -1548,6 +1580,25 @@ declare class FabricEditor {
      * Change la police de l'objet texte sélectionné
      */
     changeFont(fontFamily: string, fontWeight?: string): void;
+    setShadow(opts: {
+        color?: string;
+        blur?: number;
+        offsetX?: number;
+        offsetY?: number;
+    }): void;
+    removeShadow(): void;
+    private _clipboard;
+    /**
+     * Copy the current selection to an internal clipboard.
+     * If the selected object is a layout container, its children are copied too.
+     */
+    copySelection(): void;
+    /**
+     * Paste clipboard contents onto the canvas.
+     * Generates fresh layerIds and remaps parent/child references.
+     * Offsets pasted objects by 20px so they don't overlap the originals.
+     */
+    pasteClipboard(): Promise<FabricObject[]>;
     /**
      * Supprime l'objet ou les objets sélectionnés
      * Les objets verrouillés (position ou full) ne peuvent pas être supprimés
@@ -1611,7 +1662,7 @@ declare class CanvasGuides {
         stroke?: string;
         strokeWidth?: number;
         strokeDashArray?: number[];
-    }): void;
+    }, insertAbove?: FabricObject): void;
     /** Remove all guides added by this instance. */
     clear(): void;
     /** Clear + render in one call (common pattern). */
@@ -1628,12 +1679,16 @@ declare class CanvasGuides {
         top: number;
         width: number;
         height: number;
-    }): void;
+    }, insertAbove?: FabricObject): void;
     /**
      * Show a dashed hover hint around a shape (used during PENDING state
      * in drag-to-layout to signal that anchoring is about to happen).
+     *
+     * When `insertAbove` is provided, guides are inserted in the z-order
+     * just above that object instead of on top of everything — this
+     * prevents the overlay from covering the shape's children.
      */
-    showHintHighlight(shape: FabricObject): void;
+    showHintHighlight(shape: FabricObject, insertAbove?: FabricObject): void;
     /**
      * Show layout guides: a dashed outline around the container,
      * hatched overlays for each non-zero margin zone, and anchor

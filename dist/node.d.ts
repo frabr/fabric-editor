@@ -36,6 +36,7 @@ declare class DesignCanvas {
     adjustGrabOffset(dx: number, dy: number): void;
     getObjects(): FabricObject[];
     add(...objects: FabricObject[]): void;
+    insertAt(index: number, ...objects: FabricObject[]): void;
     remove(...objects: FabricObject[]): void;
     renderAll(): void;
     requestRenderAll(): void;
@@ -514,7 +515,7 @@ declare class LayerManager {
      * Désérialise un calque depuis ses données JSON
      * Les images legacy (type "Image") sont automatiquement migrées vers ImageFrame
      */
-    private deserialize;
+    deserialize(layer: LayerData): Promise<FabricObject | null>;
     /**
      * Applique un mode de verrouillage à un objet
      * Délègue à la fonction du module locking.ts

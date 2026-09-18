@@ -1,4 +1,4 @@
-import { FabricObject, FabricImage, Point, Gradient } from "#fabric";
+import { FabricObject, FabricImage, Point, Gradient, Shadow } from "#fabric";
 import { DesignCanvas } from "./DesignCanvas";
 import { LayerManager } from "./LayerManager";
 import { SelectionManager } from "./SelectionManager";
@@ -625,11 +625,12 @@ export class FabricEditor {
 
   /**
    * Set stroke color on the selected object. Accepts any CSS color (hex, rgba).
+   * Resets global opacity to 1 so per-channel rgba alpha is authoritative.
    */
   setStrokeColor(color: string): void {
     const obj = this.selection.current;
     if (!obj) return;
-    obj.set({ stroke: color });
+    obj.set({ stroke: color, opacity: 1 });
     if (!obj.strokeWidth) {
       obj.set({ strokeWidth: 4 });
     }
@@ -641,11 +642,12 @@ export class FabricEditor {
   /**
    * Set fill color (solid) on the selected object.
    * Unlike changeColor(), always sets fill regardless of stroke state.
+   * Resets global opacity to 1 so per-channel rgba alpha is authoritative.
    */
   setFillColor(color: string): void {
     const obj = this.selection.current;
     if (!obj) return;
-    obj.set({ fill: color });
+    obj.set({ fill: color, opacity: 1 });
     this.canvas.renderAll();
   }
 
@@ -672,7 +674,7 @@ export class FabricEditor {
         { offset: 1, color: color2 },
       ],
     });
-    obj.set({ fill: gradient });
+    obj.set({ fill: gradient, opacity: 1 });
     this.canvas.renderAll();
   }
 
@@ -684,6 +686,30 @@ export class FabricEditor {
     if (!obj || obj.type !== "i-text") return;
 
     obj.set({ fontFamily, fontWeight: fontWeight || "normal" });
+    this.canvas.requestRenderAll();
+  }
+
+  // ── Shadow ────────────────────────────────────────────────────────
+
+  setShadow(opts: { color?: string; blur?: number; offsetX?: number; offsetY?: number }): void {
+    const obj = this.selection.current;
+    if (!obj) return;
+
+    const existing = obj.shadow as Shadow | null;
+    const shadow = new Shadow({
+      color: opts.color ?? existing?.color ?? "rgba(0,0,0,0.5)",
+      blur: opts.blur ?? existing?.blur ?? 10,
+      offsetX: opts.offsetX ?? existing?.offsetX ?? 5,
+      offsetY: opts.offsetY ?? existing?.offsetY ?? 5,
+    });
+    obj.set("shadow", shadow);
+    this.canvas.requestRenderAll();
+  }
+
+  removeShadow(): void {
+    const obj = this.selection.current;
+    if (!obj) return;
+    obj.set("shadow", null);
     this.canvas.requestRenderAll();
   }
 
