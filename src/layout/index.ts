@@ -7,3 +7,4 @@ export type { ResizeAxes } from "./geometry";
 export { ContainerizeSession, wrapContainerAroundChild } from "./containerize-session";
 export { InsertChildSession } from "./insert-child-session";
 export { initYoga, isYogaReady, yogaLayout } from "./yoga-engine";
+export { LayoutAnimator } from "./layout-animator";

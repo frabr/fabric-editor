@@ -27,6 +27,7 @@ import { scaledSize, setShapeSize, topLeft, syncCoords, pointInObject, isTextObj
 import { resolveContainerChildren, sortChildrenByOrder } from "./resize-session";
 import { yogaLayout } from "./yoga-engine";
 import { runLayout, relayoutSubContainers } from "./reconcile";
+import { LayoutAnimator } from "./layout-animator";
 
 // ── Constants ────────────────────────────────────────────────────────
 
@@ -55,11 +56,21 @@ export class InsertChildSession implements LayoutSession {
   /** Current decided direction — cached for hysteresis. null = not yet decided. */
   private _currentDirection: FlexDirection | null = null;
 
+  /** Animator for smooth sibling/child transitions. */
+  private _animator: LayoutAnimator;
+
+  /** Sibling positions at anchor time — stable reference for gap calculation. */
+  private _siblingAnchors = new Map<FabricObject, { left: number; top: number; w: number; h: number }>();
+
+  /** Last Yoga-computed position of the dragged child (not the cursor position). */
+  private _lastDraggedYogaPos: { left: number; top: number } | null = null;
+
   constructor(canvas: DesignCanvas, container: FabricObject, newChild: FabricObject, cursor: { x: number; y: number }) {
     this.canvas = canvas;
     this._container = container;
     this.newChild = newChild;
     this._isReattach = false;
+    this._animator = new LayoutAnimator(canvas);
 
     // Snapshot for rollback
     const { w: cw, h: ch } = scaledSize(container);
@@ -92,6 +103,14 @@ export class InsertChildSession implements LayoutSession {
       }
     }
 
+    // Snapshot sibling positions — stable reference for gap calculation.
+    // Reading topLeft here is safe: Yoga hasn't touched them yet in this session.
+    for (const { obj } of existing) {
+      const tl = topLeft(obj);
+      const sz = scaledSize(obj);
+      this._siblingAnchors.set(obj, { left: tl.x, top: tl.y, w: sz.w, h: sz.h });
+    }
+
     // Set up the new child's layout (no margins — spacing is container padding + gap)
     const containerId = container.get?.("layerId") as string;
     const childData: ChildData = {
@@ -121,6 +140,7 @@ export class InsertChildSession implements LayoutSession {
     session._isReattach = true;
     session._currentDirection = null;
     session._lastOrder = null;
+    session._animator = new LayoutAnimator(canvas);
 
     // Snapshot for rollback
     const { w: cw, h: ch } = scaledSize(container);
@@ -153,6 +173,16 @@ export class InsertChildSession implements LayoutSession {
       }
     }
 
+    // Snapshot sibling positions — stable reference for gap calculation.
+    session._siblingAnchors = new Map();
+    for (const { obj } of allChildren) {
+      if (obj !== child) {
+        const tl = topLeft(obj);
+        const sz = scaledSize(obj);
+        session._siblingAnchors.set(obj, { left: tl.x, top: tl.y, w: sz.w, h: sz.h });
+      }
+    }
+
     // Initial preview from cursor
     session.updateFromCursor(cursor);
 
@@ -178,8 +208,23 @@ export class InsertChildSession implements LayoutSession {
     cd.minSize.w = w;
     cd.minSize.h = h;
 
+    // Capture all children positions before final layout
+    const allChildren = resolveContainerChildren(this.canvas.getObjects(), this._container);
+    const positionsBefore = new Map<FabricObject, { left: number; top: number }>();
+    for (const { obj } of allChildren) {
+      positionsBefore.set(obj, { left: obj.left!, top: obj.top! });
+    }
+
     // Yoga takes full control at commit — positions everything properly
     runLayout(this.canvas.getObjects());
+
+    // Animate all children (including dragged) that snapped to a new position
+    for (const [obj, before] of positionsBefore) {
+      if (obj.left !== before.left || obj.top !== before.top) {
+        this._animator.animate(obj, before.left, before.top);
+      }
+    }
+
     this.canvas.renderAll();
 
     // Reattach: listener already exists from the first attach
@@ -201,6 +246,9 @@ export class InsertChildSession implements LayoutSession {
   }
 
   rollback(): void {
+    // Kill any in-flight animations — positions will be restored from snapshot
+    this._animator.cancelAll();
+
     if (this._isReattach) {
       // Detach: remove child block from layout
       const layout = this.newChild.get?.("layout") as LayoutData | undefined;
@@ -267,6 +315,11 @@ export class InsertChildSession implements LayoutSession {
    * the dragged child stays under the cursor.
    */
   private updateFromCursor(cursor: { x: number; y: number }): void {
+    // Snap mid-animation siblings to their Yoga targets so that
+    // computeInsertOrder reads stable positions, not interpolated ones.
+    // Exclude the dragged child — Fabric's drag handler sets its position.
+    this._animator.flushToTargets(this.newChild);
+
     const containerLayout = this._container.get?.("layout") as LayoutData;
     const cd = containerLayout.container!;
 
@@ -321,13 +374,18 @@ export class InsertChildSession implements LayoutSession {
     cursor: { x: number; y: number },
     existingChild: { obj: FabricObject; cl: ChildData },
   ): FlexDirection {
-    const childTL = topLeft(existingChild.obj);
-    const { w: childW, h: childH } = scaledSize(existingChild.obj);
+    // Use anchored position so direction detection doesn't shift
+    // after Yoga moves the sibling into a row/column slot.
+    const anchor = this._siblingAnchors.get(existingChild.obj);
+    const childX = anchor ? anchor.left : topLeft(existingChild.obj).x;
+    const childY = anchor ? anchor.top : topLeft(existingChild.obj).y;
+    const childW = anchor ? anchor.w : scaledSize(existingChild.obj).w;
+    const childH = anchor ? anchor.h : scaledSize(existingChild.obj).h;
 
     // Distance from the child's nearest edge on each axis
     // (0 if cursor is within the child's bounds on that axis)
-    const dx = Math.max(0, cursor.x - (childTL.x + childW), childTL.x - cursor.x);
-    const dy = Math.max(0, cursor.y - (childTL.y + childH), childTL.y - cursor.y);
+    const dx = Math.max(0, cursor.x - (childX + childW), childX - cursor.x);
+    const dy = Math.max(0, cursor.y - (childY + childH), childY - cursor.y);
 
     // First decision: no hysteresis
     if (this._currentDirection === null) {
@@ -351,9 +409,10 @@ export class InsertChildSession implements LayoutSession {
 
   /**
    * Compute the insertion order based on cursor position in the main axis.
-   * Uses the midpoint between consecutive children as the decision boundary.
-   * Hysteresis: once an order is chosen, the cursor must cross a neighboring
-   * boundary to change it (no flickering near boundaries).
+   * The swap threshold is the **far edge** of each sibling — the dragged
+   * child swaps once it fully passes the sibling.
+   *
+   * Uses anchored sibling positions to avoid feedback loops with Yoga.
    */
   private computeInsertOrder(
     cursor: { x: number; y: number },
@@ -364,62 +423,54 @@ export class InsertChildSession implements LayoutSession {
 
     const cursorPos = isColumn ? cursor.y : cursor.x;
 
-    // Compute boundaries between children (midpoints)
-    // Slots: [before child 0] [between 0-1] [between 1-2] ... [after last]
-    // Each slot has an order value that goes between existing orders
-    const slots: { order: number; boundaryStart: number; boundaryEnd: number }[] = [];
+    // Build slots: [before child 0] [between 0-1] ... [after last]
+    // The boundary between "before child i" and "after child i" is the
+    // child's far edge (right/bottom). This means the dragged element
+    // must pass the sibling entirely before swapping.
+    const slots: { order: number; boundary: number }[] = [];
 
     for (let i = 0; i <= existingChildren.length; i++) {
-      const prevChild = i > 0 ? existingChildren[i - 1] : null;
-      const nextChild = i < existingChildren.length ? existingChildren[i] : null;
-
-      // Compute boundary start/end for this slot
-      let start = -Infinity;
-      let end = Infinity;
-
-      if (prevChild) {
-        const tl = topLeft(prevChild.obj);
-        const size = scaledSize(prevChild.obj);
-        const prevEnd = isColumn ? tl.y + size.h : tl.x + size.w;
-        start = prevEnd;
-      }
-      if (nextChild) {
-        const tl = topLeft(nextChild.obj);
-        const nextStart = isColumn ? tl.y : tl.x;
-        end = nextStart;
-      }
-
-      // Order value for this slot
       let order: number;
       if (i === 0) {
-        const firstOrder = existingChildren[0].cl.order ?? 0;
-        order = firstOrder - 1;
+        order = (existingChildren[0].cl.order ?? 0) - 1;
       } else if (i === existingChildren.length) {
-        const lastOrder = existingChildren[existingChildren.length - 1].cl.order ?? (existingChildren.length - 1);
-        order = lastOrder + 1;
+        order = (existingChildren[existingChildren.length - 1].cl.order ?? (existingChildren.length - 1)) + 1;
       } else {
         const prevOrder = existingChildren[i - 1].cl.order ?? (i - 1);
         const nextOrder = existingChildren[i].cl.order ?? i;
         order = (prevOrder + nextOrder) / 2;
       }
 
-      slots.push({ order, boundaryStart: start, boundaryEnd: end });
+      // Boundary = far edge of child i-1 (the child we just passed).
+      // For slot 0 there is no previous child → -Infinity.
+      let boundary: number;
+      if (i > 0) {
+        const prev = existingChildren[i - 1];
+        const anchor = this._siblingAnchors.get(prev.obj);
+        if (anchor) {
+          boundary = isColumn ? anchor.top + anchor.h : anchor.left + anchor.w;
+        } else {
+          const tl = topLeft(prev.obj);
+          const sz = scaledSize(prev.obj);
+          boundary = isColumn ? tl.y + sz.h : tl.x + sz.w;
+        }
+      } else {
+        boundary = -Infinity;
+      }
+
+      slots.push({ order, boundary });
     }
 
-    // Find which slot the cursor is in
-    // Use midpoint between slot boundaries as the decision point
-    for (let i = 0; i < slots.length - 1; i++) {
-      const midpoint = (slots[i].boundaryEnd + slots[i + 1].boundaryStart) / 2;
-      if (isFinite(midpoint) && cursorPos < midpoint) {
+    // Find which slot the cursor is in: last slot whose boundary we've passed
+    for (let i = slots.length - 1; i >= 0; i--) {
+      if (cursorPos >= slots[i].boundary) {
         this._lastOrder = slots[i].order;
         return slots[i].order;
       }
     }
 
-    // Cursor is after all children
-    const lastSlot = slots[slots.length - 1];
-    this._lastOrder = lastSlot.order;
-    return lastSlot.order;
+    this._lastOrder = slots[0].order;
+    return slots[0].order;
   }
 
   /**
@@ -440,25 +491,32 @@ export class InsertChildSession implements LayoutSession {
     const newChildSize = scaledSize(this.newChild);
     const newChildHalf = isColumn ? newChildSize.h / 2 : newChildSize.w / 2;
 
-    // Find the nearest neighbor's edge in the main axis
+    // Measure the gap between the dragged child and the nearest sibling.
+    // Uses anchored positions (session start) to avoid Yoga feedback loops.
+    //
+    // Before swap: dragged is after sibling → gap = dragged.nearEdge - sibling.farEdge
+    //   → shrinks as cursor approaches sibling, reaches 0 at contact.
+    // After swap: dragged is before sibling → gap = sibling.farEdge - dragged.farEdge
+    //   → grows as cursor continues past the sibling.
     let minDist = Infinity;
     for (const child of existingChildren) {
-      const childOrder = child.cl.order ?? 0;
-      const tl = topLeft(child.obj);
-      const size = scaledSize(child.obj);
+      const anchor = this._siblingAnchors.get(child.obj);
+      if (!anchor) continue;
 
-      let edge: number;
+      const farEdge = isColumn ? anchor.top + anchor.h : anchor.left + anchor.w;
+      const childOrder = child.cl.order ?? 0;
+
+      let dist: number;
       if (childOrder < insertOrder) {
-        // This child is before the new one → measure from its far edge
-        edge = isColumn ? tl.y + size.h : tl.x + size.w;
-        const dist = cursorPos - newChildHalf - edge;
-        if (dist >= 0 && dist < minDist) minDist = dist;
+        // Dragged is after sibling → gap from sibling's far edge to dragged's near edge
+        dist = cursorPos - newChildHalf - farEdge;
       } else {
-        // This child is after the new one → measure from its near edge
-        edge = isColumn ? tl.y : tl.x;
-        const dist = edge - (cursorPos + newChildHalf);
-        if (dist >= 0 && dist < minDist) minDist = dist;
+        // Dragged is before sibling → gap from dragged's far edge to sibling's far edge
+        // (farEdge is the swap threshold — cursor just passed it, so distance grows)
+        dist = farEdge - (cursorPos + newChildHalf);
       }
+
+      if (dist >= 0 && dist < minDist) minDist = dist;
     }
 
     return isFinite(minDist) ? Math.max(0, Math.round(minDist)) : 0;
@@ -480,6 +538,11 @@ export class InsertChildSession implements LayoutSession {
     const minH = cd.minSize?.h ?? 0;
 
     const containerTL = topLeft(this._container);
+
+    // Capture sibling Yoga-target positions before the new layout pass.
+    // For mid-animation objects we read the animator's target (the last
+    // Yoga result) instead of obj.left/top which holds an interpolated value.
+    const positionsBefore = this.captureChildPositions(allChildren);
 
     // For the measure pass, use minSize as the constraint in hug mode
     // (not currentW which may be inflated from a previous frame)
@@ -504,8 +567,39 @@ export class InsertChildSession implements LayoutSession {
 
     syncCoords(this._container, allChildren);
 
+    // Save the dragged child's Yoga position (before animation overwrites it)
+    this._lastDraggedYogaPos = { left: this.newChild.left!, top: this.newChild.top! };
+
+    // Animate all children whose position changed (order swap / crossing).
+    for (const [obj, before] of positionsBefore) {
+      if (obj.left !== before.left || obj.top !== before.top) {
+        this._animator.animate(obj, before.left, before.top);
+      }
+    }
+
     // Recursively reposition sub-containers (their position may have changed)
     relayoutSubContainers(allChildren, this.canvas.getObjects());
+  }
+
+  /** Snapshot all children positions using animator targets when available. */
+  private captureChildPositions(
+    allChildren: { obj: FabricObject; cl: ChildData }[],
+  ): Map<FabricObject, { left: number; top: number }> {
+    const map = new Map<FabricObject, { left: number; top: number }>();
+    for (const { obj } of allChildren) {
+      const target = this._animator.getTarget(obj);
+      if (target) {
+        map.set(obj, target);
+      } else if (obj === this.newChild && this._lastDraggedYogaPos) {
+        // For the dragged child, obj.left/top holds the cursor position
+        // (set by Fabric's drag handler), not the Yoga slot. Use the
+        // last known Yoga position instead.
+        map.set(obj, this._lastDraggedYogaPos);
+      } else {
+        map.set(obj, { left: obj.left!, top: obj.top! });
+      }
+    }
+    return map;
   }
 }
 
