@@ -829,6 +829,12 @@ declare class LayerManager {
     /**
      * Crée et ajoute un calque texte
      */
+    /**
+     * Crée un calque texte sans l'ajouter au canvas.
+     * Source unique des défauts texte — utilisé par addText et par le
+     * drag externe (DropHandler).
+     */
+    createText(options?: TextLayerOptions): CustomTextbox;
     addText(options?: TextLayerOptions): CustomTextbox;
     /**
      * Crée et ajoute un calque image dans un ImageFrame
@@ -862,6 +868,12 @@ declare class LayerManager {
     /**
      * Crée et ajoute un calque forme (rectangle par défaut)
      */
+    /**
+     * Crée un calque forme sans l'ajouter au canvas.
+     * Source unique des défauts forme — utilisé par addShape et par le
+     * drag externe (DropHandler).
+     */
+    createShape(options?: ShapeLayerOptions): FabricObject;
     addShape(options?: ShapeLayerOptions): FabricObject;
     /**
      * Groupe plusieurs objets ensemble
@@ -1360,6 +1372,34 @@ declare class LayoutManager {
     setAlignItems(obj: FabricObject, value: string): void;
     /** Update justifyContent on a container. */
     setJustifyContent(obj: FabricObject, value: string): void;
+    /**
+     * Advance the DTL state machine for an externally-dragged object.
+     * Call this on every dragover frame with the source object and the
+     * cursor position in scene coordinates.
+     *
+     * The source's position is updated to follow the cursor.
+     */
+    tickExternalDrag(source: FabricObject, cursor: {
+        x: number;
+        y: number;
+    }): void;
+    /**
+     * Commit the current DTL session from an external drag.
+     * Call this on drop. No-op if no session is active (the caller should
+     * handle the "simple add" case itself).
+     *
+     * Returns true if a session was committed, false otherwise.
+     */
+    commitExternalDrag(): boolean;
+    /**
+     * Rollback any in-progress DTL state from an external drag.
+     * Call this on dragleave / cancel. Rolls back the session if anchored,
+     * clears timers otherwise. The caller owns the source object and is
+     * responsible for removing it from the canvas.
+     */
+    rollbackExternalDrag(): void;
+    /** Whether the DTL state machine is currently in ANCHORED phase. */
+    get isAnchored(): boolean;
     /** Clean up event listeners. */
     dispose(): void;
     private onMovingBound;
@@ -1373,21 +1413,23 @@ declare class LayoutManager {
     private handleHoveringMoving;
     private startHovering;
     /** HOVERING timer fired → show guides and move to PENDING. */
-    private promoteToP;
+    private promoteToPending;
     private handlePendingMoving;
     private startPending;
-    private doAnchor;
+    /** PENDING timer fired → create a session and move to ANCHORED. */
+    private promoteToAnchored;
     private handleAnchoredMoving;
     /**
-     * Walk down from `root` to find the deepest penetrable descendant under
-     * the cursor. Returns `root` itself if no children qualify.
+     * Walk down from `root` to find the deepest drop target under the
+     * cursor. Returns `root` itself if no children qualify.
      */
-    private findDeepestPenetrable;
+    private findDeepestDropTarget;
     /**
-     * Find the first penetrable child of `container` under the cursor.
-     * A penetrable child is a shape (not text) that could become a container.
+     * Among the children of `container`, find the first one under the cursor
+     * that is itself a valid drop target — a shape (not text) that could
+     * become a container.
      */
-    private findPenetrableChild;
+    private findChildDropTarget;
     /** Find the parent container of `obj` by looking up its `child.parentId`. */
     private findParentContainer;
     /** Transition to ANCHORED: create a session on the target and go live. */
@@ -1611,7 +1653,7 @@ declare class FabricEditor {
     findImageAtPoint(x: number, y: number): FabricImage | ImageFrame | null;
     /**
      * Trouve l'objet "droppable" sous un point : ImageFrame, FabricImage, ou shape.
-     * Utilisé par ImageDropHandler pour le drop d'images sur images ET sur formes.
+     * Utilisé par DropHandler pour le drop d'images sur images ET sur formes.
      */
     findDropTargetAtPoint(x: number, y: number): FabricObject | null;
     /**
@@ -1717,7 +1759,29 @@ declare class CanvasGuides {
     }>): void;
 }
 
-interface ImageDropHandlerConfig {
+/**
+ * Payload describing what is being dragged from an external source
+ * (e.g. an HTML toolbox panel). The kind determines the drop capabilities:
+ *
+ * | kind  | drop on canvas | replace on hover | layout sessions |
+ * |-------|----------------|------------------|-----------------|
+ * | image | ✓              | ✓                | ✗               |
+ * | text  | ✓              | ✗                | ✓               |
+ * | shape | ✓              | ✗                | ✓               |
+ */
+type DragPayload = {
+    kind: "image";
+    url: string;
+    opts?: Partial<ImageLayerOptions>;
+} | {
+    kind: "text";
+    opts?: Partial<TextLayerOptions>;
+} | {
+    kind: "shape";
+    shapeType: ShapeType;
+    opts?: Partial<ShapeLayerOptions>;
+};
+interface DropHandlerConfig {
     /** Délai avant d'activer le mode remplacement (ms) */
     hoverDelay?: number;
     /** Fonction pour obtenir une URL à partir d'un fichier (blob URL ou upload) */
@@ -1732,21 +1796,27 @@ interface ImageDropHandlerConfig {
     onError?: (error: unknown) => void;
 }
 /**
- * Gère le drag & drop d'images sur le canvas Fabric.js
+ * Gère le drag & drop sur le canvas Fabric.js
  *
- * Deux modes :
- * - Drop rapide (< hoverDelay sur une image) : ajoute une nouvelle image
- * - Drop après attente (>= hoverDelay sur une image) : remplace l'image survolée
+ * Supports images (native file drop + URL), text, and shapes.
+ *
+ * Image-specific behaviour:
+ * - Drop rapide (< hoverDelay sur une cible) : ajoute une nouvelle image
+ * - Drop après attente (>= hoverDelay sur une cible) : remplace l'image survolée
+ *
+ * Text & shape drops are always "add at position" — no replace mode.
  */
-declare class ImageDropHandler {
+declare class DropHandler {
     private editor;
     private state;
     private config;
     private dropZone;
+    private drag;
+    private lastPointer;
     private boundHandleDragOver;
     private boundHandleDragLeave;
     private boundHandleDrop;
-    constructor(editor: FabricEditor, config: ImageDropHandlerConfig);
+    constructor(editor: FabricEditor, config: DropHandlerConfig);
     /**
      * Attache les event listeners sur l'élément drop zone
      */
@@ -1756,18 +1826,16 @@ declare class ImageDropHandler {
      */
     detach(): void;
     /**
-     * Track the pointer during an external drag (e.g. from a toolbox panel).
-     * Manages the hover timer and replace overlay — same behaviour as native file drag.
-     * The caller is responsible for calling preventDefault() on the event.
-     */
-    trackPointer(e: DragEvent): void;
-    /**
-     * Drop an image by URL. Replaces the hovered image if the timer has armed,
-     * otherwise adds a new image at the drop position.
+     * Drop an image by URL. Replaces the hovered target if the replace timer
+     * has armed (shape → conversion en ImageFrame masqué, image → nouvelle
+     * source), otherwise adds a new image at the drop position.
+     *
+     * Single image-drop path: used by completeDrag (toolbox drags) and by
+     * the native file drop handler.
      *
      * Returns the result so the caller can act on it (e.g. register the new object).
      */
-    dropUrl(url: string, e?: DragEvent): Promise<{
+    dropImage(url: string, e?: DragEvent, opts?: Partial<ImageLayerOptions>): Promise<{
         kind: "add";
         object: ImageFrame;
     } | {
@@ -1775,11 +1843,41 @@ declare class ImageDropHandler {
         object?: ImageFrame;
     } | null>;
     /**
-     * Cancel an in-progress external drag. Resets timer, overlay, and state.
+     * Arm an external drag with a payload. Creates the Fabric object that
+     * follows the cursor, off-canvas; it manifests on the canvas on the
+     * first trackPointer call. For images the object is a cosmetic preview
+     * loaded asynchronously — the drop works even if it hasn't loaded yet.
+     */
+    prepareDrag(payload: DragPayload): void;
+    /**
+     * Complete the armed drag:
+     * - image → replaces the hovered target if replace mode armed, else adds
+     * - text/shape → commits the layout session if anchored, else adds at cursor
+     *
+     * Returns the newly added object, or null when nothing new was added
+     * (replace of an existing target, or error).
+     */
+    completeDrag(e?: DragEvent): Promise<FabricObject | null>;
+    /**
+     * Suspend the armed drag: rolls back any layout session and removes the
+     * manifested object from the canvas, but keeps the drag armed so it can
+     * resume if the cursor re-enters. Call on dragleave.
+     */
+    suspendDrag(): void;
+    /**
+     * Cancel the armed drag entirely. Call on dragend / abort.
      */
     cancelDrag(): void;
+    /** Whether an external drag is currently armed. */
+    get isExternalDrag(): boolean;
     private reset;
-    private _trackPointer;
+    /**
+     * Track the pointer during a drag (native file or armed external drag).
+     * Routes by capability: manifests and moves the armed object, drives the
+     * layout state machine, and/or tracks the hover-to-replace target.
+     * The caller is responsible for calling preventDefault() on the event.
+     */
+    trackPointer(e: DragEvent): void;
     private handleDragOver;
     private handleDragLeave;
     private handleDrop;
@@ -1788,10 +1886,10 @@ declare class ImageDropHandler {
     private clearTimer;
     private clearHighlight;
     /**
-     * Met en surbrillance une image via les contrôles de sélection Fabric
+     * Met en surbrillance une cible via les contrôles de sélection Fabric
      * et un overlay HTML sombre avec texte personnalisable
      */
-    private highlightImage;
+    private highlightTarget;
     /**
      * Crée les overlays : un Rect Fabric (pour épouser le clipPath) + un élément HTML (pour le texte)
      */
@@ -1801,15 +1899,20 @@ declare class ImageDropHandler {
      */
     private createDefaultOverlay;
     /**
-     * Restaure le style original d'une image/frame et supprime l'overlay
+     * Restaure le style original d'une cible et supprime l'overlay
      */
-    private restoreImageStyle;
+    private restoreTargetStyle;
     /**
      * Supprime les overlays (Fabric + HTML)
      */
     private removeOverlay;
-    private replaceImage;
-    private addImage;
+    /**
+     * Cosmetic preview for an image drag: the real image, scaled like
+     * addImage would (300px max), semi-transparent, and excluded from
+     * drop-target detection.
+     */
+    private createImagePreview;
+    private createDragObject;
 }
 
 interface Lockable {
@@ -2097,4 +2200,4 @@ declare function fabricToHtml(layers: LayerData[], options: HtmlRenderOptions): 
  */
 declare function layerToHtmlStandalone(layer: LayerData, zIndex: number): HtmlLayerOutput;
 
-export { type AlignItems, type AlignSelf, type AttachSnapshot, CanvasGuides, type ChildData, type ChildLayout, type ContainerData, type ContainerLayout, ContainerizeSession, type ControlOption, type Controllable, CustomTextbox, DesignCanvas, type EditorConfig, FabCircle, FabPath, FabRect, FabricEditor, type FlexDirection, type FontConfig, type FontsConfig, HEART_PATH, HEXAGON_PATH, type HistoryCallbacks, HistoryManager, type HistoryState, type HtmlLayerOutput, type HtmlRenderOptions, ImageDropHandler, ImageFrame, type ImageLayerOptions, InsertChildSession, type JustifyContent, type LayerData, LayerManager, type LayoutData, LayoutManager, type LayoutManagerCallbacks, type LayoutSession, type LockMode$1 as LockMode, type Lockable, MIN_PAD, MaskManager, type ObjectControlsConfig, PendingUploadsManager, PersistenceManager, ResizeSession, type ResizeSnapResult, SHAPE_PATHS, type SaveOptions, type SaveResult, type SelectionCallbacks, SelectionManager, type ShapeCatalogEntry, type ShapeLayerOptions, type ShapePath, type ShapeType, type SizeMode, type SnappingConfig, SnappingManager, type TextLayerOptions, addCircleClip, addCropControls, addHeartClip, addHexagonClip, antiScale, applyClip, applyLockMode, clampTopLeft, createCircle, createHeart, createHexagon, createImage, createPathShape, createRect, createShape, fabricToHtml, getAvailableShapes, getLockMode, getNextLockMode, getShapeCatalog, hasExceededOffset, initYoga, isChild, isChildLayout, isContainer, isContainerLayout, isContentLocked, isPositionLocked, isStyleLocked, isValidShape, isYogaReady, layerToHtmlStandalone, nextShape, pointInObject, removeCropControls, runLayout, scaledSize, switchClip, switchShape, topLeft, wrapContainerAroundChild, yogaLayout };
+export { type AlignItems, type AlignSelf, type AttachSnapshot, CanvasGuides, type ChildData, type ChildLayout, type ContainerData, type ContainerLayout, ContainerizeSession, type ControlOption, type Controllable, CustomTextbox, DesignCanvas, type DragPayload, DropHandler, type DropHandlerConfig, type EditorConfig, FabCircle, FabPath, FabRect, FabricEditor, type FlexDirection, type FontConfig, type FontsConfig, HEART_PATH, HEXAGON_PATH, type HistoryCallbacks, HistoryManager, type HistoryState, type HtmlLayerOutput, type HtmlRenderOptions, ImageFrame, type ImageLayerOptions, InsertChildSession, type JustifyContent, type LayerData, LayerManager, type LayoutData, LayoutManager, type LayoutManagerCallbacks, type LayoutSession, type LockMode$1 as LockMode, type Lockable, MIN_PAD, MaskManager, type ObjectControlsConfig, PendingUploadsManager, PersistenceManager, ResizeSession, type ResizeSnapResult, SHAPE_PATHS, type SaveOptions, type SaveResult, type SelectionCallbacks, SelectionManager, type ShapeCatalogEntry, type ShapeLayerOptions, type ShapePath, type ShapeType, type SizeMode, type SnappingConfig, SnappingManager, type TextLayerOptions, addCircleClip, addCropControls, addHeartClip, addHexagonClip, antiScale, applyClip, applyLockMode, clampTopLeft, createCircle, createHeart, createHexagon, createImage, createPathShape, createRect, createShape, fabricToHtml, getAvailableShapes, getLockMode, getNextLockMode, getShapeCatalog, hasExceededOffset, initYoga, isChild, isChildLayout, isContainer, isContainerLayout, isContentLocked, isPositionLocked, isStyleLocked, isValidShape, isYogaReady, layerToHtmlStandalone, nextShape, pointInObject, removeCropControls, runLayout, scaledSize, switchClip, switchShape, topLeft, wrapContainerAroundChild, yogaLayout };

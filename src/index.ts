@@ -18,7 +18,8 @@ export { LayoutManager } from "./LayoutManager";
 export { CanvasGuides } from "./ui/guides";
 
 // Handlers
-export { ImageDropHandler } from "./ImageDropHandler";
+export { DropHandler } from "./DropHandler";
+export type { DropHandlerConfig, DragPayload } from "./DropHandler";
 export { PendingUploadsManager } from "./PendingUploadsManager";
 
 // ImageFrame

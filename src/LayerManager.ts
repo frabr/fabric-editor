@@ -8,7 +8,7 @@ import {
 } from "#fabric";
 import type { DesignCanvas } from "./DesignCanvas";
 import { CustomTextbox } from "./controls/CustomTextbox";
-import { createShape, createImage } from "./shapes/factories";
+import { createShape as createShapeObject, createImage } from "./shapes/factories";
 import { FabRect } from "./shapes/FabRect";
 import { FabCircle } from "./shapes/FabCircle";
 import { FabPath } from "./shapes/FabPath";
@@ -142,13 +142,19 @@ export class LayerManager {
   /**
    * Crée et ajoute un calque texte
    */
-  addText(options: TextLayerOptions = {}): CustomTextbox {
+  /**
+   * Crée un calque texte sans l'ajouter au canvas.
+   * Source unique des défauts texte — utilisé par addText et par le
+   * drag externe (DropHandler).
+   */
+  createText(options: TextLayerOptions = {}): CustomTextbox {
     const {
       text = "Tapez votre texte ici",
       left = 100,
       top = 100,
       fontFamily = "InterRegular",
       fontSize = 32,
+      fontWeight = "normal",
       fill = "#000000",
       layerId = this.generateId(),
     } = options;
@@ -158,10 +164,15 @@ export class LayerManager {
       top,
       fontFamily,
       fontSize,
+      fontWeight,
       fill,
     });
     textObj.set("layerId" as keyof typeof textObj, layerId);
+    return textObj;
+  }
 
+  addText(options: TextLayerOptions = {}): CustomTextbox {
+    const textObj = this.createText(options);
     this.add(textObj);
     return textObj;
   }
@@ -366,22 +377,32 @@ export class LayerManager {
   /**
    * Crée et ajoute un calque forme (rectangle par défaut)
    */
-  addShape(options: ShapeLayerOptions = {}): FabricObject {
+  /**
+   * Crée un calque forme sans l'ajouter au canvas.
+   * Source unique des défauts forme — utilisé par addShape et par le
+   * drag externe (DropHandler).
+   */
+  createShape(options: ShapeLayerOptions = {}): FabricObject {
     const {
       left = 100,
       top = 100,
       fill = "#ffffff",
+      stroke,
       shapeType = "rect",
       layerId = this.generateId(),
     } = options;
 
-    const shape = createShape(shapeType, {
-      fill, left, top,
+    const shape = createShapeObject(shapeType, {
+      fill, stroke, left, top,
       width: options.width,
       height: options.height,
     });
     shape.set({ layerId, layerType: "shape" });
+    return shape;
+  }
 
+  addShape(options: ShapeLayerOptions = {}): FabricObject {
+    const shape = this.createShape(options);
     this.add(shape);
     return shape;
   }

@@ -50,7 +50,7 @@ export function applyLockMode(obj: FabricObject, mode: LockMode): void {
   // Masquer les contrôles si verrouillé
   obj.hasControls = mode === "free";
 
-  // Propriété custom pour bloquer le remplacement d'image (utilisé par ImageDropHandler)
+  // Propriété custom pour bloquer le remplacement d'image (utilisé par DropHandler)
   (obj as any).lockContent = mode === "full";
 
   // Pour les textes (IText/Textbox) : éditable seulement en mode free ou position

@@ -1406,13 +1406,19 @@ var LayerManager = class {
   /**
    * Crée et ajoute un calque texte
    */
-  addText(options = {}) {
+  /**
+   * Crée un calque texte sans l'ajouter au canvas.
+   * Source unique des défauts texte — utilisé par addText et par le
+   * drag externe (DropHandler).
+   */
+  createText(options = {}) {
     const {
       text = "Tapez votre texte ici",
       left = 100,
       top = 100,
       fontFamily = "InterRegular",
       fontSize = 32,
+      fontWeight = "normal",
       fill = "#000000",
       layerId = this.generateId()
     } = options;
@@ -1421,9 +1427,14 @@ var LayerManager = class {
       top,
       fontFamily,
       fontSize,
+      fontWeight,
       fill
     });
     textObj.set("layerId", layerId);
+    return textObj;
+  }
+  addText(options = {}) {
+    const textObj = this.createText(options);
     this.add(textObj);
     return textObj;
   }
@@ -1556,22 +1567,33 @@ var LayerManager = class {
   /**
    * Crée et ajoute un calque forme (rectangle par défaut)
    */
-  addShape(options = {}) {
+  /**
+   * Crée un calque forme sans l'ajouter au canvas.
+   * Source unique des défauts forme — utilisé par addShape et par le
+   * drag externe (DropHandler).
+   */
+  createShape(options = {}) {
     const {
       left = 100,
       top = 100,
       fill = "#ffffff",
+      stroke,
       shapeType = "rect",
       layerId = this.generateId()
     } = options;
     const shape = createShape(shapeType, {
       fill,
+      stroke,
       left,
       top,
       width: options.width,
       height: options.height
     });
     shape.set({ layerId, layerType: "shape" });
+    return shape;
+  }
+  addShape(options = {}) {
+    const shape = this.createShape(options);
     this.add(shape);
     return shape;
   }

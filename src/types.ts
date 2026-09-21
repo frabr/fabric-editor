@@ -24,6 +24,14 @@ export interface FontConfig {
 // Ré-export depuis locking.ts pour rétrocompatibilité
 export type { LockMode } from "./locking";
 
+/**
+ * Clé posée (via obj.set) sur les objets de preview de drag externe.
+ * Les objets marqués sont ignorés par la détection de cible de drop
+ * (findDropTargetAtPoint) — la preview suit le curseur, elle matcherait
+ * toujours sinon.
+ */
+export const DRAG_PREVIEW_KEY = "dragPreview";
+
 // Données d'un calque (pour sérialisation/désérialisation)
 export interface LayerData {
   type: string;

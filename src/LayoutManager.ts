@@ -1,4 +1,4 @@
-import { FabricObject, Rect } from "#fabric";
+import { FabricObject, Point, Rect } from "#fabric";
 import type { DesignCanvas } from "./DesignCanvas";
 import { CanvasGuides } from "./ui/guides";
 import { runLayout, relayoutSingle } from "./layout/reconcile";
@@ -54,8 +54,16 @@ export interface LayoutManagerCallbacks {
  *           a cooldown.
  *
  * Depth resolution: during HOVERING and PENDING, we resolve the
- * deepest penetrable descendant under the cursor (bottom-up) so
- * the most nested valid target is always preferred.
+ * deepest drop target under the cursor (bottom-up) so the most
+ * nested valid target is always preferred.
+ *
+ * Drivers: the machine advances on cursor ticks, which come from two
+ * interchangeable sources:
+ *   - native Fabric drags → object:moving / mouse events;
+ *   - external drags (HTML dragover from a toolbox) → tickExternalDrag,
+ *     ended by commitExternalDrag (drop) or rollbackExternalDrag
+ *     (dragleave / cancel). The external source object is owned by the
+ *     caller (DropHandler), which adds/removes it from the canvas.
  */
 
 interface IdleState {
@@ -234,6 +242,82 @@ export class LayoutManager {
     this.callbacks.onLayoutChanged?.();
   }
 
+  // ── External drag API ──────────────────────────────────────────────
+  //
+  // These methods let an external drag source (e.g. DropHandler during
+  // an HTML drag) drive the same DTL state machine that object:moving
+  // normally drives. The source object does NOT need to be on the canvas
+  // yet — it will be added automatically when the session anchors.
+
+  /**
+   * Advance the DTL state machine for an externally-dragged object.
+   * Call this on every dragover frame with the source object and the
+   * cursor position in scene coordinates.
+   *
+   * The source's position is updated to follow the cursor.
+   */
+  tickExternalDrag(source: FabricObject, cursor: { x: number; y: number }): void {
+    // Keep the source centered on the cursor, whatever its origin
+    source.setPositionByOrigin(new Point(cursor.x, cursor.y), "center", "center");
+    source.setCoords();
+
+    switch (this.dtl.phase) {
+      case "anchored":
+        this.handleAnchoredMoving(cursor);
+        break;
+      case "pending":
+        this.handlePendingMoving(source, cursor);
+        break;
+      case "hovering":
+        this.handleHoveringMoving(source, cursor);
+        break;
+      case "idle":
+        this.handleIdleMoving(source, cursor);
+        break;
+    }
+
+    // Native drags are rendered by Fabric on mouse:move; external drags
+    // have no such driver, so render here once the source is on canvas.
+    if (this.canvas.getObjects().includes(source)) {
+      this.canvas.requestRenderAll();
+    }
+  }
+
+  /**
+   * Commit the current DTL session from an external drag.
+   * Call this on drop. No-op if no session is active (the caller should
+   * handle the "simple add" case itself).
+   *
+   * Returns true if a session was committed, false otherwise.
+   */
+  commitExternalDrag(): boolean {
+    if (this.dtl.phase === "anchored") {
+      this.doCommit();
+      return true;
+    }
+    // If we're in hovering/pending, just clean up
+    this.resetToIdle();
+    return false;
+  }
+
+  /**
+   * Rollback any in-progress DTL state from an external drag.
+   * Call this on dragleave / cancel. Rolls back the session if anchored,
+   * clears timers otherwise. The caller owns the source object and is
+   * responsible for removing it from the canvas.
+   */
+  rollbackExternalDrag(): void {
+    if (this.dtl.phase === "anchored") {
+      this.dtl.session.rollback();
+    }
+    this.resetToIdle();
+  }
+
+  /** Whether the DTL state machine is currently in ANCHORED phase. */
+  get isAnchored(): boolean {
+    return this.dtl.phase === "anchored";
+  }
+
   /** Clean up event listeners. */
   dispose(): void {
     this.resetToIdle();
@@ -347,7 +431,7 @@ export class LayoutManager {
         clearTimeout(this.dtl.timer);
         this.dtl = { ...this.dtl, source: obj, cursor };
         this.guides.clear();
-        this.doAnchor();
+        this.promoteToAnchored();
         this.doCommit();
         return;
       }
@@ -377,7 +461,7 @@ export class LayoutManager {
 
     const shape = this.findShapeUnderPoint(cursor, draggedObj);
     if (shape) {
-      const deepest = this.findDeepestPenetrable(cursor, shape, draggedObj);
+      const deepest = this.findDeepestDropTarget(cursor, shape, draggedObj);
       this.startHovering(draggedObj, deepest, cursor);
     }
   }
@@ -393,7 +477,7 @@ export class LayoutManager {
       return;
     }
 
-    const deepest = this.findDeepestPenetrable(cursor, shape, draggedObj);
+    const deepest = this.findDeepestDropTarget(cursor, shape, draggedObj);
     if (deepest !== this.dtl.target) {
       clearTimeout(this.dtl.timer);
       this.startHovering(draggedObj, deepest, cursor);
@@ -408,7 +492,7 @@ export class LayoutManager {
     target: FabricObject,
     cursor: { x: number; y: number },
   ): void {
-    const timer = setTimeout(() => this.promoteToP(), HOVER_DELAY_MS);
+    const timer = setTimeout(() => this.promoteToPending(), HOVER_DELAY_MS);
 
     this.dtl = {
       phase: "hovering",
@@ -421,7 +505,7 @@ export class LayoutManager {
   }
 
   /** HOVERING timer fired → show guides and move to PENDING. */
-  private promoteToP(): void {
+  private promoteToPending(): void {
     if (this.dtl.phase !== "hovering") return;
     const { target, source, cursor } = this.dtl;
     this.startPending(source, target, cursor);
@@ -437,7 +521,7 @@ export class LayoutManager {
       this.resetToIdle();
       return;
     }
-    const deepest = this.findDeepestPenetrable(cursor, shape, draggedObj);
+    const deepest = this.findDeepestDropTarget(cursor, shape, draggedObj);
     if (deepest !== this.dtl.target) {
       // Target changed — restart pending on the new target
       clearTimeout(this.dtl.timer);
@@ -456,7 +540,7 @@ export class LayoutManager {
     this.guides.showHintHighlight(target, target);
     this.canvas.renderAll();
 
-    const timer = setTimeout(() => this.doAnchor(), ANCHOR_DELAY_MS);
+    const timer = setTimeout(() => this.promoteToAnchored(), ANCHOR_DELAY_MS);
 
     this.dtl = {
       phase: "pending",
@@ -470,7 +554,8 @@ export class LayoutManager {
 
   // ── State machine: ANCHOR (PENDING → ANCHORED) ────────────────────
 
-  private doAnchor(): void {
+  /** PENDING timer fired → create a session and move to ANCHORED. */
+  private promoteToAnchored(): void {
     if (this.dtl.phase !== "pending") return;
     const { target, source: child, cursor } = this.dtl;
 
@@ -507,27 +592,28 @@ export class LayoutManager {
   // ── Depth helpers ─────────────────────────────────────────────────
 
   /**
-   * Walk down from `root` to find the deepest penetrable descendant under
-   * the cursor. Returns `root` itself if no children qualify.
+   * Walk down from `root` to find the deepest drop target under the
+   * cursor. Returns `root` itself if no children qualify.
    */
-  private findDeepestPenetrable(
+  private findDeepestDropTarget(
     cursor: { x: number; y: number },
     root: FabricObject,
     exclude: FabricObject,
   ): FabricObject {
     let current = root;
     for (;;) {
-      const child = this.findPenetrableChild(cursor, current, exclude);
+      const child = this.findChildDropTarget(cursor, current, exclude);
       if (!child) return current;
       current = child;
     }
   }
 
   /**
-   * Find the first penetrable child of `container` under the cursor.
-   * A penetrable child is a shape (not text) that could become a container.
+   * Among the children of `container`, find the first one under the cursor
+   * that is itself a valid drop target — a shape (not text) that could
+   * become a container.
    */
-  private findPenetrableChild(
+  private findChildDropTarget(
     cursor: { x: number; y: number },
     container: FabricObject,
     exclude: FabricObject,
@@ -560,10 +646,15 @@ export class LayoutManager {
     cursor: { x: number; y: number },
     root: FabricObject | null = null,
   ): void {
-    // Ensure the child renders above the container (z-index)
+    // If the child is not yet on the canvas (external drag), add it now
     const objects = this.canvas.getObjects();
-    const containerIdx = objects.indexOf(target);
-    const childIdx = objects.indexOf(child);
+    if (!objects.includes(child)) {
+      this.canvas.add(child);
+    }
+
+    // Ensure the child renders above the container (z-index)
+    const containerIdx = this.canvas.getObjects().indexOf(target);
+    const childIdx = this.canvas.getObjects().indexOf(child);
     if (containerIdx >= 0 && childIdx >= 0 && childIdx < containerIdx) {
       this.canvas.moveObjectTo(child, containerIdx);
     }

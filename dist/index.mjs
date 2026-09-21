@@ -115,7 +115,7 @@ var init_PendingUploadsManager = __esm({
 });
 
 // src/FabricEditor.ts
-import { FabricObject as FabricObject8, FabricImage as FabricImage6, Point as Point2, Gradient, Shadow } from "#fabric";
+import { FabricObject as FabricObject8, FabricImage as FabricImage6, Point as Point3, Gradient, Shadow } from "#fabric";
 
 // src/DesignCanvas.ts
 import { Canvas } from "#fabric";
@@ -1617,13 +1617,19 @@ var LayerManager = class {
   /**
    * Crée et ajoute un calque texte
    */
-  addText(options = {}) {
+  /**
+   * Crée un calque texte sans l'ajouter au canvas.
+   * Source unique des défauts texte — utilisé par addText et par le
+   * drag externe (DropHandler).
+   */
+  createText(options = {}) {
     const {
       text = "Tapez votre texte ici",
       left = 100,
       top = 100,
       fontFamily = "InterRegular",
       fontSize = 32,
+      fontWeight = "normal",
       fill = "#000000",
       layerId = this.generateId()
     } = options;
@@ -1632,9 +1638,14 @@ var LayerManager = class {
       top,
       fontFamily,
       fontSize,
+      fontWeight,
       fill
     });
     textObj.set("layerId", layerId);
+    return textObj;
+  }
+  addText(options = {}) {
+    const textObj = this.createText(options);
     this.add(textObj);
     return textObj;
   }
@@ -1767,22 +1778,33 @@ var LayerManager = class {
   /**
    * Crée et ajoute un calque forme (rectangle par défaut)
    */
-  addShape(options = {}) {
+  /**
+   * Crée un calque forme sans l'ajouter au canvas.
+   * Source unique des défauts forme — utilisé par addShape et par le
+   * drag externe (DropHandler).
+   */
+  createShape(options = {}) {
     const {
       left = 100,
       top = 100,
       fill = "#ffffff",
+      stroke,
       shapeType = "rect",
       layerId = this.generateId()
     } = options;
     const shape = createShape(shapeType, {
       fill,
+      stroke,
       left,
       top,
       width: options.width,
       height: options.height
     });
     shape.set({ layerId, layerType: "shape" });
+    return shape;
+  }
+  addShape(options = {}) {
+    const shape = this.createShape(options);
     this.add(shape);
     return shape;
   }
@@ -3246,7 +3268,7 @@ var SnappingManager = class {
 };
 
 // src/LayoutManager.ts
-import { Rect as Rect5 } from "#fabric";
+import { Point as Point2, Rect as Rect5 } from "#fabric";
 
 // src/layout/yoga-engine.ts
 var yoga = null;
@@ -4558,6 +4580,71 @@ var LayoutManager2 = class {
     this.relayout();
     this.callbacks.onLayoutChanged?.();
   }
+  // ── External drag API ──────────────────────────────────────────────
+  //
+  // These methods let an external drag source (e.g. DropHandler during
+  // an HTML drag) drive the same DTL state machine that object:moving
+  // normally drives. The source object does NOT need to be on the canvas
+  // yet — it will be added automatically when the session anchors.
+  /**
+   * Advance the DTL state machine for an externally-dragged object.
+   * Call this on every dragover frame with the source object and the
+   * cursor position in scene coordinates.
+   *
+   * The source's position is updated to follow the cursor.
+   */
+  tickExternalDrag(source, cursor) {
+    source.setPositionByOrigin(new Point2(cursor.x, cursor.y), "center", "center");
+    source.setCoords();
+    switch (this.dtl.phase) {
+      case "anchored":
+        this.handleAnchoredMoving(cursor);
+        break;
+      case "pending":
+        this.handlePendingMoving(source, cursor);
+        break;
+      case "hovering":
+        this.handleHoveringMoving(source, cursor);
+        break;
+      case "idle":
+        this.handleIdleMoving(source, cursor);
+        break;
+    }
+    if (this.canvas.getObjects().includes(source)) {
+      this.canvas.requestRenderAll();
+    }
+  }
+  /**
+   * Commit the current DTL session from an external drag.
+   * Call this on drop. No-op if no session is active (the caller should
+   * handle the "simple add" case itself).
+   *
+   * Returns true if a session was committed, false otherwise.
+   */
+  commitExternalDrag() {
+    if (this.dtl.phase === "anchored") {
+      this.doCommit();
+      return true;
+    }
+    this.resetToIdle();
+    return false;
+  }
+  /**
+   * Rollback any in-progress DTL state from an external drag.
+   * Call this on dragleave / cancel. Rolls back the session if anchored,
+   * clears timers otherwise. The caller owns the source object and is
+   * responsible for removing it from the canvas.
+   */
+  rollbackExternalDrag() {
+    if (this.dtl.phase === "anchored") {
+      this.dtl.session.rollback();
+    }
+    this.resetToIdle();
+  }
+  /** Whether the DTL state machine is currently in ANCHORED phase. */
+  get isAnchored() {
+    return this.dtl.phase === "anchored";
+  }
   /** Clean up event listeners. */
   dispose() {
     this.resetToIdle();
@@ -4642,7 +4729,7 @@ var LayoutManager2 = class {
         clearTimeout(this.dtl.timer);
         this.dtl = { ...this.dtl, source: obj, cursor };
         this.guides.clear();
-        this.doAnchor();
+        this.promoteToAnchored();
         this.doCommit();
         return;
       }
@@ -4664,7 +4751,7 @@ var LayoutManager2 = class {
     if (Date.now() < this.dtl.cooldownUntil) return;
     const shape = this.findShapeUnderPoint(cursor, draggedObj);
     if (shape) {
-      const deepest = this.findDeepestPenetrable(cursor, shape, draggedObj);
+      const deepest = this.findDeepestDropTarget(cursor, shape, draggedObj);
       this.startHovering(draggedObj, deepest, cursor);
     }
   }
@@ -4676,7 +4763,7 @@ var LayoutManager2 = class {
       this.resetToIdle();
       return;
     }
-    const deepest = this.findDeepestPenetrable(cursor, shape, draggedObj);
+    const deepest = this.findDeepestDropTarget(cursor, shape, draggedObj);
     if (deepest !== this.dtl.target) {
       clearTimeout(this.dtl.timer);
       this.startHovering(draggedObj, deepest, cursor);
@@ -4685,7 +4772,7 @@ var LayoutManager2 = class {
     this.dtl.cursor = cursor;
   }
   startHovering(draggedObj, target, cursor) {
-    const timer = setTimeout(() => this.promoteToP(), HOVER_DELAY_MS);
+    const timer = setTimeout(() => this.promoteToPending(), HOVER_DELAY_MS);
     this.dtl = {
       phase: "hovering",
       timer,
@@ -4696,7 +4783,7 @@ var LayoutManager2 = class {
     };
   }
   /** HOVERING timer fired → show guides and move to PENDING. */
-  promoteToP() {
+  promoteToPending() {
     if (this.dtl.phase !== "hovering") return;
     const { target, source, cursor } = this.dtl;
     this.startPending(source, target, cursor);
@@ -4709,7 +4796,7 @@ var LayoutManager2 = class {
       this.resetToIdle();
       return;
     }
-    const deepest = this.findDeepestPenetrable(cursor, shape, draggedObj);
+    const deepest = this.findDeepestDropTarget(cursor, shape, draggedObj);
     if (deepest !== this.dtl.target) {
       clearTimeout(this.dtl.timer);
       this.startPending(draggedObj, deepest, cursor);
@@ -4720,7 +4807,7 @@ var LayoutManager2 = class {
   startPending(draggedObj, target, cursor) {
     this.guides.showHintHighlight(target, target);
     this.canvas.renderAll();
-    const timer = setTimeout(() => this.doAnchor(), ANCHOR_DELAY_MS);
+    const timer = setTimeout(() => this.promoteToAnchored(), ANCHOR_DELAY_MS);
     this.dtl = {
       phase: "pending",
       timer,
@@ -4731,7 +4818,8 @@ var LayoutManager2 = class {
     };
   }
   // ── State machine: ANCHOR (PENDING → ANCHORED) ────────────────────
-  doAnchor() {
+  /** PENDING timer fired → create a session and move to ANCHORED. */
+  promoteToAnchored() {
     if (this.dtl.phase !== "pending") return;
     const { target, source: child, cursor } = this.dtl;
     const root = this.findShapeUnderPoint(cursor, child);
@@ -4758,22 +4846,23 @@ var LayoutManager2 = class {
   }
   // ── Depth helpers ─────────────────────────────────────────────────
   /**
-   * Walk down from `root` to find the deepest penetrable descendant under
-   * the cursor. Returns `root` itself if no children qualify.
+   * Walk down from `root` to find the deepest drop target under the
+   * cursor. Returns `root` itself if no children qualify.
    */
-  findDeepestPenetrable(cursor, root, exclude) {
+  findDeepestDropTarget(cursor, root, exclude) {
     let current = root;
     for (; ; ) {
-      const child = this.findPenetrableChild(cursor, current, exclude);
+      const child = this.findChildDropTarget(cursor, current, exclude);
       if (!child) return current;
       current = child;
     }
   }
   /**
-   * Find the first penetrable child of `container` under the cursor.
-   * A penetrable child is a shape (not text) that could become a container.
+   * Among the children of `container`, find the first one under the cursor
+   * that is itself a valid drop target — a shape (not text) that could
+   * become a container.
    */
-  findPenetrableChild(cursor, container, exclude) {
+  findChildDropTarget(cursor, container, exclude) {
     const layout = container.get?.("layout");
     if (!layout?.container) return null;
     const children = resolveContainerChildren(this.canvas.getObjects(), container);
@@ -4796,8 +4885,11 @@ var LayoutManager2 = class {
   /** Transition to ANCHORED: create a session on the target and go live. */
   anchorOn(target, child, cursor, root = null) {
     const objects = this.canvas.getObjects();
-    const containerIdx = objects.indexOf(target);
-    const childIdx = objects.indexOf(child);
+    if (!objects.includes(child)) {
+      this.canvas.add(child);
+    }
+    const containerIdx = this.canvas.getObjects().indexOf(target);
+    const childIdx = this.canvas.getObjects().indexOf(child);
     if (containerIdx >= 0 && childIdx >= 0 && childIdx < containerIdx) {
       this.canvas.moveObjectTo(child, containerIdx);
     }
@@ -5184,6 +5276,9 @@ function installHoverBorder(canvas, resolveTarget) {
     hoveredObj._renderControls(ctx, { hasControls: false, hasBorders: true });
   });
 }
+
+// src/types.ts
+var DRAG_PREVIEW_KEY = "dragPreview";
 
 // src/FabricEditor.ts
 var _FabricEditor = class _FabricEditor {
@@ -5840,13 +5935,14 @@ var _FabricEditor = class _FabricEditor {
   }
   /**
    * Trouve l'objet "droppable" sous un point : ImageFrame, FabricImage, ou shape.
-   * Utilisé par ImageDropHandler pour le drop d'images sur images ET sur formes.
+   * Utilisé par DropHandler pour le drop d'images sur images ET sur formes.
    */
   findDropTargetAtPoint(x, y) {
-    const point = new Point2(x, y);
+    const point = new Point3(x, y);
     const objects = this.canvas.getObjects().slice().reverse();
     for (const obj of objects) {
       if (obj.get("layerId") === "originalImage") continue;
+      if (obj.get(DRAG_PREVIEW_KEY)) continue;
       const layerType = obj.layerType;
       if (layerType === "imageFrame" && obj.containsPoint(point)) {
         return obj;
@@ -5889,15 +5985,20 @@ var _FabricEditor = class _FabricEditor {
 _FabricEditor._toObjectExtended = false;
 var FabricEditor = _FabricEditor;
 
-// src/ImageDropHandler.ts
-import { Rect as Rect6 } from "#fabric";
+// src/DropHandler.ts
+import { FabricImage as FabricImage7, Point as Point4, Rect as Rect6 } from "#fabric";
 var HIGHLIGHT_COLOR = "#3b82f6";
-var ImageDropHandler = class {
+var KIND_CAPABILITIES = {
+  image: { layout: false, replaceTarget: true },
+  text: { layout: true, replaceTarget: false },
+  shape: { layout: true, replaceTarget: false }
+};
+var DropHandler = class {
   constructor(editor, config) {
     this.editor = editor;
     this.state = {
-      hoveredImage: null,
-      pendingImage: null,
+      hoveredTarget: null,
+      pendingTarget: null,
       timer: null,
       replaceMode: false,
       originalColors: null,
@@ -5905,6 +6006,8 @@ var ImageDropHandler = class {
       htmlOverlay: null
     };
     this.dropZone = null;
+    this.drag = null;
+    this.lastPointer = null;
     this.config = {
       hoverDelay: 1e3,
       overlayElement: void 0,
@@ -5941,83 +6044,196 @@ var ImageDropHandler = class {
   }
   // ==================== Public API (for external drag sources) ====================
   /**
-   * Track the pointer during an external drag (e.g. from a toolbox panel).
-   * Manages the hover timer and replace overlay — same behaviour as native file drag.
-   * The caller is responsible for calling preventDefault() on the event.
-   */
-  trackPointer(e) {
-    this._trackPointer(e);
-  }
-  /**
-   * Drop an image by URL. Replaces the hovered image if the timer has armed,
-   * otherwise adds a new image at the drop position.
+   * Drop an image by URL. Replaces the hovered target if the replace timer
+   * has armed (shape → conversion en ImageFrame masqué, image → nouvelle
+   * source), otherwise adds a new image at the drop position.
+   *
+   * Single image-drop path: used by completeDrag (toolbox drags) and by
+   * the native file drop handler.
    *
    * Returns the result so the caller can act on it (e.g. register the new object).
    */
-  async dropUrl(url, e) {
-    const shouldReplace = this.state.replaceMode && this.state.hoveredImage;
-    const target = this.state.hoveredImage;
+  async dropImage(url, e, opts) {
+    const shouldReplace = this.state.replaceMode && this.state.hoveredTarget;
+    const target = this.state.hoveredTarget;
     this.clearTimer();
-    this.state.pendingImage = null;
-    if (shouldReplace && target) {
-      this.clearHighlight();
-      const isShape = target.layerType === "shape";
-      try {
+    this.state.pendingTarget = null;
+    this.clearHighlight();
+    try {
+      if (shouldReplace && target) {
+        const isShape = target.layerType === "shape";
         if (isShape) {
           const frame = await this.editor.layers.replaceShapeWithImage(target, url);
           this.config.onSuccess();
           return { kind: "replace", object: frame };
-        } else {
-          await this.editor.layers.replaceImageSource(target, url);
-          this.config.onSuccess();
-          return { kind: "replace" };
         }
-      } catch (error) {
-        this.config.onError(error);
-        return null;
+        await this.editor.layers.replaceImageSource(target, url);
+        this.config.onSuccess();
+        return { kind: "replace" };
       }
-    } else {
-      this.clearHighlight();
-      const opts = {};
+      const addOpts = { ...opts };
       if (e) {
         const pointer = this.editor.canvas.getScenePoint(e);
-        opts.left = pointer.x;
-        opts.top = pointer.y;
-        opts.originX = "center";
-        opts.originY = "center";
+        addOpts.left = pointer.x;
+        addOpts.top = pointer.y;
+        addOpts.originX = "center";
+        addOpts.originY = "center";
       }
-      try {
-        const object = await this.editor.layers.addImage(url, opts);
-        this.config.onSuccess();
-        return { kind: "add", object };
-      } catch (error) {
-        this.config.onError(error);
-        return null;
-      }
+      const object = await this.editor.layers.addImage(url, addOpts);
+      this.config.onSuccess();
+      return { kind: "add", object };
+    } catch (error) {
+      this.config.onError(error);
+      return null;
+    }
+  }
+  // ==================== External drag API ====================
+  //
+  // Lets an HTML drag source (toolbox panel) drop onto the canvas with
+  // per-kind capabilities (see DragPayload). Layout-capable kinds create
+  // a real Fabric object that follows the cursor and drives layout
+  // sessions (ContainerizeSession / InsertChildSession) — no fake
+  // pointer events needed.
+  //
+  // Usage:
+  //   dragstart → prepareDrag({ kind: "text", opts: { ... } })
+  //   dragover  → trackPointer(e)   (routes by capability)
+  //   drop      → completeDrag(e)   (commits session, replaces, or adds)
+  //   dragleave → suspendDrag()     (rollback + hide, drag stays armed)
+  //   dragend   → cancelDrag()      (full cancel)
+  /**
+   * Arm an external drag with a payload. Creates the Fabric object that
+   * follows the cursor, off-canvas; it manifests on the canvas on the
+   * first trackPointer call. For images the object is a cosmetic preview
+   * loaded asynchronously — the drop works even if it hasn't loaded yet.
+   */
+  prepareDrag(payload) {
+    if (this.drag) this.cancelDrag();
+    const capabilities = KIND_CAPABILITIES[payload.kind];
+    const drag = { payload, capabilities, object: null, onCanvas: false };
+    this.drag = drag;
+    if (payload.kind === "image") {
+      this.createImagePreview(payload.url).then((img) => {
+        if (this.drag === drag) drag.object = img;
+      }).catch(() => {
+      });
+    } else {
+      drag.object = this.createDragObject(payload);
     }
   }
   /**
-   * Cancel an in-progress external drag. Resets timer, overlay, and state.
+   * Complete the armed drag:
+   * - image → replaces the hovered target if replace mode armed, else adds
+   * - text/shape → commits the layout session if anchored, else adds at cursor
+   *
+   * Returns the newly added object, or null when nothing new was added
+   * (replace of an existing target, or error).
+   */
+  async completeDrag(e) {
+    if (!this.drag) return null;
+    const { payload, object } = this.drag;
+    if (payload.kind === "image") {
+      if (object && this.drag.onCanvas) {
+        this.editor.canvas.remove(object);
+      }
+      this.drag = null;
+      const result = await this.dropImage(payload.url, e, payload.opts);
+      return result?.kind === "add" ? result.object : null;
+    }
+    try {
+      const committed = this.editor.layout.commitExternalDrag();
+      if (!committed && object) {
+        if (e) {
+          const pointer = this.editor.canvas.getScenePoint(e);
+          object.setPositionByOrigin(new Point4(pointer.x, pointer.y), "center", "center");
+          object.setCoords();
+        }
+        if (!this.editor.canvas.getObjects().includes(object)) {
+          this.editor.canvas.add(object);
+        }
+      }
+      if (object) {
+        this.editor.canvas.setActiveObject(object);
+        this.editor.canvas.renderAll();
+      }
+      this.config.onSuccess();
+      this.drag = null;
+      return object;
+    } catch (error) {
+      this.config.onError(error);
+      this.cancelDrag();
+      return null;
+    }
+  }
+  /**
+   * Suspend the armed drag: rolls back any layout session and removes the
+   * manifested object from the canvas, but keeps the drag armed so it can
+   * resume if the cursor re-enters. Call on dragleave.
+   */
+  suspendDrag() {
+    if (this.drag?.object) {
+      if (this.drag.capabilities.layout) this.editor.layout.rollbackExternalDrag();
+      if (this.drag.onCanvas) {
+        this.editor.canvas.remove(this.drag.object);
+        this.drag.onCanvas = false;
+        this.editor.canvas.renderAll();
+      }
+    }
+    this.reset();
+  }
+  /**
+   * Cancel the armed drag entirely. Call on dragend / abort.
    */
   cancelDrag() {
-    this.reset();
+    this.suspendDrag();
+    this.drag = null;
+  }
+  /** Whether an external drag is currently armed. */
+  get isExternalDrag() {
+    return this.drag !== null;
   }
   // ==================== Internal ====================
   reset() {
     this.clearTimer();
     this.clearHighlight();
-    this.state.pendingImage = null;
+    this.state.pendingTarget = null;
+    this.lastPointer = null;
   }
-  _trackPointer(e) {
+  /**
+   * Track the pointer during a drag (native file or armed external drag).
+   * Routes by capability: manifests and moves the armed object, drives the
+   * layout state machine, and/or tracks the hover-to-replace target.
+   * The caller is responsible for calling preventDefault() on the event.
+   */
+  trackPointer(e) {
     const pointer = this.editor.canvas.getScenePoint(e);
-    const imageAtPoint = this.editor.findDropTargetAtPoint(pointer.x, pointer.y);
-    if (imageAtPoint !== this.state.pendingImage) {
+    if (this.lastPointer && pointer.x === this.lastPointer.x && pointer.y === this.lastPointer.y) {
+      return;
+    }
+    this.lastPointer = { x: pointer.x, y: pointer.y };
+    if (this.drag?.object) {
+      const { object, capabilities } = this.drag;
+      if (!this.drag.onCanvas) {
+        this.editor.canvas.add(object);
+        this.drag.onCanvas = true;
+      }
+      if (capabilities.layout) {
+        this.editor.layout.tickExternalDrag(object, pointer);
+        return;
+      }
+      object.setPositionByOrigin(new Point4(pointer.x, pointer.y), "center", "center");
+      object.setCoords();
+      this.editor.canvas.requestRenderAll();
+    }
+    if (this.drag && !this.drag.capabilities.replaceTarget) return;
+    const targetAtPoint = this.editor.findDropTargetAtPoint(pointer.x, pointer.y);
+    if (targetAtPoint !== this.state.pendingTarget) {
       this.clearTimer();
       this.clearHighlight();
-      this.state.pendingImage = imageAtPoint;
-      if (imageAtPoint) {
+      this.state.pendingTarget = targetAtPoint;
+      if (targetAtPoint) {
         this.state.timer = setTimeout(() => {
-          this.activateReplaceMode(imageAtPoint);
+          this.activateReplaceMode(targetAtPoint);
         }, this.config.hoverDelay);
       }
     }
@@ -6026,12 +6242,14 @@ var ImageDropHandler = class {
     e.preventDefault();
     e.stopPropagation();
     e.dataTransfer.dropEffect = "copy";
-    this._trackPointer(e);
+    this.trackPointer(e);
   }
   handleDragLeave(e) {
     e.preventDefault();
     e.stopPropagation();
-    this.reset();
+    const related = e.relatedTarget;
+    if (related && this.dropZone?.contains(related)) return;
+    this.suspendDrag();
   }
   async handleDrop(e) {
     e.preventDefault();
@@ -6041,17 +6259,7 @@ var ImageDropHandler = class {
       this.reset();
       return;
     }
-    const shouldReplace = this.state.replaceMode && this.state.hoveredImage;
-    const targetImage = this.state.hoveredImage;
-    this.clearTimer();
-    this.state.pendingImage = null;
-    if (shouldReplace && targetImage) {
-      await this.replaceImage(file, targetImage);
-    } else {
-      this.clearHighlight();
-      const pointer = this.editor.canvas.getScenePoint(e);
-      await this.addImage(file, pointer.x, pointer.y);
-    }
+    await this.dropImage(this.config.getImageUrl(file), e);
   }
   extractImageFile(e) {
     const files = e.dataTransfer?.files;
@@ -6060,13 +6268,13 @@ var ImageDropHandler = class {
     if (!file.type.startsWith("image/")) return null;
     return file;
   }
-  activateReplaceMode(image) {
-    if (isContentLocked(image)) {
+  activateReplaceMode(target) {
+    if (isContentLocked(target)) {
       return;
     }
     this.state.replaceMode = true;
-    this.state.hoveredImage = image;
-    this.highlightImage(image);
+    this.state.hoveredTarget = target;
+    this.highlightTarget(target);
   }
   clearTimer() {
     if (this.state.timer) {
@@ -6076,16 +6284,16 @@ var ImageDropHandler = class {
     this.state.replaceMode = false;
   }
   clearHighlight() {
-    if (this.state.hoveredImage) {
-      this.restoreImageStyle(this.state.hoveredImage);
-      this.state.hoveredImage = null;
+    if (this.state.hoveredTarget) {
+      this.restoreTargetStyle(this.state.hoveredTarget);
+      this.state.hoveredTarget = null;
     }
   }
   /**
-   * Met en surbrillance une image via les contrôles de sélection Fabric
+   * Met en surbrillance une cible via les contrôles de sélection Fabric
    * et un overlay HTML sombre avec texte personnalisable
    */
-  highlightImage(target) {
+  highlightTarget(target) {
     this.state.originalColors = {
       border: target.borderColor,
       corner: target.cornerColor
@@ -6157,9 +6365,9 @@ var ImageDropHandler = class {
     return overlay;
   }
   /**
-   * Restaure le style original d'une image/frame et supprime l'overlay
+   * Restaure le style original d'une cible et supprime l'overlay
    */
-  restoreImageStyle(target) {
+  restoreTargetStyle(target) {
     if (this.state.originalColors) {
       target.set({
         borderColor: this.state.originalColors.border,
@@ -6184,34 +6392,33 @@ var ImageDropHandler = class {
       this.state.htmlOverlay = null;
     }
   }
-  async replaceImage(file, target) {
-    this.clearHighlight();
-    try {
-      const imageUrl = this.config.getImageUrl(file);
-      const isShape = target.layerType === "shape";
-      if (isShape) {
-        await this.editor.layers.replaceShapeWithImage(target, imageUrl);
-      } else {
-        await this.editor.layers.replaceImageSource(target, imageUrl);
-      }
-      this.config.onSuccess();
-    } catch (error) {
-      this.config.onError(error);
+  // ==================== External drag internals ====================
+  /**
+   * Cosmetic preview for an image drag: the real image, scaled like
+   * addImage would (300px max), semi-transparent, and excluded from
+   * drop-target detection.
+   */
+  async createImagePreview(url) {
+    const img = await FabricImage7.fromURL(url, { crossOrigin: "anonymous" });
+    let scale = 1;
+    if (img.width > 300 || img.height > 300) {
+      scale = Math.min(300 / img.width, 300 / img.height);
     }
+    img.set({
+      left: -9999,
+      top: -9999,
+      scaleX: scale,
+      scaleY: scale,
+      opacity: 0.65,
+      selectable: false,
+      evented: false,
+      [DRAG_PREVIEW_KEY]: true
+    });
+    return img;
   }
-  async addImage(file, left, top) {
-    try {
-      const imageUrl = this.config.getImageUrl(file);
-      await this.editor.layers.addImage(imageUrl, {
-        left,
-        top,
-        originX: "center",
-        originY: "center"
-      });
-      this.config.onSuccess();
-    } catch (error) {
-      this.config.onError(error);
-    }
+  createDragObject(payload) {
+    const offscreen = { left: -9999, top: -9999 };
+    return payload.kind === "text" ? this.editor.layers.createText({ ...payload.opts, ...offscreen }) : this.editor.layers.createShape({ ...payload.opts, shapeType: payload.shapeType, ...offscreen });
   }
 };
 
@@ -6724,6 +6931,7 @@ export {
   ContainerizeSession,
   CustomTextbox,
   DesignCanvas,
+  DropHandler,
   FabCircle,
   FabPath,
   FabRect,
@@ -6731,7 +6939,6 @@ export {
   HEART_PATH,
   HEXAGON_PATH,
   HistoryManager,
-  ImageDropHandler,
   ImageFrame,
   InsertChildSession,
   LayerManager,

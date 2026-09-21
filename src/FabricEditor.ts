@@ -13,6 +13,7 @@ import { ImageFrame } from "./ImageFrame";
 import { isPositionLocked } from "./locking";
 import { applyControlStyle } from "./ui/controls";
 import { hexAlpha } from "./ui/color";
+import { DRAG_PREVIEW_KEY } from "./types";
 import type { EditorConfig, LayerData, FontsConfig, ShapeType } from "./types";
 import { initYoga } from "./layout/yoga-engine";
 
@@ -836,7 +837,7 @@ export class FabricEditor {
 
   /**
    * Trouve l'objet "droppable" sous un point : ImageFrame, FabricImage, ou shape.
-   * Utilisé par ImageDropHandler pour le drop d'images sur images ET sur formes.
+   * Utilisé par DropHandler pour le drop d'images sur images ET sur formes.
    */
   findDropTargetAtPoint(x: number, y: number): FabricObject | null {
     const point = new Point(x, y);
@@ -847,6 +848,9 @@ export class FabricEditor {
     for (const obj of objects) {
       // Ignorer l'image de fond
       if (obj.get("layerId") === "originalImage") continue;
+
+      // Ignorer la preview de drag (elle suit le curseur, elle matcherait toujours)
+      if (obj.get(DRAG_PREVIEW_KEY)) continue;
 
       const layerType = (obj as { layerType?: string }).layerType;
 

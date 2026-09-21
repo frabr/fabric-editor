@@ -468,6 +468,12 @@ declare class LayerManager {
     /**
      * Crée et ajoute un calque texte
      */
+    /**
+     * Crée un calque texte sans l'ajouter au canvas.
+     * Source unique des défauts texte — utilisé par addText et par le
+     * drag externe (DropHandler).
+     */
+    createText(options?: TextLayerOptions): CustomTextbox;
     addText(options?: TextLayerOptions): CustomTextbox;
     /**
      * Crée et ajoute un calque image dans un ImageFrame
@@ -501,6 +507,12 @@ declare class LayerManager {
     /**
      * Crée et ajoute un calque forme (rectangle par défaut)
      */
+    /**
+     * Crée un calque forme sans l'ajouter au canvas.
+     * Source unique des défauts forme — utilisé par addShape et par le
+     * drag externe (DropHandler).
+     */
+    createShape(options?: ShapeLayerOptions): FabricObject;
     addShape(options?: ShapeLayerOptions): FabricObject;
     /**
      * Groupe plusieurs objets ensemble
