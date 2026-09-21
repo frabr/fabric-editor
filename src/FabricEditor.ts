@@ -16,6 +16,7 @@ import { hexAlpha } from "./ui/color";
 import { DRAG_PREVIEW_KEY } from "./types";
 import type { EditorConfig, LayerData, FontsConfig, ShapeType } from "./types";
 import { initYoga } from "./layout/yoga-engine";
+import { isTextObject } from "./layout/geometry";
 
 /**
  * Éditeur d'images basé sur Fabric.js
@@ -694,9 +695,52 @@ export class FabricEditor {
    */
   changeFont(fontFamily: string, fontWeight?: string): void {
     const obj = this.selection.current;
-    if (!obj || obj.type !== "i-text") return;
+    if (!obj || !isTextObject(obj)) return;
 
     obj.set({ fontFamily, fontWeight: fontWeight || "normal" });
+    this.layout.relayout();
+    this.canvas.requestRenderAll();
+  }
+
+  /**
+   * Change la taille de police de l'objet texte sélectionné
+   */
+  setFontSize(size: number): void {
+    const obj = this.selection.current;
+    if (!obj || !isTextObject(obj) || !Number.isFinite(size) || size <= 0) return;
+
+    obj.set({ fontSize: size });
+    this.layout.relayout();
+    this.canvas.requestRenderAll();
+  }
+
+  /**
+   * Bascule un style sur l'objet texte sélectionné (gras, italique, souligné).
+   * "bold" alterne fontWeight normal/bold (un poids numérique >= 600 compte
+   * comme gras).
+   */
+  toggleTextStyle(style: "bold" | "italic" | "underline"): void {
+    const obj = this.selection.current as (typeof this.selection.current) & {
+      fontWeight?: string | number;
+      fontStyle?: string;
+      underline?: boolean;
+    };
+    if (!obj || !isTextObject(obj)) return;
+
+    switch (style) {
+      case "bold": {
+        const isBold = obj.fontWeight === "bold" || Number(obj.fontWeight) >= 600;
+        obj.set({ fontWeight: isBold ? "normal" : "bold" });
+        break;
+      }
+      case "italic":
+        obj.set({ fontStyle: obj.fontStyle === "italic" ? "normal" : "italic" });
+        break;
+      case "underline":
+        obj.set({ underline: !obj.underline });
+        break;
+    }
+    this.layout.relayout();
     this.canvas.requestRenderAll();
   }
 
