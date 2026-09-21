@@ -198,6 +198,9 @@ export class DropHandler {
 
       const addOpts: ImageLayerOptions = { ...opts };
       if (e) {
+        // Drop entirely outside the artboard → no-op (native file drags
+        // and unarmed fallbacks reach here without the completeDrag guard)
+        if (!this.intersectsCanvas(e, null)) return null;
         const pointer = this.editor.canvas.getScenePoint(e);
         addOpts.left = pointer.x;
         addOpts.top = pointer.y;
@@ -263,6 +266,13 @@ export class DropHandler {
   async completeDrag(e?: DragEvent): Promise<FabricObject | null> {
     if (!this.drag) return null;
     const { payload, object } = this.drag;
+
+    // Drop entirely outside the artboard → cancel instead of adding.
+    // (An anchored layout session implies we're over a container on canvas.)
+    if (e && !this.editor.layout.isAnchored && !this.intersectsCanvas(e, object)) {
+      this.cancelDrag();
+      return null;
+    }
 
     if (payload.kind === "image") {
       // Discard the cosmetic preview — dropImage creates the real ImageFrame
@@ -592,6 +602,24 @@ export class DropHandler {
   }
 
   // ==================== External drag internals ====================
+
+  /**
+   * True if dropping at `e` would put at least one pixel of the object on
+   * the artboard. Without an object (image not yet loaded, native file),
+   * falls back to a point-in-artboard test on the cursor.
+   */
+  private intersectsCanvas(e: DragEvent, object: FabricObject | null): boolean {
+    const p = this.editor.canvas.getScenePoint(e);
+    const w = this.editor.width;
+    const h = this.editor.height;
+    if (!object) {
+      return p.x >= 0 && p.x <= w && p.y >= 0 && p.y <= h;
+    }
+    // The object lands centered under the cursor
+    const hw = object.getScaledWidth() / 2;
+    const hh = object.getScaledHeight() / 2;
+    return p.x + hw > 0 && p.x - hw < w && p.y + hh > 0 && p.y - hh < h;
+  }
 
   /**
    * Cosmetic preview for an image drag: the real image, scaled like

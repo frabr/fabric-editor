@@ -39,6 +39,16 @@ export class FabricEditor {
   private _resizeObserver: ResizeObserver | null = null;
   private _resizeCallbacks: Array<() => void> = [];
 
+  /** Largeur de l'artboard en coordonnées scène. */
+  get width(): number {
+    return this.config.width;
+  }
+
+  /** Hauteur de l'artboard en coordonnées scène. */
+  get height(): number {
+    return this.config.height;
+  }
+
   constructor(canvasElement: HTMLCanvasElement, config: EditorConfig) {
     this.config = config;
 

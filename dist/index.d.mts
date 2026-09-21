@@ -1462,6 +1462,10 @@ declare class FabricEditor {
     private _userZoom;
     private _resizeObserver;
     private _resizeCallbacks;
+    /** Largeur de l'artboard en coordonnées scène. */
+    get width(): number;
+    /** Hauteur de l'artboard en coordonnées scène. */
+    get height(): number;
     constructor(canvasElement: HTMLCanvasElement, config: EditorConfig);
     private _initialized;
     /**
@@ -1906,6 +1910,12 @@ declare class DropHandler {
      * Supprime les overlays (Fabric + HTML)
      */
     private removeOverlay;
+    /**
+     * True if dropping at `e` would put at least one pixel of the object on
+     * the artboard. Without an object (image not yet loaded, native file),
+     * falls back to a point-in-artboard test on the cursor.
+     */
+    private intersectsCanvas;
     /**
      * Cosmetic preview for an image drag: the real image, scaled like
      * addImage would (300px max), semi-transparent, and excluded from

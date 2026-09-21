@@ -5400,6 +5400,14 @@ var _FabricEditor = class _FabricEditor {
       this.canvas.backgroundColor = "transparent";
     }
   }
+  /** Largeur de l'artboard en coordonnées scène. */
+  get width() {
+    return this.config.width;
+  }
+  /** Hauteur de l'artboard en coordonnées scène. */
+  get height() {
+    return this.config.height;
+  }
   /**
    * Async initialization: loads fonts from config if present.
    * Idempotent — safe to call multiple times.
@@ -6154,6 +6162,7 @@ var DropHandler = class {
       }
       const addOpts = { ...opts };
       if (e) {
+        if (!this.intersectsCanvas(e, null)) return null;
         const pointer = this.editor.canvas.getScenePoint(e);
         addOpts.left = pointer.x;
         addOpts.top = pointer.y;
@@ -6213,6 +6222,10 @@ var DropHandler = class {
   async completeDrag(e) {
     if (!this.drag) return null;
     const { payload, object } = this.drag;
+    if (e && !this.editor.layout.isAnchored && !this.intersectsCanvas(e, object)) {
+      this.cancelDrag();
+      return null;
+    }
     if (payload.kind === "image") {
       if (object && this.drag.onCanvas) {
         this.editor.canvas.remove(object);
@@ -6474,6 +6487,22 @@ var DropHandler = class {
     }
   }
   // ==================== External drag internals ====================
+  /**
+   * True if dropping at `e` would put at least one pixel of the object on
+   * the artboard. Without an object (image not yet loaded, native file),
+   * falls back to a point-in-artboard test on the cursor.
+   */
+  intersectsCanvas(e, object) {
+    const p = this.editor.canvas.getScenePoint(e);
+    const w = this.editor.width;
+    const h = this.editor.height;
+    if (!object) {
+      return p.x >= 0 && p.x <= w && p.y >= 0 && p.y <= h;
+    }
+    const hw = object.getScaledWidth() / 2;
+    const hh = object.getScaledHeight() / 2;
+    return p.x + hw > 0 && p.x - hw < w && p.y + hh > 0 && p.y - hh < h;
+  }
   /**
    * Cosmetic preview for an image drag: the real image, scaled like
    * addImage would (300px max), semi-transparent, and excluded from
