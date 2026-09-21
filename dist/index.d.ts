@@ -1571,7 +1571,9 @@ declare class FabricEditor {
      */
     initialize(backgroundImageUrl: string, layers?: LayerData[]): Promise<void>;
     /**
-     * Charge les polices personnalisées
+     * Charge les polices personnalisées.
+     * Une police qui échoue (URL morte, CORS…) est ignorée avec un warning :
+     * le texte retombe sur la police par défaut au lieu de bloquer tout le rendu.
      */
     loadFonts(fonts: FontsConfig): Promise<void>;
     /**

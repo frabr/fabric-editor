@@ -478,20 +478,27 @@ export class FabricEditor {
   }
 
   /**
-   * Charge les polices personnalisées
+   * Charge les polices personnalisées.
+   * Une police qui échoue (URL morte, CORS…) est ignorée avec un warning :
+   * le texte retombe sur la police par défaut au lieu de bloquer tout le rendu.
    */
   async loadFonts(fonts: FontsConfig): Promise<void> {
-    const fontFaces = await Promise.all(
-      Object.entries(fonts).map(([, values]) => {
+    const results = await Promise.allSettled(
+      Object.entries(fonts).map(([name, values]) => {
         return new FontFace(values.family, values.url, {
           style: "normal",
           weight: values.weight || "normal",
-        }).load();
+        }).load().catch((e) => {
+          console.warn(`[FabricEditor] Font "${name}" failed to load:`, e);
+          throw e;
+        });
       })
     );
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    fontFaces?.forEach((f) => (document?.fonts as any)?.add(f));
+    results.forEach((r) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      if (r.status === "fulfilled") (document?.fonts as any)?.add(r.value);
+    });
   }
 
   /**

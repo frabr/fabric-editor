@@ -1708,7 +1708,7 @@ var LayerManager = class {
       text = "Tapez votre texte ici",
       left = 100,
       top = 100,
-      fontFamily = "InterRegular",
+      fontFamily = "Inter",
       fontSize = 32,
       fontWeight = "normal",
       fill = "#000000",
@@ -5724,18 +5724,25 @@ var _FabricEditor = class _FabricEditor {
     this.history.initialize();
   }
   /**
-   * Charge les polices personnalisées
+   * Charge les polices personnalisées.
+   * Une police qui échoue (URL morte, CORS…) est ignorée avec un warning :
+   * le texte retombe sur la police par défaut au lieu de bloquer tout le rendu.
    */
   async loadFonts(fonts) {
-    const fontFaces = await Promise.all(
-      Object.entries(fonts).map(([, values]) => {
+    const results = await Promise.allSettled(
+      Object.entries(fonts).map(([name, values]) => {
         return new FontFace(values.family, values.url, {
           style: "normal",
           weight: values.weight || "normal"
-        }).load();
+        }).load().catch((e) => {
+          console.warn(`[FabricEditor] Font "${name}" failed to load:`, e);
+          throw e;
+        });
       })
     );
-    fontFaces?.forEach((f) => document?.fonts?.add(f));
+    results.forEach((r) => {
+      if (r.status === "fulfilled") document?.fonts?.add(r.value);
+    });
   }
   /**
    * @legacy Use ImageFrame.nextClipShape() directly.
@@ -5810,7 +5817,7 @@ var _FabricEditor = class _FabricEditor {
   changeColor(color) {
     const obj = this.selection.current;
     if (!obj) return;
-    if (obj.type === "i-text") {
+    if (isTextObject(obj)) {
       obj.set("fill", color);
     } else {
       const property = obj.stroke ? "stroke" : "fill";

@@ -152,7 +152,7 @@ export class LayerManager {
       text = "Tapez votre texte ici",
       left = 100,
       top = 100,
-      fontFamily = "InterRegular",
+      fontFamily = "Inter",
       fontSize = 32,
       fontWeight = "normal",
       fill = "#000000",
