@@ -584,7 +584,7 @@ export class FabricEditor {
     const obj = this.selection.current;
     if (!obj) return;
 
-    if (obj.type === "i-text") {
+    if (isTextObject(obj)) {
       obj.set("fill", color);
     } else {
       const property = obj.stroke ? "stroke" : "fill";
