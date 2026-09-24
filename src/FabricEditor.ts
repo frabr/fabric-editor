@@ -123,11 +123,21 @@ export class FabricEditor {
    */
   async replaceAllLayers(layers: LayerData[]): Promise<void> {
     await this.init();
+    // Anti-flicker : la désérialisation (chargement d'images compris) se fait AVANT de
+    // retirer l'existant, puis swap + rendu dans la même tâche — l'ancien contenu reste à
+    // l'écran jusqu'au nouveau, aucune frame vide. Les appels concurrents (changements de
+    // slide rapides) se départagent par jeton : le dernier gagne.
+    const token = (this._replaceToken = {});
+    const objects = await this.layers.deserializeAll(layers);
+    if (token !== this._replaceToken) return;
+
     this.layers.all.forEach((obj) => this.layers.remove(obj));
-    await this.layers.loadLayers(layers);
+    objects.forEach((obj) => obj && this.layers.add(obj));
     this.canvas.discardActiveObject();
     this.canvas.renderAll();
   }
+
+  private _replaceToken: object = {};
 
   /**
    * Current CSS scale applied by fitToContainer.

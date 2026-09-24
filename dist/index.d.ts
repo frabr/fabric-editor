@@ -802,6 +802,12 @@ declare class LayerManager {
      */
     loadBackgroundImage(url: string): Promise<FabricImage>;
     /**
+     * Désérialise plusieurs calques sans les ajouter au canvas — la moitié asynchrone
+     * (chargement d'images compris) du chargement, pour que l'appelant puisse faire le swap
+     * ancien/nouveau contenu de façon synchrone (anti-flicker).
+     */
+    deserializeAll(layers: LayerData[]): Promise<(FabricObject | null)[]>;
+    /**
      * Charge plusieurs calques depuis leurs données JSON
      */
     loadLayers(layers: LayerData[]): Promise<FabricObject[]>;
@@ -1482,6 +1488,7 @@ declare class FabricEditor {
      * Single entry point for both initial load and undo/redo restore.
      */
     replaceAllLayers(layers: LayerData[]): Promise<void>;
+    private _replaceToken;
     /**
      * Current CSS scale applied by fitToContainer.
      */
@@ -1702,8 +1709,16 @@ declare class PreviewCanvas extends StaticCanvas {
         height: number;
     } & Record<string, any>);
     fitToSize(containerW: number, containerH: number): number;
-    /** Remplace le contenu par ces layers et rend — l'unique verbe d'une preview. */
+    /**
+     * Remplace le contenu par ces layers et rend — l'unique verbe d'une preview.
+     *
+     * Anti-flicker : la désérialisation (chargement d'images compris) se fait AVANT le clear,
+     * puis clear + add + renderAll dans la même tâche — clear() efface les pixels
+     * immédiatement (clearContext), le rendu synchrone interdit toute frame blanche entre les
+     * deux. Les rendus concurrents se départagent par jeton : le dernier appelé gagne.
+     */
     showLayers(layers: LayerData[]): Promise<void>;
+    private _showToken;
 }
 
 /**

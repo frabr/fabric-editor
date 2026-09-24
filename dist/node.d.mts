@@ -441,6 +441,12 @@ declare class LayerManager {
      */
     loadBackgroundImage(url: string): Promise<FabricImage>;
     /**
+     * Désérialise plusieurs calques sans les ajouter au canvas — la moitié asynchrone
+     * (chargement d'images compris) du chargement, pour que l'appelant puisse faire le swap
+     * ancien/nouveau contenu de façon synchrone (anti-flicker).
+     */
+    deserializeAll(layers: LayerData[]): Promise<(FabricObject | null)[]>;
+    /**
      * Charge plusieurs calques depuis leurs données JSON
      */
     loadLayers(layers: LayerData[]): Promise<FabricObject[]>;

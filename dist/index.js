@@ -1643,17 +1643,26 @@ var LayerManager = class {
     return img;
   }
   /**
-   * Charge plusieurs calques depuis leurs données JSON
+   * Désérialise plusieurs calques sans les ajouter au canvas — la moitié asynchrone
+   * (chargement d'images compris) du chargement, pour que l'appelant puisse faire le swap
+   * ancien/nouveau contenu de façon synchrone (anti-flicker).
    */
-  async loadLayers(layers) {
+  async deserializeAll(layers) {
     const objects = await Promise.all(layers.map((l) => this.deserialize(l)));
     objects.forEach((obj, i) => {
       if (!obj) return;
       const data = layers[i];
       if (data.selectable === false) obj.selectable = false;
       if (data.evented === false) obj.evented = false;
-      this.add(obj);
     });
+    return objects;
+  }
+  /**
+   * Charge plusieurs calques depuis leurs données JSON
+   */
+  async loadLayers(layers) {
+    const objects = await this.deserializeAll(layers);
+    objects.forEach((obj) => obj && this.add(obj));
     return objects.filter(Boolean);
   }
   /**
@@ -5370,6 +5379,7 @@ var _FabricEditor = class _FabricEditor {
     this._resizeObserver = null;
     this._resizeCallbacks = [];
     this._initialized = false;
+    this._replaceToken = {};
     // ── Clipboard (copy / paste) ──────────────────────────────────────
     this._clipboard = null;
     this.config = config;
@@ -5436,8 +5446,11 @@ var _FabricEditor = class _FabricEditor {
    */
   async replaceAllLayers(layers) {
     await this.init();
+    const token = this._replaceToken = {};
+    const objects = await this.layers.deserializeAll(layers);
+    if (token !== this._replaceToken) return;
     this.layers.all.forEach((obj) => this.layers.remove(obj));
-    await this.layers.loadLayers(layers);
+    objects.forEach((obj) => obj && this.layers.add(obj));
     this.canvas.discardActiveObject();
     this.canvas.renderAll();
   }
@@ -6129,6 +6142,7 @@ var PreviewCanvas = class extends import_fabric16.StaticCanvas {
       enableRetinaScaling: false,
       ...canvasOpts
     });
+    this._showToken = {};
     this.designWidth = width;
     this.designHeight = height;
   }
@@ -6141,11 +6155,22 @@ var PreviewCanvas = class extends import_fabric16.StaticCanvas {
     this.setViewportTransform([scale, 0, 0, scale, 0, 0]);
     return scale;
   }
-  /** Remplace le contenu par ces layers et rend — l'unique verbe d'une preview. */
+  /**
+   * Remplace le contenu par ces layers et rend — l'unique verbe d'une preview.
+   *
+   * Anti-flicker : la désérialisation (chargement d'images compris) se fait AVANT le clear,
+   * puis clear + add + renderAll dans la même tâche — clear() efface les pixels
+   * immédiatement (clearContext), le rendu synchrone interdit toute frame blanche entre les
+   * deux. Les rendus concurrents se départagent par jeton : le dernier appelé gagne.
+   */
   async showLayers(layers) {
+    const manager = new LayerManager(this);
+    const token = this._showToken = {};
+    const objects = await manager.deserializeAll(layers);
+    if (token !== this._showToken) return;
     this.clear();
-    await new LayerManager(this).loadLayers(layers);
-    this.requestRenderAll();
+    objects.forEach((obj) => obj && this.add(obj));
+    this.renderAll();
   }
 };
 

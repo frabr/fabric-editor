@@ -44,12 +44,26 @@ export class PreviewCanvas extends StaticCanvas {
     return scale;
   }
 
-  /** Remplace le contenu par ces layers et rend — l'unique verbe d'une preview. */
+  /**
+   * Remplace le contenu par ces layers et rend — l'unique verbe d'une preview.
+   *
+   * Anti-flicker : la désérialisation (chargement d'images compris) se fait AVANT le clear,
+   * puis clear + add + renderAll dans la même tâche — clear() efface les pixels
+   * immédiatement (clearContext), le rendu synchrone interdit toute frame blanche entre les
+   * deux. Les rendus concurrents se départagent par jeton : le dernier appelé gagne.
+   */
   async showLayers(layers: LayerData[]): Promise<void> {
-    this.clear();
     // LayerManager est typé sur DesignCanvas mais n'exige structurellement que
     // add/remove/getObjects (+ setActiveObject optionnel) — contrat que remplit StaticCanvas.
-    await new LayerManager(this as unknown as DesignCanvas).loadLayers(layers);
-    this.requestRenderAll();
+    const manager = new LayerManager(this as unknown as DesignCanvas);
+    const token = (this._showToken = {});
+    const objects = await manager.deserializeAll(layers);
+    if (token !== this._showToken) return;
+
+    this.clear();
+    objects.forEach((obj) => obj && this.add(obj));
+    this.renderAll();
   }
+
+  private _showToken: object = {};
 }

@@ -1330,17 +1330,26 @@ var LayerManager = class {
     return img;
   }
   /**
-   * Charge plusieurs calques depuis leurs données JSON
+   * Désérialise plusieurs calques sans les ajouter au canvas — la moitié asynchrone
+   * (chargement d'images compris) du chargement, pour que l'appelant puisse faire le swap
+   * ancien/nouveau contenu de façon synchrone (anti-flicker).
    */
-  async loadLayers(layers) {
+  async deserializeAll(layers) {
     const objects = await Promise.all(layers.map((l) => this.deserialize(l)));
     objects.forEach((obj, i) => {
       if (!obj) return;
       const data = layers[i];
       if (data.selectable === false) obj.selectable = false;
       if (data.evented === false) obj.evented = false;
-      this.add(obj);
     });
+    return objects;
+  }
+  /**
+   * Charge plusieurs calques depuis leurs données JSON
+   */
+  async loadLayers(layers) {
+    const objects = await this.deserializeAll(layers);
+    objects.forEach((obj) => obj && this.add(obj));
     return objects.filter(Boolean);
   }
   /**
