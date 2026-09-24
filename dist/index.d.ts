@@ -1,5 +1,5 @@
 import * as _fabric from '#fabric';
-import { Canvas, FabricObject, TPointerEvent, Textbox, Group, FabricImage, Pattern, Rect, TOptions, RectProps, Circle, CircleProps, Path, PathProps } from '#fabric';
+import { Canvas, FabricObject, TPointerEvent, Textbox, Group, FabricImage, StaticCanvas, Pattern, Rect, TOptions, RectProps, Circle, CircleProps, Path, PathProps } from '#fabric';
 
 /**
  * DesignCanvas — wraps a Fabric Canvas to separate design size from display size.
@@ -1684,6 +1684,29 @@ declare class FabricEditor {
 }
 
 /**
+ * Canvas de preview readonly — la version dépouillée, pour vignettes et posters.
+ *
+ * StaticCanvas : pas d'upper canvas (le calque d'interaction doublerait la mémoire pixel),
+ * pas d'écouteurs DOM, pas de sélection ni de controls — et LayerManager.add ne sélectionne
+ * jamais faute de setActiveObject. Aucun manager (layout, guides, snapping, historique)
+ * n'est instancié : la mémoire se réduit au buffer du canvas et aux objets.
+ *
+ * Comme DesignCanvas, sépare l'espace design (celui des layers) de la taille d'affichage :
+ * fitToSize dimensionne le buffer et pose le viewportTransform.
+ */
+declare class PreviewCanvas extends StaticCanvas {
+    readonly designWidth: number;
+    readonly designHeight: number;
+    constructor(el: HTMLCanvasElement, opts: {
+        width: number;
+        height: number;
+    } & Record<string, any>);
+    fitToSize(containerW: number, containerH: number): number;
+    /** Remplace le contenu par ces layers et rend — l'unique verbe d'une preview. */
+    showLayers(layers: LayerData[]): Promise<void>;
+}
+
+/**
  * Manages ephemeral visual guides (overlays) on a Fabric canvas.
  *
  * All colors are derived from a single base color passed at construction.
@@ -2222,4 +2245,4 @@ declare function fabricToHtml(layers: LayerData[], options: HtmlRenderOptions): 
  */
 declare function layerToHtmlStandalone(layer: LayerData, zIndex: number): HtmlLayerOutput;
 
-export { type AlignItems, type AlignSelf, type AttachSnapshot, CanvasGuides, type ChildData, type ChildLayout, type ContainerData, type ContainerLayout, ContainerizeSession, type ControlOption, type Controllable, CustomTextbox, DesignCanvas, type DragPayload, DropHandler, type DropHandlerConfig, type EditorConfig, FabCircle, FabPath, FabRect, FabricEditor, type FlexDirection, type FontConfig, type FontsConfig, HEART_PATH, HEXAGON_PATH, type HistoryCallbacks, HistoryManager, type HistoryState, type HtmlLayerOutput, type HtmlRenderOptions, ImageFrame, type ImageLayerOptions, InsertChildSession, type JustifyContent, type LayerData, LayerManager, type LayoutData, LayoutManager, type LayoutManagerCallbacks, type LayoutSession, type LockMode$1 as LockMode, type Lockable, MIN_PAD, MaskManager, type ObjectControlsConfig, PendingUploadsManager, PersistenceManager, ResizeSession, type ResizeSnapResult, SHAPE_PATHS, type SaveOptions, type SaveResult, type SelectionCallbacks, SelectionManager, type ShapeCatalogEntry, type ShapeLayerOptions, type ShapePath, type ShapeType, type SizeMode, type SnappingConfig, SnappingManager, type TextLayerOptions, addCircleClip, addCropControls, addHeartClip, addHexagonClip, antiScale, applyClip, applyLockMode, clampTopLeft, createCircle, createHeart, createHexagon, createImage, createPathShape, createRect, createShape, fabricToHtml, getAvailableShapes, getLockMode, getNextLockMode, getShapeCatalog, hasExceededOffset, initYoga, isChild, isChildLayout, isContainer, isContainerLayout, isContentLocked, isPositionLocked, isStyleLocked, isValidShape, isYogaReady, layerToHtmlStandalone, nextShape, pointInObject, removeCropControls, runLayout, scaledSize, switchClip, switchShape, topLeft, wrapContainerAroundChild, yogaLayout };
+export { type AlignItems, type AlignSelf, type AttachSnapshot, CanvasGuides, type ChildData, type ChildLayout, type ContainerData, type ContainerLayout, ContainerizeSession, type ControlOption, type Controllable, CustomTextbox, DesignCanvas, type DragPayload, DropHandler, type DropHandlerConfig, type EditorConfig, FabCircle, FabPath, FabRect, FabricEditor, type FlexDirection, type FontConfig, type FontsConfig, HEART_PATH, HEXAGON_PATH, type HistoryCallbacks, HistoryManager, type HistoryState, type HtmlLayerOutput, type HtmlRenderOptions, ImageFrame, type ImageLayerOptions, InsertChildSession, type JustifyContent, type LayerData, LayerManager, type LayoutData, LayoutManager, type LayoutManagerCallbacks, type LayoutSession, type LockMode$1 as LockMode, type Lockable, MIN_PAD, MaskManager, type ObjectControlsConfig, PendingUploadsManager, PersistenceManager, PreviewCanvas, ResizeSession, type ResizeSnapResult, SHAPE_PATHS, type SaveOptions, type SaveResult, type SelectionCallbacks, SelectionManager, type ShapeCatalogEntry, type ShapeLayerOptions, type ShapePath, type ShapeType, type SizeMode, type SnappingConfig, SnappingManager, type TextLayerOptions, addCircleClip, addCropControls, addHeartClip, addHexagonClip, antiScale, applyClip, applyLockMode, clampTopLeft, createCircle, createHeart, createHexagon, createImage, createPathShape, createRect, createShape, fabricToHtml, getAvailableShapes, getLockMode, getNextLockMode, getShapeCatalog, hasExceededOffset, initYoga, isChild, isChildLayout, isContainer, isContainerLayout, isContentLocked, isPositionLocked, isStyleLocked, isValidShape, isYogaReady, layerToHtmlStandalone, nextShape, pointInObject, removeCropControls, runLayout, scaledSize, switchClip, switchShape, topLeft, wrapContainerAroundChild, yogaLayout };

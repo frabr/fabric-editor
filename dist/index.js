@@ -159,6 +159,7 @@ __export(index_exports, {
   MaskManager: () => MaskManager,
   PendingUploadsManager: () => PendingUploadsManager,
   PersistenceManager: () => PersistenceManager,
+  PreviewCanvas: () => PreviewCanvas,
   ResizeSession: () => ResizeSession,
   SHAPE_PATHS: () => SHAPE_PATHS,
   SelectionManager: () => SelectionManager,
@@ -6116,8 +6117,40 @@ var _FabricEditor = class _FabricEditor {
 _FabricEditor._toObjectExtended = false;
 var FabricEditor = _FabricEditor;
 
-// src/DropHandler.ts
+// src/PreviewCanvas.ts
 var import_fabric16 = require("#fabric");
+var PreviewCanvas = class extends import_fabric16.StaticCanvas {
+  constructor(el, opts) {
+    const { width, height, ...canvasOpts } = opts;
+    super(el, {
+      width,
+      height,
+      renderOnAddRemove: false,
+      enableRetinaScaling: false,
+      ...canvasOpts
+    });
+    this.designWidth = width;
+    this.designHeight = height;
+  }
+  fitToSize(containerW, containerH) {
+    const scale = Math.min(containerW / this.designWidth, containerH / this.designHeight);
+    this.setDimensions({
+      width: Math.round(this.designWidth * scale),
+      height: Math.round(this.designHeight * scale)
+    });
+    this.setViewportTransform([scale, 0, 0, scale, 0, 0]);
+    return scale;
+  }
+  /** Remplace le contenu par ces layers et rend — l'unique verbe d'une preview. */
+  async showLayers(layers) {
+    this.clear();
+    await new LayerManager(this).loadLayers(layers);
+    this.requestRenderAll();
+  }
+};
+
+// src/DropHandler.ts
+var import_fabric17 = require("#fabric");
 var HIGHLIGHT_COLOR = "#3b82f6";
 var KIND_CAPABILITIES = {
   image: { layout: false, replaceTarget: true },
@@ -6281,7 +6314,7 @@ var DropHandler = class {
       if (!committed && object) {
         if (e) {
           const pointer = this.editor.canvas.getScenePoint(e);
-          object.setPositionByOrigin(new import_fabric16.Point(pointer.x, pointer.y), "center", "center");
+          object.setPositionByOrigin(new import_fabric17.Point(pointer.x, pointer.y), "center", "center");
           object.setCoords();
         }
         if (!this.editor.canvas.getObjects().includes(object)) {
@@ -6357,7 +6390,7 @@ var DropHandler = class {
         this.editor.layout.tickExternalDrag(object, pointer);
         return;
       }
-      object.setPositionByOrigin(new import_fabric16.Point(pointer.x, pointer.y), "center", "center");
+      object.setPositionByOrigin(new import_fabric17.Point(pointer.x, pointer.y), "center", "center");
       object.setCoords();
       this.editor.canvas.requestRenderAll();
     }
@@ -6458,7 +6491,7 @@ var DropHandler = class {
       height = target.height;
       clipPath = target.clipPath;
     }
-    const fabricOverlay = new import_fabric16.Rect({
+    const fabricOverlay = new import_fabric17.Rect({
       left: target.left,
       top: target.top,
       width,
@@ -6551,7 +6584,7 @@ var DropHandler = class {
    * drop-target detection.
    */
   async createImagePreview(url) {
-    const img = await import_fabric16.FabricImage.fromURL(url, { crossOrigin: "anonymous" });
+    const img = await import_fabric17.FabricImage.fromURL(url, { crossOrigin: "anonymous" });
     let scale = 1;
     if (img.width > 300 || img.height > 300) {
       scale = Math.min(300 / img.width, 300 / img.height);
@@ -7100,6 +7133,7 @@ function layerToHtmlStandalone(layer, zIndex) {
   MaskManager,
   PendingUploadsManager,
   PersistenceManager,
+  PreviewCanvas,
   ResizeSession,
   SHAPE_PATHS,
   SelectionManager,

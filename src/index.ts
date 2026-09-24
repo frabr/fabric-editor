@@ -6,6 +6,7 @@
 // Classe principale
 export { FabricEditor } from "./FabricEditor";
 export { DesignCanvas } from "./DesignCanvas";
+export { PreviewCanvas } from "./PreviewCanvas";
 
 // Managers
 export { LayerManager } from "./LayerManager";

@@ -6035,6 +6035,38 @@ var _FabricEditor = class _FabricEditor {
 _FabricEditor._toObjectExtended = false;
 var FabricEditor = _FabricEditor;
 
+// src/PreviewCanvas.ts
+import { StaticCanvas } from "#fabric";
+var PreviewCanvas = class extends StaticCanvas {
+  constructor(el, opts) {
+    const { width, height, ...canvasOpts } = opts;
+    super(el, {
+      width,
+      height,
+      renderOnAddRemove: false,
+      enableRetinaScaling: false,
+      ...canvasOpts
+    });
+    this.designWidth = width;
+    this.designHeight = height;
+  }
+  fitToSize(containerW, containerH) {
+    const scale = Math.min(containerW / this.designWidth, containerH / this.designHeight);
+    this.setDimensions({
+      width: Math.round(this.designWidth * scale),
+      height: Math.round(this.designHeight * scale)
+    });
+    this.setViewportTransform([scale, 0, 0, scale, 0, 0]);
+    return scale;
+  }
+  /** Remplace le contenu par ces layers et rend — l'unique verbe d'une preview. */
+  async showLayers(layers) {
+    this.clear();
+    await new LayerManager(this).loadLayers(layers);
+    this.requestRenderAll();
+  }
+};
+
 // src/DropHandler.ts
 import { FabricImage as FabricImage7, Point as Point4, Rect as Rect6 } from "#fabric";
 var HIGHLIGHT_COLOR = "#3b82f6";
@@ -7018,6 +7050,7 @@ export {
   MaskManager,
   PendingUploadsManager,
   PersistenceManager,
+  PreviewCanvas,
   ResizeSession,
   SHAPE_PATHS,
   SelectionManager,
