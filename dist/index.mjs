@@ -6057,20 +6057,35 @@ var PreviewCanvas = class extends StaticCanvas {
       width,
       height,
       renderOnAddRemove: false,
-      enableRetinaScaling: false,
+      // Retina : sans buffer à devicePixelRatio, les petites vignettes (48px) sortent
+      // pixelisées sur HiDPI. Le surcoût mémoire reste marginal aux tailles de preview.
+      enableRetinaScaling: true,
       ...canvasOpts
     });
     this._showToken = {};
     this.designWidth = width;
     this.designHeight = height;
   }
-  fitToSize(containerW, containerH) {
-    const scale = Math.min(containerW / this.designWidth, containerH / this.designHeight);
-    this.setDimensions({
-      width: Math.round(this.designWidth * scale),
-      height: Math.round(this.designHeight * scale)
-    });
-    this.setViewportTransform([scale, 0, 0, scale, 0, 0]);
+  /**
+   * `contain` : le buffer épouse le design réduit (letterbox géré par le parent).
+   * `cover` : le buffer épouse le conteneur, le design centré déborde — le crop est fait par
+   * le canvas lui-même (un object-fit CSS étirerait le bitmap).
+   */
+  fitToSize(containerW, containerH, fit = "contain") {
+    const ratios = [containerW / this.designWidth, containerH / this.designHeight];
+    const scale = fit === "cover" ? Math.max(...ratios) : Math.min(...ratios);
+    const width = fit === "cover" ? containerW : Math.round(this.designWidth * scale);
+    const height = fit === "cover" ? containerH : Math.round(this.designHeight * scale);
+    this.setDimensions({ width, height });
+    this.setViewportTransform([
+      scale,
+      0,
+      0,
+      scale,
+      (width - this.designWidth * scale) / 2,
+      (height - this.designHeight * scale) / 2
+    ]);
+    this.getContext().imageSmoothingQuality = "high";
     return scale;
   }
   /**

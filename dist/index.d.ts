@@ -1708,7 +1708,12 @@ declare class PreviewCanvas extends StaticCanvas {
         width: number;
         height: number;
     } & Record<string, any>);
-    fitToSize(containerW: number, containerH: number): number;
+    /**
+     * `contain` : le buffer épouse le design réduit (letterbox géré par le parent).
+     * `cover` : le buffer épouse le conteneur, le design centré déborde — le crop est fait par
+     * le canvas lui-même (un object-fit CSS étirerait le bitmap).
+     */
+    fitToSize(containerW: number, containerH: number, fit?: "contain" | "cover"): number;
     /**
      * Remplace le contenu par ces layers et rend — l'unique verbe d'une preview.
      *

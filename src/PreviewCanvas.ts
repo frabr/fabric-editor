@@ -27,20 +27,37 @@ export class PreviewCanvas extends StaticCanvas {
       width,
       height,
       renderOnAddRemove: false,
-      enableRetinaScaling: false,
+      // Retina : sans buffer à devicePixelRatio, les petites vignettes (48px) sortent
+      // pixelisées sur HiDPI. Le surcoût mémoire reste marginal aux tailles de preview.
+      enableRetinaScaling: true,
       ...canvasOpts,
     });
     this.designWidth = width;
     this.designHeight = height;
   }
 
-  fitToSize(containerW: number, containerH: number): number {
-    const scale = Math.min(containerW / this.designWidth, containerH / this.designHeight);
-    this.setDimensions({
-      width: Math.round(this.designWidth * scale),
-      height: Math.round(this.designHeight * scale),
-    });
-    this.setViewportTransform([scale, 0, 0, scale, 0, 0]);
+  /**
+   * `contain` : le buffer épouse le design réduit (letterbox géré par le parent).
+   * `cover` : le buffer épouse le conteneur, le design centré déborde — le crop est fait par
+   * le canvas lui-même (un object-fit CSS étirerait le bitmap).
+   */
+  fitToSize(containerW: number, containerH: number, fit: "contain" | "cover" = "contain"): number {
+    const ratios = [containerW / this.designWidth, containerH / this.designHeight];
+    const scale = fit === "cover" ? Math.max(...ratios) : Math.min(...ratios);
+    const width = fit === "cover" ? containerW : Math.round(this.designWidth * scale);
+    const height = fit === "cover" ? containerH : Math.round(this.designHeight * scale);
+    this.setDimensions({ width, height });
+    this.setViewportTransform([
+      scale,
+      0,
+      0,
+      scale,
+      (width - this.designWidth * scale) / 2,
+      (height - this.designHeight * scale) / 2,
+    ]);
+    // Redimensionner un canvas réinitialise l'état de son contexte : la qualité de lissage
+    // se repose ici. "high" — un downscale 1080 -> 48 en un drawImage crénèle sinon.
+    this.getContext().imageSmoothingQuality = "high";
     return scale;
   }
 
