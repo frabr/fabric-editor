@@ -17,6 +17,7 @@ import { scaledSize } from "./layout/geometry";
 import { applyLockMode, getLockMode, type LockMode } from "./locking";
 import { ImageFrame, type ImageFrameData } from "./ImageFrame";
 import type { LayerData, TextLayerOptions, ImageLayerOptions, ShapeLayerOptions, ShapeType } from "./types";
+import { restoreBindings } from "./bindings";
 
 const BACKGROUND_LAYER_ID = "originalImage";
 
@@ -89,6 +90,7 @@ export class LayerManager {
       const data = layers[i];
       if ((data as any).selectable === false) obj.selectable = false;
       if ((data as any).evented === false) obj.evented = false;
+      restoreBindings(obj, data);
     });
     return objects;
   }
@@ -437,7 +439,7 @@ export class LayerManager {
    * Inclut les propriétés custom : layerId, lockMode, lockContent
    */
   serialize(): LayerData[] {
-    return this.all.map((obj) => obj.toObject(["layerId", "lockMode", "lockContent", "layout"]) as LayerData);
+    return this.all.map((obj) => obj.toObject(["layerId", "lockMode", "lockContent", "layout", "bindings"]) as LayerData);
   }
 
   /**

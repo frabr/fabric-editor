@@ -109,3 +109,5 @@ export type {
 export type { HistoryState, HistoryCallbacks } from "./HistoryManager";
 export type { SnappingConfig, ResizeSnapResult } from "./SnappingManager";
 export type { LayoutManagerCallbacks } from "./LayoutManager";
+export { pendingBindings, hasPendingBindings, lockBoundText } from "./bindings";
+export type { Bindings, BindingSpec } from "./bindings";

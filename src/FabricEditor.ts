@@ -17,6 +17,7 @@ import { DRAG_PREVIEW_KEY } from "./types";
 import type { EditorConfig, LayerData, FontsConfig, ShapeType } from "./types";
 import { initYoga } from "./layout/yoga-engine";
 import { isTextObject } from "./layout/geometry";
+import { installBindingBadges } from "./bindings";
 
 /**
  * Éditeur d'images basé sur Fabric.js
@@ -85,6 +86,10 @@ export class FabricEditor {
 
     // Étendre FabricObject pour inclure layerId dans le JSON
     this.extendFabricObject();
+
+    // La pastille « $ » des calques liés (dialecte template) : visible avant toute
+    // sélection, dans la couleur d'édition.
+    installBindingBadges(this.canvas.originalFabricCanvas, gc);
 
     if (config.transparent) {
       this.canvas.backgroundColor = "transparent";
@@ -814,7 +819,7 @@ export class FabricEditor {
     }
 
     this._clipboard = toCopy.map((obj) =>
-      obj.toObject(["layerId", "lockMode", "lockContent", "layout"])
+      obj.toObject(["layerId", "lockMode", "lockContent", "layout", "bindings"])
     );
   }
 
@@ -969,7 +974,7 @@ export class FabricEditor {
     FabricObject.prototype.toObject = function(propertiesToInclude) {
       return originalToObject.call(
         this,
-        ["layerId", "layout"].concat(propertiesToInclude || [])
+        ["layerId", "layout", "bindings"].concat(propertiesToInclude || [])
       );
     };
   }

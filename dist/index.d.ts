@@ -594,6 +594,12 @@ interface LayerData {
     lockContent?: boolean;
     /** Layout data (container or child) — see layout/types.ts */
     layout?: LayoutData;
+    /** Bindings du dialecte template (apibots) : { champ: { expr, scope, resolved } } */
+    bindings?: Record<string, {
+        expr?: string;
+        scope?: string;
+        resolved?: boolean;
+    }>;
     [key: string]: unknown;
 }
 interface TextLayerOptions {
@@ -2265,4 +2271,26 @@ declare function fabricToHtml(layers: LayerData[], options: HtmlRenderOptions): 
  */
 declare function layerToHtmlStandalone(layer: LayerData, zIndex: number): HtmlLayerOutput;
 
-export { type AlignItems, type AlignSelf, type AttachSnapshot, CanvasGuides, type ChildData, type ChildLayout, type ContainerData, type ContainerLayout, ContainerizeSession, type ControlOption, type Controllable, CustomTextbox, DesignCanvas, type DragPayload, DropHandler, type DropHandlerConfig, type EditorConfig, FabCircle, FabPath, FabRect, FabricEditor, type FlexDirection, type FontConfig, type FontsConfig, HEART_PATH, HEXAGON_PATH, type HistoryCallbacks, HistoryManager, type HistoryState, type HtmlLayerOutput, type HtmlRenderOptions, ImageFrame, type ImageLayerOptions, InsertChildSession, type JustifyContent, type LayerData, LayerManager, type LayoutData, LayoutManager, type LayoutManagerCallbacks, type LayoutSession, type LockMode$1 as LockMode, type Lockable, MIN_PAD, MaskManager, type ObjectControlsConfig, PendingUploadsManager, PersistenceManager, PreviewCanvas, ResizeSession, type ResizeSnapResult, SHAPE_PATHS, type SaveOptions, type SaveResult, type SelectionCallbacks, SelectionManager, type ShapeCatalogEntry, type ShapeLayerOptions, type ShapePath, type ShapeType, type SizeMode, type SnappingConfig, SnappingManager, type TextLayerOptions, addCircleClip, addCropControls, addHeartClip, addHexagonClip, antiScale, applyClip, applyLockMode, clampTopLeft, createCircle, createHeart, createHexagon, createImage, createPathShape, createRect, createShape, fabricToHtml, getAvailableShapes, getLockMode, getNextLockMode, getShapeCatalog, hasExceededOffset, initYoga, isChild, isChildLayout, isContainer, isContainerLayout, isContentLocked, isPositionLocked, isStyleLocked, isValidShape, isYogaReady, layerToHtmlStandalone, nextShape, pointInObject, removeCropControls, runLayout, scaledSize, switchClip, switchShape, topLeft, wrapContainerAroundChild, yogaLayout };
+/**
+ * Les bindings du dialecte template (apibots, plan media-template-generators §4) : un calque
+ * peut porter `bindings` — { champ: { expr, scope, resolved } } — et le champ stocké reste
+ * une valeur plate (le sample), donc le canvas rend le calque tel quel. L'éditeur, lui, doit
+ * SAVOIR qu'un champ est lié :
+ *
+ * - la donnée voyage avec le calque (sérialisation/désérialisation, comme layerId) ;
+ * - un texte au binding `text` en attente ne s'édite pas directement (règle : on édite le
+ *   binding ou on délie — sinon sample et expression divergent en silence) → editable=false ;
+ * - le lien est visible AVANT toute sélection : une pastille « $ » dans la couleur d'édition
+ *   (guideColor), dessinée en overlay au coin du calque.
+ */
+type BindingSpec = {
+    expr?: string;
+    scope?: string;
+    resolved?: boolean;
+};
+type Bindings = Record<string, BindingSpec>;
+declare function pendingBindings(obj: FabricObject): Bindings;
+declare function hasPendingBindings(obj: FabricObject): boolean;
+declare function lockBoundText(obj: FabricObject): void;
+
+export { type AlignItems, type AlignSelf, type AttachSnapshot, type BindingSpec, type Bindings, CanvasGuides, type ChildData, type ChildLayout, type ContainerData, type ContainerLayout, ContainerizeSession, type ControlOption, type Controllable, CustomTextbox, DesignCanvas, type DragPayload, DropHandler, type DropHandlerConfig, type EditorConfig, FabCircle, FabPath, FabRect, FabricEditor, type FlexDirection, type FontConfig, type FontsConfig, HEART_PATH, HEXAGON_PATH, type HistoryCallbacks, HistoryManager, type HistoryState, type HtmlLayerOutput, type HtmlRenderOptions, ImageFrame, type ImageLayerOptions, InsertChildSession, type JustifyContent, type LayerData, LayerManager, type LayoutData, LayoutManager, type LayoutManagerCallbacks, type LayoutSession, type LockMode$1 as LockMode, type Lockable, MIN_PAD, MaskManager, type ObjectControlsConfig, PendingUploadsManager, PersistenceManager, PreviewCanvas, ResizeSession, type ResizeSnapResult, SHAPE_PATHS, type SaveOptions, type SaveResult, type SelectionCallbacks, SelectionManager, type ShapeCatalogEntry, type ShapeLayerOptions, type ShapePath, type ShapeType, type SizeMode, type SnappingConfig, SnappingManager, type TextLayerOptions, addCircleClip, addCropControls, addHeartClip, addHexagonClip, antiScale, applyClip, applyLockMode, clampTopLeft, createCircle, createHeart, createHexagon, createImage, createPathShape, createRect, createShape, fabricToHtml, getAvailableShapes, getLockMode, getNextLockMode, getShapeCatalog, hasExceededOffset, hasPendingBindings, initYoga, isChild, isChildLayout, isContainer, isContainerLayout, isContentLocked, isPositionLocked, isStyleLocked, isValidShape, isYogaReady, layerToHtmlStandalone, lockBoundText, nextShape, pendingBindings, pointInObject, removeCropControls, runLayout, scaledSize, switchClip, switchShape, topLeft, wrapContainerAroundChild, yogaLayout };

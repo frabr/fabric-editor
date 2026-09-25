@@ -1303,6 +1303,22 @@ installControlOptions(ImageFrame.prototype, ["clip"]);
 import_fabric7.classRegistry.setClass(ImageFrame);
 import_fabric7.classRegistry.setClass(ImageFrame, "ImageFrame");
 
+// src/bindings.ts
+function pendingBindings(obj) {
+  const bindings = obj.get("bindings") || {};
+  return Object.fromEntries(Object.entries(bindings).filter(([, spec]) => spec?.resolved !== true));
+}
+function restoreBindings(obj, data) {
+  if (!data.bindings) return;
+  obj.set("bindings", data.bindings);
+  lockBoundText(obj);
+}
+function lockBoundText(obj) {
+  if (pendingBindings(obj)["text"] && "editable" in obj) {
+    obj.editable = false;
+  }
+}
+
 // src/LayerManager.ts
 var BACKGROUND_LAYER_ID = "originalImage";
 var LayerManager = class {
@@ -1361,6 +1377,7 @@ var LayerManager = class {
       const data = layers[i];
       if (data.selectable === false) obj.selectable = false;
       if (data.evented === false) obj.evented = false;
+      restoreBindings(obj, data);
     });
     return objects;
   }
@@ -1622,7 +1639,7 @@ var LayerManager = class {
    * Inclut les propriétés custom : layerId, lockMode, lockContent
    */
   serialize() {
-    return this.all.map((obj) => obj.toObject(["layerId", "lockMode", "lockContent", "layout"]));
+    return this.all.map((obj) => obj.toObject(["layerId", "lockMode", "lockContent", "layout", "bindings"]));
   }
   /**
    * Désérialise un calque depuis ses données JSON

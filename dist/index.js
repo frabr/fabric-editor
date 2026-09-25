@@ -185,6 +185,7 @@ __export(index_exports, {
   getNextLockMode: () => getNextLockMode,
   getShapeCatalog: () => getShapeCatalog,
   hasExceededOffset: () => hasExceededOffset,
+  hasPendingBindings: () => hasPendingBindings,
   initYoga: () => initYoga,
   isChild: () => isChild,
   isChildLayout: () => isChildLayout,
@@ -196,7 +197,9 @@ __export(index_exports, {
   isValidShape: () => isValidShape,
   isYogaReady: () => isYogaReady,
   layerToHtmlStandalone: () => layerToHtmlStandalone,
+  lockBoundText: () => lockBoundText,
   nextShape: () => nextShape,
+  pendingBindings: () => pendingBindings,
   pointInObject: () => pointInObject,
   removeCropControls: () => removeCropControls,
   runLayout: () => runLayout,
@@ -1596,6 +1599,50 @@ installControlOptions(ImageFrame.prototype, ["clip"]);
 import_fabric8.classRegistry.setClass(ImageFrame);
 import_fabric8.classRegistry.setClass(ImageFrame, "ImageFrame");
 
+// src/bindings.ts
+function pendingBindings(obj) {
+  const bindings = obj.get("bindings") || {};
+  return Object.fromEntries(Object.entries(bindings).filter(([, spec]) => spec?.resolved !== true));
+}
+function hasPendingBindings(obj) {
+  return Object.keys(pendingBindings(obj)).length > 0;
+}
+function restoreBindings(obj, data) {
+  if (!data.bindings) return;
+  obj.set("bindings", data.bindings);
+  lockBoundText(obj);
+}
+function lockBoundText(obj) {
+  if (pendingBindings(obj)["text"] && "editable" in obj) {
+    obj.editable = false;
+  }
+}
+function installBindingBadges(canvas, color) {
+  canvas.on("after:render", () => {
+    const ctx = canvas.getContext();
+    const vpt = canvas.viewportTransform;
+    if (!ctx || !vpt) return;
+    canvas.getObjects().forEach((obj) => {
+      if (!hasPendingBindings(obj)) return;
+      const corner = obj.getCoords()[0];
+      const x = corner.x * vpt[0] + vpt[4];
+      const y = corner.y * vpt[3] + vpt[5];
+      ctx.save();
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.beginPath();
+      ctx.arc(x, y, 8, 0, Math.PI * 2);
+      ctx.fillStyle = color;
+      ctx.fill();
+      ctx.fillStyle = "#ffffff";
+      ctx.font = "bold 11px sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText("$", x, y + 0.5);
+      ctx.restore();
+    });
+  });
+}
+
 // src/LayerManager.ts
 var BACKGROUND_LAYER_ID = "originalImage";
 var LayerManager = class {
@@ -1654,6 +1701,7 @@ var LayerManager = class {
       const data = layers[i];
       if (data.selectable === false) obj.selectable = false;
       if (data.evented === false) obj.evented = false;
+      restoreBindings(obj, data);
     });
     return objects;
   }
@@ -1915,7 +1963,7 @@ var LayerManager = class {
    * Inclut les propriétés custom : layerId, lockMode, lockContent
    */
   serialize() {
-    return this.all.map((obj) => obj.toObject(["layerId", "lockMode", "lockContent", "layout"]));
+    return this.all.map((obj) => obj.toObject(["layerId", "lockMode", "lockContent", "layout", "bindings"]));
   }
   /**
    * Désérialise un calque depuis ses données JSON
@@ -5407,6 +5455,7 @@ var _FabricEditor = class _FabricEditor {
     );
     this.canvas.originalFabricCanvas.snappingManager = this.snapping;
     this.extendFabricObject();
+    installBindingBadges(this.canvas.originalFabricCanvas, gc);
     if (config.transparent) {
       this.canvas.backgroundColor = "transparent";
     }
@@ -6011,7 +6060,7 @@ var _FabricEditor = class _FabricEditor {
       }
     }
     this._clipboard = toCopy.map(
-      (obj) => obj.toObject(["layerId", "lockMode", "lockContent", "layout"])
+      (obj) => obj.toObject(["layerId", "lockMode", "lockContent", "layout", "bindings"])
     );
   }
   /**
@@ -6119,7 +6168,7 @@ var _FabricEditor = class _FabricEditor {
     import_fabric15.FabricObject.prototype.toObject = function(propertiesToInclude) {
       return originalToObject.call(
         this,
-        ["layerId", "layout"].concat(propertiesToInclude || [])
+        ["layerId", "layout", "bindings"].concat(propertiesToInclude || [])
       );
     };
   }
@@ -7199,6 +7248,7 @@ function layerToHtmlStandalone(layer, zIndex) {
   getNextLockMode,
   getShapeCatalog,
   hasExceededOffset,
+  hasPendingBindings,
   initYoga,
   isChild,
   isChildLayout,
@@ -7210,7 +7260,9 @@ function layerToHtmlStandalone(layer, zIndex) {
   isValidShape,
   isYogaReady,
   layerToHtmlStandalone,
+  lockBoundText,
   nextShape,
+  pendingBindings,
   pointInObject,
   removeCropControls,
   runLayout,

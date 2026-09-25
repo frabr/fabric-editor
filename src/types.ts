@@ -51,6 +51,8 @@ export interface LayerData {
   lockContent?: boolean;
   /** Layout data (container or child) — see layout/types.ts */
   layout?: import("./layout").LayoutData;
+  /** Bindings du dialecte template (apibots) : { champ: { expr, scope, resolved } } */
+  bindings?: Record<string, { expr?: string; scope?: string; resolved?: boolean }>;
   [key: string]: unknown;
 }
 
