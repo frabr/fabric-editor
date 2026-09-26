@@ -1532,6 +1532,9 @@ function lockBoundText(obj) {
     obj.editable = false;
   }
 }
+var BADGE_HEIGHT = 20;
+var BADGE_PAD = 7;
+var BADGE_RADIUS = 4;
 function installBindingBadges(canvas, color) {
   canvas.on("after:render", () => {
     const ctx = canvas.getContext();
@@ -1542,20 +1545,27 @@ function installBindingBadges(canvas, color) {
       const corner = obj.getCoords()[0];
       const x = corner.x * vpt[0] + vpt[4];
       const y = corner.y * vpt[3] + vpt[5];
+      const label = bindingLabel(obj);
       ctx.save();
       ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.font = "600 12px ui-sans-serif, system-ui, sans-serif";
+      const width = ctx.measureText(label).width + BADGE_PAD * 2;
+      const top = y - BADGE_HEIGHT - 2;
       ctx.beginPath();
-      ctx.arc(x, y, 8, 0, Math.PI * 2);
+      ctx.roundRect(x, top, width, BADGE_HEIGHT, [BADGE_RADIUS, BADGE_RADIUS, BADGE_RADIUS, 0]);
       ctx.fillStyle = color;
       ctx.fill();
       ctx.fillStyle = "#ffffff";
-      ctx.font = "bold 11px sans-serif";
-      ctx.textAlign = "center";
+      ctx.textAlign = "left";
       ctx.textBaseline = "middle";
-      ctx.fillText("$", x, y + 0.5);
+      ctx.fillText(label, x + BADGE_PAD, top + BADGE_HEIGHT / 2 + 0.5);
       ctx.restore();
     });
   });
+}
+function bindingLabel(obj) {
+  const tokens = Object.values(pendingBindings(obj)).flatMap((spec) => String(spec?.expr ?? "").match(/\$\w+/g) || []);
+  return tokens.length ? [...new Set(tokens)].join(" ") : "$";
 }
 
 // src/LayerManager.ts

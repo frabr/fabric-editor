@@ -40,10 +40,10 @@ export function lockBoundText(obj: FabricObject): void {
 }
 
 /**
- * La pastille de liaison : dessinée après chaque rendu du canvas, au coin haut-gauche des
- * calques porteurs de bindings en attente — visible sans sélection, dans la couleur
- * d'édition. En espace écran (viewportTransform appliqué), taille constante quel que soit le
- * zoom.
+ * Le badge de liaison : une étiquette « $ » posée au coin haut-gauche du calque, COLLÉE au
+ * cadre — exactement là où se dessinerait l'indicateur de sélection — et dans la couleur
+ * d'édition. Dessinée après chaque rendu : visible sans sélection, taille constante quel que
+ * soit le zoom (espace écran, viewportTransform appliqué).
  */
 type BadgeCanvas = {
   on(eventName: string, handler: () => void): void;
@@ -51,6 +51,10 @@ type BadgeCanvas = {
   getContext(): CanvasRenderingContext2D;
   viewportTransform?: number[] | null;
 };
+
+const BADGE_HEIGHT = 20;
+const BADGE_PAD = 7;
+const BADGE_RADIUS = 4;
 
 export function installBindingBadges(canvas: BadgeCanvas, color: string): void {
   canvas.on("after:render", () => {
@@ -61,22 +65,36 @@ export function installBindingBadges(canvas: BadgeCanvas, color: string): void {
     canvas.getObjects().forEach((obj) => {
       if (!hasPendingBindings(obj)) return;
 
-      const corner = obj.getCoords()[0]; // haut-gauche en espace design
+      // Coin haut-gauche du cadre, en espace écran — le même repère que le cadre de
+      // sélection de fabric, badge posé juste au-dessus de sa bordure.
+      const corner = obj.getCoords()[0];
       const x = corner.x * vpt[0] + vpt[4];
       const y = corner.y * vpt[3] + vpt[5];
+      const label = bindingLabel(obj);
 
       ctx.save();
       ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.font = "600 12px ui-sans-serif, system-ui, sans-serif";
+      const width = ctx.measureText(label).width + BADGE_PAD * 2;
+      const top = y - BADGE_HEIGHT - 2;
+
       ctx.beginPath();
-      ctx.arc(x, y, 8, 0, Math.PI * 2);
+      ctx.roundRect(x, top, width, BADGE_HEIGHT, [BADGE_RADIUS, BADGE_RADIUS, BADGE_RADIUS, 0]);
       ctx.fillStyle = color;
       ctx.fill();
+
       ctx.fillStyle = "#ffffff";
-      ctx.font = "bold 11px sans-serif";
-      ctx.textAlign = "center";
+      ctx.textAlign = "left";
       ctx.textBaseline = "middle";
-      ctx.fillText("$", x, y + 0.5);
+      ctx.fillText(label, x + BADGE_PAD, top + BADGE_HEIGHT / 2 + 0.5);
       ctx.restore();
     });
   });
+}
+
+/** Ce que le badge dit : les tokens liés du calque, ou « $ » à défaut (expression opaque). */
+function bindingLabel(obj: FabricObject): string {
+  const tokens = Object.values(pendingBindings(obj))
+    .flatMap((spec) => String(spec?.expr ?? "").match(/\$\w+/g) || []);
+  return tokens.length ? [...new Set(tokens)].join(" ") : "$";
 }
