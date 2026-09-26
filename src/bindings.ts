@@ -40,6 +40,23 @@ export function lockBoundText(obj: FabricObject): void {
 }
 
 /**
+ * Pose un texte par programme et REMET LA MISE EN PAGE À JOUR : un `set("text", …)` nu ne
+ * remesure pas l'objet et n'émet pas l'événement `changed` que les sessions de layout
+ * écoutent — le conteneur (hug) garderait son ancienne taille alors que le texte a grandi.
+ * C'est le verbe qu'utilise l'aperçu live d'une expression liée (apibots, §9).
+ */
+export function setTextContent(obj: FabricObject, text: string): void {
+  if (!("text" in obj)) return;
+
+  obj.set("text", text);
+  // Remesure immédiate (fabric ne le fait qu'à l'édition interactive), puis on prévient les
+  // écouteurs — c'est ce que la mise en page consomme pour se recalculer.
+  (obj as unknown as { initDimensions?: () => void }).initDimensions?.();
+  obj.setCoords();
+  (obj as unknown as { fire: (name: string) => void }).fire("changed");
+}
+
+/**
  * Le badge de liaison : une étiquette « $ » posée au coin haut-gauche du calque, COLLÉE au
  * cadre — exactement là où se dessinerait l'indicateur de sélection — et dans la couleur
  * d'édition. Dessinée après chaque rendu : visible sans sélection, taille constante quel que

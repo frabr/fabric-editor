@@ -1532,6 +1532,13 @@ function lockBoundText(obj) {
     obj.editable = false;
   }
 }
+function setTextContent(obj, text) {
+  if (!("text" in obj)) return;
+  obj.set("text", text);
+  obj.initDimensions?.();
+  obj.setCoords();
+  obj.fire("changed");
+}
 var BADGE_HEIGHT = 20;
 var BADGE_PAD = 7;
 var BADGE_RADIUS = 4;
@@ -7191,6 +7198,7 @@ export {
   removeCropControls,
   runLayout,
   scaledSize,
+  setTextContent,
   switchClip,
   switchShape,
   topLeft,

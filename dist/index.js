@@ -204,6 +204,7 @@ __export(index_exports, {
   removeCropControls: () => removeCropControls,
   runLayout: () => runLayout,
   scaledSize: () => scaledSize,
+  setTextContent: () => setTextContent,
   switchClip: () => switchClip,
   switchShape: () => switchShape,
   topLeft: () => topLeft,
@@ -1616,6 +1617,13 @@ function lockBoundText(obj) {
   if (pendingBindings(obj)["text"] && "editable" in obj) {
     obj.editable = false;
   }
+}
+function setTextContent(obj, text) {
+  if (!("text" in obj)) return;
+  obj.set("text", text);
+  obj.initDimensions?.();
+  obj.setCoords();
+  obj.fire("changed");
 }
 var BADGE_HEIGHT = 20;
 var BADGE_PAD = 7;
@@ -7277,6 +7285,7 @@ function layerToHtmlStandalone(layer, zIndex) {
   removeCropControls,
   runLayout,
   scaledSize,
+  setTextContent,
   switchClip,
   switchShape,
   topLeft,
