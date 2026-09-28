@@ -929,8 +929,12 @@ export class FabricEditor {
     const objects = this.canvas.getObjects().slice().reverse();
 
     for (const obj of objects) {
-      // Ignorer l'image de fond
+      // Ignorer l'image de fond (legacy) et tout calque INERTE (evented false — le fond
+      // promu, les fonds passthrough) : un fond réactif au drop, plein cadre, capterait
+      // tous les drops et interdirait d'en poser un seul. Le fond se change par le drop
+      // en bord ou la promotion, jamais par le drop direct.
       if (obj.get("layerId") === "originalImage") continue;
+      if ((obj as FabricObject & { evented?: boolean }).evented === false) continue;
 
       // Ignorer la preview de drag (elle suit le curseur, elle matcherait toujours)
       if (obj.get(DRAG_PREVIEW_KEY)) continue;

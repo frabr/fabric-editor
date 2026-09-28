@@ -6092,6 +6092,7 @@ var _FabricEditor = class _FabricEditor {
     const objects = this.canvas.getObjects().slice().reverse();
     for (const obj of objects) {
       if (obj.get("layerId") === "originalImage") continue;
+      if (obj.evented === false) continue;
       if (obj.get(DRAG_PREVIEW_KEY)) continue;
       const layerType = obj.layerType;
       if (layerType === "imageFrame" && obj.containsPoint(point)) {
