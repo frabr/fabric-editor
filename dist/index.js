@@ -223,13 +223,28 @@ var DesignCanvas = class {
   constructor(canvasElement, opts) {
     this._scale = 1;
     const { width, height, ...canvasOpts } = opts;
-    this.width = width;
-    this.height = height;
+    this._width = width;
+    this._height = height;
     this.originalFabricCanvas = new import_fabric.Canvas(canvasElement, {
       width,
       height,
       ...canvasOpts
     });
+  }
+  /** Dimensions logiques de l'espace design (mutables : le format se décide, cf. resizeDesign). */
+  get width() {
+    return this._width;
+  }
+  get height() {
+    return this._height;
+  }
+  /**
+   * Redimensionne l'espace design : le contenu reste en place, seul le cadre change —
+   * l'appelant refait un fitToSize pour recalculer l'affichage.
+   */
+  resizeDesign(width, height) {
+    this._width = width;
+    this._height = height;
   }
   /** Current viewport scale factor (set by fitToSize). */
   get scale() {
@@ -5551,6 +5566,17 @@ var _FabricEditor = class _FabricEditor {
     container.style.overflow = this._userZoom > 1 ? "auto" : "hidden";
     this._displayScale = scale;
     return scale;
+  }
+  /**
+   * Le format se décide en cours d'édition : l'artboard change de dimensions, les calques
+   * restent en place — au caller de mettre à jour son document et son conteneur (ratio).
+   */
+  resizeArtboard(width, height) {
+    this.config.width = width;
+    this.config.height = height;
+    this.canvas.resizeDesign(width, height);
+    this.fitToContainer();
+    this._resizeCallbacks.forEach((cb) => cb());
   }
   /**
    * Set user zoom level (1 = fit to container, >1 = zoom in).

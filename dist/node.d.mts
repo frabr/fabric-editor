@@ -11,10 +11,18 @@ import { Canvas, FabricObject, TPointerEvent, Textbox, Group, FabricImage, Stati
  */
 
 declare class DesignCanvas {
-    readonly width: number;
-    readonly height: number;
     readonly originalFabricCanvas: Canvas;
+    private _width;
+    private _height;
     private _scale;
+    /** Dimensions logiques de l'espace design (mutables : le format se décide, cf. resizeDesign). */
+    get width(): number;
+    get height(): number;
+    /**
+     * Redimensionne l'espace design : le contenu reste en place, seul le cadre change —
+     * l'appelant refait un fitToSize pour recalculer l'affichage.
+     */
+    resizeDesign(width: number, height: number): void;
     constructor(canvasElement: HTMLCanvasElement, opts: {
         width: number;
         height: number;

@@ -12,10 +12,18 @@ import { Canvas, FabricObject, TPointerEvent, Textbox, Group, FabricImage, Stati
  */
 
 declare class DesignCanvas {
-    readonly width: number;
-    readonly height: number;
     readonly originalFabricCanvas: Canvas;
+    private _width;
+    private _height;
     private _scale;
+    /** Dimensions logiques de l'espace design (mutables : le format se décide, cf. resizeDesign). */
+    get width(): number;
+    get height(): number;
+    /**
+     * Redimensionne l'espace design : le contenu reste en place, seul le cadre change —
+     * l'appelant refait un fitToSize pour recalculer l'affichage.
+     */
+    resizeDesign(width: number, height: number): void;
     constructor(canvasElement: HTMLCanvasElement, opts: {
         width: number;
         height: number;
@@ -1507,6 +1515,11 @@ declare class FabricEditor {
      * The canvas buffer matches the display size exactly → pixel-perfect.
      */
     fitToContainer(): number;
+    /**
+     * Le format se décide en cours d'édition : l'artboard change de dimensions, les calques
+     * restent en place — au caller de mettre à jour son document et son conteneur (ratio).
+     */
+    resizeArtboard(width: number, height: number): void;
     /**
      * Set user zoom level (1 = fit to container, >1 = zoom in).
      * Re-runs fitToContainer to apply the new scale.

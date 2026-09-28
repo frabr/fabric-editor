@@ -10,11 +10,29 @@
 import { Canvas, type FabricObject, type TPointerEvent } from "#fabric";
 
 export class DesignCanvas {
-  readonly width: number;
-  readonly height: number;
   readonly originalFabricCanvas: Canvas;
 
+  private _width: number;
+  private _height: number;
   private _scale = 1;
+
+  /** Dimensions logiques de l'espace design (mutables : le format se décide, cf. resizeDesign). */
+  get width(): number {
+    return this._width;
+  }
+
+  get height(): number {
+    return this._height;
+  }
+
+  /**
+   * Redimensionne l'espace design : le contenu reste en place, seul le cadre change —
+   * l'appelant refait un fitToSize pour recalculer l'affichage.
+   */
+  resizeDesign(width: number, height: number): void {
+    this._width = width;
+    this._height = height;
+  }
 
   constructor(
     canvasElement: HTMLCanvasElement,
@@ -24,8 +42,8 @@ export class DesignCanvas {
     } & Record<string, any>,
   ) {
     const { width, height, ...canvasOpts } = opts;
-    this.width = width;
-    this.height = height;
+    this._width = width;
+    this._height = height;
     this.originalFabricCanvas = new Canvas(canvasElement, {
       width,
       height,

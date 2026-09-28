@@ -182,6 +182,18 @@ export class FabricEditor {
   }
 
   /**
+   * Le format se décide en cours d'édition : l'artboard change de dimensions, les calques
+   * restent en place — au caller de mettre à jour son document et son conteneur (ratio).
+   */
+  resizeArtboard(width: number, height: number): void {
+    this.config.width = width;
+    this.config.height = height;
+    this.canvas.resizeDesign(width, height);
+    this.fitToContainer();
+    this._resizeCallbacks.forEach((cb) => cb());
+  }
+
+  /**
    * Set user zoom level (1 = fit to container, >1 = zoom in).
    * Re-runs fitToContainer to apply the new scale.
    */
