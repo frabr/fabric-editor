@@ -5466,15 +5466,18 @@ function installHoverBorder(canvas, guideColor, resolveTarget) {
     const resolved = resolveTarget ? resolveTarget(raw) : raw;
     if (resolved === hoveredObj || raw === hoveredObj) {
       hoveredObj = null;
-      clearTopCtx();
+      canvas.requestRenderAll();
     }
   });
   canvas.on("after:render", () => {
     clearTopCtx();
     const ctx = canvas.originalFabricCanvas.contextTop;
     if (!ctx) return;
-    canvas.getObjects().forEach((obj) => drawDynamicMediaOutline(ctx, obj, guideColor));
     const active = canvas.getActiveObject();
+    canvas.getObjects().forEach((obj) => {
+      if (obj === active || obj === hoveredObj) return;
+      drawDynamicMediaOutline(ctx, obj, guideColor);
+    });
     if (active) drawBindingBadge(ctx, active, guideColor);
     if (!hoveredObj || hoveredObj === active) return;
     hoveredObj._renderControls(ctx, { hasControls: false, hasBorders: true });

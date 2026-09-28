@@ -310,7 +310,10 @@ function installHoverBorder(canvas: DesignCanvas, guideColor: string, resolveTar
     const resolved = resolveTarget ? resolveTarget(raw) : raw;
     if (resolved === hoveredObj || raw === hoveredObj) {
       hoveredObj = null;
-      clearTopCtx();
+      // Re-render plutôt qu'effacement sec : la passe after:render repeint ce qui doit
+      // rester (liserés des médias dynamiques) — un clear nu les faisait disparaître
+      // jusqu'au prochain render.
+      canvas.requestRenderAll();
     }
   });
 
@@ -321,12 +324,14 @@ function installHoverBorder(canvas: DesignCanvas, guideColor: string, resolveTar
     if (!ctx) return;
 
     // Les médias dynamiques portent un liseré PERMANENT : l'aperçu montre la vraie image
-    // d'exemple, le pointillé dit « remplie à la publication ».
-    canvas.getObjects().forEach((obj) => drawDynamicMediaOutline(ctx, obj, guideColor));
-
-    // Le badge de liaison accompagne le CADRE : il s'affiche avec lui, au survol comme à la
-    // sélection (le dialecte template — un calque lié se signale quand on le vise).
+    // d'exemple, le pointillé dit « remplie à la publication ». L'objet visé (survol,
+    // sélection) s'en passe : son cadre plein le remplace, le badge nomme le lien.
     const active = canvas.getActiveObject();
+    canvas.getObjects().forEach((obj) => {
+      if (obj === active || obj === hoveredObj) return;
+
+      drawDynamicMediaOutline(ctx, obj, guideColor);
+    });
     if (active) drawBindingBadge(ctx, active, guideColor);
 
     if (!hoveredObj || hoveredObj === active) return;
