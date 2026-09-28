@@ -104,9 +104,44 @@ export function drawBindingBadge(
   ctx.restore();
 }
 
-/** Ce que le badge dit : les tokens liés du calque, ou « $ » à défaut (expression opaque). */
+/** Ce que le badge dit : les tokens liés ($NOM) et les slots (media[i]) du calque. */
 function bindingLabel(obj: FabricObject): string {
-  const tokens = Object.values(pendingBindings(obj))
-    .flatMap((spec) => String(spec?.expr ?? "").match(/\$\w+/g) || []);
-  return tokens.length ? [...new Set(tokens)].join(" ") : "$";
+  const labels = Object.values(pendingBindings(obj)).flatMap((spec) => {
+    const expr = String(spec?.expr ?? "");
+    const tokens = expr.match(/\$\w+/g) || [];
+    return tokens.length ? tokens : expr.match(/^media\[/) ? [expr] : [];
+  });
+  return labels.length ? [...new Set(labels)].join(" ") : "$";
+}
+
+/**
+ * Le liseré des MÉDIAS dynamiques : un pointillé permanent dans la couleur d'édition autour
+ * des calques dont un champ image est lié — l'aperçu montre la vraie image d'exemple, le
+ * liseré dit « celle-ci sera remplie à la publication ». Espace écran (oCoords, le repère
+ * des poignées), épaisseur constante au zoom.
+ */
+export function drawDynamicMediaOutline(
+  ctx: CanvasRenderingContext2D,
+  obj: FabricObject,
+  color: string,
+): void {
+  const pending = pendingBindings(obj);
+  if (!Object.keys(pending).some((field) => field.startsWith("image."))) return;
+
+  const coords = (obj as unknown as { oCoords?: Record<string, { x: number; y: number }> }).oCoords;
+  if (!coords) return;
+
+  ctx.save();
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1.5;
+  ctx.setLineDash([6, 4]);
+  ctx.globalAlpha = 0.9;
+  ctx.beginPath();
+  ctx.moveTo(coords.tl.x, coords.tl.y);
+  ctx.lineTo(coords.tr.x, coords.tr.y);
+  ctx.lineTo(coords.br.x, coords.br.y);
+  ctx.lineTo(coords.bl.x, coords.bl.y);
+  ctx.closePath();
+  ctx.stroke();
+  ctx.restore();
 }

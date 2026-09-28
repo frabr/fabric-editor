@@ -1529,7 +1529,14 @@ var ImageFrame = class _ImageFrame extends import_fabric8.Group {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   toObject(propertiesToInclude) {
     const base = super.toObject(propertiesToInclude);
+    const extras = {};
+    (propertiesToInclude || []).forEach((key) => {
+      if (base[key] !== void 0) extras[key] = base[key];
+    });
+    if (this.selectable === false) extras.selectable = false;
+    if (this.evented === false) extras.evented = false;
     return {
+      ...extras,
       type: "ImageFrame",
       left: this.left,
       top: this.top,
@@ -1564,6 +1571,7 @@ var ImageFrame = class _ImageFrame extends import_fabric8.Group {
       imageOffsetY: data.image.offsetY,
       imageScale: data.image.scale
     });
+    if (data.layout) frame.set("layout", data.layout);
     frame.frameWidth = data.frameWidth;
     frame.frameHeight = data.frameHeight;
     frame.width = data.frameWidth;
@@ -1665,8 +1673,31 @@ function drawBindingBadge(ctx, obj, color) {
   ctx.restore();
 }
 function bindingLabel(obj) {
-  const tokens = Object.values(pendingBindings(obj)).flatMap((spec) => String(spec?.expr ?? "").match(/\$\w+/g) || []);
-  return tokens.length ? [...new Set(tokens)].join(" ") : "$";
+  const labels = Object.values(pendingBindings(obj)).flatMap((spec) => {
+    const expr = String(spec?.expr ?? "");
+    const tokens = expr.match(/\$\w+/g) || [];
+    return tokens.length ? tokens : expr.match(/^media\[/) ? [expr] : [];
+  });
+  return labels.length ? [...new Set(labels)].join(" ") : "$";
+}
+function drawDynamicMediaOutline(ctx, obj, color) {
+  const pending = pendingBindings(obj);
+  if (!Object.keys(pending).some((field) => field.startsWith("image."))) return;
+  const coords = obj.oCoords;
+  if (!coords) return;
+  ctx.save();
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1.5;
+  ctx.setLineDash([6, 4]);
+  ctx.globalAlpha = 0.9;
+  ctx.beginPath();
+  ctx.moveTo(coords.tl.x, coords.tl.y);
+  ctx.lineTo(coords.tr.x, coords.tr.y);
+  ctx.lineTo(coords.br.x, coords.br.y);
+  ctx.lineTo(coords.bl.x, coords.bl.y);
+  ctx.closePath();
+  ctx.stroke();
+  ctx.restore();
 }
 
 // src/LayerManager.ts
@@ -1725,8 +1756,9 @@ var LayerManager = class {
     objects.forEach((obj, i) => {
       if (!obj) return;
       const data = layers[i];
-      if (data.selectable === false) obj.selectable = false;
-      if (data.evented === false) obj.evented = false;
+      const isBackground = data.layerId === "bg";
+      if (isBackground || data.selectable === false) obj.selectable = false;
+      if (isBackground || data.evented === false) obj.evented = false;
       restoreBindings(obj, data);
     });
     return objects;
@@ -5441,6 +5473,7 @@ function installHoverBorder(canvas, guideColor, resolveTarget) {
     clearTopCtx();
     const ctx = canvas.originalFabricCanvas.contextTop;
     if (!ctx) return;
+    canvas.getObjects().forEach((obj) => drawDynamicMediaOutline(ctx, obj, guideColor));
     const active = canvas.getActiveObject();
     if (active) drawBindingBadge(ctx, active, guideColor);
     if (!hoveredObj || hoveredObj === active) return;
@@ -6576,6 +6609,11 @@ var DropHandler = class {
     if (isContentLocked(target)) {
       return;
     }
+    console.debug("[drop] replace armed on", {
+      layerId: target.get?.("layerId"),
+      evented: target.evented,
+      lockMode: target.get?.("lockMode")
+    });
     this.state.replaceMode = true;
     this.state.hoveredTarget = target;
     this.highlightTarget(target);

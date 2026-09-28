@@ -1216,7 +1216,14 @@ var ImageFrame = class _ImageFrame extends import_fabric7.Group {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   toObject(propertiesToInclude) {
     const base = super.toObject(propertiesToInclude);
+    const extras = {};
+    (propertiesToInclude || []).forEach((key) => {
+      if (base[key] !== void 0) extras[key] = base[key];
+    });
+    if (this.selectable === false) extras.selectable = false;
+    if (this.evented === false) extras.evented = false;
     return {
+      ...extras,
       type: "ImageFrame",
       left: this.left,
       top: this.top,
@@ -1251,6 +1258,7 @@ var ImageFrame = class _ImageFrame extends import_fabric7.Group {
       imageOffsetY: data.image.offsetY,
       imageScale: data.image.scale
     });
+    if (data.layout) frame.set("layout", data.layout);
     frame.frameWidth = data.frameWidth;
     frame.frameHeight = data.frameHeight;
     frame.width = data.frameWidth;
@@ -1375,8 +1383,9 @@ var LayerManager = class {
     objects.forEach((obj, i) => {
       if (!obj) return;
       const data = layers[i];
-      if (data.selectable === false) obj.selectable = false;
-      if (data.evented === false) obj.evented = false;
+      const isBackground = data.layerId === "bg";
+      if (isBackground || data.selectable === false) obj.selectable = false;
+      if (isBackground || data.evented === false) obj.evented = false;
       restoreBindings(obj, data);
     });
     return objects;

@@ -564,7 +564,18 @@ export class ImageFrame extends Group {
   toObject(propertiesToInclude?: any[]): any {
     const base = super.toObject(propertiesToInclude) as Record<string, unknown>;
 
+    // Les propriétés DEMANDÉES par l'appelant (layout, bindings…) doivent survivre : la
+    // forme fixe ci-dessous écrasait tout — un ImageFrame sortait de son container au save,
+    // un fond perdait son inertie (evented) et redevenait cible de drop au reload.
+    const extras: Record<string, unknown> = {};
+    (propertiesToInclude || []).forEach((key) => {
+      if (base[key] !== undefined) extras[key] = base[key];
+    });
+    if (this.selectable === false) extras.selectable = false;
+    if (this.evented === false) extras.evented = false;
+
     return {
+      ...extras,
       type: "ImageFrame",
       left: this.left,
       top: this.top,
@@ -601,6 +612,10 @@ export class ImageFrame extends Group {
       imageOffsetY: data.image.offsetY,
       imageScale: data.image.scale,
     });
+
+    // Le fromObject est manuel (contrairement aux shapes, servies par le générique de
+    // fabric) : les extras sérialisés doivent être restaurés explicitement.
+    if ((data as any).layout) frame.set("layout", (data as any).layout);
 
     // Restaurer les dimensions du frame
     frame.frameWidth = data.frameWidth;

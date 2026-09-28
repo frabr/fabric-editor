@@ -8,7 +8,7 @@
 import { FabricObject, Control, controlsUtils, type TPointerEvent } from "#fabric";
 import type { DesignCanvas } from "../DesignCanvas";
 import { parseHex, hexAlpha } from "./color";
-import { drawBindingBadge } from "../bindings";
+import { drawBindingBadge, drawDynamicMediaOutline } from "../bindings";
 
 // ── Public entry point ─────────────────────────────────────────────
 
@@ -319,6 +319,10 @@ function installHoverBorder(canvas: DesignCanvas, guideColor: string, resolveTar
     clearTopCtx();
     const ctx = (canvas.originalFabricCanvas as any).contextTop as CanvasRenderingContext2D;
     if (!ctx) return;
+
+    // Les médias dynamiques portent un liseré PERMANENT : l'aperçu montre la vraie image
+    // d'exemple, le pointillé dit « remplie à la publication ».
+    canvas.getObjects().forEach((obj) => drawDynamicMediaOutline(ctx, obj, guideColor));
 
     // Le badge de liaison accompagne le CADRE : il s'affiche avec lui, au survol comme à la
     // sélection (le dialecte template — un calque lié se signale quand on le vise).

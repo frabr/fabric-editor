@@ -86,10 +86,13 @@ export class LayerManager {
     const objects = await Promise.all(layers.map((l) => this.deserialize(l)));
     objects.forEach((obj, i) => {
       if (!obj) return;
-      // Restaurer selectable/evented depuis le JSON (non gérés par fromObject)
+      // Restaurer selectable/evented depuis le JSON (non gérés par fromObject). Un FOND
+      // (layerId "bg") est inerte PAR CONVENTION — répare aussi les docs sauvés pendant que
+      // ImageFrame#toObject perdait ces flags.
       const data = layers[i];
-      if ((data as any).selectable === false) obj.selectable = false;
-      if ((data as any).evented === false) obj.evented = false;
+      const isBackground = (data as any).layerId === "bg";
+      if (isBackground || (data as any).selectable === false) obj.selectable = false;
+      if (isBackground || (data as any).evented === false) obj.evented = false;
       restoreBindings(obj, data);
     });
     return objects;

@@ -448,6 +448,13 @@ export class DropHandler {
       return;
     }
 
+    // eslint-disable-next-line no-console
+    console.debug("[drop] replace armed on", {
+      layerId: (target as FabricObject).get?.("layerId"),
+      evented: (target as FabricObject).evented,
+      lockMode: (target as FabricObject).get?.("lockMode"),
+    });
+
     this.state.replaceMode = true;
     this.state.hoveredTarget = target;
     this.highlightTarget(target);
