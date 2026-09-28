@@ -56,57 +56,52 @@ export function setTextContent(obj: FabricObject, text: string): void {
   (obj as unknown as { fire: (name: string) => void }).fire("changed");
 }
 
+const BADGE_HEIGHT = 15;
+const BADGE_PAD = 5;
+const BADGE_FONT = "500 10px ui-sans-serif, system-ui, sans-serif";
+
 /**
- * Le badge de liaison : une étiquette « $ » posée au coin haut-gauche du calque, COLLÉE au
- * cadre — exactement là où se dessinerait l'indicateur de sélection — et dans la couleur
- * d'édition. Dessinée après chaque rendu : visible sans sélection, taille constante quel que
- * soit le zoom (espace écran, viewportTransform appliqué).
+ * Le badge de liaison — brutaliste : un rectangle net, collé au contour, sans arrondi. Il
+ * accompagne le CADRE, pas le calque : il ne s'affiche qu'avec lui (survol ou sélection),
+ * comme une étiquette du cadre.
+ *
+ * Il réutilise la position que fabric a déjà calculée pour ses poignées : `oCoords` est en
+ * espace écran (viewportTransform et zoom compris) — aucune transformation à recalculer,
+ * c'est ce qui le fait suivre à toutes les échelles.
  */
-type BadgeCanvas = {
-  on(eventName: string, handler: () => void): void;
-  getObjects(): FabricObject[];
-  getContext(): CanvasRenderingContext2D;
-  viewportTransform?: number[] | null;
-};
+export function drawBindingBadge(
+  ctx: CanvasRenderingContext2D,
+  obj: FabricObject,
+  color: string,
+): void {
+  if (!hasPendingBindings(obj)) return;
 
-const BADGE_HEIGHT = 20;
-const BADGE_PAD = 7;
-const BADGE_RADIUS = 4;
+  const corner = (obj as unknown as { oCoords?: Record<string, { x: number; y: number }> }).oCoords?.tl;
+  if (!corner) return;
 
-export function installBindingBadges(canvas: BadgeCanvas, color: string): void {
-  canvas.on("after:render", () => {
-    const ctx = canvas.getContext();
-    const vpt = canvas.viewportTransform;
-    if (!ctx || !vpt) return;
+  const label = bindingLabel(obj);
+  ctx.save();
+  // `destination-over` : le badge se glisse SOUS ce qui est déjà dessiné — il passe donc
+  // derrière les poignées au lieu de les masquer.
+  ctx.globalCompositeOperation = "destination-over";
+  ctx.font = BADGE_FONT;
+  const width = ctx.measureText(label).width + BADGE_PAD * 2;
+  // Collé au contour : le bas du badge EST le haut du cadre, et son bord gauche déborde
+  // d'un pixel pour s'aligner sur l'extérieur de la bordure.
+  const left = corner.x - 1;
+  const top = corner.y - BADGE_HEIGHT;
 
-    canvas.getObjects().forEach((obj) => {
-      if (!hasPendingBindings(obj)) return;
+  ctx.fillStyle = color;
+  ctx.fillRect(left, top, width, BADGE_HEIGHT);
 
-      // Coin haut-gauche du cadre, en espace écran — le même repère que le cadre de
-      // sélection de fabric, badge posé juste au-dessus de sa bordure.
-      const corner = obj.getCoords()[0];
-      const x = corner.x * vpt[0] + vpt[4];
-      const y = corner.y * vpt[3] + vpt[5];
-      const label = bindingLabel(obj);
-
-      ctx.save();
-      ctx.setTransform(1, 0, 0, 1, 0, 0);
-      ctx.font = "600 12px ui-sans-serif, system-ui, sans-serif";
-      const width = ctx.measureText(label).width + BADGE_PAD * 2;
-      const top = y - BADGE_HEIGHT - 2;
-
-      ctx.beginPath();
-      ctx.roundRect(x, top, width, BADGE_HEIGHT, [BADGE_RADIUS, BADGE_RADIUS, BADGE_RADIUS, 0]);
-      ctx.fillStyle = color;
-      ctx.fill();
-
-      ctx.fillStyle = "#ffffff";
-      ctx.textAlign = "left";
-      ctx.textBaseline = "middle";
-      ctx.fillText(label, x + BADGE_PAD, top + BADGE_HEIGHT / 2 + 0.5);
-      ctx.restore();
-    });
-  });
+  // Le texte doit rester AU-DESSUS de son propre fond : on repasse en composition normale
+  // (destination-over l'aurait glissé sous le rectangle qu'on vient de poser).
+  ctx.globalCompositeOperation = "source-over";
+  ctx.fillStyle = "#ffffff";
+  ctx.textAlign = "left";
+  ctx.textBaseline = "middle";
+  ctx.fillText(label, left + BADGE_PAD, top + BADGE_HEIGHT / 2);
+  ctx.restore();
 }
 
 /** Ce que le badge dit : les tokens liés du calque, ou « $ » à défaut (expression opaque). */

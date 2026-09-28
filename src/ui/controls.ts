@@ -8,6 +8,7 @@
 import { FabricObject, Control, controlsUtils, type TPointerEvent } from "#fabric";
 import type { DesignCanvas } from "../DesignCanvas";
 import { parseHex, hexAlpha } from "./color";
+import { drawBindingBadge } from "../bindings";
 
 // ── Public entry point ─────────────────────────────────────────────
 
@@ -37,7 +38,7 @@ export function applyControlStyle(
   // Wire up canvas events
   installControlHitAreas(canvas);
   installHoverAnimation(canvas, hoverProgress);
-  installHoverBorder(canvas, resolveTarget);
+  installHoverBorder(canvas, gc, resolveTarget);
 }
 
 // ── Custom control renderer ────────────────────────────────────────
@@ -278,7 +279,7 @@ function installHoverAnimation(
 
 // ── Hover border on non-selected objects ───────────────────────────
 
-function installHoverBorder(canvas: DesignCanvas, resolveTarget?: ResolveTargetFn): void {
+function installHoverBorder(canvas: DesignCanvas, guideColor: string, resolveTarget?: ResolveTargetFn): void {
   let hoveredObj: FabricObject | null = null;
 
   const clearTopCtx = () => {
@@ -309,9 +310,16 @@ function installHoverBorder(canvas: DesignCanvas, resolveTarget?: ResolveTargetF
 
   canvas.on("after:render", () => {
     clearTopCtx();
-    if (!hoveredObj || hoveredObj === canvas.getActiveObject()) return;
     const ctx = (canvas.originalFabricCanvas as any).contextTop as CanvasRenderingContext2D;
     if (!ctx) return;
+
+    // Le badge de liaison accompagne le CADRE : il s'affiche avec lui, au survol comme à la
+    // sélection (le dialecte template — un calque lié se signale quand on le vise).
+    const active = canvas.getActiveObject();
+    if (active) drawBindingBadge(ctx, active, guideColor);
+
+    if (!hoveredObj || hoveredObj === active) return;
     (hoveredObj as any)._renderControls(ctx, { hasControls: false, hasBorders: true });
+    drawBindingBadge(ctx, hoveredObj, guideColor);
   });
 }

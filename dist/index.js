@@ -179,6 +179,7 @@ __export(index_exports, {
   createPathShape: () => createPathShape,
   createRect: () => createRect,
   createShape: () => createShape,
+  drawBindingBadge: () => drawBindingBadge,
   fabricToHtml: () => fabricToHtml,
   getAvailableShapes: () => getAvailableShapes,
   getLockMode: () => getLockMode,
@@ -1625,36 +1626,28 @@ function setTextContent(obj, text) {
   obj.setCoords();
   obj.fire("changed");
 }
-var BADGE_HEIGHT = 20;
-var BADGE_PAD = 7;
-var BADGE_RADIUS = 4;
-function installBindingBadges(canvas, color) {
-  canvas.on("after:render", () => {
-    const ctx = canvas.getContext();
-    const vpt = canvas.viewportTransform;
-    if (!ctx || !vpt) return;
-    canvas.getObjects().forEach((obj) => {
-      if (!hasPendingBindings(obj)) return;
-      const corner = obj.getCoords()[0];
-      const x = corner.x * vpt[0] + vpt[4];
-      const y = corner.y * vpt[3] + vpt[5];
-      const label = bindingLabel(obj);
-      ctx.save();
-      ctx.setTransform(1, 0, 0, 1, 0, 0);
-      ctx.font = "600 12px ui-sans-serif, system-ui, sans-serif";
-      const width = ctx.measureText(label).width + BADGE_PAD * 2;
-      const top = y - BADGE_HEIGHT - 2;
-      ctx.beginPath();
-      ctx.roundRect(x, top, width, BADGE_HEIGHT, [BADGE_RADIUS, BADGE_RADIUS, BADGE_RADIUS, 0]);
-      ctx.fillStyle = color;
-      ctx.fill();
-      ctx.fillStyle = "#ffffff";
-      ctx.textAlign = "left";
-      ctx.textBaseline = "middle";
-      ctx.fillText(label, x + BADGE_PAD, top + BADGE_HEIGHT / 2 + 0.5);
-      ctx.restore();
-    });
-  });
+var BADGE_HEIGHT = 15;
+var BADGE_PAD = 5;
+var BADGE_FONT = "500 10px ui-sans-serif, system-ui, sans-serif";
+function drawBindingBadge(ctx, obj, color) {
+  if (!hasPendingBindings(obj)) return;
+  const corner = obj.oCoords?.tl;
+  if (!corner) return;
+  const label = bindingLabel(obj);
+  ctx.save();
+  ctx.globalCompositeOperation = "destination-over";
+  ctx.font = BADGE_FONT;
+  const width = ctx.measureText(label).width + BADGE_PAD * 2;
+  const left = corner.x - 1;
+  const top = corner.y - BADGE_HEIGHT;
+  ctx.fillStyle = color;
+  ctx.fillRect(left, top, width, BADGE_HEIGHT);
+  ctx.globalCompositeOperation = "source-over";
+  ctx.fillStyle = "#ffffff";
+  ctx.textAlign = "left";
+  ctx.textBaseline = "middle";
+  ctx.fillText(label, left + BADGE_PAD, top + BADGE_HEIGHT / 2);
+  ctx.restore();
 }
 function bindingLabel(obj) {
   const tokens = Object.values(pendingBindings(obj)).flatMap((spec) => String(spec?.expr ?? "").match(/\$\w+/g) || []);
@@ -5218,7 +5211,7 @@ function applyControlStyle(canvas, guideColor, resolveTarget) {
   installControlRenderer(gc, hoverProgress);
   installControlHitAreas(canvas);
   installHoverAnimation(canvas, hoverProgress);
-  installHoverBorder(canvas, resolveTarget);
+  installHoverBorder(canvas, gc, resolveTarget);
 }
 var EDGE_CONTROLS = /* @__PURE__ */ new Set(["mt", "mb", "ml", "mr"]);
 var CORNER_CONTROLS = /* @__PURE__ */ new Set(["tl", "tr", "bl", "br"]);
@@ -5401,7 +5394,7 @@ function installHoverAnimation(canvas, hoverProgress) {
     }
   });
 }
-function installHoverBorder(canvas, resolveTarget) {
+function installHoverBorder(canvas, guideColor, resolveTarget) {
   let hoveredObj = null;
   const clearTopCtx = () => {
     const fc = canvas.originalFabricCanvas;
@@ -5427,10 +5420,13 @@ function installHoverBorder(canvas, resolveTarget) {
   });
   canvas.on("after:render", () => {
     clearTopCtx();
-    if (!hoveredObj || hoveredObj === canvas.getActiveObject()) return;
     const ctx = canvas.originalFabricCanvas.contextTop;
     if (!ctx) return;
+    const active = canvas.getActiveObject();
+    if (active) drawBindingBadge(ctx, active, guideColor);
+    if (!hoveredObj || hoveredObj === active) return;
     hoveredObj._renderControls(ctx, { hasControls: false, hasBorders: true });
+    drawBindingBadge(ctx, hoveredObj, guideColor);
   });
 }
 
@@ -5473,7 +5469,6 @@ var _FabricEditor = class _FabricEditor {
     );
     this.canvas.originalFabricCanvas.snappingManager = this.snapping;
     this.extendFabricObject();
-    installBindingBadges(this.canvas.originalFabricCanvas, gc);
     if (config.transparent) {
       this.canvas.backgroundColor = "transparent";
     }
@@ -7260,6 +7255,7 @@ function layerToHtmlStandalone(layer, zIndex) {
   createPathShape,
   createRect,
   createShape,
+  drawBindingBadge,
   fabricToHtml,
   getAvailableShapes,
   getLockMode,
