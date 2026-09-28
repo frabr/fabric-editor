@@ -6240,13 +6240,15 @@ var PreviewCanvas = class extends import_fabric16.StaticCanvas {
    * immédiatement (clearContext), le rendu synchrone interdit toute frame blanche entre les
    * deux. Les rendus concurrents se départagent par jeton : le dernier appelé gagne.
    */
-  async showLayers(layers) {
+  async showLayers(layers, { relayout = false } = {}) {
     const manager = new LayerManager(this);
     const token = this._showToken = {};
     const objects = await manager.deserializeAll(layers);
+    if (relayout) await initYoga();
     if (token !== this._showToken) return;
     this.clear();
     objects.forEach((obj) => obj && this.add(obj));
+    if (relayout) runLayout(this.getObjects());
     this.renderAll();
   }
 };

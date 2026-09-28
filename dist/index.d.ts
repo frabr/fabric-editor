@@ -1728,7 +1728,9 @@ declare class PreviewCanvas extends StaticCanvas {
      * immédiatement (clearContext), le rendu synchrone interdit toute frame blanche entre les
      * deux. Les rendus concurrents se départagent par jeton : le dernier appelé gagne.
      */
-    showLayers(layers: LayerData[]): Promise<void>;
+    showLayers(layers: LayerData[], { relayout }?: {
+        relayout?: boolean;
+    }): Promise<void>;
     private _showToken;
 }
 

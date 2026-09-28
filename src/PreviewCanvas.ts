@@ -1,5 +1,7 @@
 import { StaticCanvas } from "#fabric";
 import { LayerManager } from "./LayerManager";
+import { runLayout } from "./layout/reconcile";
+import { initYoga } from "./layout/yoga-engine";
 import type { DesignCanvas } from "./DesignCanvas";
 import type { LayerData } from "./types";
 
@@ -69,16 +71,22 @@ export class PreviewCanvas extends StaticCanvas {
    * immédiatement (clearContext), le rendu synchrone interdit toute frame blanche entre les
    * deux. Les rendus concurrents se départagent par jeton : le dernier appelé gagne.
    */
-  async showLayers(layers: LayerData[]): Promise<void> {
+  async showLayers(layers: LayerData[], { relayout = false }: { relayout?: boolean } = {}): Promise<void> {
     // LayerManager est typé sur DesignCanvas mais n'exige structurellement que
     // add/remove/getObjects (+ setActiveObject optionnel) — contrat que remplit StaticCanvas.
     const manager = new LayerManager(this as unknown as DesignCanvas);
     const token = (this._showToken = {});
     const objects = await manager.deserializeAll(layers);
+    // `relayout` : les positions stockées supposent les textes du document — quand
+    // l'appelant les a interpolés (variables résolues pour SON lecteur), les longueurs
+    // changent et les conteneurs hug doivent se réagencer. runLayout est pur et le wasm
+    // yoga un singleton par page : le coût par vignette est un parcours d'objets.
+    if (relayout) await initYoga();
     if (token !== this._showToken) return;
 
     this.clear();
     objects.forEach((obj) => obj && this.add(obj));
+    if (relayout) runLayout(this.getObjects());
     this.renderAll();
   }
 
