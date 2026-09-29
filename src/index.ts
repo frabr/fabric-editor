@@ -36,10 +36,22 @@ export {
   createImage,
   createShape,
   createPathShape,
+  createPathsShape,
   getShapeCatalog,
   type ShapeCatalogEntry,
-  SHAPE_PATHS,
-  type ShapePath,
+} from "./shapes";
+
+// Shape registry — injected by the host app (EditorConfig.shapes or registerShapes)
+export {
+  registerShapes,
+  registeredShapes,
+  getCatalogShape,
+  isMonoPath,
+  clipDataFor,
+  type CatalogShape,
+  type CatalogShapeInput,
+  type ShapePathData,
+  type ClipData,
 } from "./shapes";
 
 // @legacy — shape switching, old path strings, standalone clip functions

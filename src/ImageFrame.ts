@@ -14,9 +14,10 @@ import { installControlOptions, type Controllable } from "./shapes/controlsMixin
 import {
   createCircle,
   createRect,
-  createPathShape,
   getShapeCatalog,
 } from "./shapes/factories";
+import { FabPath } from "./shapes/FabPath";
+import { clipDataFor, type ClipData } from "./shapes/registry";
 import type { SnappingManager } from "./SnappingManager";
 
 /** Interface pour accéder au SnappingManager depuis le canvas */
@@ -31,6 +32,8 @@ export interface ImageFrameOptions {
   layerId?: string;
   lockMode?: LockMode;
   clipShape?: ShapeType;
+  /** Clip inliné (formes hors catalogue global — le document reste autoporteur). */
+  clipData?: ClipData;
   /** Corner radius in pixels for "rect" clip shape (0 = sharp corners). */
   cornerRadius?: number;
   imageOffsetX?: number;
@@ -53,6 +56,13 @@ export interface ImageFrameData {
   frameWidth: number;
   frameHeight: number;
   clipShape?: ShapeType;
+  /**
+   * Le `d` du clip, inliné au save : les nouveaux documents ne dépendent plus du
+   * registre pour se recharger — l'id (clipShape) reste pour l'affichage et le
+   * cycle. Le stock legacy (id seul) se résout via le registre et s'upgrade au
+   * prochain save.
+   */
+  clipData?: ClipData;
   /** Corner radius in pixels (only meaningful when clipShape is "rect"). */
   cornerRadius?: number;
   layerId?: string;
@@ -100,6 +110,7 @@ export class ImageFrame extends Group {
   frameWidth: number;
   frameHeight: number;
   clipShape?: ShapeType;
+  clipData?: ClipData;
   /** Corner radius in pixels for "rect" clip shape. 0 = sharp corners. */
   cornerRadius: number = 0;
 
@@ -158,6 +169,7 @@ export class ImageFrame extends Group {
 
     // Clip par défaut + forme personnalisée si demandée
     this.cornerRadius = options.cornerRadius ?? 0;
+    this.clipData = options.clipData;
     this._applyClip(options.clipShape || "rect");
 
     this._setupControls();
@@ -358,30 +370,46 @@ export class ImageFrame extends Group {
     const minSize = Math.min(this.frameWidth, this.frameHeight);
 
     switch (shapeType) {
-      case "rect": {
-        const r = Math.min(this.cornerRadius, minSize / 2);
-        this.clipPath = createRect({
-          width: this.frameWidth,
-          height: this.frameHeight,
-          rx: r,
-          ry: r,
-          left: 0,
-          top: 0,
-        });
+      case "rect":
+        this.clipData = undefined;
+        this.clipPath = this._rectClip(minSize);
         break;
-      }
       case "circle":
+        this.clipData = undefined;
         this.clipPath = createCircle({ radius: minSize / 2 });
         break;
-      default:
-        this.clipPath = createPathShape(shapeType, {
-          width: this.frameWidth,
-          height: this.frameHeight,
-          left: 0,
-          top: 0,
-        });
+      default: {
+        // Le registre prime (une même forme changée de catalogue se rafraîchit) ;
+        // sans lui, le clipData inliné du document se suffit ; sans rien (id legacy,
+        // registre non injecté), on affiche rect SANS toucher clipShape — le save ne
+        // détruit pas l'id, un chargement mieux loti le résoudra.
+        this.clipData = clipDataFor(shapeType) ?? this.clipData;
+        if (this.clipData) {
+          this.clipPath = FabPath.fromPathData(this.clipData, {
+            width: this.frameWidth,
+            height: this.frameHeight,
+            left: 0,
+            top: 0,
+          });
+        } else {
+          console.warn(`[ImageFrame] clip "${shapeType}" inconnu (registre non injecté ?) — affichage rect`);
+          this.clipPath = this._rectClip(minSize);
+        }
         break;
+      }
     }
+  }
+
+  private _rectClip(minSize: number): Rect {
+    const r = Math.min(this.cornerRadius, minSize / 2);
+    return createRect({
+      width: this.frameWidth,
+      height: this.frameHeight,
+      rx: r,
+      ry: r,
+      left: 0,
+      top: 0,
+    });
   }
 
   /**
@@ -585,6 +613,7 @@ export class ImageFrame extends Group {
       frameWidth: this.frameWidth,
       frameHeight: this.frameHeight,
       clipShape: this.clipShape,
+      clipData: this.clipData,
       cornerRadius: this.cornerRadius || undefined,
       layerId: base.layerId,
       lockMode: base.lockMode,
@@ -631,6 +660,10 @@ export class ImageFrame extends Group {
       left: data.image.offsetX,
       top: data.image.offsetY,
     });
+
+    // Le clip inliné se restaure AVANT applyClipShape : un id absent du registre
+    // (forme de groupe, catalogue non injecté) reste résoluble par le document seul.
+    if (data.clipData) frame.clipData = data.clipData;
 
     // Rétrocompat : ancien "rounded" → rect + cornerRadius
     let clipShape = data.clipShape;

@@ -567,10 +567,62 @@ declare function yogaLayout(children: ResolvedChild[], containerLeft: number, co
     h: number;
 };
 
+/**
+ * Un path du catalogue : géométrie normalisée 100x100, apparence d'auteur optionnelle.
+ * Sans fill ni stroke = géométrie recolorable (le défaut de l'appelant s'applique) ;
+ * stroke sans fill = forme en contour (fill transparent, jamais le défaut).
+ */
+interface ShapePathData {
+    d: string;
+    fill?: string;
+    stroke?: string;
+    /** Normalisé dans l'espace 100x100, comme le `d`. */
+    strokeWidth?: number;
+}
+interface CatalogShape {
+    id: string;
+    paths: ShapePathData[];
+    /** Largeur réelle du dessin dans la boîte 100x100. */
+    width: number;
+    /** Hauteur réelle du dessin dans la boîte 100x100. */
+    height: number;
+}
+/** Forme legacy du catalog.json historique (mono-path à plat). */
+interface LegacyCatalogShape {
+    id: string;
+    d: string;
+    width?: number;
+    height?: number;
+}
+type CatalogShapeInput = CatalogShape | LegacyCatalogShape;
+/** Remplace le catalogue courant (idempotent — un seul catalogue par page). */
+declare function registerShapes(shapes: CatalogShapeInput[]): void;
+declare function registeredShapes(): CatalogShape[];
+declare function getCatalogShape(id: string): CatalogShape | undefined;
+/** Mono-path = géométrie : recolorable et éligible au cadrage (clip). */
+declare function isMonoPath(shape: CatalogShape): boolean;
+/**
+ * Le clip inliné d'un ImageFrame : le `d` voyage DANS le document (autoporteur),
+ * l'id de catalogue n'est plus qu'un affichage/cycle. width/height = dims du
+ * dessin dans la boîte 100x100 (le rendu HTML en a besoin pour son contain).
+ */
+interface ClipData {
+    d: string;
+    width: number;
+    height: number;
+}
+/** Le clip d'une forme du registre — mono-path uniquement (un clip veut UNE région). */
+declare function clipDataFor(id: string): ClipData | undefined;
+
 interface EditorConfig {
     width: number;
     height: number;
     fonts?: FontsConfig;
+    /**
+     * Le catalogue de formes de l'hôte (global + groupe) — la lib n'embarque aucune
+     * forme, mais doit savoir résoudre les clipShape par id du stock (registerShapes).
+     */
+    shapes?: CatalogShapeInput[];
     defaultColor?: string;
     /** Base color for all visual guides (snap lines, layout margins, hints). */
     guideColor?: string;
@@ -639,6 +691,11 @@ interface ShapeLayerOptions {
     strokeWidth?: number;
     layerId?: string;
     shapeType?: ShapeType;
+    /**
+     * Données de paths inline (payload toolbox) : prioritaires sur shapeType —
+     * l'asset devient du contenu à l'insertion. N paths → Group de FabPath.
+     */
+    paths?: ShapePathData[];
 }
 type ShapeType = "rect" | "circle" | (string & {});
 interface ObjectControlsConfig {
@@ -680,6 +737,8 @@ interface ImageFrameOptions {
     layerId?: string;
     lockMode?: LockMode$1;
     clipShape?: ShapeType;
+    /** Clip inliné (formes hors catalogue global — le document reste autoporteur). */
+    clipData?: ClipData;
     /** Corner radius in pixels for "rect" clip shape (0 = sharp corners). */
     cornerRadius?: number;
     imageOffsetX?: number;
@@ -701,6 +760,13 @@ interface ImageFrameData {
     frameWidth: number;
     frameHeight: number;
     clipShape?: ShapeType;
+    /**
+     * Le `d` du clip, inliné au save : les nouveaux documents ne dépendent plus du
+     * registre pour se recharger — l'id (clipShape) reste pour l'affichage et le
+     * cycle. Le stock legacy (id seul) se résout via le registre et s'upgrade au
+     * prochain save.
+     */
+    clipData?: ClipData;
     /** Corner radius in pixels (only meaningful when clipShape is "rect"). */
     cornerRadius?: number;
     layerId?: string;
@@ -725,6 +791,7 @@ declare class ImageFrame extends Group {
     frameWidth: number;
     frameHeight: number;
     clipShape?: ShapeType;
+    clipData?: ClipData;
     /** Corner radius in pixels for "rect" clip shape. 0 = sharp corners. */
     cornerRadius: number;
     private _imageOffsetX;
@@ -774,6 +841,7 @@ declare class ImageFrame extends Group {
     private _applyImageOffset;
     private _clampOffset;
     private _applyClip;
+    private _rectClip;
     /**
      * Fallback : absorbe le scale si les contrôles natifs sont utilisés
      */
@@ -2081,13 +2149,23 @@ declare class FabPath extends Path implements Lockable, Controllable {
     handleEdgeResize(transform: any, x: number, y: number): boolean;
     setSize(w: number, h: number): void;
     /**
-     * Create a FabPath from the shape catalog (heart, hexagon, etc.).
+     * Create a FabPath from raw path data (normalized `d` + optional authored fill).
+     * The authored fill wins over options.fill: callers pass their GENERIC default
+     * there (LayerManager's "#ffffff") — a colorless path takes it, an authored one
+     * keeps its charte color. Recoloring happens on the object afterwards, never here.
      *
      * Dimension logic:
      * - Both width & height: scale to fill both
      * - Only width: scale height proportionally
      * - Only height: scale width proportionally
      * - Neither: longest axis = 300px
+     */
+    static fromPathData(pathData: ShapePathData, options?: Partial<TOptions<PathProps>>): FabPath;
+    /** Scale to the requested box (see fromPathData) — natural dims stay untouched. */
+    fitTo(width?: number, height?: number): void;
+    /**
+     * Create a FabPath from the injected shape registry (mono-path entries only —
+     * multi-path artwork goes through createPathsShape, and is never a clip).
      */
     static createFromCatalog(shapeId: string, options?: Partial<TOptions<PathProps>>): FabPath;
 }
@@ -2126,6 +2204,20 @@ interface CreateShapeOptions {
     width?: number;
 }
 /**
+ * Crée une forme depuis ses données de paths (le payload de la toolbox les porte
+ * inline — l'asset devient du contenu à l'insertion, jamais une référence).
+ *
+ * 1 path → FabPath ordinaire (fill d'auteur prioritaire, recolorable, cf.
+ * FabPath.fromPathData). N paths → Group de FabPath : l'œuvre polychrome, figée à
+ * ses couleurs d'auteur, sélectionnée/scalée d'un bloc. Les positions relatives
+ * viennent des coordonnées des paths (espace normalisé 100x100 partagé) : chaque
+ * enfant est replacé sur son pathOffset — le centre de sa bbox dans cet espace.
+ */
+declare function createPathsShape(paths: ShapePathData[], options?: CreateShapeOptions & {
+    id?: string;
+    strokeWidth?: number;
+}): FabPath | Group;
+/**
  * Factory générique pour créer une forme par son type.
  *
  * width/height sont optionnels :
@@ -2133,7 +2225,7 @@ interface CreateShapeOptions {
  * - path shapes : une seule dimension donnée → l'autre est calculée
  *   proportionnellement ; aucune → axe principal = 300
  */
-declare function createShape(shapeType: ShapeType, options?: CreateShapeOptions): FabRect | FabCircle | FabPath;
+declare function createShape(shapeType: ShapeType, options?: CreateShapeOptions): FabRect | FabCircle | FabPath | Group;
 interface ShapeCatalogEntry {
     id: ShapeType;
     /** SVG path `d` attribute for preview rendering, or null for built-in primitives. */
@@ -2141,27 +2233,19 @@ interface ShapeCatalogEntry {
     /** viewBox to use when rendering the preview SVG (e.g. "0 0 100 100"). */
     viewBox: string;
 }
-/** All shapes available for creation via createShape(), with preview data. */
+/**
+ * Built-ins + mono-path registry entries, with preview data. Multi-path artwork
+ * is deliberately absent: this catalog feeds the clip cycling (a clip wants ONE
+ * region) and the legacy shape wheel — the insertion palette lives host-side.
+ */
 declare function getShapeCatalog(): ShapeCatalogEntry[];
 /**
  * @legacy Shape switching is no longer supported.
  */
-declare function switchShape(obj: FabricObject, nextShapeType: ShapeType): FabRect | FabCircle | FabPath;
-
-interface ShapePath {
-    /** Shape identifier (derived from SVG filename). */
-    id: string;
-    /** Path data normalized and centered within a 100x100 bounding box. */
-    d: string;
-    /** Actual width of the path within the 100x100 box. */
-    width: number;
-    /** Actual height of the path within the 100x100 box. */
-    height: number;
-}
-declare const SHAPE_PATHS: ShapePath[];
+declare function switchShape(obj: FabricObject, nextShapeType: ShapeType): FabRect | FabCircle | FabPath | Group;
 
 /**
- * @legacy Use src/shapes/generated/paths.ts instead.
+ * @legacy Use the injected shape registry (registerShapes) instead.
  * These raw path strings are kept only for backward compatibility
  * with legacy createHeart/createHexagon/clipStrategies.
  */
@@ -2325,4 +2409,4 @@ declare function setTextContent(obj: FabricObject, text: string): void;
  */
 declare function drawBindingBadge(ctx: CanvasRenderingContext2D, obj: FabricObject, color: string): void;
 
-export { type AlignItems, type AlignSelf, type AttachSnapshot, type BindingSpec, type Bindings, CanvasGuides, type ChildData, type ChildLayout, type ContainerData, type ContainerLayout, ContainerizeSession, type ControlOption, type Controllable, CustomTextbox, DesignCanvas, type DragPayload, DropHandler, type DropHandlerConfig, type EditorConfig, FabCircle, FabPath, FabRect, FabricEditor, type FlexDirection, type FontConfig, type FontsConfig, HEART_PATH, HEXAGON_PATH, type HistoryCallbacks, HistoryManager, type HistoryState, type HtmlLayerOutput, type HtmlRenderOptions, ImageFrame, type ImageLayerOptions, InsertChildSession, type JustifyContent, type LayerData, LayerManager, type LayoutData, LayoutManager, type LayoutManagerCallbacks, type LayoutSession, type LockMode$1 as LockMode, type Lockable, MIN_PAD, MaskManager, type ObjectControlsConfig, PendingUploadsManager, PersistenceManager, PreviewCanvas, ResizeSession, type ResizeSnapResult, SHAPE_PATHS, type SaveOptions, type SaveResult, type SelectionCallbacks, SelectionManager, type ShapeCatalogEntry, type ShapeLayerOptions, type ShapePath, type ShapeType, type SizeMode, type SnappingConfig, SnappingManager, type TextLayerOptions, addCircleClip, addCropControls, addHeartClip, addHexagonClip, antiScale, applyClip, applyLockMode, clampTopLeft, createCircle, createHeart, createHexagon, createImage, createPathShape, createRect, createShape, drawBindingBadge, fabricToHtml, getAvailableShapes, getLockMode, getNextLockMode, getShapeCatalog, hasExceededOffset, hasPendingBindings, initYoga, isChild, isChildLayout, isContainer, isContainerLayout, isContentLocked, isPositionLocked, isStyleLocked, isValidShape, isYogaReady, layerToHtmlStandalone, lockBoundText, nextShape, pendingBindings, pointInObject, removeCropControls, runLayout, scaledSize, setTextContent, switchClip, switchShape, topLeft, wrapContainerAroundChild, yogaLayout };
+export { type AlignItems, type AlignSelf, type AttachSnapshot, type BindingSpec, type Bindings, CanvasGuides, type CatalogShape, type CatalogShapeInput, type ChildData, type ChildLayout, type ClipData, type ContainerData, type ContainerLayout, ContainerizeSession, type ControlOption, type Controllable, CustomTextbox, DesignCanvas, type DragPayload, DropHandler, type DropHandlerConfig, type EditorConfig, FabCircle, FabPath, FabRect, FabricEditor, type FlexDirection, type FontConfig, type FontsConfig, HEART_PATH, HEXAGON_PATH, type HistoryCallbacks, HistoryManager, type HistoryState, type HtmlLayerOutput, type HtmlRenderOptions, ImageFrame, type ImageLayerOptions, InsertChildSession, type JustifyContent, type LayerData, LayerManager, type LayoutData, LayoutManager, type LayoutManagerCallbacks, type LayoutSession, type LockMode$1 as LockMode, type Lockable, MIN_PAD, MaskManager, type ObjectControlsConfig, PendingUploadsManager, PersistenceManager, PreviewCanvas, ResizeSession, type ResizeSnapResult, type SaveOptions, type SaveResult, type SelectionCallbacks, SelectionManager, type ShapeCatalogEntry, type ShapeLayerOptions, type ShapePathData, type ShapeType, type SizeMode, type SnappingConfig, SnappingManager, type TextLayerOptions, addCircleClip, addCropControls, addHeartClip, addHexagonClip, antiScale, applyClip, applyLockMode, clampTopLeft, clipDataFor, createCircle, createHeart, createHexagon, createImage, createPathShape, createPathsShape, createRect, createShape, drawBindingBadge, fabricToHtml, getAvailableShapes, getCatalogShape, getLockMode, getNextLockMode, getShapeCatalog, hasExceededOffset, hasPendingBindings, initYoga, isChild, isChildLayout, isContainer, isContainerLayout, isContentLocked, isMonoPath, isPositionLocked, isStyleLocked, isValidShape, isYogaReady, layerToHtmlStandalone, lockBoundText, nextShape, pendingBindings, pointInObject, registerShapes, registeredShapes, removeCropControls, runLayout, scaledSize, setTextContent, switchClip, switchShape, topLeft, wrapContainerAroundChild, yogaLayout };

@@ -8,7 +8,7 @@ import { HistoryManager } from "./HistoryManager";
 import { SnappingManager, type SnappingConfig } from "./SnappingManager";
 import { LayoutManager, type LayoutManagerCallbacks } from "./LayoutManager";
 import { switchClip } from "./clipping";
-import { switchShape, nextShape } from "./shapes";
+import { switchShape, nextShape, registerShapes } from "./shapes";
 import { ImageFrame } from "./ImageFrame";
 import { isPositionLocked } from "./locking";
 import { applyControlStyle } from "./ui/controls";
@@ -52,6 +52,10 @@ export class FabricEditor {
 
   constructor(canvasElement: HTMLCanvasElement, config: EditorConfig) {
     this.config = config;
+
+    // Le catalogue de l'hôte, avant tout chargement de document : la résolution des
+    // clipShape par id (stock legacy) en dépend.
+    if (config.shapes) registerShapes(config.shapes);
 
     const gc = config.guideColor ?? "#d946ef";
 

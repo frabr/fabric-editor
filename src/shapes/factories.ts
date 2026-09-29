@@ -1,12 +1,13 @@
 import {
   FabricImage,
   FabricObject,
+  Group,
   type TOptions,
   type PathProps,
   type RectProps,
   type CircleProps,
 } from "#fabric";
-import { SHAPE_PATHS, type ShapePath } from "./generated/paths";
+import { getCatalogShape, isMonoPath, registeredShapes, type ShapePathData } from "./registry";
 import type { ShapeType } from "../types";
 import { addCropControls } from "../controls/cropControls";
 import { FabRect } from "./FabRect";
@@ -90,6 +91,71 @@ interface CreateShapeOptions {
 }
 
 /**
+ * Crée une forme depuis ses données de paths (le payload de la toolbox les porte
+ * inline — l'asset devient du contenu à l'insertion, jamais une référence).
+ *
+ * 1 path → FabPath ordinaire (fill d'auteur prioritaire, recolorable, cf.
+ * FabPath.fromPathData). N paths → Group de FabPath : l'œuvre polychrome, figée à
+ * ses couleurs d'auteur, sélectionnée/scalée d'un bloc. Les positions relatives
+ * viennent des coordonnées des paths (espace normalisé 100x100 partagé) : chaque
+ * enfant est replacé sur son pathOffset — le centre de sa bbox dans cet espace.
+ */
+export function createPathsShape(
+  paths: ShapePathData[],
+  options: CreateShapeOptions & { id?: string; strokeWidth?: number } = {},
+): FabPath | Group {
+  if (paths.length === 0) throw new Error("createPathsShape: empty paths");
+  const { fill, stroke, left, top, id } = options;
+  // Même convention que createShape : sans stroke, pas d'épaisseur (le défaut
+  // fabric de 1 fausserait la bbox du groupe).
+  const strokeWidth = options.strokeWidth ?? (stroke ? 4 : 0);
+
+  if (paths.length === 1) {
+    return FabPath.fromPathData(paths[0], withoutUndefined({
+      id, fill, stroke, strokeWidth, left, top,
+      width: options.width, height: options.height,
+    }));
+  }
+
+  const children = paths.map((p) => {
+    // withoutUndefined : une clé undefined explicite écrase le défaut fabric
+    // (strokeWidth: undefined → dimensions NaN). Mêmes précédences d'apparence que
+    // FabPath.fromPathData (contour d'auteur = fill transparent).
+    const child = new FabPath(p.d, withoutUndefined({
+      fill: p.fill ?? (p.stroke ? "" : fill),
+      stroke: p.stroke ?? stroke,
+      strokeWidth: p.strokeWidth ?? strokeWidth,
+    }));
+    child.set({ left: child.pathOffset.x, top: child.pathOffset.y });
+    child.setCoords();
+    return child;
+  });
+
+  const group = new Group(children, { originX: "center", originY: "center", ...withoutUndefined({ left, top }) });
+  if (id) group.set({ id });
+
+  const target = targetDims(group.width, group.height, options.width, options.height);
+  group.set({ scaleX: target.width / group.width, scaleY: target.height / group.height });
+  group.setCoords();
+  return group;
+}
+
+function withoutUndefined<T extends Record<string, unknown>>(obj: T): T {
+  return Object.fromEntries(Object.entries(obj).filter(([, v]) => v !== undefined)) as T;
+}
+
+/** La logique de dimension partagée (cf. FabPath.fitTo) : contain sur l'axe long. */
+function targetDims(naturalW: number, naturalH: number, width?: number, height?: number) {
+  const ratio = naturalW / naturalH;
+  if (width != null && height != null) return { width, height };
+  if (width != null) return { width, height: width / ratio };
+  if (height != null) return { width: height * ratio, height };
+
+  const scale = DEFAULT_SIZE / Math.max(naturalW, naturalH);
+  return { width: naturalW * scale, height: naturalH * scale };
+}
+
+/**
  * Factory générique pour créer une forme par son type.
  *
  * width/height sont optionnels :
@@ -100,7 +166,7 @@ interface CreateShapeOptions {
 export function createShape(
   shapeType: ShapeType,
   options: CreateShapeOptions = {}
-): FabRect | FabCircle | FabPath {
+): FabRect | FabCircle | FabPath | Group {
   const { fill, stroke, left, top } = options;
   const strokeWidth = stroke ? 4 : 0;
   const w = options.width ?? DEFAULT_SIZE;
@@ -116,11 +182,16 @@ export function createShape(
       return createCircle({ radius, fill, stroke, left, top, strokeWidth });
     }
 
-    default:
-      if (SHAPE_PATHS.some((s) => s.id === shapeType)) {
-        return createPathShape(shapeType, { fill, stroke, left, top, height: options.height, width: options.width, strokeWidth });
+    default: {
+      const entry = getCatalogShape(shapeType);
+      if (entry) {
+        return createPathsShape(entry.paths, {
+          id: shapeType, fill, stroke, left, top,
+          height: options.height, width: options.width, strokeWidth,
+        });
       }
       return createRect({ fill, stroke, left, top, height: h, width: w, strokeWidth });
+    }
   }
 }
 
@@ -132,19 +203,23 @@ export interface ShapeCatalogEntry {
   viewBox: string;
 }
 
-/** All shapes available for creation via createShape(), with preview data. */
+/**
+ * Built-ins + mono-path registry entries, with preview data. Multi-path artwork
+ * is deliberately absent: this catalog feeds the clip cycling (a clip wants ONE
+ * region) and the legacy shape wheel — the insertion palette lives host-side.
+ */
 export function getShapeCatalog(): ShapeCatalogEntry[] {
   return [
     { id: "rect", path: "M0 0H100V100H0Z", viewBox: "0 0 100 100" },
     { id: "circle", path: "M50 0A50 50 0 1 1 50 100A50 50 0 1 1 50 0Z", viewBox: "0 0 100 100" },
-    ...SHAPE_PATHS.map((s) => ({ id: s.id, path: s.d, viewBox: "0 0 100 100" })),
+    ...registeredShapes().filter(isMonoPath).map((s) => ({ id: s.id, path: s.paths[0].d, viewBox: "0 0 100 100" })),
   ];
 }
 
 /**
  * @legacy Shape switching is no longer supported.
  */
-export function switchShape(obj: FabricObject, nextShapeType: ShapeType): FabRect | FabCircle | FabPath {
+export function switchShape(obj: FabricObject, nextShapeType: ShapeType): FabRect | FabCircle | FabPath | Group {
   const { fill, stroke, left, top } = obj;
   const strokeWidth = obj.strokeWidth || 0;
 

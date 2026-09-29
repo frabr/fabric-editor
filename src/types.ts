@@ -1,10 +1,16 @@
 import type { FabricObject } from "#fabric";
+import type { CatalogShapeInput, ShapePathData } from "./shapes/registry";
 
 // Configuration de l'éditeur
 export interface EditorConfig {
   width: number;
   height: number;
   fonts?: FontsConfig;
+  /**
+   * Le catalogue de formes de l'hôte (global + groupe) — la lib n'embarque aucune
+   * forme, mais doit savoir résoudre les clipShape par id du stock (registerShapes).
+   */
+  shapes?: CatalogShapeInput[];
   defaultColor?: string;
   /** Base color for all visual guides (snap lines, layout margins, hints). */
   guideColor?: string;
@@ -90,9 +96,14 @@ export interface ShapeLayerOptions {
   strokeWidth?: number;
   layerId?: string;
   shapeType?: ShapeType;
+  /**
+   * Données de paths inline (payload toolbox) : prioritaires sur shapeType —
+   * l'asset devient du contenu à l'insertion. N paths → Group de FabPath.
+   */
+  paths?: ShapePathData[];
 }
 
-// Built-in shape types + any path shape ID from src/shapes/svgs/
+// Built-in shape types + any registered catalog shape ID
 export type ShapeType = "rect" | "circle" | (string & {});
 
 // Contrôles disponibles par type d'objet

@@ -230,6 +230,29 @@ interface LayoutData {
     child?: ChildData;
 }
 
+/**
+ * Un path du catalogue : géométrie normalisée 100x100, apparence d'auteur optionnelle.
+ * Sans fill ni stroke = géométrie recolorable (le défaut de l'appelant s'applique) ;
+ * stroke sans fill = forme en contour (fill transparent, jamais le défaut).
+ */
+interface ShapePathData {
+    d: string;
+    fill?: string;
+    stroke?: string;
+    /** Normalisé dans l'espace 100x100, comme le `d`. */
+    strokeWidth?: number;
+}
+/**
+ * Le clip inliné d'un ImageFrame : le `d` voyage DANS le document (autoporteur),
+ * l'id de catalogue n'est plus qu'un affichage/cycle. width/height = dims du
+ * dessin dans la boîte 100x100 (le rendu HTML en a besoin pour son contain).
+ */
+interface ClipData {
+    d: string;
+    width: number;
+    height: number;
+}
+
 interface FontConfig {
     family: string;
     url: string;
@@ -291,6 +314,11 @@ interface ShapeLayerOptions {
     strokeWidth?: number;
     layerId?: string;
     shapeType?: ShapeType;
+    /**
+     * Données de paths inline (payload toolbox) : prioritaires sur shapeType —
+     * l'asset devient du contenu à l'insertion. N paths → Group de FabPath.
+     */
+    paths?: ShapePathData[];
 }
 type ShapeType = "rect" | "circle" | (string & {});
 interface SaveOptions {
@@ -319,6 +347,8 @@ interface ImageFrameOptions {
     layerId?: string;
     lockMode?: LockMode$1;
     clipShape?: ShapeType;
+    /** Clip inliné (formes hors catalogue global — le document reste autoporteur). */
+    clipData?: ClipData;
     /** Corner radius in pixels for "rect" clip shape (0 = sharp corners). */
     cornerRadius?: number;
     imageOffsetX?: number;
@@ -340,6 +370,13 @@ interface ImageFrameData {
     frameWidth: number;
     frameHeight: number;
     clipShape?: ShapeType;
+    /**
+     * Le `d` du clip, inliné au save : les nouveaux documents ne dépendent plus du
+     * registre pour se recharger — l'id (clipShape) reste pour l'affichage et le
+     * cycle. Le stock legacy (id seul) se résout via le registre et s'upgrade au
+     * prochain save.
+     */
+    clipData?: ClipData;
     /** Corner radius in pixels (only meaningful when clipShape is "rect"). */
     cornerRadius?: number;
     layerId?: string;
@@ -364,6 +401,7 @@ declare class ImageFrame extends Group {
     frameWidth: number;
     frameHeight: number;
     clipShape?: ShapeType;
+    clipData?: ClipData;
     /** Corner radius in pixels for "rect" clip shape. 0 = sharp corners. */
     cornerRadius: number;
     private _imageOffsetX;
@@ -413,6 +451,7 @@ declare class ImageFrame extends Group {
     private _applyImageOffset;
     private _clampOffset;
     private _applyClip;
+    private _rectClip;
     /**
      * Fallback : absorbe le scale si les contrôles natifs sont utilisés
      */

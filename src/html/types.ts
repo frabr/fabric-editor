@@ -1,4 +1,5 @@
 import type { LayerData, ShapeType } from "../types";
+import type { ClipData } from "../shapes/registry";
 
 /**
  * Résultat de la conversion d'un layer en HTML
@@ -122,6 +123,7 @@ export interface ImageFrameLayerData extends LayerData {
   frameWidth: number;
   frameHeight: number;
   clipShape?: ShapeType;
+  clipData?: ClipData;
   cornerRadius?: number;
   image: ImageFrameImageData;
 }

@@ -8,7 +8,7 @@ import {
 } from "#fabric";
 import type { DesignCanvas } from "./DesignCanvas";
 import { CustomTextbox } from "./controls/CustomTextbox";
-import { createShape as createShapeObject, createImage } from "./shapes/factories";
+import { createShape as createShapeObject, createPathsShape, createImage } from "./shapes/factories";
 import { FabRect } from "./shapes/FabRect";
 import { FabCircle } from "./shapes/FabCircle";
 import { FabPath } from "./shapes/FabPath";
@@ -407,11 +407,13 @@ export class LayerManager {
       layerId = this.generateId(),
     } = options;
 
-    const shape = createShapeObject(shapeType, {
-      fill, stroke, left, top,
-      width: options.width,
-      height: options.height,
-    });
+    // Des paths inline (payload toolbox) priment sur l'id : l'asset est déjà du
+    // contenu, aucune résolution de catalogue. fill = défaut générique, les fills
+    // d'auteur des paths gagnent (cf. FabPath.fromPathData).
+    const common = { fill, stroke, left, top, width: options.width, height: options.height };
+    const shape = options.paths?.length
+      ? createPathsShape(options.paths, { id: shapeType, ...common })
+      : createShapeObject(shapeType, common);
     shape.set({ layerId, layerType: "shape" });
     return shape;
   }

@@ -189,8 +189,8 @@ describe("LayerManager", () => {
       const result = manager.serialize();
 
       expect(result).toHaveLength(2);
-      expect(layer1.toObject).toHaveBeenCalledWith(["layerId", "lockMode", "lockContent", "layout"]);
-      expect(layer2.toObject).toHaveBeenCalledWith(["layerId", "lockMode", "lockContent", "layout"]);
+      expect(layer1.toObject).toHaveBeenCalledWith(["layerId", "lockMode", "lockContent", "layout", "bindings"]);
+      expect(layer2.toObject).toHaveBeenCalledWith(["layerId", "lockMode", "lockContent", "layout", "bindings"]);
     });
   });
 });

@@ -29,6 +29,7 @@ export function imageFrameToHtml(
     angle = 0,
     opacity = 1,
     clipShape,
+    clipData,
     cornerRadius,
     image,
     layerId,
@@ -73,7 +74,7 @@ export function imageFrameToHtml(
     useOverflowHidden = false; // Le clip-path gère le découpage
   } else if (clipShape && clipShape !== "rect") {
     // Path shapes (heart, hexagon, etc.) - utiliser SVG inline
-    inlineSvgClip = getInlineSvgClip(clipShape, frameWidth, frameHeight, clipId) || "";
+    inlineSvgClip = getInlineSvgClip(clipShape, frameWidth, frameHeight, clipId, clipData) || "";
     if (inlineSvgClip) {
       containerStyles["clip-path"] = `url(#${clipId})`;
       useOverflowHidden = false;

@@ -2,7 +2,7 @@ import { Path, classRegistry, controlsUtils, type TOptions, type PathProps } fro
 import { installLockMethods, type Lockable } from "./lockMixin";
 import { installControlOptions, type Controllable } from "./controlsMixin";
 import { isTransformCentered } from "./resizeUtils";
-import { SHAPE_PATHS } from "./generated/paths";
+import { getCatalogShape, type ShapePathData } from "./registry";
 import type { LockMode } from "../locking";
 
 const { changeObjectWidth, changeObjectHeight, getLocalPoint } = controlsUtils;
@@ -88,7 +88,10 @@ export class FabPath extends Path implements Lockable, Controllable {
   }
 
   /**
-   * Create a FabPath from the shape catalog (heart, hexagon, etc.).
+   * Create a FabPath from raw path data (normalized `d` + optional authored fill).
+   * The authored fill wins over options.fill: callers pass their GENERIC default
+   * there (LayerManager's "#ffffff") — a colorless path takes it, an authored one
+   * keeps its charte color. Recoloring happens on the object afterwards, never here.
    *
    * Dimension logic:
    * - Both width & height: scale to fill both
@@ -96,51 +99,71 @@ export class FabPath extends Path implements Lockable, Controllable {
    * - Only height: scale width proportionally
    * - Neither: longest axis = 300px
    */
-  static createFromCatalog(
-    shapeId: string,
+  static fromPathData(
+    pathData: ShapePathData,
     options?: Partial<TOptions<PathProps>>,
   ): FabPath {
-    const shapePath = SHAPE_PATHS.find((s) => s.id === shapeId);
-    if (!shapePath) {
-      throw new Error(
-        `Unknown path shape: "${shapeId}". Available: ${SHAPE_PATHS.map((s) => s.id).join(", ")}`,
-      );
-    }
-
-    const path = new FabPath(shapePath.d, {
-      id: shapeId,
+    // Contour d'auteur : fill transparent (jamais le défaut générique), le stroke
+    // du path prime sur celui de l'appelant.
+    const fill = pathData.fill ?? (pathData.stroke ? "" : options?.fill);
+    const stroke = pathData.stroke ?? options?.stroke;
+    const strokeWidth = pathData.strokeWidth ?? options?.strokeWidth;
+    const path = new FabPath(pathData.d, {
       ...options,
+      ...(fill != null ? { fill } : {}),
+      ...(stroke != null ? { stroke } : {}),
+      ...(strokeWidth != null ? { strokeWidth } : {}),
     });
 
-    const naturalW = path._naturalW;
-    const naturalH = path._naturalH;
+    path.fitTo(options?.width, options?.height);
+    return path;
+  }
 
-    const hasW = options?.width != null;
-    const hasH = options?.height != null;
-    const ratio = naturalW / naturalH;
+  /** Scale to the requested box (see fromPathData) — natural dims stay untouched. */
+  fitTo(width?: number, height?: number): void {
+    const ratio = this._naturalW / this._naturalH;
 
     let targetW: number;
     let targetH: number;
 
-    if (hasW && hasH) {
-      targetW = options!.width!;
-      targetH = options!.height!;
-    } else if (hasW) {
-      targetW = options!.width!;
+    if (width != null && height != null) {
+      targetW = width;
+      targetH = height;
+    } else if (width != null) {
+      targetW = width;
       targetH = targetW / ratio;
-    } else if (hasH) {
-      targetH = options!.height!;
+    } else if (height != null) {
+      targetH = height;
       targetW = targetH * ratio;
     } else {
-      const scale = DEFAULT_SIZE / Math.max(naturalW, naturalH);
-      targetW = naturalW * scale;
-      targetH = naturalH * scale;
+      const scale = DEFAULT_SIZE / Math.max(this._naturalW, this._naturalH);
+      targetW = this._naturalW * scale;
+      targetH = this._naturalH * scale;
     }
 
-    path.scaleX = targetW / naturalW;
-    path.scaleY = targetH / naturalH;
+    this.scaleX = targetW / this._naturalW;
+    this.scaleY = targetH / this._naturalH;
+  }
 
-    return path;
+  /**
+   * Create a FabPath from the injected shape registry (mono-path entries only —
+   * multi-path artwork goes through createPathsShape, and is never a clip).
+   */
+  static createFromCatalog(
+    shapeId: string,
+    options?: Partial<TOptions<PathProps>>,
+  ): FabPath {
+    const shape = getCatalogShape(shapeId);
+    if (!shape) {
+      throw new Error(
+        `Unknown path shape: "${shapeId}". Did the host app call registerShapes()?`,
+      );
+    }
+    if (shape.paths.length !== 1) {
+      throw new Error(`Shape "${shapeId}" is multi-path artwork — not usable as a single path.`);
+    }
+
+    return FabPath.fromPathData(shape.paths[0], { id: shapeId, ...options });
   }
 }
 

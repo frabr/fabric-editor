@@ -1,5 +1,5 @@
 /**
- * @legacy Use src/shapes/generated/paths.ts instead.
+ * @legacy Use the injected shape registry (registerShapes) instead.
  * These raw path strings are kept only for backward compatibility
  * with legacy createHeart/createHexagon/clipStrategies.
  */

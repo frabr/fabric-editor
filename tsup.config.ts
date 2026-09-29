@@ -22,4 +22,14 @@ export default defineConfig([
     platform: 'node',
     external: ['canvas', '#fabric'],
   },
+  // CLI normalize-shapes (bin) — svgpath (devDep) est bundlé dedans
+  {
+    entry: ['scripts/normalize-shapes.ts'],
+    format: ['cjs'],
+    splitting: false,
+    sourcemap: false,
+    clean: false,
+    platform: 'node',
+    banner: { js: '#!/usr/bin/env node' },
+  },
 ]);

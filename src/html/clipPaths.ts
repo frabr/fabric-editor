@@ -1,5 +1,5 @@
 import type { ShapeType } from "../types";
-import { SHAPE_PATHS } from "../shapes/generated/paths";
+import { getCatalogShape, isMonoPath, type ClipData } from "../shapes/registry";
 
 /**
  * Génère le CSS clip-path pour une forme simple (circle, rect with cornerRadius)
@@ -54,13 +54,20 @@ interface SvgPathInfo {
   centerY: number;
 }
 
-/** Build lookup from generated normalized paths (centered in 100x100 box). */
-const SVG_PATH_INFO: Record<string, SvgPathInfo> = Object.fromEntries(
-  SHAPE_PATHS.map((s) => [
-    s.id,
-    { path: s.d, width: s.width, height: s.height, centerX: 50, centerY: 50 },
-  ]),
-);
+/**
+ * Résolution paresseuse : le registre est injecté à l'init (registerShapes), une
+ * map construite au chargement du module serait toujours vide. clipData inliné
+ * (nouveaux documents) prime sur le registre (stock legacy par id).
+ */
+function svgPathInfo(shapeType: ShapeType, clipData?: ClipData): SvgPathInfo | undefined {
+  if (clipData) {
+    return { path: clipData.d, width: clipData.width, height: clipData.height, centerX: 50, centerY: 50 };
+  }
+  const shape = getCatalogShape(shapeType);
+  if (!shape || !isMonoPath(shape)) return undefined;
+
+  return { path: shape.paths[0].d, width: shape.width, height: shape.height, centerX: 50, centerY: 50 };
+}
 
 /**
  * Génère un SVG inline pour le clip-path de formes complexes (heart, hexagon)
@@ -77,9 +84,10 @@ export function getInlineSvgClip(
   shapeType: ShapeType,
   frameWidth: number,
   frameHeight: number,
-  clipId: string
+  clipId: string,
+  clipData?: ClipData,
 ): string | undefined {
-  const pathInfo = SVG_PATH_INFO[shapeType];
+  const pathInfo = svgPathInfo(shapeType, clipData);
   if (!pathInfo) return undefined;
 
   // Scale uniforme pour "contain" le path dans le frame (comme object-fit: contain)

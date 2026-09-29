@@ -378,13 +378,22 @@ installControlOptions(CustomTextbox.prototype, ["color", "font"]);
 // src/shapes/factories.ts
 var import_fabric6 = require("#fabric");
 
-// src/shapes/generated/paths.ts
-var SHAPE_PATHS = [
-  { id: "heart", d: "M50 89.71Q47.06 89.71 38.24 83.82C14.71 66.18 0 42.65 14.71 22.06 23.53 10.3 44.12 13.24 50 30.88 55.88 13.24 76.47 10.3 85.29 22.06 100 42.65 82.35 66.18 61.76 83.82Q52.94 89.71 50 89.71Z", width: 100, height: 79.41 },
-  { id: "hexagon", d: "M45.84 1.48C48.41 0 51.58 0 54.15 1.48L89.94 22.14C92.51 23.63 94.09 26.37 94.09 29.34V71.7C94.09 74.67 92.51 77.41 89.94 78.9L54.15 99.55C51.58 101.04 48.41 101.04 45.84 99.55L10.06 78.9C7.49 77.41 5.91 74.67 5.91 71.7V29.34C5.91 26.37 7.49 23.63 10.06 22.14L45.84 1.48Z", width: 88.19, height: 100 },
-  { id: "octogon", d: "M90.45 30.39l-20.84-20.84A4.15 4.15 0 0 0 66.67 8.33H33.33a4.15 4.15 0 0 0-2.94 1.22l-20.84 20.84A4.15 4.15 0 0 0 8.33 33.33v33.34c0 1.11 0.44 2.17 1.22 2.94l20.84 20.84A4.15 4.15 0 0 0 33.33 91.67h33.34c1.11 0 2.17-0.44 2.94-1.22l20.84-20.84A4.15 4.15 0 0 0 91.67 66.67V33.33a4.15 4.15 0 0 0-1.22-2.94z", width: 100, height: 100 },
-  { id: "pentagon", d: "M99.44 43.4L51.17 0.76c-0.63-0.55-1.57-0.56-2.2 0L0.57 42.98c-0.51 0.45-0.7 1.15-0.48 1.8l18.33 53.75c0.23 0.68 0.87 1.13 1.58 1.12h59.92c0.71 0 1.34-0.45 1.58-1.12l18.41-53.33C100.13 44.56 99.94 43.85 99.44 43.4z", width: 100, height: 100 }
-];
+// src/shapes/registry.ts
+var registry = [];
+function registeredShapes() {
+  return registry;
+}
+function getCatalogShape(id) {
+  return registry.find((s) => s.id === id);
+}
+function isMonoPath(shape) {
+  return shape.paths.length === 1;
+}
+function clipDataFor(id) {
+  const shape = getCatalogShape(id);
+  if (!shape || !isMonoPath(shape)) return void 0;
+  return { d: shape.paths[0].d, width: shape.width, height: shape.height };
+}
 
 // src/controls/cropControls.ts
 var import_fabric2 = require("#fabric");
@@ -695,7 +704,10 @@ var _FabPath = class _FabPath extends import_fabric5.Path {
     this.set({ scaleX: w / this._naturalW, scaleY: h / this._naturalH });
   }
   /**
-   * Create a FabPath from the shape catalog (heart, hexagon, etc.).
+   * Create a FabPath from raw path data (normalized `d` + optional authored fill).
+   * The authored fill wins over options.fill: callers pass their GENERIC default
+   * there (LayerManager's "#ffffff") — a colorless path takes it, an authored one
+   * keeps its charte color. Recoloring happens on the object afterwards, never here.
    *
    * Dimension logic:
    * - Both width & height: scale to fill both
@@ -703,41 +715,56 @@ var _FabPath = class _FabPath extends import_fabric5.Path {
    * - Only height: scale width proportionally
    * - Neither: longest axis = 300px
    */
-  static createFromCatalog(shapeId, options) {
-    const shapePath = SHAPE_PATHS.find((s) => s.id === shapeId);
-    if (!shapePath) {
-      throw new Error(
-        `Unknown path shape: "${shapeId}". Available: ${SHAPE_PATHS.map((s) => s.id).join(", ")}`
-      );
-    }
-    const path = new _FabPath(shapePath.d, {
-      id: shapeId,
-      ...options
+  static fromPathData(pathData, options) {
+    const fill = pathData.fill ?? (pathData.stroke ? "" : options?.fill);
+    const stroke = pathData.stroke ?? options?.stroke;
+    const strokeWidth = pathData.strokeWidth ?? options?.strokeWidth;
+    const path = new _FabPath(pathData.d, {
+      ...options,
+      ...fill != null ? { fill } : {},
+      ...stroke != null ? { stroke } : {},
+      ...strokeWidth != null ? { strokeWidth } : {}
     });
-    const naturalW = path._naturalW;
-    const naturalH = path._naturalH;
-    const hasW = options?.width != null;
-    const hasH = options?.height != null;
-    const ratio = naturalW / naturalH;
+    path.fitTo(options?.width, options?.height);
+    return path;
+  }
+  /** Scale to the requested box (see fromPathData) — natural dims stay untouched. */
+  fitTo(width, height) {
+    const ratio = this._naturalW / this._naturalH;
     let targetW;
     let targetH;
-    if (hasW && hasH) {
-      targetW = options.width;
-      targetH = options.height;
-    } else if (hasW) {
-      targetW = options.width;
+    if (width != null && height != null) {
+      targetW = width;
+      targetH = height;
+    } else if (width != null) {
+      targetW = width;
       targetH = targetW / ratio;
-    } else if (hasH) {
-      targetH = options.height;
+    } else if (height != null) {
+      targetH = height;
       targetW = targetH * ratio;
     } else {
-      const scale = DEFAULT_SIZE / Math.max(naturalW, naturalH);
-      targetW = naturalW * scale;
-      targetH = naturalH * scale;
+      const scale = DEFAULT_SIZE / Math.max(this._naturalW, this._naturalH);
+      targetW = this._naturalW * scale;
+      targetH = this._naturalH * scale;
     }
-    path.scaleX = targetW / naturalW;
-    path.scaleY = targetH / naturalH;
-    return path;
+    this.scaleX = targetW / this._naturalW;
+    this.scaleY = targetH / this._naturalH;
+  }
+  /**
+   * Create a FabPath from the injected shape registry (mono-path entries only —
+   * multi-path artwork goes through createPathsShape, and is never a clip).
+   */
+  static createFromCatalog(shapeId, options) {
+    const shape = getCatalogShape(shapeId);
+    if (!shape) {
+      throw new Error(
+        `Unknown path shape: "${shapeId}". Did the host app call registerShapes()?`
+      );
+    }
+    if (shape.paths.length !== 1) {
+      throw new Error(`Shape "${shapeId}" is multi-path artwork \u2014 not usable as a single path.`);
+    }
+    return _FabPath.fromPathData(shape.paths[0], { id: shapeId, ...options });
   }
 };
 _FabPath.type = "Path";
@@ -753,9 +780,6 @@ function createRect(options) {
 }
 function createCircle(options) {
   return new FabCircle(options);
-}
-function createPathShape(shapeId, options) {
-  return FabPath.createFromCatalog(shapeId, options);
 }
 async function createImage(url, options) {
   const img = await import_fabric6.FabricImage.fromURL(url, { crossOrigin: "anonymous" });
@@ -774,6 +798,50 @@ async function createImage(url, options) {
   return img;
 }
 var DEFAULT_SIZE2 = 300;
+function createPathsShape(paths, options = {}) {
+  if (paths.length === 0) throw new Error("createPathsShape: empty paths");
+  const { fill, stroke, left, top, id } = options;
+  const strokeWidth = options.strokeWidth ?? (stroke ? 4 : 0);
+  if (paths.length === 1) {
+    return FabPath.fromPathData(paths[0], withoutUndefined({
+      id,
+      fill,
+      stroke,
+      strokeWidth,
+      left,
+      top,
+      width: options.width,
+      height: options.height
+    }));
+  }
+  const children = paths.map((p) => {
+    const child = new FabPath(p.d, withoutUndefined({
+      fill: p.fill ?? (p.stroke ? "" : fill),
+      stroke: p.stroke ?? stroke,
+      strokeWidth: p.strokeWidth ?? strokeWidth
+    }));
+    child.set({ left: child.pathOffset.x, top: child.pathOffset.y });
+    child.setCoords();
+    return child;
+  });
+  const group = new import_fabric6.Group(children, { originX: "center", originY: "center", ...withoutUndefined({ left, top }) });
+  if (id) group.set({ id });
+  const target = targetDims(group.width, group.height, options.width, options.height);
+  group.set({ scaleX: target.width / group.width, scaleY: target.height / group.height });
+  group.setCoords();
+  return group;
+}
+function withoutUndefined(obj) {
+  return Object.fromEntries(Object.entries(obj).filter(([, v]) => v !== void 0));
+}
+function targetDims(naturalW, naturalH, width, height) {
+  const ratio = naturalW / naturalH;
+  if (width != null && height != null) return { width, height };
+  if (width != null) return { width, height: width / ratio };
+  if (height != null) return { width: height * ratio, height };
+  const scale = DEFAULT_SIZE2 / Math.max(naturalW, naturalH);
+  return { width: naturalW * scale, height: naturalH * scale };
+}
 function createShape(shapeType, options = {}) {
   const { fill, stroke, left, top } = options;
   const strokeWidth = stroke ? 4 : 0;
@@ -786,18 +854,29 @@ function createShape(shapeType, options = {}) {
       const radius = Math.min(w, h) / 2;
       return createCircle({ radius, fill, stroke, left, top, strokeWidth });
     }
-    default:
-      if (SHAPE_PATHS.some((s) => s.id === shapeType)) {
-        return createPathShape(shapeType, { fill, stroke, left, top, height: options.height, width: options.width, strokeWidth });
+    default: {
+      const entry = getCatalogShape(shapeType);
+      if (entry) {
+        return createPathsShape(entry.paths, {
+          id: shapeType,
+          fill,
+          stroke,
+          left,
+          top,
+          height: options.height,
+          width: options.width,
+          strokeWidth
+        });
       }
       return createRect({ fill, stroke, left, top, height: h, width: w, strokeWidth });
+    }
   }
 }
 function getShapeCatalog() {
   return [
     { id: "rect", path: "M0 0H100V100H0Z", viewBox: "0 0 100 100" },
     { id: "circle", path: "M50 0A50 50 0 1 1 50 100A50 50 0 1 1 50 0Z", viewBox: "0 0 100 100" },
-    ...SHAPE_PATHS.map((s) => ({ id: s.id, path: s.d, viewBox: "0 0 100 100" }))
+    ...registeredShapes().filter(isMonoPath).map((s) => ({ id: s.id, path: s.paths[0].d, viewBox: "0 0 100 100" }))
   ];
 }
 
@@ -893,6 +972,7 @@ var ImageFrame = class _ImageFrame extends import_fabric7.Group {
     }
     this.set("layerType", "imageFrame");
     this.cornerRadius = options.cornerRadius ?? 0;
+    this.clipData = options.clipData;
     this._applyClip(options.clipShape || "rect");
     this._setupControls();
     this._setupScaleAbsorption();
@@ -1056,30 +1136,41 @@ var ImageFrame = class _ImageFrame extends import_fabric7.Group {
     this.clipShape = shapeType;
     const minSize = Math.min(this.frameWidth, this.frameHeight);
     switch (shapeType) {
-      case "rect": {
-        const r = Math.min(this.cornerRadius, minSize / 2);
-        this.clipPath = createRect({
-          width: this.frameWidth,
-          height: this.frameHeight,
-          rx: r,
-          ry: r,
-          left: 0,
-          top: 0
-        });
+      case "rect":
+        this.clipData = void 0;
+        this.clipPath = this._rectClip(minSize);
         break;
-      }
       case "circle":
+        this.clipData = void 0;
         this.clipPath = createCircle({ radius: minSize / 2 });
         break;
-      default:
-        this.clipPath = createPathShape(shapeType, {
-          width: this.frameWidth,
-          height: this.frameHeight,
-          left: 0,
-          top: 0
-        });
+      default: {
+        this.clipData = clipDataFor(shapeType) ?? this.clipData;
+        if (this.clipData) {
+          this.clipPath = FabPath.fromPathData(this.clipData, {
+            width: this.frameWidth,
+            height: this.frameHeight,
+            left: 0,
+            top: 0
+          });
+        } else {
+          console.warn(`[ImageFrame] clip "${shapeType}" inconnu (registre non inject\xE9 ?) \u2014 affichage rect`);
+          this.clipPath = this._rectClip(minSize);
+        }
         break;
+      }
     }
+  }
+  _rectClip(minSize) {
+    const r = Math.min(this.cornerRadius, minSize / 2);
+    return createRect({
+      width: this.frameWidth,
+      height: this.frameHeight,
+      rx: r,
+      ry: r,
+      left: 0,
+      top: 0
+    });
   }
   /**
    * Fallback : absorbe le scale si les contrôles natifs sont utilisés
@@ -1233,6 +1324,7 @@ var ImageFrame = class _ImageFrame extends import_fabric7.Group {
       frameWidth: this.frameWidth,
       frameHeight: this.frameHeight,
       clipShape: this.clipShape,
+      clipData: this.clipData,
       cornerRadius: this.cornerRadius || void 0,
       layerId: base.layerId,
       lockMode: base.lockMode,
@@ -1270,6 +1362,7 @@ var ImageFrame = class _ImageFrame extends import_fabric7.Group {
       left: data.image.offsetX,
       top: data.image.offsetY
     });
+    if (data.clipData) frame.clipData = data.clipData;
     let clipShape = data.clipShape;
     if (clipShape === "rounded") {
       frame.cornerRadius = data.cornerRadius ?? Math.min(data.frameWidth, data.frameHeight) * 0.15;
@@ -1616,14 +1709,8 @@ var LayerManager = class {
       shapeType = "rect",
       layerId = this.generateId()
     } = options;
-    const shape = createShape(shapeType, {
-      fill,
-      stroke,
-      left,
-      top,
-      width: options.width,
-      height: options.height
-    });
+    const common = { fill, stroke, left, top, width: options.width, height: options.height };
+    const shape = options.paths?.length ? createPathsShape(options.paths, { id: shapeType, ...common }) : createShape(shapeType, common);
     shape.set({ layerId, layerType: "shape" });
     return shape;
   }
