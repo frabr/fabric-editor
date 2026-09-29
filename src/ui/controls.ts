@@ -199,21 +199,28 @@ function installControlHitAreas(canvas: DesignCanvas): void {
       obj.controls.mtr = createSideRotationControl();
     }
 
-    // Replace scale controls with resize controls
+    // Replace scale controls with resize controls — only for objects that actually
+    // implement the handleEdgeResize/handleCornerResize contract resizeEdge/resizeBoth
+    // delegate to (e.g. FabRect/FabCircle/FabPath). ImageFrame manages its own corner
+    // and edge actionHandlers in _setupControls(), so it must be left untouched here.
     const resizingActionName = () => RESIZING;
-    for (const key of ["ml", "mr", "mt", "mb"]) {
-      const ctrl = obj.controls[key];
-      if (!ctrl) continue;
-      ctrl.actionHandler = resizeEdge;
-      ctrl.actionName = RESIZING;
-      ctrl.getActionName = resizingActionName;
+    if (typeof (obj as any).handleEdgeResize === "function") {
+      for (const key of ["ml", "mr", "mt", "mb"]) {
+        const ctrl = obj.controls[key];
+        if (!ctrl) continue;
+        ctrl.actionHandler = resizeEdge;
+        ctrl.actionName = RESIZING;
+        ctrl.getActionName = resizingActionName;
+      }
     }
-    for (const key of ["tl", "tr", "bl", "br"]) {
-      const ctrl = obj.controls[key];
-      if (!ctrl) continue;
-      ctrl.actionHandler = resizeBoth;
-      ctrl.actionName = RESIZING;
-      ctrl.getActionName = resizingActionName;
+    if (typeof (obj as any).handleCornerResize === "function") {
+      for (const key of ["tl", "tr", "bl", "br"]) {
+        const ctrl = obj.controls[key];
+        if (!ctrl) continue;
+        ctrl.actionHandler = resizeBoth;
+        ctrl.actionName = RESIZING;
+        ctrl.getActionName = resizingActionName;
+      }
     }
 
     // Edge controls: hit area spans the full side, minus corner zones

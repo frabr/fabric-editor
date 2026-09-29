@@ -5172,19 +5172,23 @@ function installControlHitAreas(canvas) {
       obj.controls.mtr = createSideRotationControl();
     }
     const resizingActionName = () => RESIZING;
-    for (const key of ["ml", "mr", "mt", "mb"]) {
-      const ctrl = obj.controls[key];
-      if (!ctrl) continue;
-      ctrl.actionHandler = resizeEdge;
-      ctrl.actionName = RESIZING;
-      ctrl.getActionName = resizingActionName;
+    if (typeof obj.handleEdgeResize === "function") {
+      for (const key of ["ml", "mr", "mt", "mb"]) {
+        const ctrl = obj.controls[key];
+        if (!ctrl) continue;
+        ctrl.actionHandler = resizeEdge;
+        ctrl.actionName = RESIZING;
+        ctrl.getActionName = resizingActionName;
+      }
     }
-    for (const key of ["tl", "tr", "bl", "br"]) {
-      const ctrl = obj.controls[key];
-      if (!ctrl) continue;
-      ctrl.actionHandler = resizeBoth;
-      ctrl.actionName = RESIZING;
-      ctrl.getActionName = resizingActionName;
+    if (typeof obj.handleCornerResize === "function") {
+      for (const key of ["tl", "tr", "bl", "br"]) {
+        const ctrl = obj.controls[key];
+        if (!ctrl) continue;
+        ctrl.actionHandler = resizeBoth;
+        ctrl.actionName = RESIZING;
+        ctrl.getActionName = resizingActionName;
+      }
     }
     for (const key of ["mt", "mb", "ml", "mr"]) {
       const ctrl = obj.controls[key];
