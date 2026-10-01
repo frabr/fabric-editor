@@ -280,6 +280,11 @@ declare class CustomTextbox extends Textbox {
     /** Largeur naturelle à la police courante : la plus longue ligne, sans wrap. */
     naturalWidth(): number;
     /**
+     * Largeur minimale du texte : son mot le plus long (le min-content de CSS). Le
+     * découpage des mots trop longs (break-word) n'est qu'un repli, pas un minimum.
+     */
+    minContentWidth(): number;
+    /**
      * Une passe de layout : calcule la boîte sous la contrainte du container et la
      * retient. `null` : le texte a quitté son container.
      */
@@ -449,6 +454,7 @@ declare class ResizeSession {
     private containerData;
     private sizing;
     private axes;
+    private corner?;
     /** User-intended size — only updated on axes the user controls. */
     private userW;
     private userH;
@@ -458,7 +464,14 @@ declare class ResizeSession {
      * within the same drag. What remains at release is kept.
      */
     private textWidths;
+    /** Smallest box the content fits in (computed at grab): the handles stop there. */
+    private minContent;
     constructor(container: FabricObject, corner?: string);
+    /**
+     * Resize keeping the edge opposite to the dragged handle in place — when the
+     * content stops the handle, the grabbed edge stops, not the other one.
+     */
+    private setSizeKeepingAnchor;
     private restoreTextWidths;
     /**
      * Called on each `object:resizing` frame.

@@ -244,6 +244,11 @@ declare class CustomTextbox extends Textbox {
     /** Largeur naturelle à la police courante : la plus longue ligne, sans wrap. */
     naturalWidth(): number;
     /**
+     * Largeur minimale du texte : son mot le plus long (le min-content de CSS). Le
+     * découpage des mots trop longs (break-word) n'est qu'un repli, pas un minimum.
+     */
+    minContentWidth(): number;
+    /**
      * Une passe de layout : calcule la boîte sous la contrainte du container et la
      * retient. `null` : le texte a quitté son container.
      */

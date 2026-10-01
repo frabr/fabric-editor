@@ -469,6 +469,14 @@ var CustomTextbox = class extends import_fabric2.Textbox {
     return Math.ceil(this.calcTextWidth());
   }
   /**
+   * Largeur minimale du texte : son mot le plus long (le min-content de CSS). Le
+   * découpage des mots trop longs (break-word) n'est qu'un repli, pas un minimum.
+   */
+  minContentWidth() {
+    const { lines } = this._splitTextIntoLines(this.text);
+    return Math.ceil(super.getGraphemeDataForRender(lines).largestWordWidth);
+  }
+  /**
    * Une passe de layout : calcule la boîte sous la contrainte du container et la
    * retient. `null` : le texte a quitté son container.
    */
@@ -4121,16 +4129,31 @@ var ResizeSession = class {
      * within the same drag. What remains at release is kept.
      */
     this.textWidths = /* @__PURE__ */ new Map();
+    /** Smallest box the content fits in (computed at grab): the handles stop there. */
+    this.minContent = null;
     this.container = container;
     const layout = container.get("layout");
     this.containerData = layout.container;
     this.axes = cornerToAxes(corner);
+    this.corner = corner;
     const current = sizingOf(container);
     this.sizing = this.axes.x && current.x === "hug" ? { ...current, x: "fixed" } : { ...current };
     container.set("layout", { ...layout, sizing: this.sizing });
     const { w, h } = scaledSize(container);
     this.userW = w;
     this.userH = h;
+  }
+  /**
+   * Resize keeping the edge opposite to the dragged handle in place — when the
+   * content stops the handle, the grabbed edge stops, not the other one.
+   */
+  setSizeKeepingAnchor(w, h) {
+    const { container, corner } = this;
+    const originX = corner?.includes("l") ? "right" : corner?.includes("r") ? "left" : "center";
+    const originY = corner?.includes("t") ? "bottom" : corner?.includes("b") ? "top" : "center";
+    const anchor = container.getPositionByOrigin(originX, originY);
+    setShapeSize(container, w, h);
+    container.setPositionByOrigin(anchor, originX, originY);
   }
   restoreTextWidths(children) {
     for (const { obj } of children) {
@@ -4155,6 +4178,7 @@ var ResizeSession = class {
     const children = sortChildrenByOrder(resolveContainerChildren(objects, container));
     if (children.length === 0) return;
     this.restoreTextWidths(children);
+    this.minContent ?? (this.minContent = minContentSize(children, cd));
     const live = { x: sizing.x, y: sizing.y };
     const tl = topLeft(container);
     const { w: requiredW, h: requiredH } = yogaLayout(
@@ -4168,11 +4192,12 @@ var ResizeSession = class {
     );
     const prevMinW = sizing.minSize?.w ?? 0;
     const prevMinH = sizing.minSize?.h ?? 0;
-    const finalW = sizing.x === "hug" ? Math.max(axes.x ? this.userW : prevMinW, requiredW) : currentW;
-    const finalH = sizing.y === "hug" ? Math.max(axes.y ? this.userH : prevMinH, requiredH) : currentH;
-    setShapeSize(container, finalW, finalH);
+    const finalW = sizing.x === "hug" ? Math.max(axes.x ? this.userW : prevMinW, requiredW) : Math.max(currentW, this.minContent.w);
+    const finalH = sizing.y === "hug" ? Math.max(axes.y ? this.userH : prevMinH, requiredH) : Math.max(currentH, this.minContent.h);
+    this.setSizeKeepingAnchor(finalW, finalH);
+    const placed = { ...live, minSize: { w: finalW, h: finalH } };
     const tl2 = topLeft(container);
-    yogaLayout(children, tl2.x, tl2.y, finalW, finalH, cd, live);
+    yogaLayout(children, tl2.x, tl2.y, finalW, finalH, cd, placed);
     syncCoords(container, children);
   }
   /**
@@ -4192,6 +4217,18 @@ var ResizeSession = class {
     container.set("layout", { ...layout, sizing: { ...sizing, minSize } });
   }
 };
+function minContentSize(children, cd) {
+  const pad = cd.padding ?? { top: 0, right: 0, bottom: 0, left: 0 };
+  const gaps = (cd.gap ?? 0) * Math.max(0, children.length - 1);
+  const sizes = children.map(({ obj }) => isTextObject(obj) ? { w: obj.minContentWidth(), h: 0 } : scaledSize(obj));
+  const sum = (key) => sizes.reduce((total, s) => total + s[key], 0);
+  const max = (key) => Math.max(0, ...sizes.map((s) => s[key]));
+  const row = cd.flexDirection === "row";
+  return {
+    w: pad.left + pad.right + (row ? sum("w") + gaps : max("w")),
+    h: pad.top + pad.bottom + (row ? max("h") : sum("h") + gaps)
+  };
+}
 function resolveContainerChildren(objects, container) {
   const containerId = container.get("layerId");
   const out = [];
