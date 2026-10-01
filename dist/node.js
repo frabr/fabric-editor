@@ -584,6 +584,51 @@ function migrateLegacyLayout(layout) {
   return { ...layout, sizing, container };
 }
 
+// src/layout/stacking.ts
+function parentIdOf(obj) {
+  return obj.get("layout")?.child?.parentId;
+}
+function stackBlock(objects, root) {
+  const ids = /* @__PURE__ */ new Set([root.get("layerId")]);
+  const block = [];
+  for (const obj of objects) {
+    if (obj === root) block.push(obj);
+    else if (ids.has(parentIdOf(obj))) {
+      block.push(obj);
+      ids.add(obj.get("layerId"));
+    }
+  }
+  return block;
+}
+function siblingsOf(objects, obj) {
+  const parentId = parentIdOf(obj);
+  return objects.filter((o) => parentIdOf(o) === parentId);
+}
+function placeAbove(objects, root, above) {
+  const block = stackBlock(objects, root);
+  const rest = objects.filter((o) => !block.includes(o));
+  const anchor = stackBlock(rest, above);
+  const at = rest.indexOf(anchor[anchor.length - 1]) + 1;
+  return [...rest.slice(0, at), ...block, ...rest.slice(at)];
+}
+function placeBelow(objects, root, below) {
+  const block = stackBlock(objects, root);
+  const rest = objects.filter((o) => !block.includes(o));
+  const at = rest.indexOf(below);
+  return [...rest.slice(0, at), ...block, ...rest.slice(at)];
+}
+function bringBlockForward(objects, obj, overlaps) {
+  const siblings = siblingsOf(objects, obj);
+  const next = siblings.slice(siblings.indexOf(obj) + 1).find((s) => overlaps(obj, s));
+  return next ? placeAbove(objects, obj, next) : null;
+}
+function sendBlockBackward(objects, obj) {
+  const siblings = siblingsOf(objects, obj);
+  const prev = siblings[siblings.indexOf(obj) - 1];
+  if (!prev || prev === objects[0]) return null;
+  return placeBelow(objects, obj, prev);
+}
+
 // src/shapes/factories.ts
 var import_fabric6 = require("#fabric");
 
@@ -1723,22 +1768,25 @@ var LayerManager = class {
     objects.forEach((obj) => this.canvas.remove(obj));
   }
   /**
-   * Monte l'objet d'un niveau (vers l'avant)
+   * Monte l'objet devant le premier objet de même niveau qui le chevauche. Un
+   * container emmène ses descendants (toujours au-dessus de lui) ; un enfant reste
+   * parmi les enfants de son container.
    */
   bringForward(obj) {
-    this.canvas.bringObjectForward(obj, true);
-    this.canvas.renderAll();
+    const order = bringBlockForward(this.canvas.getObjects(), obj, (a, b) => a.isOverlapping(b));
+    if (order) this.applyStackOrder(order);
   }
   /**
-   * Descend l'objet d'un niveau (vers l'arrière)
-   * Ne peut pas descendre en dessous de l'image de fond
+   * Descend l'objet d'un niveau, mêmes règles de blocs que bringForward. Ne peut pas
+   * descendre en dessous de l'image de fond.
    */
   sendBackward(obj) {
-    const index = this.canvas.getObjects().indexOf(obj);
-    if (index > 1) {
-      this.canvas.sendObjectBackwards(obj);
-      this.canvas.renderAll();
-    }
+    const order = sendBlockBackward(this.canvas.getObjects(), obj);
+    if (order) this.applyStackOrder(order);
+  }
+  applyStackOrder(order) {
+    order.forEach((obj, index) => this.canvas.moveObjectTo(obj, index));
+    this.canvas.renderAll();
   }
   /**
    * Crée et ajoute un calque texte

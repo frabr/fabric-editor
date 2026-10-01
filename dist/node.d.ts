@@ -619,14 +619,17 @@ declare class LayerManager {
      */
     removeMany(objects: FabricObject[]): void;
     /**
-     * Monte l'objet d'un niveau (vers l'avant)
+     * Monte l'objet devant le premier objet de même niveau qui le chevauche. Un
+     * container emmène ses descendants (toujours au-dessus de lui) ; un enfant reste
+     * parmi les enfants de son container.
      */
     bringForward(obj: FabricObject): void;
     /**
-     * Descend l'objet d'un niveau (vers l'arrière)
-     * Ne peut pas descendre en dessous de l'image de fond
+     * Descend l'objet d'un niveau, mêmes règles de blocs que bringForward. Ne peut pas
+     * descendre en dessous de l'image de fond.
      */
     sendBackward(obj: FabricObject): void;
+    private applyStackOrder;
     /**
      * Crée et ajoute un calque texte
      */
