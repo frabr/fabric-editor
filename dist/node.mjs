@@ -125,7 +125,7 @@ import {
 } from "#fabric";
 
 // src/controls/CustomTextbox.ts
-import { Textbox, Point } from "#fabric";
+import { Textbox, Point, controlsUtils } from "#fabric";
 
 // src/shapes/controlsMixin.ts
 function installControlOptions(proto, controls) {
@@ -134,51 +134,245 @@ function installControlOptions(proto, controls) {
   };
 }
 
+// src/layout/types.ts
+var MIN_FONT_SIZE = 8;
+
+// src/layout/text-box.ts
+function resolveTextBox(input, measure) {
+  const { sizing, overflow, constraint } = input;
+  if (constraint === "as-stored") {
+    const m2 = measure.wrapped(input.width, input.fontSize);
+    return { width: m2.width, height: Math.max(m2.height, input.height), fontSize: input.fontSize, overflowing: false };
+  }
+  const maxW = constraint.maxW ?? Infinity;
+  const width = constraint.w ?? (sizing.x === "hug" ? Math.min(measure.natural(input.fontSizeIntent), maxW) : Math.min(input.width, maxW));
+  const boundH = constraint.h ?? (sizing.y === "fixed" ? input.height : void 0);
+  let fontSize = input.fontSizeIntent;
+  let m = measure.wrapped(width, fontSize);
+  if (boundH != null && m.height > boundH + 0.5 && overflow === "shrink") {
+    fontSize = largestFittingFont(width, boundH, input.fontSizeIntent, measure);
+    m = measure.wrapped(width, fontSize);
+  }
+  const minH = sizing.y === "hug" ? sizing.minSize?.h ?? 0 : 0;
+  const height = boundH ?? Math.max(m.height, minH);
+  return { width: m.width, height, fontSize, overflowing: m.height > height + 0.5 };
+}
+function largestFittingFont(width, boundH, intent, measure) {
+  let lo = Math.min(MIN_FONT_SIZE, intent);
+  let hi = intent;
+  while (hi - lo > 0.5) {
+    const mid = (lo + hi) / 2;
+    if (measure.wrapped(width, mid).height <= boundH + 0.5) lo = mid;
+    else hi = mid;
+  }
+  return Math.floor(lo * 2) / 2;
+}
+
 // src/controls/CustomTextbox.ts
+var { changeObjectWidth, changeObjectHeight } = controlsUtils;
+var UNBOUNDED_WIDTH = 1e4;
 var CustomTextbox = class extends Textbox {
   constructor(text, options) {
-    const hasExplicitWidth = options?.width != null;
     super(text, options);
-    /**
-     * Auto-width mode : le textbox s'étend horizontalement au contenu.
-     * Désactivé automatiquement quand l'utilisateur resize manuellement.
-     */
-    this._autoWidth = true;
-    /** Dernière width calculée par le mode auto-width. */
-    this._autoWidthValue = 0;
-    if (hasExplicitWidth) {
-      this._autoWidth = false;
-    } else {
-      this.initDimensions();
-    }
-    this.on("resizing", () => {
-      this._autoWidth = false;
-    });
-    this.on("scaling", () => {
-      this._autoWidth = false;
-    });
+    if (typeof options?.fontSizeIntent === "number") this.fontSizeIntent = options.fontSizeIntent;
+    this.fontSizeIntent ?? (this.fontSizeIntent = this.fontSize);
+    this._bakeLegacyScale();
+    this._ensureSizing(options?.width != null);
+    this.initDimensions();
+    this.setCoords();
+  }
+  // ── Sizing ─────────────────────────────────────────────────────────
+  /**
+   * Sans bloc `sizing` (le temps de la construction, avant _ensureSizing), la boîte
+   * stockée fait foi : largeur fixe.
+   */
+  get sizing() {
+    return this.get("layout")?.sizing ?? { x: "fixed", y: "hug" };
+  }
+  get textOverflow() {
+    return this.get("layout")?.overflow ?? "shrink";
+  }
+  /** Remplace le bloc `sizing` (nouvel objet `layout`, jamais muté en place). */
+  setSizing(sizing) {
+    const layout = this.get("layout") ?? {};
+    this.set("layout", { ...layout, sizing });
+    this.initDimensions();
+    this.setCoords();
+  }
+  setTextOverflow(overflow) {
+    const layout = this.get("layout") ?? {};
+    this.set("layout", { ...layout, overflow });
+    this.initDimensions();
+    this.setCoords();
+  }
+  /** Largeur naturelle à la police courante : la plus longue ligne, sans wrap. */
+  naturalWidth() {
+    this.width = UNBOUNDED_WIDTH;
+    super.initDimensions();
+    return Math.ceil(this.calcTextWidth());
   }
   /**
-   * Override initDimensions : en mode auto-width, on calcule les dimensions
-   * avec une width infinie puis on ajuste width au résultat.
-   * Si la width entrante diffère de notre dernière valeur auto, c'est un
-   * resize externe → on désactive auto-width.
+   * Une passe de layout : calcule la boîte sous la contrainte du container et la
+   * retient. `null` : le texte a quitté son container.
    */
+  layoutWith(constraint) {
+    if (constraint) this._constraint = constraint;
+    else delete this._constraint;
+    this.initDimensions();
+  }
+  /** Recalcul (Fabric, ou layoutWith) sous la contrainte courante. */
   initDimensions() {
-    if (this._autoWidth) {
-      if (this._autoWidthValue > 0 && Math.abs(this.width - this._autoWidthValue) > 2) {
-        this._autoWidth = false;
-        super.initDimensions();
-        return;
-      }
-      this.width = 1e4;
+    if (!this.initialized) {
       super.initDimensions();
-      const natural = Math.ceil(this.calcTextWidth());
-      this.width = natural;
-      this._autoWidthValue = natural;
-    } else {
-      super.initDimensions();
+      return;
     }
+    if (!this._isChild()) this._applyBox({});
+    else this._applyBox(this._constraint ?? "as-stored");
+  }
+  _applyBox(constraint) {
+    const box = resolveTextBox({
+      sizing: this.sizing,
+      overflow: this.textOverflow,
+      constraint,
+      fontSizeIntent: this.fontSizeIntent ?? this.fontSize,
+      fontSize: this.fontSize,
+      width: this.width,
+      height: this.height
+    }, this._measure());
+    this.fontSize = box.fontSize;
+    this._wrapAt(box.width);
+    this.height = box.height;
+    this._overflowing = box.overflowing;
+    this.objectCaching = !(box.overflowing && this.textOverflow === "visible");
+  }
+  /**
+   * Mesure via Fabric (mute l'objet ; _applyBox pose l'état final ensuite). Méthode et
+   * non champ : Fabric mesure déjà pendant le super() du constructeur.
+   */
+  _measure() {
+    return {
+      wrapped: (width, fontSize) => {
+        this.fontSize = fontSize;
+        this._wrapAt(width);
+        return { width: this.width, height: this.height };
+      },
+      natural: (fontSize) => {
+        this.fontSize = fontSize;
+        return this.naturalWidth();
+      }
+    };
+  }
+  /** Wrap à `width` puis mesure (la largeur peut grandir au mot le plus long). */
+  _wrapAt(width) {
+    this.width = width;
+    super.initDimensions();
+  }
+  /** Toute nouvelle `fontSize` posée via set() est une intention de l'utilisateur. */
+  _set(key, value) {
+    if (key === "fontSize") this.fontSizeIntent = value;
+    return super._set(key, value);
+  }
+  /** overflow "clip" : le texte est coupé au bord de sa boîte. */
+  _render(ctx) {
+    if (!this._overflowing || this.textOverflow !== "clip") {
+      super._render(ctx);
+      return;
+    }
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(-this.width / 2, -this.height / 2, this.width, this.height);
+    ctx.clip();
+    super._render(ctx);
+    ctx.restore();
+  }
+  // ── Poignées ───────────────────────────────────────────────────────
+  /**
+   * Bord gauche/droit : la largeur passe en fixe et prend la valeur tirée.
+   * Bord haut/bas : en hauteur contenu, pose le plancher `minSize.h` ; en hauteur fixe,
+   * change la hauteur.
+   */
+  handleEdgeResize(transform, x, y) {
+    const corner = transform.corner;
+    return corner === "ml" || corner === "mr" ? this._withAnchor(transform, () => this._resizeWidth(transform, x, y)) : this._withAnchor(transform, () => this._resizeHeight(transform, x, y));
+  }
+  /** Coin : les deux règles des bords à la fois. */
+  handleCornerResize(transform, x, y) {
+    return this._withAnchor(transform, () => {
+      const changedW = this._resizeWidth(transform, x, y);
+      const changedH = this._resizeHeight(transform, x, y);
+      return changedW || changedH;
+    });
+  }
+  _isChild() {
+    return this.get("layout")?.child != null;
+  }
+  _withAnchor(transform, resize) {
+    const { originX, originY } = transform;
+    const anchor = this.getPositionByOrigin(originX, originY);
+    const changed = resize();
+    this.setPositionByOrigin(anchor, originX, originY);
+    return changed;
+  }
+  _resizeWidth(transform, x, y) {
+    if (this.sizing.x !== "fixed") {
+      const layout = this.get("layout") ?? {};
+      this.set("layout", { ...layout, sizing: { ...this.sizing, x: "fixed" } });
+    }
+    return changeObjectWidth({}, transform, x, y);
+  }
+  _resizeHeight(transform, x, y) {
+    const before = this.height;
+    if (!changeObjectHeight({}, transform, x, y)) return false;
+    const sizing = this.sizing;
+    if (sizing.y === "hug") {
+      const minSize = { w: sizing.minSize?.w ?? 0, h: this.height };
+      const layout = this.get("layout") ?? {};
+      this.set("layout", { ...layout, sizing: { ...sizing, minSize } });
+    }
+    this.initDimensions();
+    return before !== this.height;
+  }
+  // ── Données legacy ─────────────────────────────────────────────────
+  /**
+   * Un texte étiré (scaleX/scaleY) est ramené à scale 1 : le scale passe dans la
+   * largeur et la police. Exact pour un scale uniforme ; un étirement non uniforme est
+   * perdu (les glyphes reprennent leurs proportions).
+   */
+  _bakeLegacyScale() {
+    const sx = this.scaleX || 1;
+    const sy = this.scaleY || 1;
+    if (sx === 1 && sy === 1) return;
+    this.width *= sx;
+    this.height *= sy;
+    this.fontSize *= sy;
+    this.fontSizeIntent *= sy;
+    for (const line of Object.values(this.styles ?? {})) {
+      for (const style of Object.values(line)) {
+        if (style.fontSize) style.fontSize *= sy;
+      }
+    }
+    this.scaleX = 1;
+    this.scaleY = 1;
+  }
+  /**
+   * Un texte sans `layout.sizing` (nouveau, ou document d'avant les modes de taille)
+   * reçoit un mode explicite :
+   * - nouveau texte, ou enfant de container (sa largeur était dictée par le container) :
+   *   largeur contenu ;
+   * - sinon : largeur contenu si la boîte épouse le texte sur une ligne, fixe sinon
+   *   (texte qui wrappe, ou boîte élargie pour un alignement).
+   */
+  _ensureSizing(hasExplicitWidth) {
+    const layout = this.get("layout");
+    if (layout?.sizing) return;
+    let x = "hug";
+    if (hasExplicitWidth && !layout?.child) {
+      const width = this.width;
+      const natural = this.naturalWidth();
+      this.width = width;
+      if (Math.abs(width - natural) > 2) x = "fixed";
+    }
+    this.set("layout", { ...layout ?? {}, sizing: { x, y: "hug" } });
   }
   /**
    * overflow-wrap: break-word — pré-découpe les mots trop longs
@@ -343,7 +537,22 @@ var CustomTextbox = class extends Textbox {
     };
   }
 };
+CustomTextbox.customProperties = ["fontSizeIntent"];
 installControlOptions(CustomTextbox.prototype, ["color", "font"]);
+
+// src/layout/legacy.ts
+function migrateLegacyLayout(layout) {
+  const legacy = layout?.container;
+  if (!layout || !legacy) return null;
+  if (!("sizeMode" in legacy) && !("minSize" in legacy) && !("overflow" in legacy)) return null;
+  const { sizeMode, minSize, overflow: _overflow, ...container } = legacy;
+  const sizing = layout.sizing ?? {
+    x: sizeMode?.x ?? "hug",
+    y: sizeMode?.y ?? "hug",
+    ...minSize ? { minSize } : {}
+  };
+  return { ...layout, sizing, container };
+}
 
 // src/shapes/factories.ts
 import {
@@ -476,7 +685,7 @@ function addCropControls(obj) {
 }
 
 // src/shapes/FabRect.ts
-import { Rect, classRegistry, controlsUtils } from "#fabric";
+import { Rect, classRegistry, controlsUtils as controlsUtils2 } from "#fabric";
 
 // src/shapes/lockMixin.ts
 var LOCK_MODES = ["free", "position", "full"];
@@ -513,7 +722,7 @@ function installLockMethods(proto) {
 }
 
 // src/shapes/FabRect.ts
-var { changeObjectWidth, changeObjectHeight } = controlsUtils;
+var { changeObjectWidth: changeObjectWidth2, changeObjectHeight: changeObjectHeight2 } = controlsUtils2;
 var FabRect = class extends Rect {
   constructor(options) {
     super({
@@ -537,8 +746,8 @@ var FabRect = class extends Rect {
   handleCornerResize(transform, x, y) {
     const { originX, originY } = transform;
     const anchor = this.getPositionByOrigin(originX, originY);
-    const changedW = changeObjectWidth({}, transform, x, y);
-    const changedH = changeObjectHeight({}, transform, x, y);
+    const changedW = changeObjectWidth2({}, transform, x, y);
+    const changedH = changeObjectHeight2({}, transform, x, y);
     this.setPositionByOrigin(anchor, originX, originY);
     return changedW || changedH;
   }
@@ -547,7 +756,7 @@ var FabRect = class extends Rect {
     const { originX, originY } = transform;
     const anchor = this.getPositionByOrigin(originX, originY);
     const corner = transform.corner;
-    const changed = corner === "ml" || corner === "mr" ? changeObjectWidth({}, transform, x, y) : changeObjectHeight({}, transform, x, y);
+    const changed = corner === "ml" || corner === "mr" ? changeObjectWidth2({}, transform, x, y) : changeObjectHeight2({}, transform, x, y);
     this.setPositionByOrigin(anchor, originX, originY);
     return changed;
   }
@@ -562,7 +771,7 @@ installControlOptions(FabRect.prototype, ["outline", "clip", "color", "corner_ra
 classRegistry.setClass(FabRect, "Rect");
 
 // src/shapes/FabCircle.ts
-import { Circle, classRegistry as classRegistry2, controlsUtils as controlsUtils2 } from "#fabric";
+import { Circle, classRegistry as classRegistry2, controlsUtils as controlsUtils3 } from "#fabric";
 
 // src/shapes/resizeUtils.ts
 function isTransformCentered(transform) {
@@ -570,7 +779,7 @@ function isTransformCentered(transform) {
 }
 
 // src/shapes/FabCircle.ts
-var { changeObjectWidth: changeObjectWidth2, changeObjectHeight: changeObjectHeight2, getLocalPoint } = controlsUtils2;
+var { changeObjectWidth: changeObjectWidth3, changeObjectHeight: changeObjectHeight3, getLocalPoint } = controlsUtils3;
 var FabCircle = class extends Circle {
   constructor(options) {
     super({
@@ -608,7 +817,7 @@ var FabCircle = class extends Circle {
     const { originX, originY } = transform;
     const anchor = this.getPositionByOrigin(originX, originY);
     const corner = transform.corner;
-    const changed = corner === "ml" || corner === "mr" ? changeObjectWidth2({}, transform, x, y) : changeObjectHeight2({}, transform, x, y);
+    const changed = corner === "ml" || corner === "mr" ? changeObjectWidth3({}, transform, x, y) : changeObjectHeight3({}, transform, x, y);
     this.scaleX *= this.width / this._naturalSize;
     this.scaleY *= this.height / this._naturalSize;
     this.width = this._naturalSize;
@@ -631,8 +840,8 @@ installControlOptions(FabCircle.prototype, ["outline", "clip", "color"]);
 classRegistry2.setClass(FabCircle, "Circle");
 
 // src/shapes/FabPath.ts
-import { Path, classRegistry as classRegistry3, controlsUtils as controlsUtils3 } from "#fabric";
-var { changeObjectWidth: changeObjectWidth3, changeObjectHeight: changeObjectHeight3, getLocalPoint: getLocalPoint2 } = controlsUtils3;
+import { Path, classRegistry as classRegistry3, controlsUtils as controlsUtils4 } from "#fabric";
+var { changeObjectWidth: changeObjectWidth4, changeObjectHeight: changeObjectHeight4, getLocalPoint: getLocalPoint2 } = controlsUtils4;
 var DEFAULT_SIZE = 300;
 var _FabPath = class _FabPath extends Path {
   constructor(path, options) {
@@ -667,7 +876,7 @@ var _FabPath = class _FabPath extends Path {
     const { originX, originY } = transform;
     const anchor = this.getPositionByOrigin(originX, originY);
     const corner = transform.corner;
-    const changed = corner === "ml" || corner === "mr" ? changeObjectWidth3({}, transform, x, y) : changeObjectHeight3({}, transform, x, y);
+    const changed = corner === "ml" || corner === "mr" ? changeObjectWidth4({}, transform, x, y) : changeObjectHeight4({}, transform, x, y);
     this.scaleX *= this.width / this._naturalW;
     this.scaleY *= this.height / this._naturalH;
     this.width = this._naturalW;
@@ -1773,6 +1982,8 @@ var LayerManager = class {
         console.warn(`Type de calque inconnu: ${layer.type}`);
         return null;
     }
+    const migrated = obj && migrateLegacyLayout(obj.get("layout"));
+    if (obj && migrated) obj.set("layout", migrated);
     if (obj && layer.lockMode) {
       const mode = layer.lockMode;
       if ("applyLockMode" in obj && typeof obj.applyLockMode === "function") {
@@ -2104,10 +2315,13 @@ var HistoryManager = class {
 
 // src/layout/yoga-engine.ts
 var yoga = null;
+var yogaConfig = null;
 async function initYoga() {
   if (yoga) return;
   const { loadYoga } = await import("yoga-layout/load");
   yoga = await loadYoga();
+  yogaConfig = yoga.Config.create();
+  yogaConfig.setPointScaleFactor(0);
 }
 
 // src/node.ts

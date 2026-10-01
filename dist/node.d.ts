@@ -76,17 +76,143 @@ declare class DesignCanvas {
 }
 
 /**
- * Textbox personnalisé qui :
- * 1. Place le textarea caché à l'intérieur du canvas container (pour le focus dans les modales)
- * 2. Force sa position à (0, 0) pour éviter les problèmes de layout/scroll
+ * Layout system types — Flexbox model backed by Yoga.
  *
- * Hérite de Textbox (et non IText) pour le line-wrapping natif
- * quand une width fixe est définie (mode layout "largeur fixe").
+ * Every participating Fabric object carries a single `layout: LayoutData`
+ * property with independent, optional blocks:
  *
- * Nécessaire car les modales (dialog) avec showModal() créent un
- * "focus trap" qui empêche le focus d'aller sur des éléments
- * en dehors du dialog. En plaçant le textarea dans le canvas
- * container (qui est dans le dialog), il peut recevoir le focus.
+ * - `sizing`: how the object sizes itself, per axis — shared by containers
+ *   and texts (a text's "content" is its text, a container's is its children)
+ * - `container`: present when the object has children (is a parent)
+ * - `child`: present when the object is inside another container
+ * - `overflow`: what a text does when its box is smaller than its content
+ *
+ * Container and child can coexist — a nested container is both.
+ *
+ * Outside a container, objects are positioned absolutely by Fabric.
+ * Inside a container, objects follow Flexbox rules (Yoga engine).
+ */
+/**
+ * Size mode per axis:
+ * - "hug": the object adapts to its content (text, or children)
+ * - "fixed": the object keeps its size, content must adapt (wrap/shrink/clip)
+ */
+type SizeMode = "hug" | "fixed";
+/** "How I size myself" — on containers and texts. */
+interface SizingData {
+    x: SizeMode;
+    y: SizeMode;
+    /**
+     * Floor set by the resize handles on a "hug" axis: the object is
+     * `max(content, minSize)`. Ignored on a "fixed" axis.
+     */
+    minSize?: {
+        w: number;
+        h: number;
+    };
+}
+/**
+ * What a text does when its box is smaller than its content (fixed height,
+ * or a height constrained by its container):
+ * - "shrink": font size goes down (to MIN_FONT_SIZE) until it fits
+ * - "clip": the text is cut at the box edge
+ * - "visible": the text overflows the box
+ */
+type TextOverflow = "shrink" | "clip" | "visible";
+/** Cross-axis alignment for a single child (maps to Yoga alignSelf). */
+type AlignSelf = "auto" | "stretch" | "flex-start" | "flex-end" | "center";
+/** Main-axis distribution (maps to Yoga justifyContent). */
+type JustifyContent = "flex-start" | "flex-end" | "center" | "space-between" | "space-around";
+/** Cross-axis alignment for all children (maps to Yoga alignItems). */
+type AlignItems = "stretch" | "flex-start" | "flex-end" | "center";
+/** Flex direction (maps to Yoga flexDirection). */
+type FlexDirection = "column" | "row";
+/** "I am a parent" — present when the object has children. */
+interface ContainerData {
+    /** Flex direction: column (vertical, default) or row (horizontal). */
+    flexDirection?: FlexDirection;
+    /** Gap between children in the main axis direction (pixels). */
+    gap?: number;
+    /** Padding between container edges and children. */
+    padding?: {
+        top: number;
+        right: number;
+        bottom: number;
+        left: number;
+    };
+    /** Cross-axis alignment for children (default: "flex-start"). */
+    alignItems?: AlignItems;
+    /** Main-axis distribution (default: "flex-start"). */
+    justifyContent?: JustifyContent;
+}
+/** "I am a child" — present when the object is inside a container. */
+interface ChildData {
+    parentId: string;
+    /** Override the container's alignItems for this child. */
+    alignSelf?: AlignSelf;
+    /** How much this child grows to fill remaining space (default: 0). */
+    flexGrow?: number;
+    /** Position in the flex flow (lower = earlier). Children without order go by insertion order. */
+    order?: number;
+}
+/** The `layout` property on any participating Fabric object. */
+interface LayoutData {
+    sizing?: SizingData;
+    container?: ContainerData;
+    child?: ChildData;
+    /** Texts only (default "shrink"). */
+    overflow?: TextOverflow;
+}
+
+/**
+ * Boîte d'un texte : fonction pure de son mode de taille, de la contrainte que lui
+ * donne son container (le temps d'une passe), de son overflow et d'une mesure.
+ *
+ * Aucun état : CustomTextbox fournit la mesure (Fabric) et applique le résultat.
+ */
+
+/**
+ * Ce que le container donne au texte pour une passe de layout — jamais conservé.
+ * - `maxW` : largeur disponible, que le texte ne dépasse pas (il wrappe)
+ * - `w` / `h` : taille exacte calculée par Yoga (stretch, flexGrow, flexShrink)
+ */
+interface TextConstraint {
+    maxW?: number;
+    w?: number;
+    h?: number;
+}
+
+/**
+ * Textbox de l'éditeur : un objet de layout comme les autres.
+ *
+ * Il porte les mêmes modes de taille que les containers (`layout.sizing`), son
+ * « contenu » étant son texte :
+ * - largeur `hug` : une ligne, la boîte suit le texte ; `fixed` : wrap à la largeur ;
+ *   dans les deux cas, jamais plus large que la place que donne le container (le
+ *   container pousse la largeur fixe, qui reste acquise) ;
+ * - hauteur `hug` : la boîte suit le texte, avec un plancher `minSize.h` posé par les
+ *   poignées ; `fixed` : la boîte garde sa hauteur et `layout.overflow` décide
+ *   (réduire la police, couper, déborder).
+ *
+ * La boîte est calculée par `resolveTextBox` (layout/text-box.ts) ; le texte ne fait
+ * que fournir la mesure et appliquer le résultat.
+ *
+ * Contrainte du container : un seul écrivain, le moteur de layout (`layoutWith`, à
+ * chaque passe). Fabric recalcule aussi le texte de lui-même, hors de toute passe et
+ * sans événement pour relancer le layout (sortie d'édition, rendu après un changement
+ * de styles) : ce recalcul reprend la dernière contrainte reçue. Un enfant jamais mis
+ * en page (document tout juste chargé) s'affiche tel que sauvegardé ; un texte hors
+ * container ignore toute contrainte.
+ *
+ * Les poignées ne déforment jamais : elles changent la boîte (jamais de scale).
+ *
+ * `fontSize` est la taille effective (celle qui est rendue et sauvegardée, pour qu'un
+ * document s'affiche juste sans relayout) ; `fontSizeIntent` est la taille voulue par
+ * l'utilisateur, d'où repart l'autofit à chaque calcul.
+ *
+ * Hérite de Textbox (et non IText) pour le line-wrapping natif. Place aussi le textarea
+ * caché dans le container du canvas, pour le focus dans les modales (`showModal()`
+ * piège le focus hors du dialog).
  */
 type WordEntry = {
     word: string[];
@@ -98,21 +224,71 @@ type GraphemeData = {
     wordsData: WordEntry[][];
 };
 declare class CustomTextbox extends Textbox {
-    /**
-     * Auto-width mode : le textbox s'étend horizontalement au contenu.
-     * Désactivé automatiquement quand l'utilisateur resize manuellement.
-     */
-    _autoWidth: boolean;
+    static customProperties: string[];
+    /** Taille de police voulue — l'effective (`fontSize`) peut être réduite par l'autofit. */
+    fontSizeIntent: number;
+    /** Le contenu dépasse la boîte (overflow clip / visible). */
+    _overflowing?: boolean;
+    /** Dernière contrainte reçue du container (absente : jamais mis en page). */
+    _constraint?: TextConstraint;
     constructor(text: string, options?: Record<string, unknown>);
-    /** Dernière width calculée par le mode auto-width. */
-    private _autoWidthValue;
     /**
-     * Override initDimensions : en mode auto-width, on calcule les dimensions
-     * avec une width infinie puis on ajuste width au résultat.
-     * Si la width entrante diffère de notre dernière valeur auto, c'est un
-     * resize externe → on désactive auto-width.
+     * Sans bloc `sizing` (le temps de la construction, avant _ensureSizing), la boîte
+     * stockée fait foi : largeur fixe.
      */
+    get sizing(): SizingData;
+    get textOverflow(): TextOverflow;
+    /** Remplace le bloc `sizing` (nouvel objet `layout`, jamais muté en place). */
+    setSizing(sizing: SizingData): void;
+    setTextOverflow(overflow: TextOverflow): void;
+    /** Largeur naturelle à la police courante : la plus longue ligne, sans wrap. */
+    naturalWidth(): number;
+    /**
+     * Une passe de layout : calcule la boîte sous la contrainte du container et la
+     * retient. `null` : le texte a quitté son container.
+     */
+    layoutWith(constraint: TextConstraint | null): void;
+    /** Recalcul (Fabric, ou layoutWith) sous la contrainte courante. */
     initDimensions(): void;
+    private _applyBox;
+    /**
+     * Mesure via Fabric (mute l'objet ; _applyBox pose l'état final ensuite). Méthode et
+     * non champ : Fabric mesure déjà pendant le super() du constructeur.
+     */
+    private _measure;
+    /** Wrap à `width` puis mesure (la largeur peut grandir au mot le plus long). */
+    private _wrapAt;
+    /** Toute nouvelle `fontSize` posée via set() est une intention de l'utilisateur. */
+    _set(key: string, value: any): this;
+    /** overflow "clip" : le texte est coupé au bord de sa boîte. */
+    _render(ctx: CanvasRenderingContext2D): void;
+    /**
+     * Bord gauche/droit : la largeur passe en fixe et prend la valeur tirée.
+     * Bord haut/bas : en hauteur contenu, pose le plancher `minSize.h` ; en hauteur fixe,
+     * change la hauteur.
+     */
+    handleEdgeResize(transform: any, x: number, y: number): boolean;
+    /** Coin : les deux règles des bords à la fois. */
+    handleCornerResize(transform: any, x: number, y: number): boolean;
+    private _isChild;
+    private _withAnchor;
+    private _resizeWidth;
+    private _resizeHeight;
+    /**
+     * Un texte étiré (scaleX/scaleY) est ramené à scale 1 : le scale passe dans la
+     * largeur et la police. Exact pour un scale uniforme ; un étirement non uniforme est
+     * perdu (les glyphes reprennent leurs proportions).
+     */
+    private _bakeLegacyScale;
+    /**
+     * Un texte sans `layout.sizing` (nouveau, ou document d'avant les modes de taille)
+     * reçoit un mode explicite :
+     * - nouveau texte, ou enfant de container (sa largeur était dictée par le container) :
+     *   largeur contenu ;
+     * - sinon : largeur contenu si la boîte épouse le texte sur une ligne, fixe sinon
+     *   (texte qui wrappe, ou boîte élargie pour un alignement).
+     */
+    private _ensureSizing;
     /**
      * overflow-wrap: break-word — pré-découpe les mots trop longs
      * en chunks et les marque pour que _wrapLine ne mette pas
@@ -156,79 +332,6 @@ declare class CustomTextbox extends Textbox {
  * - full: position ET contenu verrouillés
  */
 type LockMode$1 = "free" | "position" | "full";
-
-/**
- * Layout system types — Flexbox model backed by Yoga.
- *
- * Every participating Fabric object carries a single `layout: LayoutData`
- * property with two independent, optional blocks:
- *
- * - `container`: present when the object has children (is a parent)
- * - `child`: present when the object is inside another container
- *
- * Both can coexist — a nested container is both a parent and a child.
- *
- * Outside a container, objects are positioned absolutely by Fabric.
- * Inside a container, objects follow Flexbox rules (Yoga engine).
- */
-/**
- * Size mode per axis:
- * - "hug": container adapts to content
- * - "fixed": container keeps its size, content must adapt (shrink/clip)
- */
-type SizeMode = "hug" | "fixed";
-/** Cross-axis alignment for a single child (maps to Yoga alignSelf). */
-type AlignSelf = "auto" | "stretch" | "flex-start" | "flex-end" | "center";
-/** Main-axis distribution (maps to Yoga justifyContent). */
-type JustifyContent = "flex-start" | "flex-end" | "center" | "space-between" | "space-around";
-/** Cross-axis alignment for all children (maps to Yoga alignItems). */
-type AlignItems = "stretch" | "flex-start" | "flex-end" | "center";
-/** Flex direction (maps to Yoga flexDirection). */
-type FlexDirection = "column" | "row";
-/** "I am a parent" — present when the object has children. */
-interface ContainerData {
-    sizeMode: {
-        x: SizeMode;
-        y: SizeMode;
-    };
-    /** Minimum size set by manual resize. Container never shrinks below this. */
-    minSize?: {
-        w: number;
-        h: number;
-    };
-    /** Overflow behavior when content exceeds fixed size. */
-    overflow?: "clip" | "shrink";
-    /** Flex direction: column (vertical, default) or row (horizontal). */
-    flexDirection?: FlexDirection;
-    /** Gap between children in the main axis direction (pixels). */
-    gap?: number;
-    /** Padding between container edges and children. */
-    padding?: {
-        top: number;
-        right: number;
-        bottom: number;
-        left: number;
-    };
-    /** Cross-axis alignment for children (default: "flex-start"). */
-    alignItems?: AlignItems;
-    /** Main-axis distribution (default: "flex-start"). */
-    justifyContent?: JustifyContent;
-}
-/** "I am a child" — present when the object is inside a container. */
-interface ChildData {
-    parentId: string;
-    /** Override the container's alignItems for this child. */
-    alignSelf?: AlignSelf;
-    /** How much this child grows to fill remaining space (default: 0). */
-    flexGrow?: number;
-    /** Position in the flex flow (lower = earlier). Children without order go by insertion order. */
-    order?: number;
-}
-/** The `layout` property on any participating Fabric object. */
-interface LayoutData {
-    container?: ContainerData;
-    child?: ChildData;
-}
 
 /**
  * Un path du catalogue : géométrie normalisée 100x100, apparence d'auteur optionnelle.

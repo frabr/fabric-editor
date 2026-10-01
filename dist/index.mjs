@@ -263,7 +263,7 @@ import {
 } from "#fabric";
 
 // src/controls/CustomTextbox.ts
-import { Textbox, Point } from "#fabric";
+import { Textbox, Point, controlsUtils } from "#fabric";
 
 // src/shapes/controlsMixin.ts
 function installControlOptions(proto, controls) {
@@ -272,51 +272,262 @@ function installControlOptions(proto, controls) {
   };
 }
 
+// src/layout/types.ts
+function isContainer(l) {
+  return l.container != null;
+}
+function isChild(l) {
+  return l.child != null;
+}
+function isContainerLayout(l) {
+  return isContainer(l);
+}
+function isChildLayout(l) {
+  return isChild(l);
+}
+var MIN_PAD = 8;
+var MIN_FONT_SIZE = 8;
+var DEFAULT_SIZING = { x: "hug", y: "hug" };
+function sizingOf(obj) {
+  return obj.get("layout")?.sizing ?? DEFAULT_SIZING;
+}
+
+// src/layout/text-box.ts
+function resolveTextBox(input, measure) {
+  const { sizing, overflow, constraint } = input;
+  if (constraint === "as-stored") {
+    const m2 = measure.wrapped(input.width, input.fontSize);
+    return { width: m2.width, height: Math.max(m2.height, input.height), fontSize: input.fontSize, overflowing: false };
+  }
+  const maxW = constraint.maxW ?? Infinity;
+  const width = constraint.w ?? (sizing.x === "hug" ? Math.min(measure.natural(input.fontSizeIntent), maxW) : Math.min(input.width, maxW));
+  const boundH = constraint.h ?? (sizing.y === "fixed" ? input.height : void 0);
+  let fontSize = input.fontSizeIntent;
+  let m = measure.wrapped(width, fontSize);
+  if (boundH != null && m.height > boundH + 0.5 && overflow === "shrink") {
+    fontSize = largestFittingFont(width, boundH, input.fontSizeIntent, measure);
+    m = measure.wrapped(width, fontSize);
+  }
+  const minH = sizing.y === "hug" ? sizing.minSize?.h ?? 0 : 0;
+  const height = boundH ?? Math.max(m.height, minH);
+  return { width: m.width, height, fontSize, overflowing: m.height > height + 0.5 };
+}
+function largestFittingFont(width, boundH, intent, measure) {
+  let lo = Math.min(MIN_FONT_SIZE, intent);
+  let hi = intent;
+  while (hi - lo > 0.5) {
+    const mid = (lo + hi) / 2;
+    if (measure.wrapped(width, mid).height <= boundH + 0.5) lo = mid;
+    else hi = mid;
+  }
+  return Math.floor(lo * 2) / 2;
+}
+
 // src/controls/CustomTextbox.ts
+var { changeObjectWidth, changeObjectHeight } = controlsUtils;
+var UNBOUNDED_WIDTH = 1e4;
 var CustomTextbox = class extends Textbox {
   constructor(text, options) {
-    const hasExplicitWidth = options?.width != null;
     super(text, options);
-    /**
-     * Auto-width mode : le textbox s'étend horizontalement au contenu.
-     * Désactivé automatiquement quand l'utilisateur resize manuellement.
-     */
-    this._autoWidth = true;
-    /** Dernière width calculée par le mode auto-width. */
-    this._autoWidthValue = 0;
-    if (hasExplicitWidth) {
-      this._autoWidth = false;
-    } else {
-      this.initDimensions();
-    }
-    this.on("resizing", () => {
-      this._autoWidth = false;
-    });
-    this.on("scaling", () => {
-      this._autoWidth = false;
-    });
+    if (typeof options?.fontSizeIntent === "number") this.fontSizeIntent = options.fontSizeIntent;
+    this.fontSizeIntent ?? (this.fontSizeIntent = this.fontSize);
+    this._bakeLegacyScale();
+    this._ensureSizing(options?.width != null);
+    this.initDimensions();
+    this.setCoords();
+  }
+  // ── Sizing ─────────────────────────────────────────────────────────
+  /**
+   * Sans bloc `sizing` (le temps de la construction, avant _ensureSizing), la boîte
+   * stockée fait foi : largeur fixe.
+   */
+  get sizing() {
+    return this.get("layout")?.sizing ?? { x: "fixed", y: "hug" };
+  }
+  get textOverflow() {
+    return this.get("layout")?.overflow ?? "shrink";
+  }
+  /** Remplace le bloc `sizing` (nouvel objet `layout`, jamais muté en place). */
+  setSizing(sizing) {
+    const layout = this.get("layout") ?? {};
+    this.set("layout", { ...layout, sizing });
+    this.initDimensions();
+    this.setCoords();
+  }
+  setTextOverflow(overflow) {
+    const layout = this.get("layout") ?? {};
+    this.set("layout", { ...layout, overflow });
+    this.initDimensions();
+    this.setCoords();
+  }
+  /** Largeur naturelle à la police courante : la plus longue ligne, sans wrap. */
+  naturalWidth() {
+    this.width = UNBOUNDED_WIDTH;
+    super.initDimensions();
+    return Math.ceil(this.calcTextWidth());
   }
   /**
-   * Override initDimensions : en mode auto-width, on calcule les dimensions
-   * avec une width infinie puis on ajuste width au résultat.
-   * Si la width entrante diffère de notre dernière valeur auto, c'est un
-   * resize externe → on désactive auto-width.
+   * Une passe de layout : calcule la boîte sous la contrainte du container et la
+   * retient. `null` : le texte a quitté son container.
    */
+  layoutWith(constraint) {
+    if (constraint) this._constraint = constraint;
+    else delete this._constraint;
+    this.initDimensions();
+  }
+  /** Recalcul (Fabric, ou layoutWith) sous la contrainte courante. */
   initDimensions() {
-    if (this._autoWidth) {
-      if (this._autoWidthValue > 0 && Math.abs(this.width - this._autoWidthValue) > 2) {
-        this._autoWidth = false;
-        super.initDimensions();
-        return;
-      }
-      this.width = 1e4;
+    if (!this.initialized) {
       super.initDimensions();
-      const natural = Math.ceil(this.calcTextWidth());
-      this.width = natural;
-      this._autoWidthValue = natural;
-    } else {
-      super.initDimensions();
+      return;
     }
+    if (!this._isChild()) this._applyBox({});
+    else this._applyBox(this._constraint ?? "as-stored");
+  }
+  _applyBox(constraint) {
+    const box = resolveTextBox({
+      sizing: this.sizing,
+      overflow: this.textOverflow,
+      constraint,
+      fontSizeIntent: this.fontSizeIntent ?? this.fontSize,
+      fontSize: this.fontSize,
+      width: this.width,
+      height: this.height
+    }, this._measure());
+    this.fontSize = box.fontSize;
+    this._wrapAt(box.width);
+    this.height = box.height;
+    this._overflowing = box.overflowing;
+    this.objectCaching = !(box.overflowing && this.textOverflow === "visible");
+  }
+  /**
+   * Mesure via Fabric (mute l'objet ; _applyBox pose l'état final ensuite). Méthode et
+   * non champ : Fabric mesure déjà pendant le super() du constructeur.
+   */
+  _measure() {
+    return {
+      wrapped: (width, fontSize) => {
+        this.fontSize = fontSize;
+        this._wrapAt(width);
+        return { width: this.width, height: this.height };
+      },
+      natural: (fontSize) => {
+        this.fontSize = fontSize;
+        return this.naturalWidth();
+      }
+    };
+  }
+  /** Wrap à `width` puis mesure (la largeur peut grandir au mot le plus long). */
+  _wrapAt(width) {
+    this.width = width;
+    super.initDimensions();
+  }
+  /** Toute nouvelle `fontSize` posée via set() est une intention de l'utilisateur. */
+  _set(key, value) {
+    if (key === "fontSize") this.fontSizeIntent = value;
+    return super._set(key, value);
+  }
+  /** overflow "clip" : le texte est coupé au bord de sa boîte. */
+  _render(ctx) {
+    if (!this._overflowing || this.textOverflow !== "clip") {
+      super._render(ctx);
+      return;
+    }
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(-this.width / 2, -this.height / 2, this.width, this.height);
+    ctx.clip();
+    super._render(ctx);
+    ctx.restore();
+  }
+  // ── Poignées ───────────────────────────────────────────────────────
+  /**
+   * Bord gauche/droit : la largeur passe en fixe et prend la valeur tirée.
+   * Bord haut/bas : en hauteur contenu, pose le plancher `minSize.h` ; en hauteur fixe,
+   * change la hauteur.
+   */
+  handleEdgeResize(transform, x, y) {
+    const corner = transform.corner;
+    return corner === "ml" || corner === "mr" ? this._withAnchor(transform, () => this._resizeWidth(transform, x, y)) : this._withAnchor(transform, () => this._resizeHeight(transform, x, y));
+  }
+  /** Coin : les deux règles des bords à la fois. */
+  handleCornerResize(transform, x, y) {
+    return this._withAnchor(transform, () => {
+      const changedW = this._resizeWidth(transform, x, y);
+      const changedH = this._resizeHeight(transform, x, y);
+      return changedW || changedH;
+    });
+  }
+  _isChild() {
+    return this.get("layout")?.child != null;
+  }
+  _withAnchor(transform, resize) {
+    const { originX, originY } = transform;
+    const anchor = this.getPositionByOrigin(originX, originY);
+    const changed = resize();
+    this.setPositionByOrigin(anchor, originX, originY);
+    return changed;
+  }
+  _resizeWidth(transform, x, y) {
+    if (this.sizing.x !== "fixed") {
+      const layout = this.get("layout") ?? {};
+      this.set("layout", { ...layout, sizing: { ...this.sizing, x: "fixed" } });
+    }
+    return changeObjectWidth({}, transform, x, y);
+  }
+  _resizeHeight(transform, x, y) {
+    const before = this.height;
+    if (!changeObjectHeight({}, transform, x, y)) return false;
+    const sizing = this.sizing;
+    if (sizing.y === "hug") {
+      const minSize = { w: sizing.minSize?.w ?? 0, h: this.height };
+      const layout = this.get("layout") ?? {};
+      this.set("layout", { ...layout, sizing: { ...sizing, minSize } });
+    }
+    this.initDimensions();
+    return before !== this.height;
+  }
+  // ── Données legacy ─────────────────────────────────────────────────
+  /**
+   * Un texte étiré (scaleX/scaleY) est ramené à scale 1 : le scale passe dans la
+   * largeur et la police. Exact pour un scale uniforme ; un étirement non uniforme est
+   * perdu (les glyphes reprennent leurs proportions).
+   */
+  _bakeLegacyScale() {
+    const sx = this.scaleX || 1;
+    const sy = this.scaleY || 1;
+    if (sx === 1 && sy === 1) return;
+    this.width *= sx;
+    this.height *= sy;
+    this.fontSize *= sy;
+    this.fontSizeIntent *= sy;
+    for (const line of Object.values(this.styles ?? {})) {
+      for (const style of Object.values(line)) {
+        if (style.fontSize) style.fontSize *= sy;
+      }
+    }
+    this.scaleX = 1;
+    this.scaleY = 1;
+  }
+  /**
+   * Un texte sans `layout.sizing` (nouveau, ou document d'avant les modes de taille)
+   * reçoit un mode explicite :
+   * - nouveau texte, ou enfant de container (sa largeur était dictée par le container) :
+   *   largeur contenu ;
+   * - sinon : largeur contenu si la boîte épouse le texte sur une ligne, fixe sinon
+   *   (texte qui wrappe, ou boîte élargie pour un alignement).
+   */
+  _ensureSizing(hasExplicitWidth) {
+    const layout = this.get("layout");
+    if (layout?.sizing) return;
+    let x = "hug";
+    if (hasExplicitWidth && !layout?.child) {
+      const width = this.width;
+      const natural = this.naturalWidth();
+      this.width = width;
+      if (Math.abs(width - natural) > 2) x = "fixed";
+    }
+    this.set("layout", { ...layout ?? {}, sizing: { x, y: "hug" } });
   }
   /**
    * overflow-wrap: break-word — pré-découpe les mots trop longs
@@ -481,7 +692,22 @@ var CustomTextbox = class extends Textbox {
     };
   }
 };
+CustomTextbox.customProperties = ["fontSizeIntent"];
 installControlOptions(CustomTextbox.prototype, ["color", "font"]);
+
+// src/layout/legacy.ts
+function migrateLegacyLayout(layout) {
+  const legacy = layout?.container;
+  if (!layout || !legacy) return null;
+  if (!("sizeMode" in legacy) && !("minSize" in legacy) && !("overflow" in legacy)) return null;
+  const { sizeMode, minSize, overflow: _overflow, ...container } = legacy;
+  const sizing = layout.sizing ?? {
+    x: sizeMode?.x ?? "hug",
+    y: sizeMode?.y ?? "hug",
+    ...minSize ? { minSize } : {}
+  };
+  return { ...layout, sizing, container };
+}
 
 // src/shapes/factories.ts
 import {
@@ -631,7 +857,7 @@ function removeCropControls(obj) {
 }
 
 // src/shapes/FabRect.ts
-import { Rect, classRegistry, controlsUtils } from "#fabric";
+import { Rect, classRegistry, controlsUtils as controlsUtils2 } from "#fabric";
 
 // src/shapes/lockMixin.ts
 var LOCK_MODES = ["free", "position", "full"];
@@ -668,7 +894,7 @@ function installLockMethods(proto) {
 }
 
 // src/shapes/FabRect.ts
-var { changeObjectWidth, changeObjectHeight } = controlsUtils;
+var { changeObjectWidth: changeObjectWidth2, changeObjectHeight: changeObjectHeight2 } = controlsUtils2;
 var FabRect = class extends Rect {
   constructor(options) {
     super({
@@ -692,8 +918,8 @@ var FabRect = class extends Rect {
   handleCornerResize(transform, x, y) {
     const { originX, originY } = transform;
     const anchor = this.getPositionByOrigin(originX, originY);
-    const changedW = changeObjectWidth({}, transform, x, y);
-    const changedH = changeObjectHeight({}, transform, x, y);
+    const changedW = changeObjectWidth2({}, transform, x, y);
+    const changedH = changeObjectHeight2({}, transform, x, y);
     this.setPositionByOrigin(anchor, originX, originY);
     return changedW || changedH;
   }
@@ -702,7 +928,7 @@ var FabRect = class extends Rect {
     const { originX, originY } = transform;
     const anchor = this.getPositionByOrigin(originX, originY);
     const corner = transform.corner;
-    const changed = corner === "ml" || corner === "mr" ? changeObjectWidth({}, transform, x, y) : changeObjectHeight({}, transform, x, y);
+    const changed = corner === "ml" || corner === "mr" ? changeObjectWidth2({}, transform, x, y) : changeObjectHeight2({}, transform, x, y);
     this.setPositionByOrigin(anchor, originX, originY);
     return changed;
   }
@@ -717,7 +943,7 @@ installControlOptions(FabRect.prototype, ["outline", "clip", "color", "corner_ra
 classRegistry.setClass(FabRect, "Rect");
 
 // src/shapes/FabCircle.ts
-import { Circle, classRegistry as classRegistry2, controlsUtils as controlsUtils2 } from "#fabric";
+import { Circle, classRegistry as classRegistry2, controlsUtils as controlsUtils3 } from "#fabric";
 
 // src/shapes/resizeUtils.ts
 function isTransformCentered(transform) {
@@ -725,7 +951,7 @@ function isTransformCentered(transform) {
 }
 
 // src/shapes/FabCircle.ts
-var { changeObjectWidth: changeObjectWidth2, changeObjectHeight: changeObjectHeight2, getLocalPoint } = controlsUtils2;
+var { changeObjectWidth: changeObjectWidth3, changeObjectHeight: changeObjectHeight3, getLocalPoint } = controlsUtils3;
 var FabCircle = class extends Circle {
   constructor(options) {
     super({
@@ -763,7 +989,7 @@ var FabCircle = class extends Circle {
     const { originX, originY } = transform;
     const anchor = this.getPositionByOrigin(originX, originY);
     const corner = transform.corner;
-    const changed = corner === "ml" || corner === "mr" ? changeObjectWidth2({}, transform, x, y) : changeObjectHeight2({}, transform, x, y);
+    const changed = corner === "ml" || corner === "mr" ? changeObjectWidth3({}, transform, x, y) : changeObjectHeight3({}, transform, x, y);
     this.scaleX *= this.width / this._naturalSize;
     this.scaleY *= this.height / this._naturalSize;
     this.width = this._naturalSize;
@@ -786,8 +1012,8 @@ installControlOptions(FabCircle.prototype, ["outline", "clip", "color"]);
 classRegistry2.setClass(FabCircle, "Circle");
 
 // src/shapes/FabPath.ts
-import { Path, classRegistry as classRegistry3, controlsUtils as controlsUtils3 } from "#fabric";
-var { changeObjectWidth: changeObjectWidth3, changeObjectHeight: changeObjectHeight3, getLocalPoint: getLocalPoint2 } = controlsUtils3;
+import { Path, classRegistry as classRegistry3, controlsUtils as controlsUtils4 } from "#fabric";
+var { changeObjectWidth: changeObjectWidth4, changeObjectHeight: changeObjectHeight4, getLocalPoint: getLocalPoint2 } = controlsUtils4;
 var DEFAULT_SIZE = 300;
 var _FabPath = class _FabPath extends Path {
   constructor(path, options) {
@@ -822,7 +1048,7 @@ var _FabPath = class _FabPath extends Path {
     const { originX, originY } = transform;
     const anchor = this.getPositionByOrigin(originX, originY);
     const corner = transform.corner;
-    const changed = corner === "ml" || corner === "mr" ? changeObjectWidth3({}, transform, x, y) : changeObjectHeight3({}, transform, x, y);
+    const changed = corner === "ml" || corner === "mr" ? changeObjectWidth4({}, transform, x, y) : changeObjectHeight4({}, transform, x, y);
     this.scaleX *= this.width / this._naturalW;
     this.scaleY *= this.height / this._naturalH;
     this.width = this._naturalW;
@@ -1099,6 +1325,18 @@ function hasExceededOffset(current, origin, offsetX, offsetY, margin) {
   const dx = current.x - origin.x;
   const dy = current.y - origin.y;
   return offsetX > 0 && dx < -(offsetX + margin) || offsetX < 0 && dx > -offsetX + margin || offsetY > 0 && dy < -(offsetY + margin) || offsetY < 0 && dy > -offsetY + margin;
+}
+function detachChild(obj) {
+  const layout = obj.get?.("layout");
+  if (layout?.child) {
+    const { child: _child, ...rest } = layout;
+    obj.set("layout", Object.keys(rest).length ? rest : void 0);
+  }
+  if (isTextObject(obj)) obj.layoutWith(null);
+}
+function cloneLayout(obj) {
+  const layout = obj.get?.("layout");
+  return layout ? JSON.parse(JSON.stringify(layout)) : void 0;
 }
 function syncCoords(container, children) {
   container.setCoords();
@@ -2092,6 +2330,8 @@ var LayerManager = class {
         console.warn(`Type de calque inconnu: ${layer.type}`);
         return null;
     }
+    const migrated = obj && migrateLegacyLayout(obj.get("layout"));
+    if (obj && migrated) obj.set("layout", migrated);
     if (obj && layer.lockMode) {
       const mode = layer.lockMode;
       if ("applyLockMode" in obj && typeof obj.applyLockMode === "function") {
@@ -3483,10 +3723,13 @@ import { Point as Point2, Rect as Rect5 } from "#fabric";
 
 // src/layout/yoga-engine.ts
 var yoga = null;
+var yogaConfig = null;
 async function initYoga() {
   if (yoga) return;
   const { loadYoga } = await import("yoga-layout/load");
   yoga = await loadYoga();
+  yogaConfig = yoga.Config.create();
+  yogaConfig.setPointScaleFactor(0);
 }
 function isYogaReady() {
   return yoga !== null;
@@ -3495,14 +3738,14 @@ function getYoga() {
   if (!yoga) throw new Error("Yoga not initialized. Call initYoga() first.");
   return yoga;
 }
-function yogaLayout(children, containerLeft, containerTop, containerW, containerH, cd) {
+function yogaLayout(children, containerLeft, containerTop, containerW, containerH, cd, sizing) {
   if (children.length === 0) return { w: 0, h: 0 };
   const Y = getYoga();
-  const modeX = cd.sizeMode.x;
-  const modeY = cd.sizeMode.y;
+  const modeX = sizing.x;
+  const modeY = sizing.y;
   const direction = cd.flexDirection ?? "column";
   const isColumn = direction === "column";
-  const root = Y.Node.create();
+  const root = Y.Node.create(yogaConfig);
   root.setFlexDirection(
     isColumn ? Y.FLEX_DIRECTION_COLUMN : Y.FLEX_DIRECTION_ROW
   );
@@ -3535,6 +3778,9 @@ function yogaLayout(children, containerLeft, containerTop, containerW, container
   } else {
     root.setHeightAuto();
   }
+  const minSize = sizing.minSize;
+  if (minSize && modeX === "hug" && minSize.w > 0) root.setMinWidth(minSize.w);
+  if (minSize && modeY === "hug" && minSize.h > 0) root.setMinHeight(minSize.h);
   for (const { obj } of children) {
     if (isTextObject(obj)) continue;
     const ext = obj;
@@ -3550,7 +3796,7 @@ function yogaLayout(children, containerLeft, containerTop, containerW, container
   const yogaNodes = [];
   for (let i = 0; i < children.length; i++) {
     const { obj, cl } = children[i];
-    const node = Y.Node.create();
+    const node = Y.Node.create(yogaConfig);
     const alignSelf = cl.alignSelf ?? "auto";
     if (alignSelf !== "auto") {
       node.setAlignSelf(mapAlignSelf(alignSelf, Y));
@@ -3600,6 +3846,9 @@ function yogaLayout(children, containerLeft, containerTop, containerW, container
     const computedW = node.getComputedWidth();
     const computedH = node.getComputedHeight();
     const currentSize = scaledSize(obj);
+    if (isTextObject(obj) && (Math.abs(computedW - currentSize.w) > 0.5 || Math.abs(computedH - currentSize.h) > 0.5)) {
+      obj.layoutWith({ w: computedW, h: computedH });
+    }
     if (!isTextObject(obj)) {
       const scaleX = obj.scaleX || 1;
       const scaleY = obj.scaleY || 1;
@@ -3673,53 +3922,59 @@ function mapJustifyContent(justify, Y) {
 }
 function setupTextMeasure(node, obj, Y) {
   const t = obj;
-  node.setMeasureFunc(
-    (width, widthMode, _height, _heightMode) => {
-      if (widthMode === Y.MEASURE_MODE_EXACTLY) {
-        t.set({ width });
-        t.initDimensions();
-      } else if (widthMode === Y.MEASURE_MODE_AT_MOST) {
-        t.set({ width: 1e4 });
-        t.initDimensions();
-        const naturalW = Math.ceil(t.calcTextWidth());
-        t.set({ width: Math.min(naturalW, width) });
-        t.initDimensions();
-      } else {
-        t.set({ width: 1e4 });
-        t.initDimensions();
-        const naturalW = Math.ceil(t.calcTextWidth());
-        t.set({ width: naturalW });
-        t.initDimensions();
-      }
-      const { w, h } = scaledSize(obj);
-      return { width: w, height: h };
-    }
-  );
+  node.setMeasureFunc((width, widthMode) => {
+    if (widthMode === Y.MEASURE_MODE_EXACTLY) t.layoutWith({ w: width });
+    else if (widthMode === Y.MEASURE_MODE_AT_MOST) t.layoutWith({ maxW: width });
+    else t.layoutWith({});
+    const { w, h } = scaledSize(obj);
+    return { width: w, height: h };
+  });
 }
 
 // src/layout/resize-session.ts
 var ResizeSession = class {
   constructor(container, corner) {
+    /**
+     * Fixed widths of the text children at grab time: the container pushes them
+     * when it gets narrower, and they grow back if the user widens it again
+     * within the same drag. What remains at release is kept.
+     */
+    this.textWidths = /* @__PURE__ */ new Map();
     this.container = container;
     const layout = container.get("layout");
     this.containerData = layout.container;
     this.axes = cornerToAxes(corner);
+    const current = sizingOf(container);
+    this.sizing = this.axes.x && current.x === "hug" ? { ...current, x: "fixed" } : { ...current };
+    container.set("layout", { ...layout, sizing: this.sizing });
     const { w, h } = scaledSize(container);
     this.userW = w;
     this.userH = h;
+  }
+  restoreTextWidths(children) {
+    for (const { obj } of children) {
+      if (!isTextObject(obj) || sizingOf(obj).x !== "fixed") continue;
+      const grabbed = this.textWidths.get(obj);
+      if (grabbed == null) this.textWidths.set(obj, obj.width);
+      else if (obj.width !== grabbed) {
+        obj.layoutWith({});
+        obj.set({ width: grabbed });
+      }
+    }
   }
   /**
    * Called on each `object:resizing` frame.
    * Controls already set width/height directly (no scale involved).
    */
   handleResizing(objects) {
-    const { container, containerData, axes } = this;
-    const cd = containerData;
+    const { container, containerData: cd, sizing, axes } = this;
     const { w: currentW, h: currentH } = scaledSize(container);
     if (axes.x) this.userW = currentW;
     if (axes.y) this.userH = currentH;
     const children = sortChildrenByOrder(resolveContainerChildren(objects, container));
     if (children.length === 0) return;
+    this.restoreTextWidths(children);
+    const live = { x: sizing.x, y: sizing.y };
     const tl = topLeft(container);
     const { w: requiredW, h: requiredH } = yogaLayout(
       children,
@@ -3727,40 +3982,33 @@ var ResizeSession = class {
       tl.y,
       currentW,
       currentH,
-      cd
+      cd,
+      live
     );
-    const modeX = cd.sizeMode.x;
-    const modeY = cd.sizeMode.y;
-    let finalW;
-    if (modeX === "hug") {
-      finalW = axes.x ? Math.max(this.userW, requiredW) : requiredW;
-    } else {
-      finalW = currentW;
-    }
-    let finalH;
-    if (modeY === "hug") {
-      finalH = axes.y ? Math.max(this.userH, requiredH) : requiredH;
-    } else {
-      finalH = currentH;
-    }
+    const prevMinW = sizing.minSize?.w ?? 0;
+    const prevMinH = sizing.minSize?.h ?? 0;
+    const finalW = sizing.x === "hug" ? Math.max(axes.x ? this.userW : prevMinW, requiredW) : currentW;
+    const finalH = sizing.y === "hug" ? Math.max(axes.y ? this.userH : prevMinH, requiredH) : currentH;
     setShapeSize(container, finalW, finalH);
     const tl2 = topLeft(container);
-    yogaLayout(children, tl2.x, tl2.y, finalW, finalH, cd);
+    yogaLayout(children, tl2.x, tl2.y, finalW, finalH, cd, live);
     syncCoords(container, children);
   }
   /**
-   * Called on `object:modified`. Captures minSize from the user's intent.
+   * Called on `object:modified`. On a hug axis the user dragged, what they
+   * dragged becomes the floor — under the content it's harmless (the box is
+   * max(content, floor)).
    */
-  commit(objects) {
-    const { container, containerData } = this;
-    const modeX = containerData.sizeMode.x;
-    const modeY = containerData.sizeMode.y;
-    const { w: containerW, h: containerH } = scaledSize(container);
-    if (!containerData.minSize) containerData.minSize = { w: 0, h: 0 };
-    if (modeX === "hug") containerData.minSize.w = this.userW;
-    if (modeX === "fixed") containerData.minSize.w = containerW;
-    if (modeY === "hug") containerData.minSize.h = this.userH;
-    if (modeY === "fixed") containerData.minSize.h = containerH;
+  commit(_objects) {
+    const { container, sizing, axes } = this;
+    const dragsHugX = sizing.x === "hug" && axes.x;
+    const dragsHugY = sizing.y === "hug" && axes.y;
+    if (!dragsHugX && !dragsHugY) return;
+    const minSize = { w: sizing.minSize?.w ?? 0, h: sizing.minSize?.h ?? 0 };
+    if (dragsHugX) minSize.w = this.userW;
+    if (dragsHugY) minSize.h = this.userH;
+    const layout = container.get("layout");
+    container.set("layout", { ...layout, sizing: { ...sizing, minSize } });
   }
 };
 function resolveContainerChildren(objects, container) {
@@ -3836,21 +4084,18 @@ function relayoutSubContainers(children, allObjects) {
     if (subChildren.length === 0) continue;
     const tl = topLeft(obj);
     const { w, h } = scaledSize(obj);
-    yogaLayout(subChildren, tl.x, tl.y, w, h, childLayout.container);
+    yogaLayout(subChildren, tl.x, tl.y, w, h, childLayout.container, sizingOf(obj));
     syncCoords(obj, subChildren);
     relayoutSubContainers(subChildren, allObjects);
   }
 }
 function layoutContainer(container, cd, children) {
-  const modeX = cd.sizeMode.x;
-  const modeY = cd.sizeMode.y;
-  const minW = cd.minSize?.w ?? 0;
-  const minH = cd.minSize?.h ?? 0;
+  const sizing = sizingOf(container);
+  const minW = sizing.minSize?.w ?? 0;
+  const minH = sizing.minSize?.h ?? 0;
   const { w: visW, h: visH } = scaledSize(container);
-  const currentW = Math.max(visW, minW);
-  const currentH = Math.max(visH, minH);
-  const bothFixed = modeX === "fixed" && modeY === "fixed";
-  if (!bothFixed) restoreTextFontSizes(children);
+  const currentW = sizing.x === "hug" ? Math.max(visW, minW) : visW;
+  const currentH = sizing.y === "hug" ? Math.max(visH, minH) : visH;
   const tl = topLeft(container);
   const { w: requiredW, h: requiredH } = yogaLayout(
     children,
@@ -3858,77 +4103,18 @@ function layoutContainer(container, cd, children) {
     tl.y,
     currentW,
     currentH,
-    cd
+    cd,
+    sizing
   );
-  const finalW = modeX === "hug" ? Math.max(requiredW, minW) : currentW;
-  const finalH = modeY === "hug" ? Math.max(requiredH, minH) : currentH;
+  const finalW = sizing.x === "hug" ? Math.max(requiredW, minW) : currentW;
+  const finalH = sizing.y === "hug" ? Math.max(requiredH, minH) : currentH;
   setShapeSize(container, finalW, finalH);
-  if (bothFixed) {
-    shrinkOverflowingText(children, finalW, finalH, cd);
-  }
   if (finalW !== currentW || finalH !== currentH) {
     const tl2 = topLeft(container);
-    yogaLayout(children, tl2.x, tl2.y, finalW, finalH, cd);
+    yogaLayout(children, tl2.x, tl2.y, finalW, finalH, cd, sizing);
   }
   syncCoords(container, children);
 }
-function shrinkOverflowingText(children, containerW, containerH, cd) {
-  const pad = cd.padding ?? { top: 0, right: 0, bottom: 0, left: 0 };
-  const availW = containerW - pad.left - pad.right;
-  const availH = containerH - pad.top - pad.bottom;
-  for (const { obj } of children) {
-    if (!isTextObject(obj)) continue;
-    const { h: childH } = scaledSize(obj);
-    if (childH > availH) {
-      shrinkTextToFit(obj, availW, availH);
-    }
-  }
-}
-function restoreTextFontSizes(children) {
-  for (const { obj } of children) {
-    if (!isTextObject(obj)) continue;
-    const t = obj;
-    if (t._layoutOriginalFontSize == null) continue;
-    t.fontSize = t._layoutOriginalFontSize;
-    delete t._layoutOriginalFontSize;
-    t.initDimensions();
-  }
-}
-function shrinkTextToFit(obj, availW, availH) {
-  const t = obj;
-  const originalSize = t._layoutOriginalFontSize ?? t.fontSize;
-  t._layoutOriginalFontSize = originalSize;
-  t.fontSize = originalSize;
-  t.initDimensions();
-  const minFontSize = 8;
-  let fontSize = originalSize;
-  for (let i = 0; i < 20; i++) {
-    const { w: textW, h: textH } = scaledSize(obj);
-    if (textW <= availW && textH <= availH) break;
-    if (fontSize <= minFontSize) break;
-    const ratioW = availW / Math.max(textW, 1);
-    const ratioH = availH / Math.max(textH, 1);
-    fontSize = Math.max(minFontSize, Math.floor(fontSize * Math.min(ratioW, ratioH)));
-    t.fontSize = fontSize;
-    obj.set({ width: availW });
-    t.initDimensions();
-  }
-}
-
-// src/layout/types.ts
-function isContainer(l) {
-  return l.container != null;
-}
-function isChild(l) {
-  return l.child != null;
-}
-function isContainerLayout(l) {
-  return isContainer(l);
-}
-function isChildLayout(l) {
-  return isChild(l);
-}
-var MIN_PAD = 8;
 
 // src/layout/containerize-session.ts
 var EXIT_MARGIN = 5;
@@ -3998,46 +4184,28 @@ var ContainerizeSession = class _ContainerizeSession {
     bubbleUpLayout(this.shape, this.canvas.getObjects());
     return "anchored";
   }
-  /** Finalize the attach. Returns a cleanup function for the "changed" listener. */
+  /**
+   * Finalize the attach. Text edits relayout through the LayoutManager's
+   * canvas-wide `text:changed` listener — nothing to clean up here.
+   */
   commit() {
     const tTL = topLeft(this.text);
     this.text.set({ left: tTL.x, top: tTL.y, originX: "left", originY: "top" });
     this.text.setCoords();
     runLayout(this.canvas.getObjects());
     this.canvas.renderAll();
-    if (this._isReattach) {
-      return () => {
-      };
-    }
-    if (isTextObject(this.text)) {
-      const relayout = () => {
-        runLayout(this.canvas.getObjects());
-        this.canvas.renderAll();
-      };
-      this.text.on("changed", relayout);
-      return () => this.text.off("changed", relayout);
-    }
     return () => {
     };
   }
   /** Undo anchor: restore snapshot, reverse grab offset. */
   rollback() {
     if (this._isReattach) {
-      const layout = this.text.get?.("layout");
-      if (layout) {
-        delete layout.child;
-        if (!layout.container) {
-          this.text.set("layout", void 0);
-        } else {
-          this.text.set("layout", { ...layout });
-        }
-      }
+      detachChild(this.text);
       this.shape.set({
         width: this.snapshot.shape.width,
         height: this.snapshot.shape.height
       });
       this.shape.set("layout", this.snapshot.shape.layout ?? void 0);
-      this.text.off("changed");
       this.shape.setCoords();
       this.text.setCoords();
       this.canvas.renderAll();
@@ -4067,8 +4235,8 @@ var ContainerizeSession = class _ContainerizeSession {
       textAlign: this.snapshot.text.textAlign
     });
     this.text.set("layout", this.snapshot.text.layout ?? void 0);
+    if (isTextObject(this.text)) this.text.layoutWith(null);
     this.canvas.adjustGrabOffset(-this.clampDx, -this.clampDy);
-    this.text.off("changed");
     this.shape.setCoords();
     this.text.setCoords();
     this.canvas.renderAll();
@@ -4099,7 +4267,7 @@ function takeSnapshot(shape, text) {
       scaleY: shape.scaleY,
       stroke: shape.stroke,
       strokeWidth: shape.strokeWidth,
-      layout: shape.get?.("layout") ?? void 0
+      layout: cloneLayout(shape)
     },
     text: {
       left: text.left,
@@ -4110,7 +4278,7 @@ function takeSnapshot(shape, text) {
       scaleX: text.scaleX,
       scaleY: text.scaleY,
       textAlign: text.textAlign,
-      layout: text.get?.("layout") ?? void 0
+      layout: cloneLayout(text)
     }
   };
 }
@@ -4129,28 +4297,17 @@ function applyInitialLayout(shape, child) {
   const sTL = topLeft(shape);
   const cTL = topLeft(child);
   const { w: shapeW, h: shapeH } = scaledSize(shape);
-  const childW = child.width * (child.scaleX || 1);
   const padX = Math.max(MIN_PAD, Math.round(cTL.x - sTL.x));
   const padY = Math.max(MIN_PAD, Math.round(cTL.y - sTL.y));
-  let modeX = "hug";
-  if (isTextObject(child)) {
-    const naturalW = child.calcTextWidth ? Math.ceil(child.calcTextWidth()) : childW;
-    const textWraps = childW < naturalW - 2;
-    if (textWraps) modeX = "fixed";
-  }
   const containerId = shape.get?.("layerId");
   const shapeLayout = shape.get?.("layout") ?? {};
-  shapeLayout.container = {
-    sizeMode: { x: modeX, y: "hug" },
-    minSize: { w: shapeW, h: shapeH },
-    padding: { top: padY, right: padX, bottom: padY, left: padX }
-  };
-  shape.set("layout", { ...shapeLayout });
+  shape.set("layout", {
+    ...shapeLayout,
+    sizing: shapeLayout.sizing ?? { x: "hug", y: "hug", minSize: { w: shapeW, h: shapeH } },
+    container: { padding: { top: padY, right: padX, bottom: padY, left: padX } }
+  });
   const childLayout = child.get?.("layout") ?? {};
-  childLayout.child = {
-    parentId: containerId
-  };
-  child.set("layout", { ...childLayout });
+  child.set("layout", { ...childLayout, child: { parentId: containerId } });
 }
 function wrapContainerAroundChild(child, container) {
   const childLayout = child.get?.("layout");
@@ -4164,8 +4321,9 @@ function wrapContainerAroundChild(child, container) {
   const padTop = Math.max(MIN_PAD, Math.round(tTL.y - sTL.y));
   cd.padding = { top: padTop, right: padLeft, bottom: padTop, left: padLeft };
   container.set("layout", { ...containerLayout });
-  const minW = cd.minSize?.w ?? 0;
-  const minH = cd.minSize?.h ?? 0;
+  const sizing = sizingOf(container);
+  const minW = sizing.minSize?.w ?? 0;
+  const minH = sizing.minSize?.h ?? 0;
   const requiredW = padLeft + childW + padLeft;
   const requiredH = padTop + childH + padTop;
   setShapeSize(container, Math.max(requiredW, minW), Math.max(requiredH, minH));
@@ -4402,11 +4560,8 @@ var InsertChildSession = class _InsertChildSession {
   }
   commit() {
     const layout = this._container.get?.("layout");
-    const cd = layout.container;
     const { w, h } = scaledSize(this._container);
-    if (!cd.minSize) cd.minSize = { w: 0, h: 0 };
-    cd.minSize.w = w;
-    cd.minSize.h = h;
+    this._container.set("layout", { ...layout, sizing: { ...sizingOf(this._container), minSize: { w, h } } });
     const allChildren = resolveContainerChildren(this.canvas.getObjects(), this._container);
     const positionsBefore = /* @__PURE__ */ new Map();
     for (const { obj } of allChildren) {
@@ -4419,33 +4574,13 @@ var InsertChildSession = class _InsertChildSession {
       }
     }
     this.canvas.renderAll();
-    if (this._isReattach) {
-      return () => {
-      };
-    }
-    if (isTextObject(this.newChild)) {
-      const relayout = () => {
-        runLayout(this.canvas.getObjects());
-        this.canvas.renderAll();
-      };
-      this.newChild.on("changed", relayout);
-      return () => this.newChild.off("changed", relayout);
-    }
     return () => {
     };
   }
   rollback() {
     this._animator.cancelAll();
     if (this._isReattach) {
-      const layout = this.newChild.get?.("layout");
-      if (layout) {
-        delete layout.child;
-        if (!layout.container) {
-          this.newChild.set("layout", void 0);
-        } else {
-          this.newChild.set("layout", { ...layout });
-        }
-      }
+      detachChild(this.newChild);
       this._container.set("layout", this.snapshot.containerLayout ?? void 0);
       this._container.set({ left: this.snapshot.containerLeft, top: this.snapshot.containerTop });
       setShapeSize(this._container, this.snapshot.containerW, this.snapshot.containerH);
@@ -4464,6 +4599,7 @@ var InsertChildSession = class _InsertChildSession {
       this.canvas.renderAll();
       return;
     }
+    detachChild(this.newChild);
     this.newChild.set("layout", this.snapshot.childLayout ?? void 0);
     this.newChild.set({ left: this.snapshot.childLeft, top: this.snapshot.childTop });
     this.newChild.setCoords();
@@ -4634,13 +4770,14 @@ var InsertChildSession = class _InsertChildSession {
   previewLayout(allChildren) {
     const containerLayout = this._container.get?.("layout");
     const cd = containerLayout.container;
+    const sizing = sizingOf(this._container);
     const { w: currentW, h: currentH } = scaledSize(this._container);
-    const minW = cd.minSize?.w ?? 0;
-    const minH = cd.minSize?.h ?? 0;
+    const minW = sizing.minSize?.w ?? 0;
+    const minH = sizing.minSize?.h ?? 0;
     const containerTL = topLeft(this._container);
     const positionsBefore = this.captureChildPositions(allChildren);
-    const modeX = cd.sizeMode.x;
-    const modeY = cd.sizeMode.y;
+    const modeX = sizing.x;
+    const modeY = sizing.y;
     const measureW = modeX === "hug" ? minW : currentW;
     const measureH = modeY === "hug" ? minH : currentH;
     const { w: requiredW, h: requiredH } = yogaLayout(
@@ -4649,14 +4786,15 @@ var InsertChildSession = class _InsertChildSession {
       containerTL.y,
       measureW,
       measureH,
-      cd
+      cd,
+      sizing
     );
     const finalW = modeX === "hug" ? Math.max(requiredW, minW) : currentW;
     const finalH = modeY === "hug" ? Math.max(requiredH, minH) : currentH;
     if (finalW !== currentW || finalH !== currentH) {
       setShapeSize(this._container, finalW, finalH);
       const tl2 = topLeft(this._container);
-      yogaLayout(allChildren, tl2.x, tl2.y, finalW, finalH, cd);
+      yogaLayout(allChildren, tl2.x, tl2.y, finalW, finalH, cd, sizing);
     }
     syncCoords(this._container, allChildren);
     this._lastDraggedYogaPos = { left: this.newChild.left, top: this.newChild.top };
@@ -4686,10 +4824,6 @@ var InsertChildSession = class _InsertChildSession {
     return map;
   }
 };
-function cloneLayout(obj) {
-  const layout = obj.get?.("layout");
-  return layout ? JSON.parse(JSON.stringify(layout)) : void 0;
-}
 
 // src/LayoutManager.ts
 var HOVER_DELAY_MS = 700;
@@ -4702,6 +4836,7 @@ var LayoutManager2 = class {
     this.onMovingBound = (e) => this.onMoving(e);
     this.onModifiedBound = (e) => this.onModified(e);
     this.onResizingBound = (e) => this.onResizing(e);
+    this.onTextChangedBound = (e) => this.onTextChanged(e);
     this.canvas = canvas;
     this.callbacks = callbacks;
     this.guides = new CanvasGuides(canvas, guideColor);
@@ -4717,22 +4852,33 @@ var LayoutManager2 = class {
     runLayout(this.canvas.getObjects());
     this.canvas.renderAll();
   }
-  /** Update layout mode on the currently selected container. */
+  /**
+   * Set the size mode of a container or a text:
+   * - "hug": width and height follow the content
+   * - "hug-y": fixed width (texts wrap), height follows the content
+   * - "fixed": fixed width and height (texts apply their overflow)
+   * The floor set by the handles (`minSize`) is kept.
+   */
   setMode(obj, mode) {
     const layout = obj.get("layout");
-    if (!layout?.container) return;
-    switch (mode) {
-      case "hug":
-        layout.container.sizeMode = { x: "hug", y: "hug" };
-        break;
-      case "hug-y":
-        layout.container.sizeMode = { x: "fixed", y: "hug" };
-        break;
-      case "fixed":
-        layout.container.sizeMode = { x: "fixed", y: "fixed" };
-        break;
-    }
-    obj.set("layout", { ...layout });
+    const isText = isTextObject(obj);
+    if (!layout?.container && !isText) return;
+    const current = sizingOf(obj);
+    const axes = {
+      "hug": { x: "hug", y: "hug" },
+      "hug-y": { x: "fixed", y: "hug" },
+      "fixed": { x: "fixed", y: "fixed" }
+    };
+    const sizing = { ...current, ...axes[mode] };
+    if (isText) obj.setSizing(sizing);
+    else obj.set("layout", { ...layout, sizing });
+    this.relayout();
+    this.callbacks.onLayoutChanged?.();
+  }
+  /** What a text does when its box is smaller than its content. */
+  setOverflow(obj, overflow) {
+    if (!isTextObject(obj)) return;
+    obj.setTextOverflow(overflow);
     this.relayout();
     this.callbacks.onLayoutChanged?.();
   }
@@ -4862,11 +5008,13 @@ var LayoutManager2 = class {
     this.canvas.off("object:moving", this.onMovingBound);
     this.canvas.off("object:modified", this.onModifiedBound);
     this.canvas.off("object:resizing", this.onResizingBound);
+    this.canvas.off("text:changed", this.onTextChangedBound);
   }
   setupEventListeners() {
     this.canvas.on("object:moving", this.onMovingBound);
     this.canvas.on("object:modified", this.onModifiedBound);
     this.canvas.on("object:resizing", this.onResizingBound);
+    this.canvas.on("text:changed", this.onTextChangedBound);
   }
   // ── Canvas event handlers ─────────────────────────────────────────
   onMoving(e) {
@@ -4918,8 +5066,21 @@ var LayoutManager2 = class {
         break;
     }
   }
+  /** A text inside a container was edited → its ancestors adapt. */
+  onTextChanged(e) {
+    const layout = e.target?.get?.("layout");
+    if (!layout?.child) return;
+    this.relayout();
+    this.callbacks.onLayoutChanged?.();
+  }
   onModified(e) {
     const obj = e.target;
+    const childLayout = obj?.get?.("layout");
+    if (childLayout?.child && isTextObject(obj) && this.dtl.phase === "idle" && e.transform?.action === "resizing") {
+      this.relayout();
+      this.callbacks.onLayoutChanged?.();
+      return;
+    }
     const layout = obj.get?.("layout");
     if (layout?.container) {
       if (this.resizeSession) {
@@ -4950,6 +5111,16 @@ var LayoutManager2 = class {
   onResizing(e) {
     const target = e.target;
     const layout = target?.get?.("layout");
+    if (layout?.child && isTextObject(target)) {
+      const parent = this.findParentContainer(target);
+      const pLayout = parent?.get?.("layout");
+      if (parent && pLayout?.container) {
+        relayoutSingle(parent, pLayout.container, this.canvas.getObjects());
+        bubbleUpLayout(parent, this.canvas.getObjects());
+        this.canvas.renderAll();
+      }
+      return;
+    }
     if (!layout?.container) return;
     if (!this.resizeSession) {
       this.resizeSession = new ResizeSession(target, e.transform?.corner);
@@ -5258,7 +5429,7 @@ function applyClip(obj, shapeType) {
 }
 
 // src/ui/controls.ts
-import { FabricObject as FabricObject7, Control as Control2, controlsUtils as controlsUtils4 } from "#fabric";
+import { FabricObject as FabricObject7, Control as Control2, controlsUtils as controlsUtils5 } from "#fabric";
 function applyControlStyle(canvas, guideColor, resolveTarget) {
   const gc = guideColor;
   FabricObject7.ownDefaults.borderColor = gc;
@@ -5371,8 +5542,8 @@ function installControlHitAreas(canvas) {
     y: 0,
     offsetX: 30,
     offsetY: 0,
-    actionHandler: controlsUtils4.rotationWithSnapping,
-    cursorStyleHandler: controlsUtils4.rotationStyleHandler,
+    actionHandler: controlsUtils5.rotationWithSnapping,
+    cursorStyleHandler: controlsUtils5.rotationStyleHandler,
     withConnection: true,
     actionName: "rotate"
   });
@@ -6086,6 +6257,16 @@ var _FabricEditor = class _FabricEditor {
     const obj = this.selection.current;
     if (!obj || !isTextObject(obj) || !Number.isFinite(size) || size <= 0) return;
     obj.set({ fontSize: size });
+    this.layout.relayout();
+    this.canvas.requestRenderAll();
+  }
+  /**
+   * Justification de l'objet texte sélectionné, dans sa boîte.
+   */
+  setTextAlign(align) {
+    const obj = this.selection.current;
+    if (!obj || !isTextObject(obj)) return;
+    obj.set({ textAlign: align });
     this.layout.relayout();
     this.canvas.requestRenderAll();
   }
