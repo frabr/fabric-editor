@@ -10,9 +10,9 @@ import type { FabricObject } from "#fabric";
 import type { DesignCanvas } from "../DesignCanvas";
 import {
   type LayoutData,
-  type ChildData,
   type AttachSnapshot,
   MIN_PAD,
+  sizingOf,
 } from "./types";
 import {
   scaledSize,
@@ -22,6 +22,9 @@ import {
   hasExceededOffset,
   isTextObject,
   pointInObject,
+  detachChild,
+  cloneLayout,
+  type LayoutText,
 } from "./geometry";
 import { runLayout, relayoutSingle, bubbleUpLayout } from "./reconcile";
 
@@ -128,7 +131,10 @@ export class ContainerizeSession {
     return "anchored";
   }
 
-  /** Finalize the attach. Returns a cleanup function for the "changed" listener. */
+  /**
+   * Finalize the attach. Text edits relayout through the LayoutManager's
+   * canvas-wide `text:changed` listener — nothing to clean up here.
+   */
   commit(): () => void {
     const tTL = topLeft(this.text);
     this.text.set({ left: tTL.x, top: tTL.y, originX: "left", originY: "top" });
@@ -136,38 +142,13 @@ export class ContainerizeSession {
 
     runLayout(this.canvas.getObjects());
     this.canvas.renderAll();
-
-    // Reattach: listener already exists from the first attach
-    if (this._isReattach) {
-      return () => {};
-    }
-
-    // Only text objects fire "changed" (on content edit); shapes don't need it
-    if (isTextObject(this.text)) {
-      const relayout = () => {
-        runLayout(this.canvas.getObjects());
-        this.canvas.renderAll();
-      };
-      (this.text as any).on("changed", relayout);
-      return () => (this.text as any).off("changed", relayout);
-    }
-
     return () => {};
   }
 
   /** Undo anchor: restore snapshot, reverse grab offset. */
   rollback(): void {
     if (this._isReattach) {
-      // Detach: remove child block from layout
-      const layout = this.text.get?.("layout") as LayoutData | undefined;
-      if (layout) {
-        delete layout.child;
-        if (!layout.container) {
-          this.text.set("layout", undefined);
-        } else {
-          this.text.set("layout", { ...layout });
-        }
-      }
+      detachChild(this.text);
 
       // Restore container to snapshot (before the drag resized it)
       this.shape.set({
@@ -175,7 +156,6 @@ export class ContainerizeSession {
       });
       this.shape.set("layout", this.snapshot.shape.layout ?? undefined);
 
-      (this.text as any).off("changed");
       this.shape.setCoords();
       this.text.setCoords();
       this.canvas.renderAll();
@@ -199,10 +179,10 @@ export class ContainerizeSession {
       textAlign: this.snapshot.text.textAlign,
     } as any);
     this.text.set("layout", this.snapshot.text.layout ?? undefined);
+    if (isTextObject(this.text)) (this.text as unknown as LayoutText).layoutWith(null);
 
     this.canvas.adjustGrabOffset(-this.clampDx, -this.clampDy);
 
-    (this.text as any).off("changed");
     this.shape.setCoords();
     this.text.setCoords();
     this.canvas.renderAll();
@@ -229,7 +209,7 @@ function takeSnapshot(shape: FabricObject, text: FabricObject): AttachSnapshot {
       width: shape.width, height: shape.height,
       scaleX: shape.scaleX, scaleY: shape.scaleY,
       stroke: (shape as any).stroke, strokeWidth: (shape as any).strokeWidth,
-      layout: shape.get?.("layout") ?? undefined,
+      layout: cloneLayout(shape),
     },
     text: {
       left: text.left, top: text.top,
@@ -237,7 +217,7 @@ function takeSnapshot(shape: FabricObject, text: FabricObject): AttachSnapshot {
       width: text.width,
       scaleX: text.scaleX, scaleY: text.scaleY,
       textAlign: (text as any).textAlign,
-      layout: text.get?.("layout") ?? undefined,
+      layout: cloneLayout(text),
     },
   };
 }
@@ -265,37 +245,26 @@ function applyInitialLayout(shape: FabricObject, child: FabricObject): void {
   const sTL = topLeft(shape);
   const cTL = topLeft(child);
   const { w: shapeW, h: shapeH } = scaledSize(shape);
-  const childW = child.width * (child.scaleX || 1);
 
   const padX = Math.max(MIN_PAD, Math.round(cTL.x - sTL.x));
   const padY = Math.max(MIN_PAD, Math.round(cTL.y - sTL.y));
 
-  // Text: detect if already wrapping → fixed-x. Non-text: always hug.
-  let modeX: "fixed" | "hug" = "hug";
-  if (isTextObject(child)) {
-    const naturalW = (child as any).calcTextWidth
-      ? Math.ceil((child as any).calcTextWidth()) : childW;
-    const textWraps = childW < naturalW - 2;
-    if (textWraps) modeX = "fixed";
-  }
-
   const containerId = shape.get?.("layerId") as string;
 
-  // Add container block to shape (preserve existing child block if nested)
+  // Add container block to shape (preserve existing child block if nested).
+  // The container hugs its child — a text brings its own sizing (a wrapping
+  // text is fixed-width on its own), nothing to guess. The shape's current
+  // size is the floor.
   const shapeLayout = (shape.get?.("layout") as LayoutData) ?? {};
-  shapeLayout.container = {
-    sizeMode: { x: modeX, y: "hug" },
-    minSize: { w: shapeW, h: shapeH },
-    padding: { top: padY, right: padX, bottom: padY, left: padX },
-  };
-  shape.set("layout", { ...shapeLayout });
+  shape.set("layout", {
+    ...shapeLayout,
+    sizing: shapeLayout.sizing ?? { x: "hug", y: "hug", minSize: { w: shapeW, h: shapeH } },
+    container: { padding: { top: padY, right: padX, bottom: padY, left: padX } },
+  });
 
   // Add child block to child (preserve existing container block if it has children)
   const childLayout = (child.get?.("layout") as LayoutData) ?? {};
-  childLayout.child = {
-    parentId: containerId,
-  };
-  child.set("layout", { ...childLayout });
+  child.set("layout", { ...childLayout, child: { parentId: containerId } });
 }
 
 /** Resize container to wrap around its child, updating padding from current position. */
@@ -316,8 +285,9 @@ export function wrapContainerAroundChild(child: FabricObject, container: FabricO
   cd.padding = { top: padTop, right: padLeft, bottom: padTop, left: padLeft };
   container.set("layout", { ...containerLayout });
 
-  const minW = cd.minSize?.w ?? 0;
-  const minH = cd.minSize?.h ?? 0;
+  const sizing = sizingOf(container);
+  const minW = sizing.minSize?.w ?? 0;
+  const minH = sizing.minSize?.h ?? 0;
   const requiredW = padLeft + childW + padLeft;
   const requiredH = padTop + childH + padTop;
 

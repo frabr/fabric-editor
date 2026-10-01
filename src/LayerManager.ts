@@ -8,6 +8,8 @@ import {
 } from "#fabric";
 import type { DesignCanvas } from "./DesignCanvas";
 import { CustomTextbox } from "./controls/CustomTextbox";
+import { migrateLegacyLayout } from "./layout/legacy";
+import type { LayoutData } from "./layout/types";
 import { createShape as createShapeObject, createPathsShape, createImage } from "./shapes/factories";
 import { FabRect } from "./shapes/FabRect";
 import { FabCircle } from "./shapes/FabCircle";
@@ -517,6 +519,10 @@ export class LayerManager {
         console.warn(`Type de calque inconnu: ${layer.type}`);
         return null;
     }
+
+    // Données de layout d'avant layout.sizing
+    const migrated = obj && migrateLegacyLayout(obj.get("layout") as LayoutData | undefined);
+    if (obj && migrated) obj.set("layout", migrated);
 
     // Appliquer les propriétés de verrouillage si présentes
     if (obj && layer.lockMode) {

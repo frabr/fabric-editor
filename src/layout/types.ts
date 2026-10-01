@@ -2,12 +2,15 @@
  * Layout system types — Flexbox model backed by Yoga.
  *
  * Every participating Fabric object carries a single `layout: LayoutData`
- * property with two independent, optional blocks:
+ * property with independent, optional blocks:
  *
+ * - `sizing`: how the object sizes itself, per axis — shared by containers
+ *   and texts (a text's "content" is its text, a container's is its children)
  * - `container`: present when the object has children (is a parent)
  * - `child`: present when the object is inside another container
+ * - `overflow`: what a text does when its box is smaller than its content
  *
- * Both can coexist — a nested container is both a parent and a child.
+ * Container and child can coexist — a nested container is both.
  *
  * Outside a container, objects are positioned absolutely by Fabric.
  * Inside a container, objects follow Flexbox rules (Yoga engine).
@@ -15,10 +18,30 @@
 
 /**
  * Size mode per axis:
- * - "hug": container adapts to content
- * - "fixed": container keeps its size, content must adapt (shrink/clip)
+ * - "hug": the object adapts to its content (text, or children)
+ * - "fixed": the object keeps its size, content must adapt (wrap/shrink/clip)
  */
 export type SizeMode = "hug" | "fixed";
+
+/** "How I size myself" — on containers and texts. */
+export interface SizingData {
+  x: SizeMode;
+  y: SizeMode;
+  /**
+   * Floor set by the resize handles on a "hug" axis: the object is
+   * `max(content, minSize)`. Ignored on a "fixed" axis.
+   */
+  minSize?: { w: number; h: number };
+}
+
+/**
+ * What a text does when its box is smaller than its content (fixed height,
+ * or a height constrained by its container):
+ * - "shrink": font size goes down (to MIN_FONT_SIZE) until it fits
+ * - "clip": the text is cut at the box edge
+ * - "visible": the text overflows the box
+ */
+export type TextOverflow = "shrink" | "clip" | "visible";
 
 /** Cross-axis alignment for a single child (maps to Yoga alignSelf). */
 export type AlignSelf = "auto" | "stretch" | "flex-start" | "flex-end" | "center";
@@ -34,11 +57,6 @@ export type FlexDirection = "column" | "row";
 
 /** "I am a parent" — present when the object has children. */
 export interface ContainerData {
-  sizeMode: { x: SizeMode; y: SizeMode };
-  /** Minimum size set by manual resize. Container never shrinks below this. */
-  minSize?: { w: number; h: number };
-  /** Overflow behavior when content exceeds fixed size. */
-  overflow?: "clip" | "shrink";
   /** Flex direction: column (vertical, default) or row (horizontal). */
   flexDirection?: FlexDirection;
   /** Gap between children in the main axis direction (pixels). */
@@ -64,8 +82,11 @@ export interface ChildData {
 
 /** The `layout` property on any participating Fabric object. */
 export interface LayoutData {
+  sizing?: SizingData;
   container?: ContainerData;
   child?: ChildData;
+  /** Texts only (default "shrink"). */
+  overflow?: TextOverflow;
 }
 
 /** Resolved child: a Fabric object paired with its ChildData. */
@@ -116,6 +137,17 @@ export interface LayoutSession {
 
 /** Minimum padding between a child and its container edges. */
 export const MIN_PAD = 8;
+
+/** Floor of the "shrink" text overflow. */
+export const MIN_FONT_SIZE = 8;
+
+/** Sizing of an object without a `sizing` block (new containers, legacy data). */
+export const DEFAULT_SIZING: SizingData = { x: "hug", y: "hug" };
+
+/** The object's sizing — DEFAULT_SIZING when it declares none. */
+export function sizingOf(obj: { get(key: string): unknown }): SizingData {
+  return (obj.get("layout") as LayoutData | undefined)?.sizing ?? DEFAULT_SIZING;
+}
 
 // ── Attach types ────────────────────────────────────────────────────
 

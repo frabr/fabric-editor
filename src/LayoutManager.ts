@@ -1,13 +1,20 @@
 import { FabricObject, Point, Rect } from "#fabric";
 import type { DesignCanvas } from "./DesignCanvas";
 import { CanvasGuides } from "./ui/guides";
-import { runLayout, relayoutSingle } from "./layout/reconcile";
+import { runLayout, relayoutSingle, bubbleUpLayout } from "./layout/reconcile";
 import { ResizeSession } from "./layout/resize-session";
 import {
   type LayoutData,
   type LayoutSession,
+  type SizingData,
+  type TextOverflow,
+  sizingOf,
 } from "./layout/types";
 import { pointInObject, isTextObject } from "./layout/geometry";
+import type { CustomTextbox } from "./controls/CustomTextbox";
+
+/** Size presets of the UI (same vocabulary for containers and texts). */
+export type SizePreset = "hug" | "hug-y" | "fixed";
 import { resolveContainerChildren } from "./layout/resize-session";
 import { ContainerizeSession } from "./layout/containerize-session";
 import { InsertChildSession } from "./layout/insert-child-session";
@@ -147,23 +154,37 @@ export class LayoutManager {
     this.canvas.renderAll();
   }
 
-  /** Update layout mode on the currently selected container. */
-  setMode(obj: FabricObject, mode: "hug" | "hug-y" | "fixed"): void {
+  /**
+   * Set the size mode of a container or a text:
+   * - "hug": width and height follow the content
+   * - "hug-y": fixed width (texts wrap), height follows the content
+   * - "fixed": fixed width and height (texts apply their overflow)
+   * The floor set by the handles (`minSize`) is kept.
+   */
+  setMode(obj: FabricObject, mode: SizePreset): void {
     const layout = obj.get("layout") as LayoutData | undefined;
-    if (!layout?.container) return;
+    const isText = isTextObject(obj);
+    if (!layout?.container && !isText) return;
 
-    switch (mode) {
-      case "hug":
-        layout.container.sizeMode = { x: "hug", y: "hug" };
-        break;
-      case "hug-y":
-        layout.container.sizeMode = { x: "fixed", y: "hug" };
-        break;
-      case "fixed":
-        layout.container.sizeMode = { x: "fixed", y: "fixed" };
-        break;
-    }
-    obj.set("layout", { ...layout });
+    const current = sizingOf(obj);
+    const axes: Record<SizePreset, Pick<SizingData, "x" | "y">> = {
+      "hug": { x: "hug", y: "hug" },
+      "hug-y": { x: "fixed", y: "hug" },
+      "fixed": { x: "fixed", y: "fixed" },
+    };
+    const sizing: SizingData = { ...current, ...axes[mode] };
+
+    if (isText) (obj as unknown as CustomTextbox).setSizing(sizing);
+    else obj.set("layout", { ...layout, sizing });
+
+    this.relayout();
+    this.callbacks.onLayoutChanged?.();
+  }
+
+  /** What a text does when its box is smaller than its content. */
+  setOverflow(obj: FabricObject, overflow: TextOverflow): void {
+    if (!isTextObject(obj)) return;
+    (obj as unknown as CustomTextbox).setTextOverflow(overflow);
 
     this.relayout();
     this.callbacks.onLayoutChanged?.();
@@ -324,6 +345,7 @@ export class LayoutManager {
     this.canvas.off("object:moving", this.onMovingBound);
     this.canvas.off("object:modified", this.onModifiedBound);
     this.canvas.off("object:resizing", this.onResizingBound);
+    this.canvas.off("text:changed", this.onTextChangedBound);
   }
 
   // ── Event wiring ──────────────────────────────────────────────────
@@ -331,11 +353,13 @@ export class LayoutManager {
   private onMovingBound = (e: any) => this.onMoving(e);
   private onModifiedBound = (e: any) => this.onModified(e);
   private onResizingBound = (e: any) => this.onResizing(e);
+  private onTextChangedBound = (e: any) => this.onTextChanged(e);
 
   private setupEventListeners(): void {
     this.canvas.on("object:moving", this.onMovingBound);
     this.canvas.on("object:modified", this.onModifiedBound);
     this.canvas.on("object:resizing", this.onResizingBound);
+    this.canvas.on("text:changed", this.onTextChangedBound);
   }
 
   // ── Canvas event handlers ─────────────────────────────────────────
@@ -404,8 +428,25 @@ export class LayoutManager {
     }
   }
 
+  /** A text inside a container was edited → its ancestors adapt. */
+  private onTextChanged(e: any): void {
+    const layout = e.target?.get?.("layout") as LayoutData | undefined;
+    if (!layout?.child) return;
+    this.relayout();
+    this.callbacks.onLayoutChanged?.();
+  }
+
   private onModified(e: any): void {
     const obj = e.target;
+
+    // Text child resized → its container settles (outside any drag session)
+    const childLayout = obj?.get?.("layout") as LayoutData | undefined;
+    if (childLayout?.child && isTextObject(obj) && this.dtl.phase === "idle" &&
+        e.transform?.action === "resizing") {
+      this.relayout();
+      this.callbacks.onLayoutChanged?.();
+      return;
+    }
 
     // Container modified → commit resize session if active, then relayout
     const layout = obj.get?.("layout") as LayoutData | undefined;
@@ -443,6 +484,19 @@ export class LayoutManager {
   private onResizing(e: any): void {
     const target = e.target;
     const layout = target?.get?.("layout") as LayoutData | undefined;
+
+    // Text child resized live → its container chain follows
+    if (layout?.child && isTextObject(target)) {
+      const parent = this.findParentContainer(target);
+      const pLayout = parent?.get?.("layout") as LayoutData | undefined;
+      if (parent && pLayout?.container) {
+        relayoutSingle(parent, pLayout.container, this.canvas.getObjects());
+        bubbleUpLayout(parent, this.canvas.getObjects());
+        this.canvas.renderAll();
+      }
+      return;
+    }
+
     if (!layout?.container) return;
 
     // Create session on first resizing frame

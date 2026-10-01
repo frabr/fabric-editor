@@ -11,23 +11,35 @@
  * - justifyContent: from ContainerData (default FlexStart)
  * - gap: from ContainerData (uniform spacing between children)
  * - Per-child alignSelf, flexGrow, flexShrink
- * - Text nodes use setMeasureFunc() for intrinsic sizing
+ * - Text nodes use setMeasureFunc() for intrinsic sizing: the text measures
+ *   itself under the width Yoga offers, then receives the box Yoga computed
+ *   (see CustomTextbox.layoutWith) — its own sizing and overflow do the rest
  */
-import type { FabricObject, FabricText } from "#fabric";
-import type { ResolvedChild, SizeMode, ContainerData } from "./types";
-import { scaledSize, isTextObject } from "./geometry";
+import type { FabricObject } from "#fabric";
+import type { ResolvedChild, ContainerData, SizingData } from "./types";
+import { scaledSize, isTextObject, type LayoutText } from "./geometry";
 
 // ── Yoga singleton ─────────────────────────────────────────────────
 
 type Yoga = Awaited<ReturnType<typeof import("yoga-layout/load").loadYoga>>;
 type YogaNode = ReturnType<Yoga["Node"]["create"]>;
+type YogaConfig = ReturnType<Yoga["Config"]["create"]>;
 
 let yoga: Yoga | null = null;
+
+/**
+ * No pixel rounding: a text measured at 68.3px must come back at 68.3px, or
+ * the rounded size would read as a box imposed by the container (and lock the
+ * text against its own resize handles).
+ */
+let yogaConfig: YogaConfig | null = null;
 
 export async function initYoga(): Promise<void> {
   if (yoga) return;
   const { loadYoga } = await import("yoga-layout/load");
   yoga = await loadYoga();
+  yogaConfig = yoga.Config.create();
+  yogaConfig.setPointScaleFactor(0);
 }
 
 export function isYogaReady(): boolean {
@@ -56,17 +68,18 @@ export function yogaLayout(
   containerW: number,
   containerH: number,
   cd: ContainerData,
+  sizing: SizingData,
 ): { w: number; h: number } {
   if (children.length === 0) return { w: 0, h: 0 };
 
   const Y = getYoga();
-  const modeX = cd.sizeMode.x;
-  const modeY = cd.sizeMode.y;
+  const modeX = sizing.x;
+  const modeY = sizing.y;
   const direction = cd.flexDirection ?? "column";
   const isColumn = direction === "column";
 
   // ── Build root node (container) ──────────────────────────────
-  const root = Y.Node.create();
+  const root = Y.Node.create(yogaConfig!);
 
   root.setFlexDirection(
     isColumn ? Y.FLEX_DIRECTION_COLUMN : Y.FLEX_DIRECTION_ROW,
@@ -112,6 +125,12 @@ export function yogaLayout(
     root.setHeightAuto();
   }
 
+  // Hug floor (set by the resize handles): Yoga must know it, so that children
+  // align (center, flex-end) inside the real box, not inside the content box.
+  const minSize = sizing.minSize;
+  if (minSize && modeX === "hug" && minSize.w > 0) root.setMinWidth(minSize.w);
+  if (minSize && modeY === "hug" && minSize.h > 0) root.setMinHeight(minSize.h);
+
   // ── Restore intrinsic sizes ──────────────────────────────────
   // Children that were shrunk in a previous pass need their original
   // size restored so Yoga can measure the true space requirement.
@@ -134,7 +153,7 @@ export function yogaLayout(
 
   for (let i = 0; i < children.length; i++) {
     const { obj, cl } = children[i];
-    const node = Y.Node.create();
+    const node = Y.Node.create(yogaConfig!);
 
     // alignSelf
     const alignSelf = cl.alignSelf ?? "auto";
@@ -208,6 +227,13 @@ export function yogaLayout(
     const computedW = node.getComputedWidth();
     const computedH = node.getComputedHeight();
     const currentSize = scaledSize(obj);
+
+    // Text: Yoga may have stretched, grown or shrunk the measured box — the text
+    // takes it (wrap, min height, autofit happen inside the text).
+    if (isTextObject(obj) &&
+        (Math.abs(computedW - currentSize.w) > 0.5 || Math.abs(computedH - currentSize.h) > 0.5)) {
+      (obj as unknown as LayoutText).layoutWith({ w: computedW, h: computedH });
+    }
 
     if (!isTextObject(obj)) {
       const scaleX = obj.scaleX || 1;
@@ -286,32 +312,16 @@ function mapJustifyContent(justify: string, Y: Yoga): number {
 // ── Text measure function ──────────────────────────────────────────
 
 function setupTextMeasure(node: YogaNode, obj: FabricObject, Y: Yoga): void {
-  const t = obj as unknown as FabricText;
+  const t = obj as unknown as LayoutText;
 
-  node.setMeasureFunc(
-    (width: number, widthMode: number, _height: number, _heightMode: number) => {
-      if (widthMode === Y.MEASURE_MODE_EXACTLY) {
-        // Fixed width — wrap text to this width
-        t.set({ width } as any);
-        t.initDimensions();
-      } else if (widthMode === Y.MEASURE_MODE_AT_MOST) {
-        // Max width — use natural width clamped to max
-        t.set({ width: 10000 } as any);
-        t.initDimensions();
-        const naturalW = Math.ceil((t as any).calcTextWidth());
-        t.set({ width: Math.min(naturalW, width) } as any);
-        t.initDimensions();
-      } else {
-        // Undefined — use natural width
-        t.set({ width: 10000 } as any);
-        t.initDimensions();
-        const naturalW = Math.ceil((t as any).calcTextWidth());
-        t.set({ width: naturalW } as any);
-        t.initDimensions();
-      }
+  node.setMeasureFunc((width: number, widthMode: number) => {
+    // Exactly: the container imposes the width (stretch, row flex). At most: the
+    // text's own sizing decides, wrapping at the available width. Undefined: free.
+    if (widthMode === Y.MEASURE_MODE_EXACTLY) t.layoutWith({ w: width });
+    else if (widthMode === Y.MEASURE_MODE_AT_MOST) t.layoutWith({ maxW: width });
+    else t.layoutWith({});
 
-      const { w, h } = scaledSize(obj);
-      return { width: w, height: h };
-    },
-  );
+    const { w, h } = scaledSize(obj);
+    return { width: w, height: h };
+  });
 }

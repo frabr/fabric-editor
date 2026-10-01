@@ -90,7 +90,7 @@ export { addCropControls, removeCropControls, CustomTextbox } from "./controls";
 // Layout
 export { runLayout } from "./layout";
 export { ResizeSession } from "./layout";
-export type { LayoutData, ContainerData, ChildData, ContainerLayout, ChildLayout, SizeMode, AlignSelf, AlignItems, JustifyContent, FlexDirection, AttachSnapshot, LayoutSession } from "./layout";
+export type { LayoutData, SizingData, TextOverflow, ContainerData, ChildData, ContainerLayout, ChildLayout, SizeMode, AlignSelf, AlignItems, JustifyContent, FlexDirection, AttachSnapshot, LayoutSession } from "./layout";
 export { isContainer, isChild, isContainerLayout, isChildLayout, MIN_PAD } from "./layout";
 export { scaledSize, topLeft, pointInObject, clampTopLeft, hasExceededOffset } from "./layout";
 export { ContainerizeSession, InsertChildSession, wrapContainerAroundChild } from "./layout";
@@ -120,6 +120,6 @@ export type {
 
 export type { HistoryState, HistoryCallbacks } from "./HistoryManager";
 export type { SnappingConfig, ResizeSnapResult } from "./SnappingManager";
-export type { LayoutManagerCallbacks } from "./LayoutManager";
+export type { LayoutManagerCallbacks, SizePreset } from "./LayoutManager";
 export { pendingBindings, hasPendingBindings, lockBoundText, setTextContent, drawBindingBadge } from "./bindings";
 export type { Bindings, BindingSpec } from "./bindings";
