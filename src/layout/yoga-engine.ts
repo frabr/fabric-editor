@@ -167,8 +167,9 @@ export function yogaLayout(
       node.setFlexGrow(flexGrow);
     }
 
-    // flexShrink: allow children to compress when container is too small
-    node.setFlexShrink(1);
+    // flexShrink: only a text absorbs a lack of room (it wraps, or autofits);
+    // shapes, images and nested containers keep their size and overflow
+    node.setFlexShrink(isTextObject(obj) ? 1 : 0);
 
     // Size: text uses measure func, others use explicit size
     if (isTextObject(obj)) {

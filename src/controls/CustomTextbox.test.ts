@@ -186,6 +186,20 @@ describe("Texte dans un container", () => {
     expect(c.height).toBeCloseTo(t.height + 20, 0);
   });
 
+  it("place insuffisante en ligne : la forme garde sa taille, seul le texte cède (il wrappe)", () => {
+    const c = container("c", 300, 50, {
+      sizing: { x: "fixed", y: "hug" },
+      container: { padding: PAD, flexDirection: "row", gap: 10 },
+    });
+    const shape = new FabRect({ width: 150, height: 40, originX: "left", originY: "top" });
+    shape.set({ layerId: "s", layout: { child: { parentId: "c", order: 0 } } } as any);
+    const t = text(LONG, { layout: { child: { parentId: "c", order: 1 } } });
+    runLayout([c, shape, t]);
+    expect(shape.width).toBe(150);
+    expect(t.width).toBeLessThanOrEqual(300 - 20 - 150 - 10 + 0.5);
+    expect(t.textLines.length).toBeGreaterThan(1);
+  });
+
   it("container fixe × fixe : deux textes se partagent la place et se réduisent chacun", () => {
     const c = container("c", 220, 120, {
       sizing: { x: "fixed", y: "fixed" },
