@@ -105,6 +105,15 @@ export class CustomTextbox extends Textbox {
   }
 
   /**
+   * Largeur minimale du texte : son mot le plus long (le min-content de CSS). Le
+   * découpage des mots trop longs (break-word) n'est qu'un repli, pas un minimum.
+   */
+  minContentWidth(): number {
+    const { lines } = this._splitTextIntoLines(this.text);
+    return Math.ceil(super.getGraphemeDataForRender(lines).largestWordWidth);
+  }
+
+  /**
    * Une passe de layout : calcule la boîte sous la contrainte du container et la
    * retient. `null` : le texte a quitté son container.
    */

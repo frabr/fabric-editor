@@ -41,6 +41,7 @@ export class ResizeSession {
   private containerData: ContainerData;
   private sizing: SizingData;
   private axes: ResizeAxes;
+  private corner?: string;
 
   /** User-intended size — only updated on axes the user controls. */
   private userW: number;
@@ -53,11 +54,15 @@ export class ResizeSession {
    */
   private textWidths = new Map<FabricObject, number>();
 
+  /** Smallest box the content fits in (computed at grab): the handles stop there. */
+  private minContent: { w: number; h: number } | null = null;
+
   constructor(container: FabricObject, corner?: string) {
     this.container = container;
     const layout = container.get("layout") as LayoutData;
     this.containerData = layout.container!;
     this.axes = cornerToAxes(corner);
+    this.corner = corner;
 
     // Touching the width fixes it, for the whole interaction
     const current = sizingOf(container);
@@ -67,6 +72,19 @@ export class ResizeSession {
     const { w, h } = scaledSize(container);
     this.userW = w;
     this.userH = h;
+  }
+
+  /**
+   * Resize keeping the edge opposite to the dragged handle in place — when the
+   * content stops the handle, the grabbed edge stops, not the other one.
+   */
+  private setSizeKeepingAnchor(w: number, h: number): void {
+    const { container, corner } = this;
+    const originX = corner?.includes("l") ? "right" : corner?.includes("r") ? "left" : "center";
+    const originY = corner?.includes("t") ? "bottom" : corner?.includes("b") ? "top" : "center";
+    const anchor = container.getPositionByOrigin(originX, originY);
+    setShapeSize(container, w, h);
+    container.setPositionByOrigin(anchor, originX, originY);
   }
 
   private restoreTextWidths(children: ResolvedChild[]): void {
@@ -99,6 +117,7 @@ export class ResizeSession {
     const children = sortChildrenByOrder(resolveContainerChildren(objects, container));
     if (children.length === 0) return;
     this.restoreTextWidths(children);
+    this.minContent ??= minContentSize(children, cd);
 
     // Live, the floor is what the user drags — not the previous minSize
     const live: SizingData = { x: sizing.x, y: sizing.y };
@@ -113,14 +132,17 @@ export class ResizeSession {
     const prevMinH = sizing.minSize?.h ?? 0;
     const finalW = sizing.x === "hug"
       ? Math.max(axes.x ? this.userW : prevMinW, requiredW)
-      : currentW;
+      : Math.max(currentW, this.minContent.w);
     const finalH = sizing.y === "hug"
       ? Math.max(axes.y ? this.userH : prevMinH, requiredH)
-      : currentH;
+      : Math.max(currentH, this.minContent.h);
 
-    setShapeSize(container, finalW, finalH);
+    this.setSizeKeepingAnchor(finalW, finalH);
+    // Place the children inside the box being dragged, not inside the content
+    // box: the hug floor is this frame's size (alignment center / end needs it)
+    const placed: SizingData = { ...live, minSize: { w: finalW, h: finalH } };
     const tl2 = topLeft(container);
-    yogaLayout(children, tl2.x, tl2.y, finalW, finalH, cd, live);
+    yogaLayout(children, tl2.x, tl2.y, finalW, finalH, cd, placed);
     syncCoords(container, children);
   }
 
@@ -142,6 +164,27 @@ export class ResizeSession {
     const layout = container.get("layout") as LayoutData;
     container.set("layout", { ...layout, sizing: { ...sizing, minSize } });
   }
+}
+
+/**
+ * Smallest container box its children fit in, without squeezing anything:
+ * padding, gaps, rigid children at their size, texts at their longest word
+ * (they can wrap) and at no height (they can autofit or clip).
+ */
+function minContentSize(children: ResolvedChild[], cd: ContainerData): { w: number; h: number } {
+  const pad = cd.padding ?? { top: 0, right: 0, bottom: 0, left: 0 };
+  const gaps = (cd.gap ?? 0) * Math.max(0, children.length - 1);
+  const sizes = children.map(({ obj }) => isTextObject(obj)
+    ? { w: (obj as unknown as LayoutText).minContentWidth(), h: 0 }
+    : scaledSize(obj));
+  const sum = (key: "w" | "h") => sizes.reduce((total, s) => total + s[key], 0);
+  const max = (key: "w" | "h") => Math.max(0, ...sizes.map((s) => s[key]));
+
+  const row = cd.flexDirection === "row";
+  return {
+    w: pad.left + pad.right + (row ? sum("w") + gaps : max("w")),
+    h: pad.top + pad.bottom + (row ? max("h") : sum("h") + gaps),
+  };
 }
 
 // ── Shared helpers (used by sessions and reconcile) ─────────────────

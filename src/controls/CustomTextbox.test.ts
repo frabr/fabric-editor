@@ -329,3 +329,63 @@ describe("CustomTextbox — poignées", () => {
     expect(Math.abs(t.height - 200)).toBeLessThanOrEqual(1);
   });
 });
+
+describe("ResizeSession — le contenu arrête la poignée", () => {
+  function rect(id: string, w: number, order: number): FabRect {
+    const r = new FabRect({ width: w, height: 40, originX: "left", originY: "top" });
+    r.set({ layerId: id, layout: { child: { parentId: "c", order } } } as any);
+    return r;
+  }
+  const row = (w: number) => container("c", w, 80, {
+    sizing: { x: "fixed", y: "hug" },
+    container: { padding: PAD, flexDirection: "row", gap: 10 },
+  });
+
+  it("en ligne : jamais plus étroit que marges (2 × 10) + éléments (2 × 100) + gap (10)", () => {
+    const c = row(400);
+    const objects = [c, rect("a", 100, 0), rect("b", 100, 1)];
+    runLayout(objects);
+    const session = new ResizeSession(c, "mr");
+    c.set({ width: 100 });
+    session.handleResizing(objects);
+    expect(c.width).toBe(230);
+  });
+
+  it("un texte compte pour son mot le plus long (il peut wrapper)", () => {
+    const c = row(600);
+    const t = text("court motextrêmementlong", { layout: { child: { parentId: "c", order: 1 } } });
+    const objects = [c, rect("a", 100, 0), t];
+    runLayout(objects);
+    const session = new ResizeSession(c, "mr");
+    c.set({ width: 100 });
+    session.handleResizing(objects);
+    expect(c.width).toBe(20 + 100 + 10 + t.minContentWidth());
+    expect(t.minContentWidth()).toBeLessThan(t.naturalWidth());
+  });
+
+  it("bord gauche arrêté : c'est lui qui s'arrête, le bord droit ne bouge pas", () => {
+    const c = row(400);
+    const objects = [c, rect("a", 100, 0), rect("b", 100, 1)];
+    runLayout(objects);
+    const session = new ResizeSession(c, "ml");
+    c.set({ width: 100, left: 300 });
+    session.handleResizing(objects);
+    expect(c.width).toBe(230);
+    expect(c.left + c.width).toBe(400);
+  });
+
+  it("pendant le drag, les enfants sont alignés dans la boîte étirée (pas dans celle du contenu)", () => {
+    const c = container("c", 300, 80, {
+      sizing: { x: "fixed", y: "hug" },
+      container: { padding: PAD, flexDirection: "row", gap: 10, alignItems: "center" },
+    });
+    const objects = [c, rect("a", 100, 0), rect("b", 100, 1)];
+    runLayout(objects);
+    const session = new ResizeSession(c, "mb");
+    c.set({ height: 200 });
+    session.handleResizing(objects);
+    expect(c.height).toBe(200);
+    // centré dans 200 : (200 - 40) / 2, au trait de 1px près (sans le correctif : 10)
+    expect(Math.abs(objects[1].top - 80)).toBeLessThanOrEqual(1);
+  });
+});

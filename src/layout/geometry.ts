@@ -45,6 +45,8 @@ const TEXT_TYPES = ["i-text", "textbox"];
 
 /** The layout-facing surface of a text object (implemented by CustomTextbox). */
 export interface LayoutText {
+  /** Narrowest the text can get: its longest word. */
+  minContentWidth(): number;
   /** A layout pass: the container's constraint (null: the text left its container). */
   layoutWith(constraint: { maxW?: number; w?: number; h?: number } | null): void;
 }
