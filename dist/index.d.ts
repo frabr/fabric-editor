@@ -1172,11 +1172,10 @@ declare class SelectionManager {
     set onModified(callback: ((obj: FabricObject | null) => void) | undefined);
     /**
      * Given a Fabric target (the object under the cursor), return the object
-     * that should actually be highlighted / selected.
-     *
-     * - If the target is a layout child and we are NOT inside its group,
-     *   redirect to the parent container.
-     * - Otherwise return the target as-is.
+     * that should actually be hovered / selected / dragged: a layout child
+     * outside the active group resolves to its container, up the chain (a
+     * grandchild resolves to the outermost container that isn't the active
+     * group's child).
      */
     resolveTarget(obj: FabricObject): FabricObject;
     /**
@@ -1215,13 +1214,35 @@ declare class SelectionManager {
      */
     private setupListeners;
     /**
-     * Intercept mouse:down to manage group-enter / group-exit logic.
-     *
-     * - Click on an already-selected container → enter the group
-     * - Click on an object outside the active group → exit the group
-     * - Click on empty canvas → exit the group
+     * Fabric picks the target of a press (and of hover) in searchPossibleTargets:
+     * redirecting there — not after the selection — makes a press on a child
+     * outside its group a press on its container, so that a click + drag moves
+     * the container right away instead of grabbing the child.
+     */
+    private redirectTargetSearch;
+    /** What was selected before this press — Fabric selects before firing mouse:down. */
+    private _selectedBeforePress;
+    private handleMouseDownBefore;
+    /**
+     * Group exit: a press outside the active group (or on empty canvas) leaves it.
+     * Entering is decided on release (see handleMouseUp), so that a drag on a
+     * selected container still moves it.
      */
     private handleMouseDown;
+    /**
+     * Group enter: a click (no drag) on a container that was already selected
+     * enters it and selects its child under the pointer.
+     */
+    private handleMouseUp;
+    /** Enter `container`'s group and select its topmost child under `point`. */
+    private enterGroup;
+    /**
+     * Double-click on a text inside a container: its two clicks entered the
+     * group and selected the text (the press targeted the container, so
+     * Fabric's own double-click editing didn't run) — edit it now, word under
+     * the pointer selected, like Fabric does.
+     */
+    private handleDoubleClick;
     /**
      * Gère la création/mise à jour de sélection
      * Les objets verrouillés sont exclus des sélections multiples

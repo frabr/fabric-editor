@@ -115,7 +115,7 @@ var init_PendingUploadsManager = __esm({
 });
 
 // src/FabricEditor.ts
-import { FabricObject as FabricObject8, FabricImage as FabricImage6, Point as Point3, Gradient, Shadow } from "#fabric";
+import { FabricObject as FabricObject8, FabricImage as FabricImage6, Point as Point4, Gradient, Shadow } from "#fabric";
 
 // src/DesignCanvas.ts
 import { Canvas } from "#fabric";
@@ -2406,7 +2406,7 @@ var LayerManager = class {
 };
 
 // src/SelectionManager.ts
-import { ActiveSelection } from "#fabric";
+import { ActiveSelection, Point as Point2 } from "#fabric";
 var SelectionManager = class {
   constructor(canvas) {
     this.canvas = canvas;
@@ -2419,6 +2419,8 @@ var SelectionManager = class {
      * children directly instead of redirecting to the container.
      */
     this._activeGroupId = null;
+    /** What was selected before this press — Fabric selects before firing mouse:down. */
+    this._selectedBeforePress = null;
     this.setupListeners();
   }
   /** The layerId of the container we're currently editing inside, or null. */
@@ -2486,20 +2488,20 @@ var SelectionManager = class {
   }
   /**
    * Given a Fabric target (the object under the cursor), return the object
-   * that should actually be highlighted / selected.
-   *
-   * - If the target is a layout child and we are NOT inside its group,
-   *   redirect to the parent container.
-   * - Otherwise return the target as-is.
+   * that should actually be hovered / selected / dragged: a layout child
+   * outside the active group resolves to its container, up the chain (a
+   * grandchild resolves to the outermost container that isn't the active
+   * group's child).
    */
   resolveTarget(obj) {
-    const layout = obj.get("layout");
-    if (!layout?.child) return obj;
-    if (this._activeGroupId === layout.child.parentId) return obj;
-    const parent = this.canvas.getObjects().find(
-      (o) => o.get("layerId") === layout.child.parentId
-    );
-    return parent ?? obj;
+    let current = obj;
+    for (; ; ) {
+      const parentId = current.get("layout")?.child?.parentId;
+      if (!parentId || parentId === this._activeGroupId) return current;
+      const parent = this.canvas.getObjects().find((o) => o.get("layerId") === parentId);
+      if (!parent) return current;
+      current = parent;
+    }
   }
   /**
    * Retourne les contrôles disponibles pour l'objet sélectionné
@@ -2564,7 +2566,11 @@ var SelectionManager = class {
    * Configure les écouteurs d'événements du canvas
    */
   setupListeners() {
+    this.redirectTargetSearch();
+    this.canvas.on("mouse:down:before", this.handleMouseDownBefore.bind(this));
     this.canvas.on("mouse:down", this.handleMouseDown.bind(this));
+    this.canvas.on("mouse:up", this.handleMouseUp.bind(this));
+    this.canvas.on("mouse:dblclick", this.handleDoubleClick.bind(this));
     this.canvas.on("selection:created", this.handleSelection.bind(this));
     this.canvas.on("selection:updated", this.handleSelection.bind(this));
     this.canvas.on("selection:cleared", this.handleDeselection.bind(this));
@@ -2574,39 +2580,75 @@ var SelectionManager = class {
     this.canvas.on("object:modified", this.handleModified.bind(this));
   }
   /**
-   * Intercept mouse:down to manage group-enter / group-exit logic.
-   *
-   * - Click on an already-selected container → enter the group
-   * - Click on an object outside the active group → exit the group
-   * - Click on empty canvas → exit the group
+   * Fabric picks the target of a press (and of hover) in searchPossibleTargets:
+   * redirecting there — not after the selection — makes a press on a child
+   * outside its group a press on its container, so that a click + drag moves
+   * the container right away instead of grabbing the child.
+   */
+  redirectTargetSearch() {
+    const fc = this.canvas.originalFabricCanvas;
+    const search = fc.searchPossibleTargets.bind(fc);
+    fc.searchPossibleTargets = (objects, pointer) => {
+      const info = search(objects, pointer);
+      if (info.target) {
+        const resolved = this.resolveTarget(info.target);
+        if (resolved !== info.target) {
+          info.target = resolved;
+          info.container = resolved;
+        }
+      }
+      return info;
+    };
+  }
+  handleMouseDownBefore() {
+    this._selectedBeforePress = this.current;
+  }
+  /**
+   * Group exit: a press outside the active group (or on empty canvas) leaves it.
+   * Entering is decided on release (see handleMouseUp), so that a drag on a
+   * selected container still moves it.
    */
   handleMouseDown(e) {
+    if (!this._activeGroupId) return;
     const target = e.target;
-    if (!target) {
-      this._activeGroupId = null;
-      return;
-    }
-    const targetLayout = target.get("layout");
-    if (this._activeGroupId) {
-      const isChildOfGroup = targetLayout?.child && targetLayout.child.parentId === this._activeGroupId;
-      const isTheContainer = target.get("layerId") === this._activeGroupId;
-      if (!isChildOfGroup && !isTheContainer) {
-        this._activeGroupId = null;
-      }
-      return;
-    }
-    const currentObj = this.current;
-    if (!currentObj) return;
-    const currentLayout = currentObj.get("layout");
-    if (!currentLayout?.container) return;
-    const currentId = currentObj.get("layerId");
-    if (target === currentObj) {
-      this._activeGroupId = currentId;
-      return;
-    }
-    if (targetLayout?.child && targetLayout.child.parentId === currentId) {
-      this._activeGroupId = currentId;
-    }
+    const isTheContainer = target?.get("layerId") === this._activeGroupId;
+    const isChildOfGroup = target?.get("layout")?.child?.parentId === this._activeGroupId;
+    if (!target || !isTheContainer && !isChildOfGroup) this._activeGroupId = null;
+  }
+  /**
+   * Group enter: a click (no drag) on a container that was already selected
+   * enters it and selects its child under the pointer.
+   */
+  handleMouseUp(e) {
+    const before = this._selectedBeforePress;
+    this._selectedBeforePress = null;
+    if (!e.isClick || !before || e.target !== before) return;
+    if (!before.get("layout")?.container) return;
+    this.enterGroup(before, this.canvas.getScenePoint(e.e));
+  }
+  /** Enter `container`'s group and select its topmost child under `point`. */
+  enterGroup(container, point) {
+    const id = container.get("layerId");
+    this._activeGroupId = id;
+    const child = this.canvas.getObjects().slice().reverse().find(
+      (o) => o.get("layout")?.child?.parentId === id && o.containsPoint(new Point2(point.x, point.y))
+    );
+    if (child) this.canvas.setActiveObject(child);
+    this.canvas.requestRenderAll();
+  }
+  /**
+   * Double-click on a text inside a container: its two clicks entered the
+   * group and selected the text (the press targeted the container, so
+   * Fabric's own double-click editing didn't run) — edit it now, word under
+   * the pointer selected, like Fabric does.
+   */
+  handleDoubleClick(e) {
+    const text = this.current;
+    if (!text || !isTextObject(text) || text.isEditing || text.editable === false) return;
+    if (text.get("layout")?.child?.parentId !== this._activeGroupId) return;
+    text.enterEditing(e.e);
+    text.selectWord(text.getSelectionStartFromPointer(e.e));
+    this.canvas.requestRenderAll();
   }
   /**
    * Gère la création/mise à jour de sélection
@@ -3719,7 +3761,7 @@ var SnappingManager = class {
 };
 
 // src/LayoutManager.ts
-import { Point as Point2, Rect as Rect5 } from "#fabric";
+import { Point as Point3, Rect as Rect5 } from "#fabric";
 
 // src/layout/yoga-engine.ts
 var yoga = null;
@@ -4951,7 +4993,7 @@ var LayoutManager2 = class {
    * The source's position is updated to follow the cursor.
    */
   tickExternalDrag(source, cursor) {
-    source.setPositionByOrigin(new Point2(cursor.x, cursor.y), "center", "center");
+    source.setPositionByOrigin(new Point3(cursor.x, cursor.y), "center", "center");
     source.setCoords();
     switch (this.dtl.phase) {
       case "anchored":
@@ -6407,7 +6449,7 @@ var _FabricEditor = class _FabricEditor {
    * Utilisé par DropHandler pour le drop d'images sur images ET sur formes.
    */
   findDropTargetAtPoint(x, y) {
-    const point = new Point3(x, y);
+    const point = new Point4(x, y);
     const objects = this.canvas.getObjects().slice().reverse();
     for (const obj of objects) {
       if (obj.get("layerId") === "originalImage") continue;
@@ -6517,7 +6559,7 @@ var PreviewCanvas = class extends StaticCanvas {
 };
 
 // src/DropHandler.ts
-import { FabricImage as FabricImage7, Point as Point4, Rect as Rect6 } from "#fabric";
+import { FabricImage as FabricImage7, Point as Point5, Rect as Rect6 } from "#fabric";
 var HIGHLIGHT_COLOR = "#3b82f6";
 var KIND_CAPABILITIES = {
   image: { layout: false, replaceTarget: true },
@@ -6681,7 +6723,7 @@ var DropHandler = class {
       if (!committed && object) {
         if (e) {
           const pointer = this.editor.canvas.getScenePoint(e);
-          object.setPositionByOrigin(new Point4(pointer.x, pointer.y), "center", "center");
+          object.setPositionByOrigin(new Point5(pointer.x, pointer.y), "center", "center");
           object.setCoords();
         }
         if (!this.editor.canvas.getObjects().includes(object)) {
@@ -6757,7 +6799,7 @@ var DropHandler = class {
         this.editor.layout.tickExternalDrag(object, pointer);
         return;
       }
-      object.setPositionByOrigin(new Point4(pointer.x, pointer.y), "center", "center");
+      object.setPositionByOrigin(new Point5(pointer.x, pointer.y), "center", "center");
       object.setCoords();
       this.editor.canvas.requestRenderAll();
     }
