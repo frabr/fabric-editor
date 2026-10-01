@@ -3986,7 +3986,7 @@ function yogaLayout(children, containerLeft, containerTop, containerW, container
     if (flexGrow > 0) {
       node.setFlexGrow(flexGrow);
     }
-    node.setFlexShrink(1);
+    node.setFlexShrink(isTextObject(obj) ? 1 : 0);
     if (isTextObject(obj)) {
       setupTextMeasure(node, obj, Y);
     } else {
@@ -4635,6 +4635,8 @@ var InsertChildSession = class _InsertChildSession {
     this._currentDirection = null;
     /** Sibling positions at anchor time — stable reference for gap calculation. */
     this._siblingAnchors = /* @__PURE__ */ new Map();
+    /** Size of the dragged child when grabbed — Yoga may squeeze it in later frames. */
+    this._newChildAnchorSize = { w: 0, h: 0 };
     /** Last Yoga-computed position of the dragged child (not the cursor position). */
     this._lastDraggedYogaPos = null;
     /** Last computed order — for hysteresis. */
@@ -4642,6 +4644,7 @@ var InsertChildSession = class _InsertChildSession {
     this.canvas = canvas;
     this._container = container;
     this.newChild = newChild;
+    this._newChildAnchorSize = scaledSize(newChild);
     this._isReattach = false;
     this._animator = new LayoutAnimator(canvas);
     const { w: cw, h: ch } = scaledSize(container);
@@ -4693,6 +4696,7 @@ var InsertChildSession = class _InsertChildSession {
     session.canvas = canvas;
     session._container = container;
     session.newChild = child;
+    session._newChildAnchorSize = scaledSize(child);
     session._isReattach = true;
     session._currentDirection = null;
     session._lastOrder = null;
@@ -4821,7 +4825,7 @@ var InsertChildSession = class _InsertChildSession {
       const dirIsColumn = direction === "column";
       const insertOrder = this.computeInsertOrder(cursor, otherChildren, dirIsColumn);
       const gap = this.computeGap(cursor, otherChildren, insertOrder, dirIsColumn);
-      cd.gap = gap;
+      cd.gap = Math.min(gap, this.freeMainSpace(otherChildren, dirIsColumn));
       this._container.set("layout", { ...containerLayout });
       const layout = this.newChild.get?.("layout");
       if (layout?.child) {
@@ -4912,6 +4916,26 @@ var InsertChildSession = class _InsertChildSession {
     }
     this._lastOrder = slots[0].order;
     return slots[0].order;
+  }
+  /**
+   * Room the gap may take on the main axis: unlimited when the container hugs
+   * it (it grows), else the inner size minus the children's sizes when grabbed
+   * — the gap stops when they reach the edge instead of squeezing them.
+   */
+  freeMainSpace(existingChildren, isColumn) {
+    const sizing = sizingOf(this._container);
+    if ((isColumn ? sizing.y : sizing.x) === "hug") return Infinity;
+    const cd = (this._container.get?.("layout")).container;
+    const pad = cd.padding ?? { top: 0, right: 0, bottom: 0, left: 0 };
+    const { w, h } = scaledSize(this._container);
+    const inner = isColumn ? h - pad.top - pad.bottom : w - pad.left - pad.right;
+    const main = (size) => isColumn ? size.h : size.w;
+    let used = main(this._newChildAnchorSize);
+    for (const { obj } of existingChildren) {
+      const anchor = this._siblingAnchors.get(obj);
+      used += main(anchor ?? scaledSize(obj));
+    }
+    return Math.max(0, Math.floor(inner - used));
   }
   /**
    * Compute the gap between children from the cursor's distance to the

@@ -608,6 +608,8 @@ declare class InsertChildSession implements LayoutSession {
     private _animator;
     /** Sibling positions at anchor time — stable reference for gap calculation. */
     private _siblingAnchors;
+    /** Size of the dragged child when grabbed — Yoga may squeeze it in later frames. */
+    private _newChildAnchorSize;
     /** Last Yoga-computed position of the dragged child (not the cursor position). */
     private _lastDraggedYogaPos;
     constructor(canvas: DesignCanvas, container: FabricObject, newChild: FabricObject, cursor: {
@@ -656,6 +658,12 @@ declare class InsertChildSession implements LayoutSession {
      * Uses anchored sibling positions to avoid feedback loops with Yoga.
      */
     private computeInsertOrder;
+    /**
+     * Room the gap may take on the main axis: unlimited when the container hugs
+     * it (it grows), else the inner size minus the children's sizes when grabbed
+     * — the gap stops when they reach the edge instead of squeezing them.
+     */
+    private freeMainSpace;
     /**
      * Compute the gap between children from the cursor's distance to the
      * nearest neighbor in the main axis. The gap is the space between the
