@@ -1,18 +1,44 @@
-import { Textbox, Point } from "#fabric";
+import { Textbox, Point, controlsUtils } from "#fabric";
 import { installControlOptions } from "../shapes/controlsMixin";
+import { type LayoutData, type SizingData, type TextOverflow } from "../layout/types";
+import { resolveTextBox, type TextConstraint, type TextMeasure } from "../layout/text-box";
+
+const { changeObjectWidth, changeObjectHeight } = controlsUtils;
+
+/** Largeur de mesure « sans contrainte » (une ligne par paragraphe). */
+const UNBOUNDED_WIDTH = 10000;
 
 /**
- * Textbox personnalisé qui :
- * 1. Place le textarea caché à l'intérieur du canvas container (pour le focus dans les modales)
- * 2. Force sa position à (0, 0) pour éviter les problèmes de layout/scroll
+ * Textbox de l'éditeur : un objet de layout comme les autres.
  *
- * Hérite de Textbox (et non IText) pour le line-wrapping natif
- * quand une width fixe est définie (mode layout "largeur fixe").
+ * Il porte les mêmes modes de taille que les containers (`layout.sizing`), son
+ * « contenu » étant son texte :
+ * - largeur `hug` : une ligne, la boîte suit le texte ; `fixed` : wrap à la largeur ;
+ *   dans les deux cas, jamais plus large que la place que donne le container (le
+ *   container pousse la largeur fixe, qui reste acquise) ;
+ * - hauteur `hug` : la boîte suit le texte, avec un plancher `minSize.h` posé par les
+ *   poignées ; `fixed` : la boîte garde sa hauteur et `layout.overflow` décide
+ *   (réduire la police, couper, déborder).
  *
- * Nécessaire car les modales (dialog) avec showModal() créent un
- * "focus trap" qui empêche le focus d'aller sur des éléments
- * en dehors du dialog. En plaçant le textarea dans le canvas
- * container (qui est dans le dialog), il peut recevoir le focus.
+ * La boîte est calculée par `resolveTextBox` (layout/text-box.ts) ; le texte ne fait
+ * que fournir la mesure et appliquer le résultat.
+ *
+ * Contrainte du container : un seul écrivain, le moteur de layout (`layoutWith`, à
+ * chaque passe). Fabric recalcule aussi le texte de lui-même, hors de toute passe et
+ * sans événement pour relancer le layout (sortie d'édition, rendu après un changement
+ * de styles) : ce recalcul reprend la dernière contrainte reçue. Un enfant jamais mis
+ * en page (document tout juste chargé) s'affiche tel que sauvegardé ; un texte hors
+ * container ignore toute contrainte.
+ *
+ * Les poignées ne déforment jamais : elles changent la boîte (jamais de scale).
+ *
+ * `fontSize` est la taille effective (celle qui est rendue et sauvegardée, pour qu'un
+ * document s'affiche juste sans relayout) ; `fontSizeIntent` est la taille voulue par
+ * l'utilisateur, d'où repart l'autofit à chaque calcul.
+ *
+ * Hérite de Textbox (et non IText) pour le line-wrapping natif. Place aussi le textarea
+ * caché dans le container du canvas, pour le focus dans les modales (`showModal()`
+ * piège le focus hors du dialog).
  */
 type WordEntry = { word: string[]; width: number; _isChunk?: boolean };
 type GraphemeData = {
@@ -21,55 +47,259 @@ type GraphemeData = {
 };
 
 export class CustomTextbox extends Textbox {
-  /**
-   * Auto-width mode : le textbox s'étend horizontalement au contenu.
-   * Désactivé automatiquement quand l'utilisateur resize manuellement.
-   */
-  _autoWidth = true;
+  static customProperties = ["fontSizeIntent"];
+
+  /** Taille de police voulue — l'effective (`fontSize`) peut être réduite par l'autofit. */
+  declare fontSizeIntent: number;
+
+  /** Le contenu dépasse la boîte (overflow clip / visible). */
+  declare _overflowing?: boolean;
+
+  /** Dernière contrainte reçue du container (absente : jamais mis en page). */
+  declare _constraint?: TextConstraint;
 
   constructor(text: string, options?: Record<string, unknown>) {
-    const hasExplicitWidth = options?.width != null;
     super(text, options);
-    // _autoWidth = true est assigné ici par TS (après super).
-    // Le super() a déjà appelé initDimensions avec _autoWidth = undefined,
-    // donc on relance pour appliquer le mode auto-width.
-    if (hasExplicitWidth) {
-      this._autoWidth = false;
-    } else {
-      this.initDimensions();
-    }
-    // Resize manuel (handles latéraux changent width, scaling change scaleX)
-    this.on("resizing", () => { this._autoWidth = false; });
-    this.on("scaling", () => { this._autoWidth = false; });
+    if (typeof options?.fontSizeIntent === "number") this.fontSizeIntent = options.fontSizeIntent;
+    this.fontSizeIntent ??= this.fontSize;
+    this._bakeLegacyScale();
+    this._ensureSizing(options?.width != null);
+    this.initDimensions();
+    this.setCoords();
   }
 
-  /** Dernière width calculée par le mode auto-width. */
-  private _autoWidthValue = 0;
+  // ── Sizing ─────────────────────────────────────────────────────────
 
   /**
-   * Override initDimensions : en mode auto-width, on calcule les dimensions
-   * avec une width infinie puis on ajuste width au résultat.
-   * Si la width entrante diffère de notre dernière valeur auto, c'est un
-   * resize externe → on désactive auto-width.
+   * Sans bloc `sizing` (le temps de la construction, avant _ensureSizing), la boîte
+   * stockée fait foi : largeur fixe.
    */
-  initDimensions(): void {
-    if (this._autoWidth) {
-      // Détecter un resize externe (handle latéral, API, etc.)
-      if (this._autoWidthValue > 0 && Math.abs(this.width - this._autoWidthValue) > 2) {
-        this._autoWidth = false;
-        super.initDimensions();
-        return;
-      }
-      // Mesurer sur une seule ligne
-      this.width = 10000;
-      super.initDimensions();
-      const natural = Math.ceil(this.calcTextWidth());
-      this.width = natural;
-      this._autoWidthValue = natural;
-    } else {
-      super.initDimensions();
-    }
+  get sizing(): SizingData {
+    return (this.get("layout") as LayoutData | undefined)?.sizing ?? { x: "fixed", y: "hug" };
   }
+
+  get textOverflow(): TextOverflow {
+    return (this.get("layout") as LayoutData | undefined)?.overflow ?? "shrink";
+  }
+
+  /** Remplace le bloc `sizing` (nouvel objet `layout`, jamais muté en place). */
+  setSizing(sizing: SizingData): void {
+    const layout = (this.get("layout") as LayoutData | undefined) ?? {};
+    this.set("layout", { ...layout, sizing });
+    this.initDimensions();
+    this.setCoords();
+  }
+
+  setTextOverflow(overflow: TextOverflow): void {
+    const layout = (this.get("layout") as LayoutData | undefined) ?? {};
+    this.set("layout", { ...layout, overflow });
+    this.initDimensions();
+    this.setCoords();
+  }
+
+  /** Largeur naturelle à la police courante : la plus longue ligne, sans wrap. */
+  naturalWidth(): number {
+    this.width = UNBOUNDED_WIDTH;
+    super.initDimensions();
+    return Math.ceil(this.calcTextWidth());
+  }
+
+  /**
+   * Largeur minimale du texte : son mot le plus long (le min-content de CSS). Le
+   * découpage des mots trop longs (break-word) n'est qu'un repli, pas un minimum.
+   */
+  minContentWidth(): number {
+    const { lines } = this._splitTextIntoLines(this.text);
+    return Math.ceil(super.getGraphemeDataForRender(lines).largestWordWidth);
+  }
+
+  /**
+   * Une passe de layout : calcule la boîte sous la contrainte du container et la
+   * retient. `null` : le texte a quitté son container.
+   */
+  layoutWith(constraint: TextConstraint | null): void {
+    if (constraint) this._constraint = constraint;
+    else delete this._constraint;
+    this.initDimensions();
+  }
+
+  /** Recalcul (Fabric, ou layoutWith) sous la contrainte courante. */
+  initDimensions(): void {
+    if (!this.initialized) {
+      super.initDimensions();
+      return;
+    }
+    if (!this._isChild()) this._applyBox({});
+    else this._applyBox(this._constraint ?? "as-stored");
+  }
+
+  private _applyBox(constraint: TextConstraint | "as-stored"): void {
+    const box = resolveTextBox({
+      sizing: this.sizing,
+      overflow: this.textOverflow,
+      constraint,
+      fontSizeIntent: this.fontSizeIntent ?? this.fontSize,
+      fontSize: this.fontSize,
+      width: this.width,
+      height: this.height,
+    }, this._measure());
+
+    // Laisse Fabric dans l'état final (lignes wrappées à la bonne police), puis la boîte
+    this.fontSize = box.fontSize;
+    this._wrapAt(box.width);
+    this.height = box.height;
+    this._overflowing = box.overflowing;
+    // Le cache Fabric est taillé sur la boîte : un débordement visible doit s'en passer.
+    this.objectCaching = !(box.overflowing && this.textOverflow === "visible");
+  }
+
+  /**
+   * Mesure via Fabric (mute l'objet ; _applyBox pose l'état final ensuite). Méthode et
+   * non champ : Fabric mesure déjà pendant le super() du constructeur.
+   */
+  private _measure(): TextMeasure {
+    return {
+      wrapped: (width, fontSize) => {
+        this.fontSize = fontSize;
+        this._wrapAt(width);
+        return { width: this.width, height: this.height };
+      },
+      natural: (fontSize) => {
+        this.fontSize = fontSize;
+        return this.naturalWidth();
+      },
+    };
+  }
+
+  /** Wrap à `width` puis mesure (la largeur peut grandir au mot le plus long). */
+  private _wrapAt(width: number): void {
+    this.width = width;
+    super.initDimensions();
+  }
+
+  /** Toute nouvelle `fontSize` posée via set() est une intention de l'utilisateur. */
+  _set(key: string, value: any): this {
+    if (key === "fontSize") this.fontSizeIntent = value;
+    return super._set(key, value);
+  }
+
+  /** overflow "clip" : le texte est coupé au bord de sa boîte. */
+  _render(ctx: CanvasRenderingContext2D): void {
+    if (!this._overflowing || this.textOverflow !== "clip") {
+      super._render(ctx);
+      return;
+    }
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(-this.width / 2, -this.height / 2, this.width, this.height);
+    ctx.clip();
+    super._render(ctx);
+    ctx.restore();
+  }
+
+  // ── Poignées ───────────────────────────────────────────────────────
+
+  /**
+   * Bord gauche/droit : la largeur passe en fixe et prend la valeur tirée.
+   * Bord haut/bas : en hauteur contenu, pose le plancher `minSize.h` ; en hauteur fixe,
+   * change la hauteur.
+   */
+  handleEdgeResize(transform: any, x: number, y: number): boolean {
+    const corner: string = transform.corner;
+    return corner === "ml" || corner === "mr"
+      ? this._withAnchor(transform, () => this._resizeWidth(transform, x, y))
+      : this._withAnchor(transform, () => this._resizeHeight(transform, x, y));
+  }
+
+  /** Coin : les deux règles des bords à la fois. */
+  handleCornerResize(transform: any, x: number, y: number): boolean {
+    return this._withAnchor(transform, () => {
+      const changedW = this._resizeWidth(transform, x, y);
+      const changedH = this._resizeHeight(transform, x, y);
+      return changedW || changedH;
+    });
+  }
+
+  private _isChild(): boolean {
+    return (this.get("layout") as LayoutData | undefined)?.child != null;
+  }
+
+  private _withAnchor(transform: any, resize: () => boolean): boolean {
+    const { originX, originY } = transform;
+    const anchor = this.getPositionByOrigin(originX, originY);
+    const changed = resize();
+    this.setPositionByOrigin(anchor, originX, originY);
+    return changed;
+  }
+
+  private _resizeWidth(transform: any, x: number, y: number): boolean {
+    if (this.sizing.x !== "fixed") {
+      const layout = (this.get("layout") as LayoutData | undefined) ?? {};
+      this.set("layout", { ...layout, sizing: { ...this.sizing, x: "fixed" } });
+    }
+    // set("width") relance initDimensions (width est une textLayoutProperty)
+    return changeObjectWidth({} as any, transform, x, y);
+  }
+
+  private _resizeHeight(transform: any, x: number, y: number): boolean {
+    const before = this.height;
+    if (!changeObjectHeight({} as any, transform, x, y)) return false;
+    const sizing = this.sizing;
+    if (sizing.y === "hug") {
+      const minSize = { w: sizing.minSize?.w ?? 0, h: this.height };
+      const layout = (this.get("layout") as LayoutData | undefined) ?? {};
+      this.set("layout", { ...layout, sizing: { ...sizing, minSize } });
+    }
+    this.initDimensions();
+    return before !== this.height;
+  }
+
+  // ── Données legacy ─────────────────────────────────────────────────
+
+  /**
+   * Un texte étiré (scaleX/scaleY) est ramené à scale 1 : le scale passe dans la
+   * largeur et la police. Exact pour un scale uniforme ; un étirement non uniforme est
+   * perdu (les glyphes reprennent leurs proportions).
+   */
+  private _bakeLegacyScale(): void {
+    const sx = this.scaleX || 1;
+    const sy = this.scaleY || 1;
+    if (sx === 1 && sy === 1) return;
+    this.width *= sx;
+    this.height *= sy;
+    this.fontSize *= sy;
+    this.fontSizeIntent *= sy;
+    for (const line of Object.values(this.styles ?? {})) {
+      for (const style of Object.values(line as Record<string, { fontSize?: number }>)) {
+        if (style.fontSize) style.fontSize *= sy;
+      }
+    }
+    this.scaleX = 1;
+    this.scaleY = 1;
+  }
+
+  /**
+   * Un texte sans `layout.sizing` (nouveau, ou document d'avant les modes de taille)
+   * reçoit un mode explicite :
+   * - nouveau texte, ou enfant de container (sa largeur était dictée par le container) :
+   *   largeur contenu ;
+   * - sinon : largeur contenu si la boîte épouse le texte sur une ligne, fixe sinon
+   *   (texte qui wrappe, ou boîte élargie pour un alignement).
+   */
+  private _ensureSizing(hasExplicitWidth: boolean): void {
+    const layout = this.get("layout") as LayoutData | undefined;
+    if (layout?.sizing) return;
+
+    let x: "hug" | "fixed" = "hug";
+    if (hasExplicitWidth && !layout?.child) {
+      const width = this.width;
+      const natural = this.naturalWidth();
+      this.width = width;
+      if (Math.abs(width - natural) > 2) x = "fixed";
+    }
+    this.set("layout", { ...(layout ?? {}), sizing: { x, y: "hug" } });
+  }
+
   /**
    * overflow-wrap: break-word — pré-découpe les mots trop longs
    * en chunks et les marque pour que _wrapLine ne mette pas

@@ -8,6 +8,9 @@ import {
 } from "#fabric";
 import type { DesignCanvas } from "./DesignCanvas";
 import { CustomTextbox } from "./controls/CustomTextbox";
+import { migrateLegacyLayout } from "./layout/legacy";
+import { bringBlockForward, sendBlockBackward } from "./layout/stacking";
+import type { LayoutData } from "./layout/types";
 import { createShape as createShapeObject, createPathsShape, createImage } from "./shapes/factories";
 import { FabRect } from "./shapes/FabRect";
 import { FabCircle } from "./shapes/FabCircle";
@@ -135,23 +138,27 @@ export class LayerManager {
   }
 
   /**
-   * Monte l'objet d'un niveau (vers l'avant)
+   * Monte l'objet devant le premier objet de même niveau qui le chevauche. Un
+   * container emmène ses descendants (toujours au-dessus de lui) ; un enfant reste
+   * parmi les enfants de son container.
    */
   bringForward(obj: FabricObject): void {
-    this.canvas.bringObjectForward(obj, true);
-    this.canvas.renderAll();
+    const order = bringBlockForward(this.canvas.getObjects(), obj, (a, b) => a.isOverlapping(b));
+    if (order) this.applyStackOrder(order);
   }
 
   /**
-   * Descend l'objet d'un niveau (vers l'arrière)
-   * Ne peut pas descendre en dessous de l'image de fond
+   * Descend l'objet d'un niveau, mêmes règles de blocs que bringForward. Ne peut pas
+   * descendre en dessous de l'image de fond.
    */
   sendBackward(obj: FabricObject): void {
-    const index = this.canvas.getObjects().indexOf(obj);
-    if (index > 1) {
-      this.canvas.sendObjectBackwards(obj);
-      this.canvas.renderAll();
-    }
+    const order = sendBlockBackward(this.canvas.getObjects(), obj);
+    if (order) this.applyStackOrder(order);
+  }
+
+  private applyStackOrder(order: FabricObject[]): void {
+    order.forEach((obj, index) => this.canvas.moveObjectTo(obj, index));
+    this.canvas.renderAll();
   }
 
   /**
@@ -517,6 +524,10 @@ export class LayerManager {
         console.warn(`Type de calque inconnu: ${layer.type}`);
         return null;
     }
+
+    // Données de layout d'avant layout.sizing
+    const migrated = obj && migrateLegacyLayout(obj.get("layout") as LayoutData | undefined);
+    if (obj && migrated) obj.set("layout", migrated);
 
     // Appliquer les propriétés de verrouillage si présentes
     if (obj && layer.lockMode) {

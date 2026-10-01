@@ -12,7 +12,8 @@ import {
   type LayoutData,
   type ContainerData,
   type ResolvedChild,
-  type SizeMode,
+  type SizingData,
+  sizingOf,
 } from "./types";
 import {
   scaledSize,
@@ -20,26 +21,53 @@ import {
   syncCoords,
   topLeft,
   cornerToAxes,
+  isTextObject,
+  type LayoutText,
   type ResizeAxes,
 } from "./geometry";
 import { yogaLayout } from "./yoga-engine";
 
 // ── ResizeSession ───────────────────────────────────────────────────
 
+/**
+ * Handle rules (same as texts, see CustomTextbox):
+ * - dragging a left/right edge fixes the width (hug → fixed);
+ * - dragging a top/bottom edge on a hug height sets the floor `minSize.h`
+ *   (the mode doesn't change); on a fixed height, sets the height;
+ * - a corner applies both rules.
+ */
 export class ResizeSession {
   private container: FabricObject;
   private containerData: ContainerData;
+  private sizing: SizingData;
   private axes: ResizeAxes;
+  private corner?: string;
 
   /** User-intended size — only updated on axes the user controls. */
   private userW: number;
   private userH: number;
+
+  /**
+   * Fixed widths of the text children at grab time: the container pushes them
+   * when it gets narrower, and they grow back if the user widens it again
+   * within the same drag. What remains at release is kept.
+   */
+  private textWidths = new Map<FabricObject, number>();
+
+  /** Smallest box the content fits in (computed at grab): the handles stop there. */
+  private minContent: { w: number; h: number } | null = null;
 
   constructor(container: FabricObject, corner?: string) {
     this.container = container;
     const layout = container.get("layout") as LayoutData;
     this.containerData = layout.container!;
     this.axes = cornerToAxes(corner);
+    this.corner = corner;
+
+    // Touching the width fixes it, for the whole interaction
+    const current = sizingOf(container);
+    this.sizing = this.axes.x && current.x === "hug" ? { ...current, x: "fixed" } : { ...current };
+    container.set("layout", { ...layout, sizing: this.sizing });
 
     const { w, h } = scaledSize(container);
     this.userW = w;
@@ -47,12 +75,38 @@ export class ResizeSession {
   }
 
   /**
+   * Resize keeping the edge opposite to the dragged handle in place — when the
+   * content stops the handle, the grabbed edge stops, not the other one.
+   */
+  private setSizeKeepingAnchor(w: number, h: number): void {
+    const { container, corner } = this;
+    const originX = corner?.includes("l") ? "right" : corner?.includes("r") ? "left" : "center";
+    const originY = corner?.includes("t") ? "bottom" : corner?.includes("b") ? "top" : "center";
+    const anchor = container.getPositionByOrigin(originX, originY);
+    setShapeSize(container, w, h);
+    container.setPositionByOrigin(anchor, originX, originY);
+  }
+
+  private restoreTextWidths(children: ResolvedChild[]): void {
+    for (const { obj } of children) {
+      if (!isTextObject(obj) || sizingOf(obj).x !== "fixed") continue;
+      const grabbed = this.textWidths.get(obj);
+      if (grabbed == null) this.textWidths.set(obj, obj.width);
+      else if (obj.width !== grabbed) {
+        // Lift the previous frame's constraint, or it would clamp it again right away
+        // (this frame's pass sets the new one)
+        (obj as unknown as LayoutText).layoutWith({});
+        obj.set({ width: grabbed });
+      }
+    }
+  }
+
+  /**
    * Called on each `object:resizing` frame.
    * Controls already set width/height directly (no scale involved).
    */
   handleResizing(objects: FabricObject[]): void {
-    const { container, containerData, axes } = this;
-    const cd = containerData;
+    const { container, containerData: cd, sizing, axes } = this;
 
     const { w: currentW, h: currentH } = scaledSize(container);
 
@@ -62,55 +116,75 @@ export class ResizeSession {
 
     const children = sortChildrenByOrder(resolveContainerChildren(objects, container));
     if (children.length === 0) return;
+    this.restoreTextWidths(children);
+    this.minContent ??= minContentSize(children, cd);
 
-    // Use true top-left (handles center-origin shapes like FabRect)
+    // Live, the floor is what the user drags — not the previous minSize
+    const live: SizingData = { x: sizing.x, y: sizing.y };
     const tl = topLeft(container);
-
     const { w: requiredW, h: requiredH } = yogaLayout(
-      children, tl.x, tl.y, currentW, currentH, cd,
+      children, tl.x, tl.y, currentW, currentH, cd, live,
     );
 
-    const modeX = cd.sizeMode.x;
-    const modeY = cd.sizeMode.y;
+    // Hug axis: content = floor, the user can grow beyond on the dragged axis.
+    // Fixed axis: the user decides entirely.
+    const prevMinW = sizing.minSize?.w ?? 0;
+    const prevMinH = sizing.minSize?.h ?? 0;
+    const finalW = sizing.x === "hug"
+      ? Math.max(axes.x ? this.userW : prevMinW, requiredW)
+      : Math.max(currentW, this.minContent.w);
+    const finalH = sizing.y === "hug"
+      ? Math.max(axes.y ? this.userH : prevMinH, requiredH)
+      : Math.max(currentH, this.minContent.h);
 
-    // Axes hug: content = floor. User can grow beyond if dragging that axis.
-    // Axes fixed: user decides entirely.
-    let finalW: number;
-    if (modeX === "hug") {
-      finalW = axes.x ? Math.max(this.userW, requiredW) : requiredW;
-    } else {
-      finalW = currentW;
-    }
-
-    let finalH: number;
-    if (modeY === "hug") {
-      finalH = axes.y ? Math.max(this.userH, requiredH) : requiredH;
-    } else {
-      finalH = currentH;
-    }
-
-    // Apply resolved size and re-position with final dimensions.
-    setShapeSize(container, finalW, finalH);
+    this.setSizeKeepingAnchor(finalW, finalH);
+    // Place the children inside the box being dragged, not inside the content
+    // box: the hug floor is this frame's size (alignment center / end needs it)
+    const placed: SizingData = { ...live, minSize: { w: finalW, h: finalH } };
     const tl2 = topLeft(container);
-    yogaLayout(children, tl2.x, tl2.y, finalW, finalH, cd);
+    yogaLayout(children, tl2.x, tl2.y, finalW, finalH, cd, placed);
     syncCoords(container, children);
   }
 
   /**
-   * Called on `object:modified`. Captures minSize from the user's intent.
+   * Called on `object:modified`. On a hug axis the user dragged, what they
+   * dragged becomes the floor — under the content it's harmless (the box is
+   * max(content, floor)).
    */
-  commit(objects: FabricObject[]): void {
-    const { container, containerData } = this;
-    const modeX = containerData.sizeMode.x;
-    const modeY = containerData.sizeMode.y;
+  commit(_objects: FabricObject[]): void {
+    const { container, sizing, axes } = this;
+    const dragsHugX = sizing.x === "hug" && axes.x;
+    const dragsHugY = sizing.y === "hug" && axes.y;
+    if (!dragsHugX && !dragsHugY) return;
 
-    const { w: containerW, h: containerH } = scaledSize(container);
-    if (!containerData.minSize) containerData.minSize = { w: 0, h: 0 };
-    if (modeX === "hug") containerData.minSize.w = this.userW;
-    if (modeX === "fixed") containerData.minSize.w = containerW;
-    if (modeY === "hug") containerData.minSize.h = this.userH;
-    if (modeY === "fixed") containerData.minSize.h = containerH;
+    const minSize = { w: sizing.minSize?.w ?? 0, h: sizing.minSize?.h ?? 0 };
+    if (dragsHugX) minSize.w = this.userW;
+    if (dragsHugY) minSize.h = this.userH;
+
+    const layout = container.get("layout") as LayoutData;
+    container.set("layout", { ...layout, sizing: { ...sizing, minSize } });
   }
+}
+
+/**
+ * Smallest container box its children fit in, without squeezing anything:
+ * padding, gaps, rigid children at their size, texts at their longest word
+ * (they can wrap) and at no height (they can autofit or clip).
+ */
+function minContentSize(children: ResolvedChild[], cd: ContainerData): { w: number; h: number } {
+  const pad = cd.padding ?? { top: 0, right: 0, bottom: 0, left: 0 };
+  const gaps = (cd.gap ?? 0) * Math.max(0, children.length - 1);
+  const sizes = children.map(({ obj }) => isTextObject(obj)
+    ? { w: (obj as unknown as LayoutText).minContentWidth(), h: 0 }
+    : scaledSize(obj));
+  const sum = (key: "w" | "h") => sizes.reduce((total, s) => total + s[key], 0);
+  const max = (key: "w" | "h") => Math.max(0, ...sizes.map((s) => s[key]));
+
+  const row = cd.flexDirection === "row";
+  return {
+    w: pad.left + pad.right + (row ? sum("w") + gaps : max("w")),
+    h: pad.top + pad.bottom + (row ? max("h") : sum("h") + gaps),
+  };
 }
 
 // ── Shared helpers (used by sessions and reconcile) ─────────────────

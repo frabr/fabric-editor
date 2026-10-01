@@ -1,7 +1,8 @@
-import { ActiveSelection, type FabricObject } from "#fabric";
+import { ActiveSelection, Point, type FabricObject } from "#fabric";
 import type { DesignCanvas } from "./DesignCanvas";
 import { isPositionLocked } from "./locking";
 import type { LayoutData } from "./layout/types";
+import { isTextObject } from "./layout/geometry";
 import type { SelectionCallbacks, ControlOption } from "./types";
 import type { Controllable } from "./shapes/controlsMixin";
 
@@ -99,24 +100,21 @@ export class SelectionManager {
 
   /**
    * Given a Fabric target (the object under the cursor), return the object
-   * that should actually be highlighted / selected.
-   *
-   * - If the target is a layout child and we are NOT inside its group,
-   *   redirect to the parent container.
-   * - Otherwise return the target as-is.
+   * that should actually be hovered / selected / dragged: a layout child
+   * outside the active group resolves to its container, up the chain (a
+   * grandchild resolves to the outermost container that isn't the active
+   * group's child).
    */
   resolveTarget(obj: FabricObject): FabricObject {
-    const layout = obj.get("layout") as LayoutData | undefined;
-    if (!layout?.child) return obj;
-
-    // We're inside this child's group → target the child directly
-    if (this._activeGroupId === layout.child.parentId) return obj;
-
-    // Not inside the group → redirect to the parent container
-    const parent = this.canvas.getObjects().find(
-      (o) => o.get("layerId") === layout.child!.parentId,
-    );
-    return parent ?? obj;
+    let current = obj;
+    for (;;) {
+      const parentId = (current.get("layout") as LayoutData | undefined)?.child?.parentId;
+      // Not a child, or inside its group → this is the target
+      if (!parentId || parentId === this._activeGroupId) return current;
+      const parent = this.canvas.getObjects().find((o) => o.get("layerId") === parentId);
+      if (!parent) return current;
+      current = parent;
+    }
   }
 
   /**
@@ -189,7 +187,11 @@ export class SelectionManager {
    * Configure les écouteurs d'événements du canvas
    */
   private setupListeners(): void {
+    this.redirectTargetSearch();
+    this.canvas.on("mouse:down:before", this.handleMouseDownBefore.bind(this));
     this.canvas.on("mouse:down", this.handleMouseDown.bind(this));
+    this.canvas.on("mouse:up", this.handleMouseUp.bind(this));
+    this.canvas.on("mouse:dblclick", this.handleDoubleClick.bind(this));
     this.canvas.on("selection:created", this.handleSelection.bind(this));
     this.canvas.on("selection:updated", this.handleSelection.bind(this));
     this.canvas.on("selection:cleared", this.handleDeselection.bind(this));
@@ -200,54 +202,96 @@ export class SelectionManager {
   }
 
   /**
-   * Intercept mouse:down to manage group-enter / group-exit logic.
-   *
-   * - Click on an already-selected container → enter the group
-   * - Click on an object outside the active group → exit the group
-   * - Click on empty canvas → exit the group
+   * Fabric picks the target of a press (and of hover) in searchPossibleTargets:
+   * redirecting there — not after the selection — makes a press on a child
+   * outside its group a press on its container, so that a click + drag moves
+   * the container right away instead of grabbing the child.
+   */
+  private redirectTargetSearch(): void {
+    const fc = this.canvas.originalFabricCanvas as unknown as {
+      searchPossibleTargets(objects: FabricObject[], pointer: unknown): { target?: FabricObject; container?: FabricObject };
+    };
+    const search = fc.searchPossibleTargets.bind(fc);
+    fc.searchPossibleTargets = (objects, pointer) => {
+      const info = search(objects, pointer);
+      if (info.target) {
+        const resolved = this.resolveTarget(info.target);
+        if (resolved !== info.target) {
+          info.target = resolved;
+          info.container = resolved;
+        }
+      }
+      return info;
+    };
+  }
+
+  /** What was selected before this press — Fabric selects before firing mouse:down. */
+  private _selectedBeforePress: FabricObject | null = null;
+
+  private handleMouseDownBefore(): void {
+    this._selectedBeforePress = this.current;
+  }
+
+  /**
+   * Group exit: a press outside the active group (or on empty canvas) leaves it.
+   * Entering is decided on release (see handleMouseUp), so that a drag on a
+   * selected container still moves it.
    */
   private handleMouseDown(e: any): void {
+    if (!this._activeGroupId) return;
+
     const target = e.target as FabricObject | undefined;
+    const isTheContainer = target?.get("layerId") === this._activeGroupId;
+    const isChildOfGroup = (target?.get("layout") as LayoutData | undefined)?.child?.parentId === this._activeGroupId;
+    if (!target || (!isTheContainer && !isChildOfGroup)) this._activeGroupId = null;
+  }
 
-    // Click on empty canvas → exit group
-    if (!target) {
-      this._activeGroupId = null;
-      return;
-    }
+  /**
+   * Group enter: a click (no drag) on a container that was already selected
+   * enters it and selects its child under the pointer.
+   */
+  private handleMouseUp(e: any): void {
+    const before = this._selectedBeforePress;
+    this._selectedBeforePress = null;
+    if (!e.isClick || !before || e.target !== before) return;
+    if (!(before.get("layout") as LayoutData | undefined)?.container) return;
 
-    const targetLayout = target.get("layout") as LayoutData | undefined;
+    this.enterGroup(before, this.canvas.getScenePoint(e.e));
+  }
 
-    // If we're inside a group, check if the click is still within it
-    if (this._activeGroupId) {
-      const isChildOfGroup = targetLayout?.child
-        && targetLayout.child.parentId === this._activeGroupId;
-      const isTheContainer = target.get("layerId") === this._activeGroupId;
+  /** Enter `container`'s group and select its topmost child under `point`. */
+  private enterGroup(container: FabricObject, point: { x: number; y: number }): void {
+    const id = container.get("layerId") as string;
+    this._activeGroupId = id;
 
-      if (!isChildOfGroup && !isTheContainer) {
-        // Clicked outside the active group → exit
-        this._activeGroupId = null;
-      }
-      return;
-    }
+    const child = this.canvas.getObjects().slice().reverse().find((o) =>
+      (o.get("layout") as LayoutData | undefined)?.child?.parentId === id &&
+      o.containsPoint(new Point(point.x, point.y)),
+    );
+    if (child) this.canvas.setActiveObject(child);
+    this.canvas.requestRenderAll();
+  }
 
-    // Not inside a group: check if we should enter one.
-    const currentObj = this.current;
-    if (!currentObj) return;
+  /**
+   * Double-click on a text inside a container: its two clicks entered the
+   * group and selected the text (the press targeted the container, so
+   * Fabric's own double-click editing didn't run) — edit it now, word under
+   * the pointer selected, like Fabric does.
+   */
+  private handleDoubleClick(e: any): void {
+    const text = this.current as (FabricObject & {
+      isEditing?: boolean;
+      editable?: boolean;
+      enterEditing(e?: unknown): void;
+      getSelectionStartFromPointer(e: unknown): number;
+      selectWord(index: number): void;
+    }) | null;
+    if (!text || !isTextObject(text) || text.isEditing || text.editable === false) return;
+    if ((text.get("layout") as LayoutData | undefined)?.child?.parentId !== this._activeGroupId) return;
 
-    const currentLayout = currentObj.get("layout") as LayoutData | undefined;
-    if (!currentLayout?.container) return;
-
-    const currentId = currentObj.get("layerId") as string;
-
-    // Click on the container itself, or on one of its children → enter group
-    if (target === currentObj) {
-      this._activeGroupId = currentId;
-      return;
-    }
-
-    if (targetLayout?.child && targetLayout.child.parentId === currentId) {
-      this._activeGroupId = currentId;
-    }
+    text.enterEditing(e.e);
+    text.selectWord(text.getSelectionStartFromPointer(e.e));
+    this.canvas.requestRenderAll();
   }
 
   /**

@@ -748,6 +748,18 @@ export class FabricEditor {
   }
 
   /**
+   * Justification de l'objet texte sélectionné, dans sa boîte.
+   */
+  setTextAlign(align: "left" | "center" | "right" | "justify"): void {
+    const obj = this.selection.current;
+    if (!obj || !isTextObject(obj)) return;
+
+    obj.set({ textAlign: align } as Partial<FabricObject>);
+    this.layout.relayout();
+    this.canvas.requestRenderAll();
+  }
+
+  /**
    * Bascule un style sur l'objet texte sélectionné (gras, italique, souligné).
    * "bold" alterne fontWeight normal/bold (un poids numérique >= 600 compte
    * comme gras).

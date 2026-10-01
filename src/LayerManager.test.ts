@@ -16,6 +16,11 @@ function createMockCanvas() {
       if (idx > -1) objects.splice(idx, 1);
     }),
     getObjects: vi.fn(() => canvas._objects),
+    moveObjectTo: vi.fn((obj: FabricObject, index: number) => {
+      const list = (canvas as any)._objects as FabricObject[];
+      list.splice(list.indexOf(obj), 1);
+      list.splice(index, 0, obj);
+    }),
     setActiveObject: vi.fn(),
     renderAll: vi.fn(),
     requestRenderAll: vi.fn(),
@@ -40,6 +45,7 @@ function createMockObject(layerId: string, type = "rect"): FabricObject {
     set: vi.fn(),
     toJSON: vi.fn(() => ({ type, layerId })),
     toObject: vi.fn(() => ({ type, layerId })),
+    isOverlapping: vi.fn(() => true),
   } as unknown as FabricObject;
 }
 
@@ -139,12 +145,14 @@ describe("LayerManager", () => {
   });
 
   describe("bringForward", () => {
-    it("déplace l'objet vers l'avant", () => {
-      const obj = createMockObject("layer_1");
+    it("déplace l'objet devant le suivant qui le chevauche", () => {
+      const layer1 = createMockObject("layer_1");
+      const layer2 = createMockObject("layer_2");
+      (canvas as any)._objects = [layer1, layer2];
 
-      manager.bringForward(obj);
+      manager.bringForward(layer1);
 
-      expect(canvas.bringObjectForward).toHaveBeenCalledWith(obj, true);
+      expect((canvas as any)._objects).toEqual([layer2, layer1]);
       expect(canvas.renderAll).toHaveBeenCalled();
     });
   });
@@ -159,7 +167,7 @@ describe("LayerManager", () => {
 
       manager.sendBackward(layer2);
 
-      expect(canvas.sendObjectBackwards).toHaveBeenCalledWith(layer2);
+      expect((canvas as any)._objects).toEqual([bg, layer2, layer1]);
       expect(canvas.renderAll).toHaveBeenCalled();
     });
 
@@ -171,7 +179,8 @@ describe("LayerManager", () => {
 
       manager.sendBackward(layer1);
 
-      expect(canvas.sendObjectBackwards).not.toHaveBeenCalled();
+      expect((canvas as any)._objects).toEqual([bg, layer1]);
+      expect(canvas.moveObjectTo).not.toHaveBeenCalled();
     });
   });
 

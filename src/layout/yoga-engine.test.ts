@@ -10,7 +10,7 @@
  * Default alignItems is "flex-start" (children keep their size).
  */
 import { describe, it, expect, beforeAll } from "vitest";
-import type { ResolvedChild, ChildData, ContainerData } from "./types";
+import type { ResolvedChild, ChildData, ContainerData, SizingData } from "./types";
 import { initYoga, yogaLayout } from "./yoga-engine";
 
 // ── Setup ─────────────────────────────────────────────────────────
@@ -52,11 +52,11 @@ function rc(layerId: string, w: number, h: number, cl: ChildData): ResolvedChild
   return { obj: mockObj(layerId, w, h), cl };
 }
 
-function cd(overrides: Partial<ContainerData> = {}): ContainerData {
-  return {
-    sizeMode: { x: "hug", y: "hug" },
-    ...overrides,
-  };
+/** Container data + its sizing, spread as yogaLayout's last two arguments. */
+function cd(
+  { sizeMode, ...overrides }: Partial<ContainerData> & { sizeMode?: Pick<SizingData, "x" | "y"> } = {},
+): [ContainerData, SizingData] {
+  return [overrides, { x: "hug", y: "hug", ...sizeMode }];
 }
 
 // ── Tests ─────────────────────────────────────────────────────────
@@ -66,7 +66,7 @@ describe("yogaLayout — single child", () => {
     const c1 = rc("a", 100, 20, { parentId: "container" });
 
     const result = yogaLayout([c1], 0, 0, 200, 200,
-      cd({ padding: { top: 15, right: 10, bottom: 15, left: 10 } }));
+      ...cd({ padding: { top: 15, right: 10, bottom: 15, left: 10 } }));
 
     expect(c1.obj.left).toBe(10);
     expect(c1.obj.top).toBe(15);
@@ -78,7 +78,7 @@ describe("yogaLayout — single child", () => {
     const c1 = rc("a", 100, 20, { parentId: "container" });
 
     const result = yogaLayout([c1], 50, 100, 300, 200,
-      cd({
+      ...cd({
         sizeMode: { x: "fixed", y: "fixed" },
         padding: { top: 15, right: 10, bottom: 15, left: 10 },
       }));
@@ -93,7 +93,7 @@ describe("yogaLayout — single child", () => {
     const c1 = rc("a", 60, 20, { parentId: "container" });
 
     yogaLayout([c1], 0, 0, 200, 100,
-      cd({
+      ...cd({
         sizeMode: { x: "fixed", y: "fixed" },
         padding: { top: 10, right: 10, bottom: 10, left: 10 },
         alignItems: "stretch",
@@ -110,7 +110,7 @@ describe("yogaLayout — multiple children (column)", () => {
     const c2 = rc("b", 100, 30, { parentId: "container" });
 
     const result = yogaLayout([c1, c2], 0, 0, 200, 300,
-      cd({ padding: { top: 15, right: 10, bottom: 12, left: 10 } }));
+      ...cd({ padding: { top: 15, right: 10, bottom: 12, left: 10 } }));
 
     expect(c1.obj.top).toBe(15);
     expect(c1.obj.left).toBe(10);
@@ -128,7 +128,7 @@ describe("yogaLayout — multiple children (column)", () => {
     const c2 = rc("b", 100, 30, { parentId: "container" });
 
     const result = yogaLayout([c1, c2], 0, 0, 200, 300,
-      cd({ gap: 8, padding: { top: 10, right: 10, bottom: 10, left: 10 } }));
+      ...cd({ gap: 8, padding: { top: 10, right: 10, bottom: 10, left: 10 } }));
 
     expect(c1.obj.top).toBe(10);
     // c2: top = 10 + 20 + 8 = 38
@@ -144,7 +144,7 @@ describe("yogaLayout — multiple children (column)", () => {
     const c3 = rc("c", 80, 25, { parentId: "container" });
 
     const result = yogaLayout([c1, c2, c3], 100, 200, 150, 500,
-      cd({ gap: 8, padding: { top: 10, right: 10, bottom: 10, left: 10 } }));
+      ...cd({ gap: 8, padding: { top: 10, right: 10, bottom: 10, left: 10 } }));
 
     expect(c1.obj.top).toBe(210);
     expect(c1.obj.left).toBe(110);
@@ -166,7 +166,7 @@ describe("yogaLayout — row direction", () => {
     const c2 = rc("b", 60, 30, { parentId: "container" });
 
     const result = yogaLayout([c1, c2], 0, 0, 300, 200,
-      cd({ flexDirection: "row", padding: { top: 10, right: 10, bottom: 10, left: 10 } }));
+      ...cd({ flexDirection: "row", padding: { top: 10, right: 10, bottom: 10, left: 10 } }));
 
     expect(c1.obj.left).toBe(10);
     expect(c1.obj.top).toBe(10);
@@ -184,7 +184,7 @@ describe("yogaLayout — row direction", () => {
     const c2 = rc("b", 60, 30, { parentId: "container" });
 
     const result = yogaLayout([c1, c2], 0, 0, 300, 200,
-      cd({ flexDirection: "row", gap: 12, padding: { top: 10, right: 10, bottom: 10, left: 10 } }));
+      ...cd({ flexDirection: "row", gap: 12, padding: { top: 10, right: 10, bottom: 10, left: 10 } }));
 
     expect(c1.obj.left).toBe(10);
     // c2: left = 10 + 80 + 12 = 102
@@ -203,7 +203,7 @@ describe("yogaLayout — alignment", () => {
     });
 
     yogaLayout([c1], 0, 0, 200, 200,
-      cd({
+      ...cd({
         sizeMode: { x: "fixed", y: "fixed" },
         padding: { top: 10, right: 10, bottom: 10, left: 10 },
       }));
@@ -219,7 +219,7 @@ describe("yogaLayout — alignment", () => {
     });
 
     yogaLayout([c1], 0, 0, 200, 200,
-      cd({
+      ...cd({
         sizeMode: { x: "fixed", y: "fixed" },
         padding: { top: 10, right: 10, bottom: 10, left: 10 },
       }));
@@ -232,7 +232,7 @@ describe("yogaLayout — alignment", () => {
     const c1 = rc("a", 80, 20, { parentId: "container" });
 
     yogaLayout([c1], 0, 0, 200, 200,
-      cd({
+      ...cd({
         sizeMode: { x: "fixed", y: "fixed" },
         padding: { top: 10, right: 10, bottom: 10, left: 10 },
         alignItems: "flex-end",
@@ -246,7 +246,7 @@ describe("yogaLayout — alignment", () => {
     const c1 = rc("a", 80, 20, { parentId: "container" });
 
     yogaLayout([c1], 0, 0, 200, 200,
-      cd({
+      ...cd({
         sizeMode: { x: "fixed", y: "fixed" },
         justifyContent: "center",
       }));
@@ -260,7 +260,7 @@ describe("yogaLayout — alignment", () => {
     const c2 = rc("b", 80, 20, { parentId: "container" });
 
     yogaLayout([c1, c2], 0, 0, 200, 200,
-      cd({ sizeMode: { x: "fixed", y: "fixed" }, justifyContent: "space-between" }));
+      ...cd({ sizeMode: { x: "fixed", y: "fixed" }, justifyContent: "space-between" }));
 
     // First at top, second at bottom
     expect(c1.obj.top).toBe(0);
@@ -273,7 +273,7 @@ describe("yogaLayout — stretch", () => {
     const c1 = rc("a", 60, 20, { parentId: "container" });
 
     yogaLayout([c1], 0, 0, 300, 200,
-      cd({
+      ...cd({
         sizeMode: { x: "fixed", y: "hug" },
         padding: { top: 10, right: 15, bottom: 10, left: 15 },
         alignItems: "stretch",
@@ -290,7 +290,7 @@ describe("yogaLayout — stretch", () => {
     });
 
     yogaLayout([c1], 0, 0, 300, 200,
-      cd({
+      ...cd({
         sizeMode: { x: "fixed", y: "hug" },
         padding: { top: 10, right: 15, bottom: 10, left: 15 },
         alignItems: "stretch",
@@ -304,7 +304,7 @@ describe("yogaLayout — stretch", () => {
     const c1 = rc("a", 60, 20, { parentId: "container" });
 
     yogaLayout([c1], 0, 0, 300, 200,
-      cd({
+      ...cd({
         padding: { top: 10, right: 15, bottom: 10, left: 15 },
         alignItems: "stretch",
       }));
@@ -317,7 +317,7 @@ describe("yogaLayout — stretch", () => {
     const c1 = rc("a", 60, 20, { parentId: "container" });
 
     yogaLayout([c1], 0, 0, 300, 200,
-      cd({ sizeMode: { x: "fixed", y: "hug" } }));
+      ...cd({ sizeMode: { x: "fixed", y: "hug" } }));
 
     // Default is flex-start, no stretch
     expect(c1.obj.width).toBe(60);
@@ -329,7 +329,7 @@ describe("yogaLayout — order", () => {
     const c1 = rc("a", 80, 20, { parentId: "container" });
     const c2 = rc("b", 80, 30, { parentId: "container" });
 
-    yogaLayout([c1, c2], 0, 0, 200, 300, cd());
+    yogaLayout([c1, c2], 0, 0, 200, 300, ...cd());
 
     // c1 first, c2 second (no padding → starts at 0)
     expect(c1.obj.top).toBe(0);
@@ -341,7 +341,7 @@ describe("yogaLayout — order", () => {
     const c2 = rc("b", 80, 30, { parentId: "container" });
 
     yogaLayout([c1, c2], 0, 0, 200, 300,
-      cd({ padding: { top: 10, right: 10, bottom: 10, left: 10 } }));
+      ...cd({ padding: { top: 10, right: 10, bottom: 10, left: 10 } }));
 
     expect(c1.obj.top).toBe(10);
     expect(c2.obj.top).toBe(30);
@@ -355,7 +355,7 @@ describe("yogaLayout — origin correction", () => {
     c1.obj.originY = "center";
 
     yogaLayout([c1], 0, 0, 200, 200,
-      cd({
+      ...cd({
         sizeMode: { x: "fixed", y: "fixed" },
         padding: { top: 10, right: 10, bottom: 10, left: 10 },
       }));
@@ -372,7 +372,7 @@ describe("yogaLayout — origin correction", () => {
     c1.obj.originY = "center";
 
     yogaLayout([c1], 0, 0, 200, 200,
-      cd({
+      ...cd({
         sizeMode: { x: "fixed", y: "fixed" },
         padding: { top: 10, right: 10, bottom: 10, left: 10 },
         alignItems: "stretch",
@@ -391,7 +391,7 @@ describe("yogaLayout — flexGrow", () => {
     const c2 = rc("b", 80, 30, { parentId: "container", flexGrow: 1 });
 
     yogaLayout([c1, c2], 0, 0, 200, 200,
-      cd({ sizeMode: { x: "fixed", y: "fixed" } }));
+      ...cd({ sizeMode: { x: "fixed", y: "fixed" } }));
 
     // c1 is 20px tall, c2 grows to fill remaining: 200 - 20 = 180
     expect(c1.obj.top).toBe(0);
@@ -405,7 +405,7 @@ describe("yogaLayout — no padding", () => {
   it("children start at container origin when no padding", () => {
     const c1 = rc("a", 80, 20, { parentId: "container" });
 
-    yogaLayout([c1], 50, 100, 200, 200, cd());
+    yogaLayout([c1], 50, 100, 200, 200, ...cd());
 
     expect(c1.obj.left).toBe(50);
     expect(c1.obj.top).toBe(100);

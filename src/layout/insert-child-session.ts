@@ -22,8 +22,8 @@
  */
 import type { FabricObject } from "#fabric";
 import type { DesignCanvas } from "../DesignCanvas";
-import type { LayoutSession, LayoutData, ChildData, FlexDirection } from "./types";
-import { scaledSize, setShapeSize, topLeft, syncCoords, pointInObject, isTextObject } from "./geometry";
+import { type LayoutSession, type LayoutData, type ChildData, type FlexDirection, sizingOf } from "./types";
+import { scaledSize, setShapeSize, topLeft, syncCoords, pointInObject, detachChild, cloneLayout } from "./geometry";
 import { resolveContainerChildren, sortChildrenByOrder } from "./resize-session";
 import { yogaLayout } from "./yoga-engine";
 import { runLayout, relayoutSingle, relayoutSubContainers, bubbleUpLayout } from "./reconcile";
@@ -62,6 +62,9 @@ export class InsertChildSession implements LayoutSession {
   /** Sibling positions at anchor time — stable reference for gap calculation. */
   private _siblingAnchors = new Map<FabricObject, { left: number; top: number; w: number; h: number }>();
 
+  /** Size of the dragged child when grabbed — Yoga may squeeze it in later frames. */
+  private _newChildAnchorSize = { w: 0, h: 0 };
+
   /** Last Yoga-computed position of the dragged child (not the cursor position). */
   private _lastDraggedYogaPos: { left: number; top: number } | null = null;
 
@@ -69,6 +72,7 @@ export class InsertChildSession implements LayoutSession {
     this.canvas = canvas;
     this._container = container;
     this.newChild = newChild;
+    this._newChildAnchorSize = scaledSize(newChild);
     this._isReattach = false;
     this._animator = new LayoutAnimator(canvas);
 
@@ -137,6 +141,7 @@ export class InsertChildSession implements LayoutSession {
     session.canvas = canvas;
     session._container = container;
     session.newChild = child;
+    session._newChildAnchorSize = scaledSize(child);
     session._isReattach = true;
     session._currentDirection = null;
     session._lastOrder = null;
@@ -200,13 +205,10 @@ export class InsertChildSession implements LayoutSession {
   }
 
   commit(): () => void {
-    // Capture minSize so the container stays at its expanded size
+    // Capture the floor so the container stays at its expanded size
     const layout = this._container.get?.("layout") as LayoutData;
-    const cd = layout.container!;
     const { w, h } = scaledSize(this._container);
-    if (!cd.minSize) cd.minSize = { w: 0, h: 0 };
-    cd.minSize.w = w;
-    cd.minSize.h = h;
+    this._container.set("layout", { ...layout, sizing: { ...sizingOf(this._container), minSize: { w, h } } });
 
     // Capture all children positions before final layout
     const allChildren = resolveContainerChildren(this.canvas.getObjects(), this._container);
@@ -226,22 +228,7 @@ export class InsertChildSession implements LayoutSession {
     }
 
     this.canvas.renderAll();
-
-    // Reattach: listener already exists from the first attach
-    if (this._isReattach) {
-      return () => {};
-    }
-
-    // Only text objects fire "changed" (on content edit); shapes don't need it
-    if (isTextObject(this.newChild)) {
-      const relayout = () => {
-        runLayout(this.canvas.getObjects());
-        this.canvas.renderAll();
-      };
-      (this.newChild as any).on("changed", relayout);
-      return () => (this.newChild as any).off("changed", relayout);
-    }
-
+    // Text edits relayout through the LayoutManager's `text:changed` listener
     return () => {};
   }
 
@@ -250,16 +237,7 @@ export class InsertChildSession implements LayoutSession {
     this._animator.cancelAll();
 
     if (this._isReattach) {
-      // Detach: remove child block from layout
-      const layout = this.newChild.get?.("layout") as LayoutData | undefined;
-      if (layout) {
-        delete layout.child;
-        if (!layout.container) {
-          this.newChild.set("layout", undefined);
-        } else {
-          this.newChild.set("layout", { ...layout });
-        }
-      }
+      detachChild(this.newChild);
 
       // Restore container to snapshot state
       this._container.set("layout", this.snapshot.containerLayout ?? undefined);
@@ -287,6 +265,7 @@ export class InsertChildSession implements LayoutSession {
     }
 
     // New insertion: restore everything to pre-session state
+    detachChild(this.newChild);
     this.newChild.set("layout", this.snapshot.childLayout ?? undefined);
     this.newChild.set({ left: this.snapshot.childLeft, top: this.snapshot.childTop });
     this.newChild.setCoords();
@@ -337,7 +316,7 @@ export class InsertChildSession implements LayoutSession {
       const dirIsColumn = direction === "column";
       const insertOrder = this.computeInsertOrder(cursor, otherChildren, dirIsColumn);
       const gap = this.computeGap(cursor, otherChildren, insertOrder, dirIsColumn);
-      cd.gap = gap;
+      cd.gap = Math.min(gap, this.freeMainSpace(otherChildren, dirIsColumn));
       this._container.set("layout", { ...containerLayout });
 
       const layout = this.newChild.get?.("layout") as LayoutData;
@@ -474,6 +453,32 @@ export class InsertChildSession implements LayoutSession {
   }
 
   /**
+   * Room the gap may take on the main axis: unlimited when the container hugs
+   * it (it grows), else the inner size minus the children's sizes when grabbed
+   * — the gap stops when they reach the edge instead of squeezing them.
+   */
+  private freeMainSpace(
+    existingChildren: { obj: FabricObject; cl: ChildData }[],
+    isColumn: boolean,
+  ): number {
+    const sizing = sizingOf(this._container);
+    if ((isColumn ? sizing.y : sizing.x) === "hug") return Infinity;
+
+    const cd = (this._container.get?.("layout") as LayoutData).container!;
+    const pad = cd.padding ?? { top: 0, right: 0, bottom: 0, left: 0 };
+    const { w, h } = scaledSize(this._container);
+    const inner = isColumn ? h - pad.top - pad.bottom : w - pad.left - pad.right;
+
+    const main = (size: { w: number; h: number }) => (isColumn ? size.h : size.w);
+    let used = main(this._newChildAnchorSize);
+    for (const { obj } of existingChildren) {
+      const anchor = this._siblingAnchors.get(obj);
+      used += main(anchor ?? scaledSize(obj));
+    }
+    return Math.max(0, Math.floor(inner - used));
+  }
+
+  /**
    * Compute the gap between children from the cursor's distance to the
    * nearest neighbor in the main axis. The gap is the space between the
    * cursor and the nearest edge of an existing child, minus the new child's
@@ -533,9 +538,10 @@ export class InsertChildSession implements LayoutSession {
   private previewLayout(allChildren: { obj: FabricObject; cl: ChildData }[]): void {
     const containerLayout = this._container.get?.("layout") as LayoutData;
     const cd = containerLayout.container!;
+    const sizing = sizingOf(this._container);
     const { w: currentW, h: currentH } = scaledSize(this._container);
-    const minW = cd.minSize?.w ?? 0;
-    const minH = cd.minSize?.h ?? 0;
+    const minW = sizing.minSize?.w ?? 0;
+    const minH = sizing.minSize?.h ?? 0;
 
     const containerTL = topLeft(this._container);
 
@@ -546,13 +552,13 @@ export class InsertChildSession implements LayoutSession {
 
     // For the measure pass, use minSize as the constraint in hug mode
     // (not currentW which may be inflated from a previous frame)
-    const modeX = cd.sizeMode.x;
-    const modeY = cd.sizeMode.y;
+    const modeX = sizing.x;
+    const modeY = sizing.y;
     const measureW = modeX === "hug" ? minW : currentW;
     const measureH = modeY === "hug" ? minH : currentH;
 
     const { w: requiredW, h: requiredH } = yogaLayout(
-      allChildren, containerTL.x, containerTL.y, measureW, measureH, cd,
+      allChildren, containerTL.x, containerTL.y, measureW, measureH, cd, sizing,
     );
 
     // Size: hug adapts to content (min = snapshot minSize), fixed stays put
@@ -562,7 +568,7 @@ export class InsertChildSession implements LayoutSession {
     if (finalW !== currentW || finalH !== currentH) {
       setShapeSize(this._container, finalW, finalH);
       const tl2 = topLeft(this._container);
-      yogaLayout(allChildren, tl2.x, tl2.y, finalW, finalH, cd);
+      yogaLayout(allChildren, tl2.x, tl2.y, finalW, finalH, cd, sizing);
     }
 
     syncCoords(this._container, allChildren);
@@ -606,12 +612,4 @@ export class InsertChildSession implements LayoutSession {
     }
     return map;
   }
-}
-
-// ── Helpers ─────────────────────────────────────────────────────────
-
-/** Deep-clone a Fabric object's layout data for snapshot/rollback. */
-function cloneLayout(obj: FabricObject): LayoutData | undefined {
-  const layout = obj.get?.("layout") as LayoutData | undefined;
-  return layout ? JSON.parse(JSON.stringify(layout)) : undefined;
 }

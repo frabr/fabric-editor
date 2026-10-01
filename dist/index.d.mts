@@ -77,17 +77,178 @@ declare class DesignCanvas {
 }
 
 /**
- * Textbox personnalisé qui :
- * 1. Place le textarea caché à l'intérieur du canvas container (pour le focus dans les modales)
- * 2. Force sa position à (0, 0) pour éviter les problèmes de layout/scroll
+ * Layout system types — Flexbox model backed by Yoga.
  *
- * Hérite de Textbox (et non IText) pour le line-wrapping natif
- * quand une width fixe est définie (mode layout "largeur fixe").
+ * Every participating Fabric object carries a single `layout: LayoutData`
+ * property with independent, optional blocks:
  *
- * Nécessaire car les modales (dialog) avec showModal() créent un
- * "focus trap" qui empêche le focus d'aller sur des éléments
- * en dehors du dialog. En plaçant le textarea dans le canvas
- * container (qui est dans le dialog), il peut recevoir le focus.
+ * - `sizing`: how the object sizes itself, per axis — shared by containers
+ *   and texts (a text's "content" is its text, a container's is its children)
+ * - `container`: present when the object has children (is a parent)
+ * - `child`: present when the object is inside another container
+ * - `overflow`: what a text does when its box is smaller than its content
+ *
+ * Container and child can coexist — a nested container is both.
+ *
+ * Outside a container, objects are positioned absolutely by Fabric.
+ * Inside a container, objects follow Flexbox rules (Yoga engine).
+ */
+/**
+ * Size mode per axis:
+ * - "hug": the object adapts to its content (text, or children)
+ * - "fixed": the object keeps its size, content must adapt (wrap/shrink/clip)
+ */
+type SizeMode = "hug" | "fixed";
+/** "How I size myself" — on containers and texts. */
+interface SizingData {
+    x: SizeMode;
+    y: SizeMode;
+    /**
+     * Floor set by the resize handles on a "hug" axis: the object is
+     * `max(content, minSize)`. Ignored on a "fixed" axis.
+     */
+    minSize?: {
+        w: number;
+        h: number;
+    };
+}
+/**
+ * What a text does when its box is smaller than its content (fixed height,
+ * or a height constrained by its container):
+ * - "shrink": font size goes down (to MIN_FONT_SIZE) until it fits
+ * - "clip": the text is cut at the box edge
+ * - "visible": the text overflows the box
+ */
+type TextOverflow = "shrink" | "clip" | "visible";
+/** Cross-axis alignment for a single child (maps to Yoga alignSelf). */
+type AlignSelf = "auto" | "stretch" | "flex-start" | "flex-end" | "center";
+/** Main-axis distribution (maps to Yoga justifyContent). */
+type JustifyContent = "flex-start" | "flex-end" | "center" | "space-between" | "space-around";
+/** Cross-axis alignment for all children (maps to Yoga alignItems). */
+type AlignItems = "stretch" | "flex-start" | "flex-end" | "center";
+/** Flex direction (maps to Yoga flexDirection). */
+type FlexDirection = "column" | "row";
+/** "I am a parent" — present when the object has children. */
+interface ContainerData {
+    /** Flex direction: column (vertical, default) or row (horizontal). */
+    flexDirection?: FlexDirection;
+    /** Gap between children in the main axis direction (pixels). */
+    gap?: number;
+    /** Padding between container edges and children. */
+    padding?: {
+        top: number;
+        right: number;
+        bottom: number;
+        left: number;
+    };
+    /** Cross-axis alignment for children (default: "flex-start"). */
+    alignItems?: AlignItems;
+    /** Main-axis distribution (default: "flex-start"). */
+    justifyContent?: JustifyContent;
+}
+/** "I am a child" — present when the object is inside a container. */
+interface ChildData {
+    parentId: string;
+    /** Override the container's alignItems for this child. */
+    alignSelf?: AlignSelf;
+    /** How much this child grows to fill remaining space (default: 0). */
+    flexGrow?: number;
+    /** Position in the flex flow (lower = earlier). Children without order go by insertion order. */
+    order?: number;
+}
+/** The `layout` property on any participating Fabric object. */
+interface LayoutData {
+    sizing?: SizingData;
+    container?: ContainerData;
+    child?: ChildData;
+    /** Texts only (default "shrink"). */
+    overflow?: TextOverflow;
+}
+/** Resolved child: a Fabric object paired with its ChildData. */
+interface ResolvedChild {
+    obj: _fabric.FabricObject;
+    cl: ChildData;
+}
+declare function isContainer(l: LayoutData): boolean;
+declare function isChild(l: LayoutData): boolean;
+/** @deprecated Use `layout.container != null` instead. */
+type ContainerLayout = LayoutData & {
+    container: ContainerData;
+};
+/** @deprecated Use `layout.child != null` instead. */
+type ChildLayout = ChildData;
+/** @deprecated Use `isContainer` instead. */
+declare function isContainerLayout(l: LayoutData): boolean;
+/** @deprecated Use `isChild` instead. */
+declare function isChildLayout(l: LayoutData): boolean;
+/** Common interface for layout sessions (ContainerizeSession, InsertChildSession). */
+interface LayoutSession {
+    handleMoving(cursor: {
+        x: number;
+        y: number;
+    }): "anchored" | "exited";
+    commit(): () => void;
+    rollback(): void;
+    readonly container: _fabric.FabricObject;
+    readonly child: _fabric.FabricObject;
+}
+/** Minimum padding between a child and its container edges. */
+declare const MIN_PAD = 8;
+/** Snapshot of shape + text properties before attach, used for rollback. */
+interface AttachSnapshot {
+    shape: Record<string, any>;
+    text: Record<string, any>;
+}
+
+/**
+ * Boîte d'un texte : fonction pure de son mode de taille, de la contrainte que lui
+ * donne son container (le temps d'une passe), de son overflow et d'une mesure.
+ *
+ * Aucun état : CustomTextbox fournit la mesure (Fabric) et applique le résultat.
+ */
+
+/**
+ * Ce que le container donne au texte pour une passe de layout — jamais conservé.
+ * - `maxW` : largeur disponible, que le texte ne dépasse pas (il wrappe)
+ * - `w` / `h` : taille exacte calculée par Yoga (stretch, flexGrow, flexShrink)
+ */
+interface TextConstraint {
+    maxW?: number;
+    w?: number;
+    h?: number;
+}
+
+/**
+ * Textbox de l'éditeur : un objet de layout comme les autres.
+ *
+ * Il porte les mêmes modes de taille que les containers (`layout.sizing`), son
+ * « contenu » étant son texte :
+ * - largeur `hug` : une ligne, la boîte suit le texte ; `fixed` : wrap à la largeur ;
+ *   dans les deux cas, jamais plus large que la place que donne le container (le
+ *   container pousse la largeur fixe, qui reste acquise) ;
+ * - hauteur `hug` : la boîte suit le texte, avec un plancher `minSize.h` posé par les
+ *   poignées ; `fixed` : la boîte garde sa hauteur et `layout.overflow` décide
+ *   (réduire la police, couper, déborder).
+ *
+ * La boîte est calculée par `resolveTextBox` (layout/text-box.ts) ; le texte ne fait
+ * que fournir la mesure et appliquer le résultat.
+ *
+ * Contrainte du container : un seul écrivain, le moteur de layout (`layoutWith`, à
+ * chaque passe). Fabric recalcule aussi le texte de lui-même, hors de toute passe et
+ * sans événement pour relancer le layout (sortie d'édition, rendu après un changement
+ * de styles) : ce recalcul reprend la dernière contrainte reçue. Un enfant jamais mis
+ * en page (document tout juste chargé) s'affiche tel que sauvegardé ; un texte hors
+ * container ignore toute contrainte.
+ *
+ * Les poignées ne déforment jamais : elles changent la boîte (jamais de scale).
+ *
+ * `fontSize` est la taille effective (celle qui est rendue et sauvegardée, pour qu'un
+ * document s'affiche juste sans relayout) ; `fontSizeIntent` est la taille voulue par
+ * l'utilisateur, d'où repart l'autofit à chaque calcul.
+ *
+ * Hérite de Textbox (et non IText) pour le line-wrapping natif. Place aussi le textarea
+ * caché dans le container du canvas, pour le focus dans les modales (`showModal()`
+ * piège le focus hors du dialog).
  */
 type WordEntry = {
     word: string[];
@@ -99,21 +260,76 @@ type GraphemeData = {
     wordsData: WordEntry[][];
 };
 declare class CustomTextbox extends Textbox {
-    /**
-     * Auto-width mode : le textbox s'étend horizontalement au contenu.
-     * Désactivé automatiquement quand l'utilisateur resize manuellement.
-     */
-    _autoWidth: boolean;
+    static customProperties: string[];
+    /** Taille de police voulue — l'effective (`fontSize`) peut être réduite par l'autofit. */
+    fontSizeIntent: number;
+    /** Le contenu dépasse la boîte (overflow clip / visible). */
+    _overflowing?: boolean;
+    /** Dernière contrainte reçue du container (absente : jamais mis en page). */
+    _constraint?: TextConstraint;
     constructor(text: string, options?: Record<string, unknown>);
-    /** Dernière width calculée par le mode auto-width. */
-    private _autoWidthValue;
     /**
-     * Override initDimensions : en mode auto-width, on calcule les dimensions
-     * avec une width infinie puis on ajuste width au résultat.
-     * Si la width entrante diffère de notre dernière valeur auto, c'est un
-     * resize externe → on désactive auto-width.
+     * Sans bloc `sizing` (le temps de la construction, avant _ensureSizing), la boîte
+     * stockée fait foi : largeur fixe.
      */
+    get sizing(): SizingData;
+    get textOverflow(): TextOverflow;
+    /** Remplace le bloc `sizing` (nouvel objet `layout`, jamais muté en place). */
+    setSizing(sizing: SizingData): void;
+    setTextOverflow(overflow: TextOverflow): void;
+    /** Largeur naturelle à la police courante : la plus longue ligne, sans wrap. */
+    naturalWidth(): number;
+    /**
+     * Largeur minimale du texte : son mot le plus long (le min-content de CSS). Le
+     * découpage des mots trop longs (break-word) n'est qu'un repli, pas un minimum.
+     */
+    minContentWidth(): number;
+    /**
+     * Une passe de layout : calcule la boîte sous la contrainte du container et la
+     * retient. `null` : le texte a quitté son container.
+     */
+    layoutWith(constraint: TextConstraint | null): void;
+    /** Recalcul (Fabric, ou layoutWith) sous la contrainte courante. */
     initDimensions(): void;
+    private _applyBox;
+    /**
+     * Mesure via Fabric (mute l'objet ; _applyBox pose l'état final ensuite). Méthode et
+     * non champ : Fabric mesure déjà pendant le super() du constructeur.
+     */
+    private _measure;
+    /** Wrap à `width` puis mesure (la largeur peut grandir au mot le plus long). */
+    private _wrapAt;
+    /** Toute nouvelle `fontSize` posée via set() est une intention de l'utilisateur. */
+    _set(key: string, value: any): this;
+    /** overflow "clip" : le texte est coupé au bord de sa boîte. */
+    _render(ctx: CanvasRenderingContext2D): void;
+    /**
+     * Bord gauche/droit : la largeur passe en fixe et prend la valeur tirée.
+     * Bord haut/bas : en hauteur contenu, pose le plancher `minSize.h` ; en hauteur fixe,
+     * change la hauteur.
+     */
+    handleEdgeResize(transform: any, x: number, y: number): boolean;
+    /** Coin : les deux règles des bords à la fois. */
+    handleCornerResize(transform: any, x: number, y: number): boolean;
+    private _isChild;
+    private _withAnchor;
+    private _resizeWidth;
+    private _resizeHeight;
+    /**
+     * Un texte étiré (scaleX/scaleY) est ramené à scale 1 : le scale passe dans la
+     * largeur et la police. Exact pour un scale uniforme ; un étirement non uniforme est
+     * perdu (les glyphes reprennent leurs proportions).
+     */
+    private _bakeLegacyScale;
+    /**
+     * Un texte sans `layout.sizing` (nouveau, ou document d'avant les modes de taille)
+     * reçoit un mode explicite :
+     * - nouveau texte, ou enfant de container (sa largeur était dictée par le container) :
+     *   largeur contenu ;
+     * - sinon : largeur contenu si la boîte épouse le texte sur une ligne, fixe sinon
+     *   (texte qui wrappe, ou boîte élargie pour un alignement).
+     */
+    private _ensureSizing;
     /**
      * overflow-wrap: break-word — pré-découpe les mots trop longs
      * en chunks et les marque pour que _wrapLine ne mette pas
@@ -188,126 +404,19 @@ declare function isContentLocked(obj: FabricObject): boolean;
 declare function isPositionLocked(obj: FabricObject): boolean;
 
 /**
- * Layout system types — Flexbox model backed by Yoga.
- *
- * Every participating Fabric object carries a single `layout: LayoutData`
- * property with two independent, optional blocks:
- *
- * - `container`: present when the object has children (is a parent)
- * - `child`: present when the object is inside another container
- *
- * Both can coexist — a nested container is both a parent and a child.
- *
- * Outside a container, objects are positioned absolutely by Fabric.
- * Inside a container, objects follow Flexbox rules (Yoga engine).
- */
-/**
- * Size mode per axis:
- * - "hug": container adapts to content
- * - "fixed": container keeps its size, content must adapt (shrink/clip)
- */
-type SizeMode = "hug" | "fixed";
-/** Cross-axis alignment for a single child (maps to Yoga alignSelf). */
-type AlignSelf = "auto" | "stretch" | "flex-start" | "flex-end" | "center";
-/** Main-axis distribution (maps to Yoga justifyContent). */
-type JustifyContent = "flex-start" | "flex-end" | "center" | "space-between" | "space-around";
-/** Cross-axis alignment for all children (maps to Yoga alignItems). */
-type AlignItems = "stretch" | "flex-start" | "flex-end" | "center";
-/** Flex direction (maps to Yoga flexDirection). */
-type FlexDirection = "column" | "row";
-/** "I am a parent" — present when the object has children. */
-interface ContainerData {
-    sizeMode: {
-        x: SizeMode;
-        y: SizeMode;
-    };
-    /** Minimum size set by manual resize. Container never shrinks below this. */
-    minSize?: {
-        w: number;
-        h: number;
-    };
-    /** Overflow behavior when content exceeds fixed size. */
-    overflow?: "clip" | "shrink";
-    /** Flex direction: column (vertical, default) or row (horizontal). */
-    flexDirection?: FlexDirection;
-    /** Gap between children in the main axis direction (pixels). */
-    gap?: number;
-    /** Padding between container edges and children. */
-    padding?: {
-        top: number;
-        right: number;
-        bottom: number;
-        left: number;
-    };
-    /** Cross-axis alignment for children (default: "flex-start"). */
-    alignItems?: AlignItems;
-    /** Main-axis distribution (default: "flex-start"). */
-    justifyContent?: JustifyContent;
-}
-/** "I am a child" — present when the object is inside a container. */
-interface ChildData {
-    parentId: string;
-    /** Override the container's alignItems for this child. */
-    alignSelf?: AlignSelf;
-    /** How much this child grows to fill remaining space (default: 0). */
-    flexGrow?: number;
-    /** Position in the flex flow (lower = earlier). Children without order go by insertion order. */
-    order?: number;
-}
-/** The `layout` property on any participating Fabric object. */
-interface LayoutData {
-    container?: ContainerData;
-    child?: ChildData;
-}
-/** Resolved child: a Fabric object paired with its ChildData. */
-interface ResolvedChild {
-    obj: _fabric.FabricObject;
-    cl: ChildData;
-}
-declare function isContainer(l: LayoutData): boolean;
-declare function isChild(l: LayoutData): boolean;
-/** @deprecated Use `layout.container != null` instead. */
-type ContainerLayout = LayoutData & {
-    container: ContainerData;
-};
-/** @deprecated Use `layout.child != null` instead. */
-type ChildLayout = ChildData;
-/** @deprecated Use `isContainer` instead. */
-declare function isContainerLayout(l: LayoutData): boolean;
-/** @deprecated Use `isChild` instead. */
-declare function isChildLayout(l: LayoutData): boolean;
-/** Common interface for layout sessions (ContainerizeSession, InsertChildSession). */
-interface LayoutSession {
-    handleMoving(cursor: {
-        x: number;
-        y: number;
-    }): "anchored" | "exited";
-    commit(): () => void;
-    rollback(): void;
-    readonly container: _fabric.FabricObject;
-    readonly child: _fabric.FabricObject;
-}
-/** Minimum padding between a child and its container edges. */
-declare const MIN_PAD = 8;
-/** Snapshot of shape + text properties before attach, used for rollback. */
-interface AttachSnapshot {
-    shape: Record<string, any>;
-    text: Record<string, any>;
-}
-
-/**
  * Layout reconciliation — Flexbox model backed by Yoga.
  *
  * Takes the declared layout state (container/child relationships, size modes,
  * margins, flex props) and resolves concrete positions and dimensions.
  * Idempotent: running it twice on the same state produces the same result.
  *
- * Supports two size modes per axis:
- * - "hug": container adapts to content (bottom-up)
+ * Supports two size modes per axis (`layout.sizing`):
+ * - "hug": container adapts to content (bottom-up), floored by `minSize`
  * - "fixed": container keeps its size, content adapts
  *
- * When X is fixed: text wraps at the available width (Textbox behavior).
- * When both X and Y are fixed: text also shrinks (fontSize) if it overflows.
+ * The container only gives room: a text child receives the box Yoga computed
+ * and decides itself what to do with it (wrap, autofit, clip — see
+ * CustomTextbox). The container never touches a text's font size.
  *
  * Single pass, deterministic, no solver.
  *
@@ -333,23 +442,48 @@ declare function runLayout(objects: FabricObject[]): void;
  * the programmatic layout reconciliation that runs on every frame.
  */
 
+/**
+ * Handle rules (same as texts, see CustomTextbox):
+ * - dragging a left/right edge fixes the width (hug → fixed);
+ * - dragging a top/bottom edge on a hug height sets the floor `minSize.h`
+ *   (the mode doesn't change); on a fixed height, sets the height;
+ * - a corner applies both rules.
+ */
 declare class ResizeSession {
     private container;
     private containerData;
+    private sizing;
     private axes;
+    private corner?;
     /** User-intended size — only updated on axes the user controls. */
     private userW;
     private userH;
+    /**
+     * Fixed widths of the text children at grab time: the container pushes them
+     * when it gets narrower, and they grow back if the user widens it again
+     * within the same drag. What remains at release is kept.
+     */
+    private textWidths;
+    /** Smallest box the content fits in (computed at grab): the handles stop there. */
+    private minContent;
     constructor(container: FabricObject, corner?: string);
+    /**
+     * Resize keeping the edge opposite to the dragged handle in place — when the
+     * content stops the handle, the grabbed edge stops, not the other one.
+     */
+    private setSizeKeepingAnchor;
+    private restoreTextWidths;
     /**
      * Called on each `object:resizing` frame.
      * Controls already set width/height directly (no scale involved).
      */
     handleResizing(objects: FabricObject[]): void;
     /**
-     * Called on `object:modified`. Captures minSize from the user's intent.
+     * Called on `object:modified`. On a hug axis the user dragged, what they
+     * dragged becomes the floor — under the content it's harmless (the box is
+     * max(content, floor)).
      */
-    commit(objects: FabricObject[]): void;
+    commit(_objects: FabricObject[]): void;
 }
 
 /**
@@ -433,7 +567,10 @@ declare class ContainerizeSession {
         x: number;
         y: number;
     }): "anchored" | "exited";
-    /** Finalize the attach. Returns a cleanup function for the "changed" listener. */
+    /**
+     * Finalize the attach. Text edits relayout through the LayoutManager's
+     * canvas-wide `text:changed` listener — nothing to clean up here.
+     */
     commit(): () => void;
     /** Undo anchor: restore snapshot, reverse grab offset. */
     rollback(): void;
@@ -484,6 +621,8 @@ declare class InsertChildSession implements LayoutSession {
     private _animator;
     /** Sibling positions at anchor time — stable reference for gap calculation. */
     private _siblingAnchors;
+    /** Size of the dragged child when grabbed — Yoga may squeeze it in later frames. */
+    private _newChildAnchorSize;
     /** Last Yoga-computed position of the dragged child (not the cursor position). */
     private _lastDraggedYogaPos;
     constructor(canvas: DesignCanvas, container: FabricObject, newChild: FabricObject, cursor: {
@@ -533,6 +672,12 @@ declare class InsertChildSession implements LayoutSession {
      */
     private computeInsertOrder;
     /**
+     * Room the gap may take on the main axis: unlimited when the container hugs
+     * it (it grows), else the inner size minus the children's sizes when grabbed
+     * — the gap stops when they reach the edge instead of squeezing them.
+     */
+    private freeMainSpace;
+    /**
      * Compute the gap between children from the cursor's distance to the
      * nearest neighbor in the main axis. The gap is the space between the
      * cursor and the nearest edge of an existing child, minus the new child's
@@ -562,7 +707,7 @@ declare function isYogaReady(): boolean;
  *
  * Returns the required container size (for hug mode).
  */
-declare function yogaLayout(children: ResolvedChild[], containerLeft: number, containerTop: number, containerW: number, containerH: number, cd: ContainerData): {
+declare function yogaLayout(children: ResolvedChild[], containerLeft: number, containerTop: number, containerW: number, containerH: number, cd: ContainerData, sizing: SizingData): {
     w: number;
     h: number;
 };
@@ -906,14 +1051,17 @@ declare class LayerManager {
      */
     removeMany(objects: FabricObject[]): void;
     /**
-     * Monte l'objet d'un niveau (vers l'avant)
+     * Monte l'objet devant le premier objet de même niveau qui le chevauche. Un
+     * container emmène ses descendants (toujours au-dessus de lui) ; un enfant reste
+     * parmi les enfants de son container.
      */
     bringForward(obj: FabricObject): void;
     /**
-     * Descend l'objet d'un niveau (vers l'arrière)
-     * Ne peut pas descendre en dessous de l'image de fond
+     * Descend l'objet d'un niveau, mêmes règles de blocs que bringForward. Ne peut pas
+     * descendre en dessous de l'image de fond.
      */
     sendBackward(obj: FabricObject): void;
+    private applyStackOrder;
     /**
      * Crée et ajoute un calque texte
      */
@@ -1048,11 +1196,10 @@ declare class SelectionManager {
     set onModified(callback: ((obj: FabricObject | null) => void) | undefined);
     /**
      * Given a Fabric target (the object under the cursor), return the object
-     * that should actually be highlighted / selected.
-     *
-     * - If the target is a layout child and we are NOT inside its group,
-     *   redirect to the parent container.
-     * - Otherwise return the target as-is.
+     * that should actually be hovered / selected / dragged: a layout child
+     * outside the active group resolves to its container, up the chain (a
+     * grandchild resolves to the outermost container that isn't the active
+     * group's child).
      */
     resolveTarget(obj: FabricObject): FabricObject;
     /**
@@ -1091,13 +1238,35 @@ declare class SelectionManager {
      */
     private setupListeners;
     /**
-     * Intercept mouse:down to manage group-enter / group-exit logic.
-     *
-     * - Click on an already-selected container → enter the group
-     * - Click on an object outside the active group → exit the group
-     * - Click on empty canvas → exit the group
+     * Fabric picks the target of a press (and of hover) in searchPossibleTargets:
+     * redirecting there — not after the selection — makes a press on a child
+     * outside its group a press on its container, so that a click + drag moves
+     * the container right away instead of grabbing the child.
+     */
+    private redirectTargetSearch;
+    /** What was selected before this press — Fabric selects before firing mouse:down. */
+    private _selectedBeforePress;
+    private handleMouseDownBefore;
+    /**
+     * Group exit: a press outside the active group (or on empty canvas) leaves it.
+     * Entering is decided on release (see handleMouseUp), so that a drag on a
+     * selected container still moves it.
      */
     private handleMouseDown;
+    /**
+     * Group enter: a click (no drag) on a container that was already selected
+     * enters it and selects its child under the pointer.
+     */
+    private handleMouseUp;
+    /** Enter `container`'s group and select its topmost child under `point`. */
+    private enterGroup;
+    /**
+     * Double-click on a text inside a container: its two clicks entered the
+     * group and selected the text (the press targeted the container, so
+     * Fabric's own double-click editing didn't run) — edit it now, word under
+     * the pointer selected, like Fabric does.
+     */
+    private handleDoubleClick;
     /**
      * Gère la création/mise à jour de sélection
      * Les objets verrouillés sont exclus des sélections multiples
@@ -1417,6 +1586,8 @@ declare class SnappingManager {
     dispose(): void;
 }
 
+/** Size presets of the UI (same vocabulary for containers and texts). */
+type SizePreset = "hug" | "hug-y" | "fixed";
 interface LayoutManagerCallbacks {
     /** Called after a layout relationship is committed (drag-to-layout or panel edit). */
     onLayoutCreated?: () => void;
@@ -1446,8 +1617,16 @@ declare class LayoutManager {
     setCallbacks(callbacks: LayoutManagerCallbacks): void;
     /** Run layout on all canvas objects (programmatic relayout). */
     relayout(): void;
-    /** Update layout mode on the currently selected container. */
-    setMode(obj: FabricObject, mode: "hug" | "hug-y" | "fixed"): void;
+    /**
+     * Set the size mode of a container or a text:
+     * - "hug": width and height follow the content
+     * - "hug-y": fixed width (texts wrap), height follows the content
+     * - "fixed": fixed width and height (texts apply their overflow)
+     * The floor set by the handles (`minSize`) is kept.
+     */
+    setMode(obj: FabricObject, mode: SizePreset): void;
+    /** What a text does when its box is smaller than its content. */
+    setOverflow(obj: FabricObject, overflow: TextOverflow): void;
     /** Update padding on a container. */
     setPadding(obj: FabricObject, side: string, value: number): void;
     /** Update alignSelf on a child layout object. */
@@ -1493,8 +1672,11 @@ declare class LayoutManager {
     private onMovingBound;
     private onModifiedBound;
     private onResizingBound;
+    private onTextChangedBound;
     private setupEventListeners;
     private onMoving;
+    /** A text inside a container was edited → its ancestors adapt. */
+    private onTextChanged;
     private onModified;
     private onResizing;
     private handleIdleMoving;
@@ -1726,6 +1908,10 @@ declare class FabricEditor {
      * Change la taille de police de l'objet texte sélectionné
      */
     setFontSize(size: number): void;
+    /**
+     * Justification de l'objet texte sélectionné, dans sa boîte.
+     */
+    setTextAlign(align: "left" | "center" | "right" | "justify"): void;
     /**
      * Bascule un style sur l'objet texte sélectionné (gras, italique, souligné).
      * "bold" alterne fontWeight normal/bold (un poids numérique >= 600 compte
@@ -2409,4 +2595,4 @@ declare function setTextContent(obj: FabricObject, text: string): void;
  */
 declare function drawBindingBadge(ctx: CanvasRenderingContext2D, obj: FabricObject, color: string): void;
 
-export { type AlignItems, type AlignSelf, type AttachSnapshot, type BindingSpec, type Bindings, CanvasGuides, type CatalogShape, type CatalogShapeInput, type ChildData, type ChildLayout, type ClipData, type ContainerData, type ContainerLayout, ContainerizeSession, type ControlOption, type Controllable, CustomTextbox, DesignCanvas, type DragPayload, DropHandler, type DropHandlerConfig, type EditorConfig, FabCircle, FabPath, FabRect, FabricEditor, type FlexDirection, type FontConfig, type FontsConfig, HEART_PATH, HEXAGON_PATH, type HistoryCallbacks, HistoryManager, type HistoryState, type HtmlLayerOutput, type HtmlRenderOptions, ImageFrame, type ImageLayerOptions, InsertChildSession, type JustifyContent, type LayerData, LayerManager, type LayoutData, LayoutManager, type LayoutManagerCallbacks, type LayoutSession, type LockMode$1 as LockMode, type Lockable, MIN_PAD, MaskManager, type ObjectControlsConfig, PendingUploadsManager, PersistenceManager, PreviewCanvas, ResizeSession, type ResizeSnapResult, type SaveOptions, type SaveResult, type SelectionCallbacks, SelectionManager, type ShapeCatalogEntry, type ShapeLayerOptions, type ShapePathData, type ShapeType, type SizeMode, type SnappingConfig, SnappingManager, type TextLayerOptions, addCircleClip, addCropControls, addHeartClip, addHexagonClip, antiScale, applyClip, applyLockMode, clampTopLeft, clipDataFor, createCircle, createHeart, createHexagon, createImage, createPathShape, createPathsShape, createRect, createShape, drawBindingBadge, fabricToHtml, getAvailableShapes, getCatalogShape, getLockMode, getNextLockMode, getShapeCatalog, hasExceededOffset, hasPendingBindings, initYoga, isChild, isChildLayout, isContainer, isContainerLayout, isContentLocked, isMonoPath, isPositionLocked, isStyleLocked, isValidShape, isYogaReady, layerToHtmlStandalone, lockBoundText, nextShape, pendingBindings, pointInObject, registerShapes, registeredShapes, removeCropControls, runLayout, scaledSize, setTextContent, switchClip, switchShape, topLeft, wrapContainerAroundChild, yogaLayout };
+export { type AlignItems, type AlignSelf, type AttachSnapshot, type BindingSpec, type Bindings, CanvasGuides, type CatalogShape, type CatalogShapeInput, type ChildData, type ChildLayout, type ClipData, type ContainerData, type ContainerLayout, ContainerizeSession, type ControlOption, type Controllable, CustomTextbox, DesignCanvas, type DragPayload, DropHandler, type DropHandlerConfig, type EditorConfig, FabCircle, FabPath, FabRect, FabricEditor, type FlexDirection, type FontConfig, type FontsConfig, HEART_PATH, HEXAGON_PATH, type HistoryCallbacks, HistoryManager, type HistoryState, type HtmlLayerOutput, type HtmlRenderOptions, ImageFrame, type ImageLayerOptions, InsertChildSession, type JustifyContent, type LayerData, LayerManager, type LayoutData, LayoutManager, type LayoutManagerCallbacks, type LayoutSession, type LockMode$1 as LockMode, type Lockable, MIN_PAD, MaskManager, type ObjectControlsConfig, PendingUploadsManager, PersistenceManager, PreviewCanvas, ResizeSession, type ResizeSnapResult, type SaveOptions, type SaveResult, type SelectionCallbacks, SelectionManager, type ShapeCatalogEntry, type ShapeLayerOptions, type ShapePathData, type ShapeType, type SizeMode, type SizePreset, type SizingData, type SnappingConfig, SnappingManager, type TextLayerOptions, type TextOverflow, addCircleClip, addCropControls, addHeartClip, addHexagonClip, antiScale, applyClip, applyLockMode, clampTopLeft, clipDataFor, createCircle, createHeart, createHexagon, createImage, createPathShape, createPathsShape, createRect, createShape, drawBindingBadge, fabricToHtml, getAvailableShapes, getCatalogShape, getLockMode, getNextLockMode, getShapeCatalog, hasExceededOffset, hasPendingBindings, initYoga, isChild, isChildLayout, isContainer, isContainerLayout, isContentLocked, isMonoPath, isPositionLocked, isStyleLocked, isValidShape, isYogaReady, layerToHtmlStandalone, lockBoundText, nextShape, pendingBindings, pointInObject, registerShapes, registeredShapes, removeCropControls, runLayout, scaledSize, setTextContent, switchClip, switchShape, topLeft, wrapContainerAroundChild, yogaLayout };

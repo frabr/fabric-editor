@@ -5,12 +5,13 @@
  * margins, flex props) and resolves concrete positions and dimensions.
  * Idempotent: running it twice on the same state produces the same result.
  *
- * Supports two size modes per axis:
- * - "hug": container adapts to content (bottom-up)
+ * Supports two size modes per axis (`layout.sizing`):
+ * - "hug": container adapts to content (bottom-up), floored by `minSize`
  * - "fixed": container keeps its size, content adapts
  *
- * When X is fixed: text wraps at the available width (Textbox behavior).
- * When both X and Y are fixed: text also shrinks (fontSize) if it overflows.
+ * The container only gives room: a text child receives the box Yoga computed
+ * and decides itself what to do with it (wrap, autofit, clip — see
+ * CustomTextbox). The container never touches a text's font size.
  *
  * Single pass, deterministic, no solver.
  *
@@ -18,9 +19,9 @@
  * This module only handles programmatic relayout (content changes, mode
  * changes, move, etc.).
  */
-import type { FabricObject, FabricText } from "#fabric";
-import { type LayoutData, type ContainerData, type ChildData } from "./types";
-import { scaledSize, setShapeSize, isTextObject, syncCoords, topLeft } from "./geometry";
+import type { FabricObject } from "#fabric";
+import { type LayoutData, type ContainerData, type ChildData, sizingOf } from "./types";
+import { scaledSize, setShapeSize, syncCoords, topLeft } from "./geometry";
 import { resolveContainerChildren, sortChildrenByOrder } from "./resize-session";
 import { yogaLayout } from "./yoga-engine";
 
@@ -118,7 +119,7 @@ export function relayoutSubContainers(
 
     const tl = topLeft(obj);
     const { w, h } = scaledSize(obj);
-    yogaLayout(subChildren, tl.x, tl.y, w, h, childLayout.container);
+    yogaLayout(subChildren, tl.x, tl.y, w, h, childLayout.container, sizingOf(obj));
     syncCoords(obj, subChildren);
     // Recurse deeper
     relayoutSubContainers(subChildren, allObjects);
@@ -132,120 +133,32 @@ function layoutContainer(
   cd: ContainerData,
   children: { obj: FabricObject; cl: ChildData }[],
 ): void {
-  const modeX = cd.sizeMode.x;
-  const modeY = cd.sizeMode.y;
-
-  const minW = cd.minSize?.w ?? 0;
-  const minH = cd.minSize?.h ?? 0;
+  const sizing = sizingOf(container);
+  const minW = sizing.minSize?.w ?? 0;
+  const minH = sizing.minSize?.h ?? 0;
 
   const { w: visW, h: visH } = scaledSize(container);
-  const currentW = Math.max(visW, minW);
-  const currentH = Math.max(visH, minH);
-
-  const bothFixed = modeX === "fixed" && modeY === "fixed";
-
-  if (!bothFixed) restoreTextFontSizes(children);
+  const currentW = sizing.x === "hug" ? Math.max(visW, minW) : visW;
+  const currentH = sizing.y === "hug" ? Math.max(visH, minH) : visH;
 
   // Use true top-left (handles center-origin shapes like FabRect)
   const tl = topLeft(container);
 
   // Yoga computes positions + sizes in a single pass (text measure via setMeasureFunc)
   const { w: requiredW, h: requiredH } = yogaLayout(
-    children, tl.x, tl.y, currentW, currentH, cd,
+    children, tl.x, tl.y, currentW, currentH, cd, sizing,
   );
 
-  const finalW = modeX === "hug" ? Math.max(requiredW, minW) : currentW;
-  const finalH = modeY === "hug" ? Math.max(requiredH, minH) : currentH;
+  const finalW = sizing.x === "hug" ? Math.max(requiredW, minW) : currentW;
+  const finalH = sizing.y === "hug" ? Math.max(requiredH, minH) : currentH;
 
   setShapeSize(container, finalW, finalH);
-
-  if (bothFixed) {
-    shrinkOverflowingText(children, finalW, finalH, cd);
-  }
 
   // Re-run with final dimensions if hug mode changed the size
   if (finalW !== currentW || finalH !== currentH) {
     const tl2 = topLeft(container);
-    yogaLayout(children, tl2.x, tl2.y, finalW, finalH, cd);
+    yogaLayout(children, tl2.x, tl2.y, finalW, finalH, cd, sizing);
   }
 
   syncCoords(container, children);
-}
-
-
-/** Shrink text children that overflow when both axes are fixed. */
-function shrinkOverflowingText(
-  children: { obj: FabricObject; cl: ChildData }[],
-  containerW: number,
-  containerH: number,
-  cd: ContainerData,
-): void {
-  const pad = cd.padding ?? { top: 0, right: 0, bottom: 0, left: 0 };
-  const availW = containerW - pad.left - pad.right;
-  const availH = containerH - pad.top - pad.bottom;
-
-  for (const { obj } of children) {
-    if (!isTextObject(obj)) continue;
-
-    const { h: childH } = scaledSize(obj);
-
-    if (childH > availH) {
-      shrinkTextToFit(obj, availW, availH);
-    }
-  }
-}
-
-// ── text shrinking ───────────────────────────────────────────────────
-
-/** Restaurer la fontSize originale des textes qui avaient été shrinkés. */
-function restoreTextFontSizes(
-  children: { obj: FabricObject; cl: ChildData }[],
-): void {
-  for (const { obj } of children) {
-    if (!isTextObject(obj)) continue;
-
-    const t = obj as unknown as FabricText & { _layoutOriginalFontSize?: number };
-    if (t._layoutOriginalFontSize == null) continue;
-
-    t.fontSize = t._layoutOriginalFontSize;
-    delete t._layoutOriginalFontSize;
-    t.initDimensions();
-  }
-}
-
-/**
- * Shrink a text object's fontSize until it fits within availW × availH.
- * Stores the original fontSize as `_layoutOriginalFontSize` so we can
- * grow back if space becomes available (e.g. switching back to hug).
- */
-function shrinkTextToFit(
-  obj: FabricObject,
-  availW: number,
-  availH: number
-): void {
-  const t = obj as unknown as FabricText & { _layoutOriginalFontSize?: number };
-  const originalSize = t._layoutOriginalFontSize ?? t.fontSize;
-  t._layoutOriginalFontSize = originalSize;
-
-  // Reset to original before measuring
-  t.fontSize = originalSize;
-  t.initDimensions();
-
-  const minFontSize = 8;
-  let fontSize = originalSize;
-
-  for (let i = 0; i < 20; i++) {
-    const { w: textW, h: textH } = scaledSize(obj);
-
-    if (textW <= availW && textH <= availH) break;
-    if (fontSize <= minFontSize) break;
-
-    const ratioW = availW / Math.max(textW, 1);
-    const ratioH = availH / Math.max(textH, 1);
-    fontSize = Math.max(minFontSize, Math.floor(fontSize * Math.min(ratioW, ratioH)));
-
-    t.fontSize = fontSize;
-    obj.set({ width: availW });
-    t.initDimensions();
-  }
 }

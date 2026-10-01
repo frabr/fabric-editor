@@ -5,7 +5,7 @@
  * LayoutManager (drag-to-layout interactions).
  */
 import type { FabricObject } from "#fabric";
-import type { ResolvedChild } from "./types";
+import type { LayoutData, ResolvedChild } from "./types";
 
 /** Scaled dimensions (width × scaleX, height × scaleY). */
 export function scaledSize(obj: FabricObject): { w: number; h: number } {
@@ -42,6 +42,14 @@ export function pointInObject(
 }
 
 const TEXT_TYPES = ["i-text", "textbox"];
+
+/** The layout-facing surface of a text object (implemented by CustomTextbox). */
+export interface LayoutText {
+  /** Narrowest the text can get: its longest word. */
+  minContentWidth(): number;
+  /** A layout pass: the container's constraint (null: the text left its container). */
+  layoutWith(constraint: { maxW?: number; w?: number; h?: number } | null): void;
+}
 
 export function isTextObject(obj: FabricObject): boolean {
   return TEXT_TYPES.includes(obj.type);
@@ -85,6 +93,25 @@ export function hasExceededOffset(
     (offsetY > 0 && dy < -(offsetY + margin)) ||
     (offsetY < 0 && dy > (-offsetY + margin))
   );
+}
+
+/**
+ * Remove an object's `child` block, keeping the rest of its layout (sizing,
+ * container, overflow). A text also drops the box its container imposed.
+ */
+export function detachChild(obj: FabricObject): void {
+  const layout = obj.get?.("layout") as LayoutData | undefined;
+  if (layout?.child) {
+    const { child: _child, ...rest } = layout;
+    obj.set("layout", Object.keys(rest).length ? rest : undefined);
+  }
+  if (isTextObject(obj)) (obj as unknown as LayoutText).layoutWith(null);
+}
+
+/** Deep-clone a Fabric object's layout data for snapshot/rollback. */
+export function cloneLayout(obj: FabricObject): LayoutData | undefined {
+  const layout = obj.get?.("layout") as LayoutData | undefined;
+  return layout ? JSON.parse(JSON.stringify(layout)) : undefined;
 }
 
 /** Refresh Fabric's internal coordinate caches. */
