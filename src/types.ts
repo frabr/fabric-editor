@@ -20,6 +20,12 @@ export interface EditorConfig {
   userSlotPrompt?: string;
   container?: HTMLElement;
   transparent?: boolean;
+  /**
+   * Plan de travail : le canvas remplit le container, le cadre du document y est centré,
+   * le hors-cadre reste visible sous un voile (voir DesignCanvas.enableWorkspace).
+   * Sans : canvas = cadre (le comportement historique).
+   */
+  workspace?: boolean | import("./DesignCanvas").WorkspaceOptions;
 }
 
 // Configuration des polices

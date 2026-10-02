@@ -70,22 +70,8 @@ export class PersistenceManager {
    * Rasterise le canvas en image base64
    */
   async rasterize(): Promise<string> {
-    // Sauvegarder le zoom actuel
-    const currentZoom = this.canvas.getZoom();
-
-    // Réinitialiser le zoom pour le rendu
-    this.canvas.setZoom(1);
-
-    const dataUrl = this.canvas.toDataURL({
-      format: "png",
-      quality: 1,
-      multiplier: 1,
-    });
-
-    // Restaurer le zoom
-    this.canvas.setZoom(currentZoom);
-
-    return dataUrl;
+    // Le cadre seul, à la taille du document, quelle que soit la vue (zoom, plan de travail)
+    return this.canvas.toFrameDataURL({ format: "png", quality: 1, multiplier: 1 });
   }
 
   /**

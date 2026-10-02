@@ -5,7 +5,7 @@
 
 // Classe principale
 export { FabricEditor } from "./FabricEditor";
-export { DesignCanvas } from "./DesignCanvas";
+export { DesignCanvas, type FrameRect, type WorkspaceOptions } from "./DesignCanvas";
 export { PreviewCanvas } from "./PreviewCanvas";
 
 // Managers

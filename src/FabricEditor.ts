@@ -1,5 +1,5 @@
 import { FabricObject, FabricImage, Point, Gradient, Shadow } from "#fabric";
-import { DesignCanvas } from "./DesignCanvas";
+import { DesignCanvas, type FrameRect } from "./DesignCanvas";
 import { LayerManager } from "./LayerManager";
 import { SelectionManager } from "./SelectionManager";
 import { MaskManager } from "./MaskManager";
@@ -97,6 +97,14 @@ export class FabricEditor {
       this.canvas.backgroundColor = "transparent";
     }
 
+    if (config.workspace) {
+      this.canvas.enableWorkspace({
+        frameColor: gc,
+        ...(typeof config.workspace === "object" ? config.workspace : {}),
+      });
+      this.installWorkspacePan();
+    }
+
   }
 
   private _initialized = false;
@@ -166,6 +174,18 @@ export class FabricEditor {
 
     const boxW = container.clientWidth;
     const boxH = container.clientHeight;
+
+    // Plan de travail : le canvas remplit le container, la vue centre le cadre
+    if (this.canvas.isWorkspace) {
+      const scale = this.canvas.fitWorkspace(boxW, boxH, this._userZoom);
+      const canvasEl = container.querySelector<HTMLElement>(".canvas-container") || container;
+      canvasEl.style.marginLeft = "";
+      canvasEl.style.marginTop = "";
+      container.style.overflow = "hidden";
+      this._displayScale = scale;
+      return scale;
+    }
+
     const scale = this.canvas.fitToSize(boxW, boxH, this._userZoom);
 
     const bufferW = Math.round(this.canvas.width * scale);
@@ -206,12 +226,37 @@ export class FabricEditor {
    */
   setUserZoom(zoom: number): void {
     this._userZoom = Math.max(0.1, zoom);
+    // Revenu à l'ajustement (ou en deçà) : la vue se recentre sur le cadre
+    if (this._userZoom <= 1) this.canvas.resetPan();
     this.fitToContainer();
     this._resizeCallbacks.forEach((cb) => cb());
   }
 
   get userZoom(): number {
     return this._userZoom;
+  }
+
+  /**
+   * Le cadre du document à l'écran (px CSS, relatifs à l'élément canvas) — pour caler
+   * dessus les couches HTML de l'hôte (iframe vidéo, fonds HTML, damier). Change à
+   * chaque ajustement, zoom ou déplacement : voir onResize.
+   */
+  get frameRect(): FrameRect {
+    return this.canvas.frameRect;
+  }
+
+  /**
+   * Plan de travail zoomé : la molette déplace la vue (le minimum pour atteindre le
+   * hors-cadre ; les gestes de zoom et les limites du déplacement viendront plus tard).
+   */
+  private installWorkspacePan(): void {
+    this.canvas.on("mouse:wheel", (opt: { e: WheelEvent }) => {
+      if (this._userZoom <= 1) return;
+      opt.e.preventDefault();
+      this.canvas.panBy(-opt.e.deltaX, -opt.e.deltaY);
+      this.canvas.requestRenderAll();
+      this._resizeCallbacks.forEach((cb) => cb());
+    });
   }
 
   /**
@@ -245,23 +290,26 @@ export class FabricEditor {
     return {
       getContainer: () => anchorEl,
       getDisplayScale: () => this._displayScale,
+      // Où tombe l'origine du document (le coin du cadre) dans l'ancre : l'élément canvas,
+      // plus la position du cadre dans le canvas (nulle hors plan de travail)
       getCanvasOffset: () => {
         const container = this.config.container;
         if (!container) return { left: 0, top: 0 };
         const canvasEl = container.querySelector<HTMLElement>(".canvas-container") || container;
         const anchorRect = anchorEl.getBoundingClientRect();
         const canvasRect = canvasEl.getBoundingClientRect();
+        const frame = this.canvas.frameRect;
         return {
-          left: canvasRect.left - anchorRect.left,
-          top: canvasRect.top - anchorRect.top,
+          left: canvasRect.left - anchorRect.left + frame.left,
+          top: canvasRect.top - anchorRect.top + frame.top,
         };
       },
     };
   }
 
   /**
-   * Convertit des coordonnées du canvas Fabric vers des coordonnées CSS affichées.
-   * Utilise le displayScale mis à jour par fitToContainer.
+   * Convertit des coordonnées du document vers des coordonnées CSS relatives à l'élément
+   * canvas : l'échelle, plus la position du cadre (nulle hors plan de travail).
    */
   canvasToDisplayCoords(rect: { left: number; top: number; width: number; height: number }): {
     left: number;
@@ -270,9 +318,10 @@ export class FabricEditor {
     height: number;
   } {
     const s = this._displayScale;
+    const frame = this.canvas.frameRect;
     return {
-      left: rect.left * s,
-      top: rect.top * s,
+      left: frame.left + rect.left * s,
+      top: frame.top + rect.top * s,
       width: rect.width * s,
       height: rect.height * s,
     };
@@ -302,8 +351,9 @@ export class FabricEditor {
     const { anchor = "center", offset = 0, autoFlip = false, clampToContainer = false } = options;
     const displayRect = this.canvasToDisplayCoords(obj.getBoundingRect());
     const s = this._displayScale;
-    const containerWidth = this.config.width * s;
-    const containerHeight = this.config.height * s;
+    // L'espace où l'élément peut se placer : tout le canvas en plan de travail, le cadre sinon
+    const containerWidth = this.canvas.isWorkspace ? this.canvas.originalFabricCanvas.width : this.config.width * s;
+    const containerHeight = this.canvas.isWorkspace ? this.canvas.originalFabricCanvas.height : this.config.height * s;
     const elementWidth = element.offsetWidth || 100;
     const elementHeight = element.offsetHeight || 40;
 
