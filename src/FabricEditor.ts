@@ -10,7 +10,6 @@ import { LayoutManager, type LayoutManagerCallbacks } from "./LayoutManager";
 import { switchClip } from "./clipping";
 import { switchShape, nextShape, registerShapes } from "./shapes";
 import { ImageFrame } from "./ImageFrame";
-import { isPositionLocked } from "./locking";
 import { applyControlStyle } from "./ui/controls";
 import { hexAlpha } from "./ui/color";
 import { DRAG_PREVIEW_KEY } from "./types";
@@ -917,7 +916,7 @@ export class FabricEditor {
     if (selected.length === 0) return;
 
     // Filtrer les objets verrouillés (ne supprimer que les objets non verrouillés)
-    const deletable = selected.filter((obj) => !isPositionLocked(obj));
+    const deletable = selected.filter((obj) => rulesOf(obj).deletes);
     if (deletable.length === 0) return;
 
     this.layers.removeMany(deletable);
@@ -931,14 +930,15 @@ export class FabricEditor {
    */
   findImageAtPoint(x: number, y: number): FabricImage | ImageFrame | null {
     const target = this.findDropTargetAtPoint(x, y);
-    if (!target || rulesOf(target).onToolboxImage !== "replaceImage") return null;
+    if (!target || rulesOf(target, { ignoreLock: true }).onToolboxImage !== "replaceImage") return null;
     return target as FabricImage | ImageFrame;
   }
 
   /**
-   * Trouve l'objet qui réagit à une image de la toolbox sous un point (le plus haut :
-   * une forme la prend en fond, une forme-image remplace la sienne — voir rulesOf).
-   * Utilisé par DropHandler pour le drop d'images sur images ET sur formes.
+   * Trouve la cible d'une image de la toolbox sous un point : le plus haut objet opaque
+   * (une forme la prend en fond, une forme-image remplace la sienne — voir rulesOf). Il
+   * peut ne pas réagir (verrouillé, groupe de paths) : DropHandler n'arme alors pas le
+   * remplacement, et l'image est ajoutée.
    */
   findDropTargetAtPoint(x: number, y: number): FabricObject | null {
     const point = new Point(x, y);
@@ -951,8 +951,12 @@ export class FabricEditor {
       if (obj.get(DRAG_PREVIEW_KEY)) continue;
       // Le fond (legacy, promu, passthrough) est hors-jeu : un fond réactif au drop,
       // plein cadre, capterait tous les drops — il se change par le drop en bord ou
-      // la promotion, jamais par le drop direct.
-      if (!rulesOf(obj).onToolboxImage) continue;
+      // la promotion, jamais par le drop direct. Le verrou est ignoré ici : un objet
+      // verrouillé reste opaque (l'armement du remplacement, lui, le lit).
+      // Opaque aussi : une forme qui ne prend pas d'image (groupe de paths) — l'image ne
+      // va pas remplir la forme cachée dessous. Un texte, lui, reste transparent.
+      const rules = rulesOf(obj, { ignoreLock: true });
+      if (!rules.onToolboxImage && !rules.hosts) continue;
       if (obj.containsPoint(point)) return obj;
     }
 

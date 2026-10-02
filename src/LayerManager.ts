@@ -11,6 +11,7 @@ import type { DesignCanvas } from "./DesignCanvas";
 import { CustomTextbox } from "./controls/CustomTextbox";
 import { migrateLegacyLayout } from "./layout/legacy";
 import { bringBlockForward, sendBlockBackward } from "./layout/stacking";
+import { kindOf } from "./capabilities";
 import type { LayoutData } from "./layout/types";
 import { createShape as createShapeObject, createPathsShape, createImage } from "./shapes/factories";
 import { FabRect } from "./shapes/FabRect";
@@ -244,9 +245,8 @@ export class LayerManager {
     newUrl: string,
     options?: { opacity?: number }
   ): Promise<ImageFrame | FabricImage> {
-    // Si c'est un ImageFrame, déléguer à sa méthode (vérifier via layerType)
-    const layerType = (target as { layerType?: string }).layerType;
-    if (layerType === "imageFrame" || target instanceof ImageFrame) {
+    // Une forme-image : déléguer à sa méthode
+    if (kindOf(target as FabricObject) === "imageShape") {
       const frame = target as ImageFrame;
       const newImg = await FabricImage.fromURL(newUrl, { crossOrigin: "anonymous" });
       await frame.replaceImage(newImg);

@@ -2,7 +2,6 @@ import { FabricImage, Point, Rect, type FabricObject } from "#fabric";
 import type { FabricEditor } from "./FabricEditor";
 import { DRAG_PREVIEW_KEY } from "./types";
 import type { ImageLayerOptions, ShapeType, TextLayerOptions, ShapeLayerOptions } from "./types";
-import { isContentLocked } from "./locking";
 import { rulesOf } from "./capabilities";
 import { ImageFrame } from "./ImageFrame";
 
@@ -443,8 +442,8 @@ export class DropHandler {
   }
 
   private activateReplaceMode(target: DropTarget): void {
-    // Si le contenu est verrouillé, ne pas activer le mode remplacement
-    if (isContentLocked(target as FabricObject)) {
+    // Verrouillé (contenu) : la cible reste opaque mais ne réagit pas
+    if (!rulesOf(target as FabricObject).onToolboxImage) {
       return;
     }
 

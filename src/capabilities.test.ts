@@ -9,6 +9,8 @@ import { CustomTextbox } from "./controls/CustomTextbox";
 import { FabRect } from "./shapes/FabRect";
 import { FabCircle } from "./shapes/FabCircle";
 import { ImageFrame } from "./ImageFrame";
+import { applyLockMode } from "./locking";
+import type { FabricObject } from "#fabric";
 
 function shape<T extends { set(props: Record<string, unknown>): unknown }>(obj: T): T {
   obj.set({ layerType: "shape", layerId: "s" });
@@ -23,7 +25,10 @@ function imageFrame(): ImageFrame {
 describe("rulesOf", () => {
   it("texte : n'accueille pas, ignore les images, police et couleur", () => {
     const rules = rulesOf(new CustomTextbox("Bonjour", {}));
-    expect(rules).toEqual({ kind: "text", onToolboxImage: null, hosts: false, options: ["color", "font"] });
+    expect(rules).toEqual({
+      kind: "text", onToolboxImage: null, hosts: false, options: ["color", "font"],
+      restyles: true, restacks: true, deletes: true,
+    });
   });
 
   it("forme : accueille, prend une image en fond", () => {
@@ -37,14 +42,14 @@ describe("rulesOf", () => {
     expect(rulesOf(shape(new FabCircle({ radius: 10 }))).options).not.toContain("corner_radius");
   });
 
-  it("groupe de paths (forme du catalogue multi-path) : forme sans options", () => {
+  it("groupe de paths (forme multi-régions) : accueille, mais ni options ni image en fond", () => {
     const rules = rulesOf(shape(new Group([])));
-    expect(rules).toMatchObject({ kind: "shape", hosts: true, options: [] });
+    expect(rules).toMatchObject({ kind: "shape", hosts: true, options: [], onToolboxImage: null });
   });
 
   it("forme + image : une forme (accueille, contour, découpe, angles), qui remplace son image", () => {
     const rules = rulesOf(imageFrame());
-    expect(rules).toEqual({
+    expect(rules).toMatchObject({
       kind: "imageShape", onToolboxImage: "replaceImage", hosts: true,
       options: ["outline", "clip", "corner_radius", "image"],
     });
@@ -64,5 +69,35 @@ describe("rulesOf", () => {
     for (const obj of [background, inert, guide]) {
       expect(rulesOf(obj)).toMatchObject({ kind: "shape", onToolboxImage: null, hosts: false });
     }
+  });
+
+  describe("verrous", () => {
+    function locked<T extends { set(props: Record<string, unknown>): unknown }>(obj: T, mode: string): T {
+      applyLockMode(obj as unknown as FabricObject, mode as any);
+      return obj;
+    }
+
+    it("position : plus de style ni de pile ni de suppression ; le placeholder garde son image", () => {
+      const rules = rulesOf(locked(imageFrame(), "position"));
+      expect(rules).toMatchObject({
+        onToolboxImage: "replaceImage", hosts: true, options: ["image"],
+        restyles: false, restacks: false, deletes: false,
+      });
+      expect(rulesOf(locked(shape(new FabRect({ width: 10, height: 10 })), "position")).options).toEqual([]);
+    });
+
+    it("total : plus rien", () => {
+      const rules = rulesOf(locked(shape(new FabRect({ width: 10, height: 10 })), "full"));
+      expect(rules).toMatchObject({
+        onToolboxImage: null, hosts: false, options: [],
+        restyles: false, restacks: false, deletes: false,
+      });
+    });
+
+    it("verrou ignoré (recherche de cible d'un drop) : l'objet verrouillé reste opaque", () => {
+      const frame = locked(imageFrame(), "full");
+      expect(rulesOf(frame).onToolboxImage).toBeNull();
+      expect(rulesOf(frame, { ignoreLock: true }).onToolboxImage).toBe("replaceImage");
+    });
   });
 });
