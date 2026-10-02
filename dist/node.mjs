@@ -121,18 +121,12 @@ import { StaticCanvas, FabricObject as FabricObject4 } from "#fabric";
 // src/LayerManager.ts
 import {
   FabricImage as FabricImage4,
-  Group as Group3
+  Group as Group3,
+  util
 } from "#fabric";
 
 // src/controls/CustomTextbox.ts
 import { Textbox, Point, controlsUtils } from "#fabric";
-
-// src/shapes/controlsMixin.ts
-function installControlOptions(proto, controls) {
-  proto.getControlOptions = function() {
-    return controls;
-  };
-}
 
 // src/layout/types.ts
 var MIN_FONT_SIZE = 8;
@@ -238,6 +232,7 @@ var CustomTextbox = class extends Textbox {
     else this._applyBox(this._constraint ?? "as-stored");
   }
   _applyBox(constraint) {
+    const before = { width: this.width, height: this.height, fontSize: this.fontSize };
     const box = resolveTextBox({
       sizing: this.sizing,
       overflow: this.textOverflow,
@@ -251,6 +246,9 @@ var CustomTextbox = class extends Textbox {
     this._wrapAt(box.width);
     this.height = box.height;
     this._overflowing = box.overflowing;
+    if (before.width !== this.width || before.height !== this.height || before.fontSize !== this.fontSize) {
+      this.dirty = true;
+    }
     this.objectCaching = !(box.overflowing && this.textOverflow === "visible");
   }
   /**
@@ -546,7 +544,6 @@ var CustomTextbox = class extends Textbox {
   }
 };
 CustomTextbox.customProperties = ["fontSizeIntent"];
-installControlOptions(CustomTextbox.prototype, ["color", "font"]);
 
 // src/layout/legacy.ts
 function migrateLegacyLayout(layout) {
@@ -820,7 +817,6 @@ var FabRect = class extends Rect {
 FabRect.type = "Rect";
 FabRect.customProperties = ["layerId", "layerType", "lockMode", "lockContent"];
 installLockMethods(FabRect.prototype);
-installControlOptions(FabRect.prototype, ["outline", "clip", "color", "corner_radius"]);
 classRegistry.setClass(FabRect, "Rect");
 
 // src/shapes/FabCircle.ts
@@ -889,7 +885,6 @@ var FabCircle = class extends Circle {
 FabCircle.type = "Circle";
 FabCircle.customProperties = ["layerId", "layerType", "lockMode", "lockContent"];
 installLockMethods(FabCircle.prototype);
-installControlOptions(FabCircle.prototype, ["outline", "clip", "color"]);
 classRegistry2.setClass(FabCircle, "Circle");
 
 // src/shapes/FabPath.ts
@@ -1008,7 +1003,6 @@ _FabPath.type = "Path";
 _FabPath.customProperties = ["layerId", "layerType", "lockMode", "lockContent"];
 var FabPath = _FabPath;
 installLockMethods(FabPath.prototype);
-installControlOptions(FabPath.prototype, ["outline", "clip", "color"]);
 classRegistry3.setClass(FabPath, "Path");
 
 // src/shapes/factories.ts
@@ -1331,6 +1325,11 @@ var ImageFrame = class _ImageFrame extends Group2 {
     this.setCoords();
     this.dirty = true;
   }
+  /** Taille visuelle (contrat des formes, utilisé par le layout) : le frame, image en cover. */
+  setSize(w, h) {
+    this.set({ scaleX: 1, scaleY: 1 });
+    this.resizeFrame(w, h);
+  }
   /**
    * Applique une forme de clip au frame
    */
@@ -1358,6 +1357,25 @@ var ImageFrame = class _ImageFrame extends Group2 {
     this._applyClip("rect");
     this.dirty = true;
     this.canvas?.requestRenderAll();
+  }
+  getCornerRadius() {
+    return this.cornerRadius;
+  }
+  /**
+   * Contour (capacité de forme) : un Group ne dessine pas de trait — on trace la forme
+   * de découpe par-dessus, hors clip, trait centré sur le bord comme pour une forme.
+   */
+  render(ctx) {
+    super.render(ctx);
+    const outline = this.clipPath;
+    if (!this.visible || !outline || !this.stroke || !this.strokeWidth) return;
+    const saved = { fill: outline.fill, stroke: outline.stroke, strokeWidth: outline.strokeWidth };
+    ctx.save();
+    this.transform(ctx);
+    outline.set({ fill: "transparent", stroke: this.stroke, strokeWidth: this.strokeWidth });
+    outline.render(ctx);
+    outline.set(saved);
+    ctx.restore();
   }
   // ─────────────────────────────────────────────────────────────
   // Méthodes privées
@@ -1442,13 +1460,17 @@ var ImageFrame = class _ImageFrame extends Group2 {
         const canvas = target.canvas;
         if (!canvas) return false;
         const pointer = canvas.getScenePoint(eventData);
+        const anchorX = changeX === 1 ? "left" : changeX === -1 ? "right" : "center";
+        const anchorY = changeY === 1 ? "top" : changeY === -1 ? "bottom" : "center";
         if (transform._startWidth === void 0) {
+          const center = target.getCenterPoint();
           transform._startWidth = target.frameWidth;
           transform._startHeight = target.frameHeight;
           transform._startPointerX = pointer.x;
           transform._startPointerY = pointer.y;
-          transform._startLeft = target.left;
-          transform._startTop = target.top;
+          transform._startLeft = center.x;
+          transform._startTop = center.y;
+          transform._anchor = target.getPositionByOrigin(anchorX, anchorY);
         }
         const rotated = rotatePoint(
           pointer.x - transform._startPointerX,
@@ -1512,14 +1534,11 @@ var ImageFrame = class _ImageFrame extends Group2 {
             newHeight = snapResult.height;
           }
         }
-        const deltaWidth = newWidth - transform._startWidth;
-        const deltaHeight = newHeight - transform._startHeight;
-        const offsetX = deltaWidth / 2 * changeX;
-        const offsetY = deltaHeight / 2 * changeY;
-        const rotatedOffset = rotatePoint(offsetX, offsetY, -target.angle);
-        target.left = transform._startLeft + rotatedOffset.x;
-        target.top = transform._startTop + rotatedOffset.y;
         target.resizeFrame(newWidth, newHeight);
+        target.setPositionByOrigin(transform._anchor, anchorX, anchorY);
+        target.setCoords();
+        target.fire("resizing");
+        canvas.fire?.("object:resizing", { target, e: eventData, transform, pointer });
         canvas.requestRenderAll();
         return true;
       };
@@ -1529,7 +1548,7 @@ var ImageFrame = class _ImageFrame extends Group2 {
         const x = key.includes("l") ? -1 : 1;
         const y = key.includes("t") ? -1 : 1;
         this.controls[key].actionHandler = resizeHandler(x, y);
-        this.controls[key].actionName = "resizeFrame";
+        this.controls[key].actionName = "resizing";
       }
     });
     [
@@ -1540,7 +1559,7 @@ var ImageFrame = class _ImageFrame extends Group2 {
     ].forEach(({ key, x, y }) => {
       if (this.controls[key]) {
         this.controls[key].actionHandler = resizeHandler(x, y);
-        this.controls[key].actionName = "resizeFrame";
+        this.controls[key].actionName = "resizing";
       }
     });
   }
@@ -1561,6 +1580,8 @@ var ImageFrame = class _ImageFrame extends Group2 {
       type: "ImageFrame",
       left: this.left,
       top: this.top,
+      originX: this.originX,
+      originY: this.originY,
       angle: this.angle,
       scaleX: this.scaleX,
       scaleY: this.scaleY,
@@ -1573,6 +1594,8 @@ var ImageFrame = class _ImageFrame extends Group2 {
       lockMode: base.lockMode,
       lockContent: base.lockContent,
       opacity: this.opacity,
+      stroke: this.stroke || void 0,
+      strokeWidth: this.stroke ? this.strokeWidth : void 0,
       image: {
         src: this.imageSrc,
         offsetX: this._imageOffsetX,
@@ -1594,6 +1617,8 @@ var ImageFrame = class _ImageFrame extends Group2 {
       imageScale: data.image.scale
     });
     if (data.layout) frame.set("layout", data.layout);
+    if (data.originX) frame.set({ originX: data.originX, originY: data.originY ?? data.originX });
+    if (data.stroke) frame.set({ stroke: data.stroke, strokeWidth: data.strokeWidth ?? 4 });
     frame.frameWidth = data.frameWidth;
     frame.frameHeight = data.frameHeight;
     frame.width = data.frameWidth;
@@ -1643,7 +1668,6 @@ var ImageFrame = class _ImageFrame extends Group2 {
     });
   }
 };
-installControlOptions(ImageFrame.prototype, ["clip"]);
 classRegistry4.setClass(ImageFrame);
 classRegistry4.setClass(ImageFrame, "ImageFrame");
 
@@ -1912,23 +1936,28 @@ var LayerManager = class {
    * L'ImageFrame est inséré au même z-index que la forme d'origine.
    */
   async replaceShapeWithImage(shape, imageUrl) {
-    const shapeId = shape.id || "";
-    const clipShape = isValidShape(shapeId) ? shapeId : "rect";
+    const { clipShape, clipData, cornerRadius } = clipOfShape(shape);
     const { w: displayedWidth, h: displayedHeight } = scaledSize(shape);
     const center = shape.getRelativeCenterPoint();
     const zIndex = this.canvas.getObjects().indexOf(shape);
     const img = await FabricImage4.fromURL(imageUrl, { crossOrigin: "anonymous" });
-    const cornerRadius = shape instanceof FabRect ? shape.getCornerRadius() : 0;
     const frame = new ImageFrame(img, {
       left: center.x,
       top: center.y,
       angle: shape.angle,
       layerId: shape.layerId || this.generateId(),
       clipShape,
+      clipData,
       frameWidth: displayedWidth,
       frameHeight: displayedHeight,
       cornerRadius
     });
+    const layout = shape.get("layout");
+    if (layout) frame.set("layout", JSON.parse(JSON.stringify(layout)));
+    const lockMode = getLockMode(shape);
+    if (lockMode !== "free") applyLockMode(frame, lockMode);
+    const bindings = shape.get("bindings");
+    if (bindings) frame.set("bindings", bindings);
     this.canvas.remove(shape);
     this.canvas.add(frame);
     if (zIndex >= 0 && zIndex < this.canvas.getObjects().length) {
@@ -2112,6 +2141,16 @@ var LayerManager = class {
     return "heart";
   }
 };
+function clipOfShape(shape) {
+  if (shape instanceof FabRect) return { clipShape: "rect", cornerRadius: shape.getCornerRadius() };
+  if (shape instanceof FabCircle) return { clipShape: "circle", cornerRadius: 0 };
+  if (shape instanceof FabPath) {
+    const id = shape.id;
+    const clipData = { d: util.joinPath(shape.path), width: shape.width, height: shape.height };
+    return { clipShape: id && isValidShape(id) ? id : id || "custom", clipData, cornerRadius: 0 };
+  }
+  return { clipShape: "rect", cornerRadius: 0 };
+}
 
 // src/PersistenceManager.ts
 var PersistenceManager = class {

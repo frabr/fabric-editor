@@ -847,7 +847,8 @@ interface ObjectControlsConfig {
     type: string;
     options: ControlOption[];
 }
-type ControlOption = "clip" | "color" | "font" | "outline" | "corner_radius";
+/** `image` : les capacités d'image (remplacer, recadrer, promouvoir en fond). */
+type ControlOption = "clip" | "color" | "font" | "outline" | "corner_radius" | "image";
 interface SelectionCallbacks {
     onSelect?: (object: FabricObject) => void;
     onDeselect?: () => void;
@@ -896,6 +897,10 @@ interface ImageFrameOptions {
     frameHeight?: number;
 }
 interface ImageFrameData {
+    originX?: "left" | "center" | "right";
+    originY?: "top" | "center" | "bottom";
+    stroke?: string;
+    strokeWidth?: number;
     type: "ImageFrame";
     left: number;
     top: number;
@@ -970,6 +975,8 @@ declare class ImageFrame extends Group {
      * Redimensionne le frame (l'image s'adapte en cover)
      */
     resizeFrame(newWidth: number, newHeight: number): void;
+    /** Taille visuelle (contrat des formes, utilisé par le layout) : le frame, image en cover. */
+    setSize(w: number, h: number): void;
     /**
      * Applique une forme de clip au frame
      */
@@ -983,6 +990,12 @@ declare class ImageFrame extends Group {
      * Automatically switches to "rect" if another clip shape is active.
      */
     setCornerRadius(radius: number): void;
+    getCornerRadius(): number;
+    /**
+     * Contour (capacité de forme) : un Group ne dessine pas de trait — on trace la forme
+     * de découpe par-dessus, hors clip, trait centré sur le bord comme pour une forme.
+     */
+    render(ctx: CanvasRenderingContext2D): void;
     private _applyImageOffset;
     private _clampOffset;
     private _applyClip;
@@ -1696,8 +1709,7 @@ declare class LayoutManager {
     private findDeepestDropTarget;
     /**
      * Among the children of `container`, find the first one under the cursor
-     * that is itself a valid drop target — a shape (not text) that could
-     * become a container.
+     * that can host (see rulesOf) — it would become a sub-container.
      */
     private findChildDropTarget;
     /** Find the parent container of `obj` by looking up its `child.parentId`. */
@@ -1948,7 +1960,8 @@ declare class FabricEditor {
      */
     findImageAtPoint(x: number, y: number): FabricImage | ImageFrame | null;
     /**
-     * Trouve l'objet "droppable" sous un point : ImageFrame, FabricImage, ou shape.
+     * Trouve l'objet qui réagit à une image de la toolbox sous un point (le plus haut :
+     * une forme la prend en fond, une forme-image remplace la sienne — voir rulesOf).
      * Utilisé par DropHandler pour le drop d'images sur images ET sur formes.
      */
     findDropTargetAtPoint(x: number, y: number): FabricObject | null;
@@ -2266,11 +2279,7 @@ interface Lockable {
     isContentLocked(): boolean;
 }
 
-interface Controllable {
-    getControlOptions(): ControlOption[];
-}
-
-declare class FabRect extends Rect implements Lockable, Controllable {
+declare class FabRect extends Rect implements Lockable {
     static type: string;
     static customProperties: string[];
     lockMode: LockMode$1;
@@ -2281,7 +2290,6 @@ declare class FabRect extends Rect implements Lockable, Controllable {
     isPositionLocked: () => boolean;
     isStyleLocked: () => boolean;
     isContentLocked: () => boolean;
-    getControlOptions: () => ControlOption[];
     constructor(options?: Partial<TOptions<RectProps>>);
     setCornerRadius(radius: number): void;
     getCornerRadius(): number;
@@ -2292,7 +2300,7 @@ declare class FabRect extends Rect implements Lockable, Controllable {
     setSize(w: number, h: number): void;
 }
 
-declare class FabCircle extends Circle implements Lockable, Controllable {
+declare class FabCircle extends Circle implements Lockable {
     static type: string;
     static customProperties: string[];
     lockMode: LockMode$1;
@@ -2303,7 +2311,6 @@ declare class FabCircle extends Circle implements Lockable, Controllable {
     isPositionLocked: () => boolean;
     isStyleLocked: () => boolean;
     isContentLocked: () => boolean;
-    getControlOptions: () => ControlOption[];
     /** Natural diameter — stays fixed, scale absorbs sizing. */
     private _naturalSize;
     constructor(options?: Partial<TOptions<CircleProps>>);
@@ -2314,7 +2321,7 @@ declare class FabCircle extends Circle implements Lockable, Controllable {
     setSize(w: number, h: number): void;
 }
 
-declare class FabPath extends Path implements Lockable, Controllable {
+declare class FabPath extends Path implements Lockable {
     static type: string;
     static customProperties: string[];
     lockMode: LockMode$1;
@@ -2325,7 +2332,6 @@ declare class FabPath extends Path implements Lockable, Controllable {
     isPositionLocked: () => boolean;
     isStyleLocked: () => boolean;
     isContentLocked: () => boolean;
-    getControlOptions: () => ControlOption[];
     private _naturalW;
     private _naturalH;
     constructor(path: string | any[], options?: Partial<TOptions<PathProps>>);
@@ -2454,6 +2460,41 @@ declare function isValidShape(id: string): id is ShapeType;
  * Retourne la liste des formes disponibles
  */
 declare function getAvailableShapes(): ShapeType[];
+
+/**
+ * Règlement des capacités : pour un objet, « que fais-je quand… » et « quelles
+ * options je propose ». Le code pose ses questions ici au lieu de tester des types
+ * (layerType, instanceof) chacun de son côté.
+ *
+ * La sorte d'objet décide des réactions ; l'état les affine. Être container n'est pas
+ * une sorte d'objet : c'est la capacité d'accueillir (`hosts`) plus l'état d'avoir des
+ * enfants.
+ *
+ * Plan : apibots docs/plans/object-capabilities.md.
+ */
+
+/**
+ * - `text` : un texte
+ * - `shape` : rect, cercle, path (catalogue), groupe de paths
+ * - `imageShape` : une forme dont le fond est une image (ImageFrame) — mêmes capacités
+ *   qu'une forme, sauf la couleur de fond ; remplace son image au lieu de la prendre
+ * - `legacyImage` : image brute d'avant les ImageFrame (le fond legacy, notamment)
+ * - `other` : tout le reste (groupes, objets de l'éditeur)
+ */
+type ObjectKind = "text" | "shape" | "imageShape" | "legacyImage" | "other";
+/** Ce que fait l'objet d'une image lâchée depuis la toolbox. */
+type ToolboxImageReaction = "fill" | "replaceImage";
+interface ObjectRules {
+    kind: ObjectKind;
+    /** Image lâchée depuis la toolbox : la prendre en fond, remplacer la sienne, ou rien. */
+    onToolboxImage: ToolboxImageReaction | null;
+    /** Un objet traîné au-dessus : l'accueillir comme enfant (devenir container). */
+    hosts: boolean;
+    /** Options proposées par la toolbox. */
+    options: ControlOption[];
+}
+declare function kindOf(obj: FabricObject): ObjectKind;
+declare function rulesOf(obj: FabricObject): ObjectRules;
 
 /**
  * Calcule les facteurs d'anti-scale pour maintenir les proportions d'un clip
@@ -2595,4 +2636,4 @@ declare function setTextContent(obj: FabricObject, text: string): void;
  */
 declare function drawBindingBadge(ctx: CanvasRenderingContext2D, obj: FabricObject, color: string): void;
 
-export { type AlignItems, type AlignSelf, type AttachSnapshot, type BindingSpec, type Bindings, CanvasGuides, type CatalogShape, type CatalogShapeInput, type ChildData, type ChildLayout, type ClipData, type ContainerData, type ContainerLayout, ContainerizeSession, type ControlOption, type Controllable, CustomTextbox, DesignCanvas, type DragPayload, DropHandler, type DropHandlerConfig, type EditorConfig, FabCircle, FabPath, FabRect, FabricEditor, type FlexDirection, type FontConfig, type FontsConfig, HEART_PATH, HEXAGON_PATH, type HistoryCallbacks, HistoryManager, type HistoryState, type HtmlLayerOutput, type HtmlRenderOptions, ImageFrame, type ImageLayerOptions, InsertChildSession, type JustifyContent, type LayerData, LayerManager, type LayoutData, LayoutManager, type LayoutManagerCallbacks, type LayoutSession, type LockMode$1 as LockMode, type Lockable, MIN_PAD, MaskManager, type ObjectControlsConfig, PendingUploadsManager, PersistenceManager, PreviewCanvas, ResizeSession, type ResizeSnapResult, type SaveOptions, type SaveResult, type SelectionCallbacks, SelectionManager, type ShapeCatalogEntry, type ShapeLayerOptions, type ShapePathData, type ShapeType, type SizeMode, type SizePreset, type SizingData, type SnappingConfig, SnappingManager, type TextLayerOptions, type TextOverflow, addCircleClip, addCropControls, addHeartClip, addHexagonClip, antiScale, applyClip, applyLockMode, clampTopLeft, clipDataFor, createCircle, createHeart, createHexagon, createImage, createPathShape, createPathsShape, createRect, createShape, drawBindingBadge, fabricToHtml, getAvailableShapes, getCatalogShape, getLockMode, getNextLockMode, getShapeCatalog, hasExceededOffset, hasPendingBindings, initYoga, isChild, isChildLayout, isContainer, isContainerLayout, isContentLocked, isMonoPath, isPositionLocked, isStyleLocked, isValidShape, isYogaReady, layerToHtmlStandalone, lockBoundText, nextShape, pendingBindings, pointInObject, registerShapes, registeredShapes, removeCropControls, runLayout, scaledSize, setTextContent, switchClip, switchShape, topLeft, wrapContainerAroundChild, yogaLayout };
+export { type AlignItems, type AlignSelf, type AttachSnapshot, type BindingSpec, type Bindings, CanvasGuides, type CatalogShape, type CatalogShapeInput, type ChildData, type ChildLayout, type ClipData, type ContainerData, type ContainerLayout, ContainerizeSession, type ControlOption, CustomTextbox, DesignCanvas, type DragPayload, DropHandler, type DropHandlerConfig, type EditorConfig, FabCircle, FabPath, FabRect, FabricEditor, type FlexDirection, type FontConfig, type FontsConfig, HEART_PATH, HEXAGON_PATH, type HistoryCallbacks, HistoryManager, type HistoryState, type HtmlLayerOutput, type HtmlRenderOptions, ImageFrame, type ImageLayerOptions, InsertChildSession, type JustifyContent, type LayerData, LayerManager, type LayoutData, LayoutManager, type LayoutManagerCallbacks, type LayoutSession, type LockMode$1 as LockMode, type Lockable, MIN_PAD, MaskManager, type ObjectControlsConfig, type ObjectKind, type ObjectRules, PendingUploadsManager, PersistenceManager, PreviewCanvas, ResizeSession, type ResizeSnapResult, type SaveOptions, type SaveResult, type SelectionCallbacks, SelectionManager, type ShapeCatalogEntry, type ShapeLayerOptions, type ShapePathData, type ShapeType, type SizeMode, type SizePreset, type SizingData, type SnappingConfig, SnappingManager, type TextLayerOptions, type TextOverflow, type ToolboxImageReaction, addCircleClip, addCropControls, addHeartClip, addHexagonClip, antiScale, applyClip, applyLockMode, clampTopLeft, clipDataFor, createCircle, createHeart, createHexagon, createImage, createPathShape, createPathsShape, createRect, createShape, drawBindingBadge, fabricToHtml, getAvailableShapes, getCatalogShape, getLockMode, getNextLockMode, getShapeCatalog, hasExceededOffset, hasPendingBindings, initYoga, isChild, isChildLayout, isContainer, isContainerLayout, isContentLocked, isMonoPath, isPositionLocked, isStyleLocked, isValidShape, isYogaReady, kindOf, layerToHtmlStandalone, lockBoundText, nextShape, pendingBindings, pointInObject, registerShapes, registeredShapes, removeCropControls, rulesOf, runLayout, scaledSize, setTextContent, switchClip, switchShape, topLeft, wrapContainerAroundChild, yogaLayout };

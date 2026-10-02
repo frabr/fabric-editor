@@ -469,6 +469,10 @@ interface ImageFrameOptions {
     frameHeight?: number;
 }
 interface ImageFrameData {
+    originX?: "left" | "center" | "right";
+    originY?: "top" | "center" | "bottom";
+    stroke?: string;
+    strokeWidth?: number;
     type: "ImageFrame";
     left: number;
     top: number;
@@ -543,6 +547,8 @@ declare class ImageFrame extends Group {
      * Redimensionne le frame (l'image s'adapte en cover)
      */
     resizeFrame(newWidth: number, newHeight: number): void;
+    /** Taille visuelle (contrat des formes, utilisé par le layout) : le frame, image en cover. */
+    setSize(w: number, h: number): void;
     /**
      * Applique une forme de clip au frame
      */
@@ -556,6 +562,12 @@ declare class ImageFrame extends Group {
      * Automatically switches to "rect" if another clip shape is active.
      */
     setCornerRadius(radius: number): void;
+    getCornerRadius(): number;
+    /**
+     * Contour (capacité de forme) : un Group ne dessine pas de trait — on trace la forme
+     * de découpe par-dessus, hors clip, trait centré sur le bord comme pour une forme.
+     */
+    render(ctx: CanvasRenderingContext2D): void;
     private _applyImageOffset;
     private _clampOffset;
     private _applyClip;
