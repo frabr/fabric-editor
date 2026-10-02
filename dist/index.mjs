@@ -7127,9 +7127,9 @@ var DropHandler = class {
           this.config.onSuccess();
           return { kind: "replace", object: frame };
         }
-        await this.editor.layers.replaceImageSource(target, url);
+        const replaced = await this.editor.layers.replaceImageSource(target, url);
         this.config.onSuccess();
-        return { kind: "replace" };
+        return { kind: "replace", object: replaced };
       }
       const addOpts = { ...opts };
       if (e) {
@@ -7189,8 +7189,7 @@ var DropHandler = class {
    * - image → replaces the hovered target if replace mode armed, else adds
    * - text/shape → commits the layout session if anchored, else adds at cursor
    *
-   * Returns the newly added object, or null when nothing new was added
-   * (replace of an existing target, or error).
+   * Returns what the drop produced (see DropResult), or null.
    */
   async completeDrag(e) {
     if (!this.drag) return null;
@@ -7202,16 +7201,14 @@ var DropHandler = class {
     if (payload.kind === "userSlot") {
       if (object && this.drag.onCanvas) this.editor.canvas.remove(object);
       this.drag = null;
-      const result = this.dropUserSlot(e, payload.opts);
-      return result?.kind === "add" ? result.object : null;
+      return this.dropUserSlot(e, payload.opts);
     }
     if (payload.kind === "image") {
       if (object && this.drag.onCanvas) {
         this.editor.canvas.remove(object);
       }
       this.drag = null;
-      const result = await this.dropImage(payload.url, e, payload.opts);
-      return result?.kind === "add" ? result.object : null;
+      return this.dropImage(payload.url, e, payload.opts);
     }
     try {
       const committed = this.editor.layout.commitExternalDrag();
@@ -7231,7 +7228,7 @@ var DropHandler = class {
       }
       this.config.onSuccess();
       this.drag = null;
-      return object;
+      return object ? { kind: "add", object } : null;
     } catch (error) {
       this.config.onError(error);
       this.cancelDrag();

@@ -2247,6 +2247,15 @@ type DragPayload = {
         hint?: string;
     };
 };
+/**
+ * Ce qu'un drop a produit : un calque ajouté, ou la cible remplacée — `object` est alors le
+ * calque qui l'occupe désormais (une forme remplie devient une forme-image, une image
+ * devenue cadre une forme). null : rien n'a été posé (hors artboard, annulation, erreur).
+ */
+type DropResult = {
+    kind: "add" | "replace";
+    object: FabricObject;
+};
 interface DropHandlerConfig {
     /** Délai avant d'activer le mode remplacement (ms) */
     hoverDelay?: number;
@@ -2301,13 +2310,7 @@ declare class DropHandler {
      *
      * Returns the result so the caller can act on it (e.g. register the new object).
      */
-    dropImage(url: string, e?: DragEvent, opts?: Partial<ImageLayerOptions>): Promise<{
-        kind: "add";
-        object: ImageFrame;
-    } | {
-        kind: "replace";
-        object?: ImageFrame;
-    } | null>;
+    dropImage(url: string, e?: DragEvent, opts?: Partial<ImageLayerOptions>): Promise<DropResult | null>;
     /**
      * Arm an external drag with a payload. Creates the Fabric object that
      * follows the cursor, off-canvas; it manifests on the canvas on the
@@ -2320,10 +2323,9 @@ declare class DropHandler {
      * - image → replaces the hovered target if replace mode armed, else adds
      * - text/shape → commits the layout session if anchored, else adds at cursor
      *
-     * Returns the newly added object, or null when nothing new was added
-     * (replace of an existing target, or error).
+     * Returns what the drop produced (see DropResult), or null.
      */
-    completeDrag(e?: DragEvent): Promise<FabricObject | null>;
+    completeDrag(e?: DragEvent): Promise<DropResult | null>;
     /**
      * Suspend the armed drag: rolls back any layout session and removes the
      * manifested object from the canvas, but keeps the drag armed so it can
@@ -2391,10 +2393,7 @@ declare class DropHandler {
      */
     dropUserSlot(e?: DragEvent, opts?: Partial<ShapeLayerOptions> & {
         hint?: string;
-    }): {
-        kind: "add" | "replace";
-        object: FabricObject;
-    } | null;
+    }): DropResult | null;
     /** L'aperçu d'un cadre à fournir, translucide comme celui d'une image. */
     private createUserSlotPreview;
     private createDragObject;
@@ -2773,4 +2772,4 @@ declare function drawFrameBadge(ctx: CanvasRenderingContext2D, obj: FabricObject
 /** Les labels d'un objet réunis en un seul badge (dédoublonnés), ou null. */
 declare function badgeLabel(obj: FabricObject, labelers: BadgeLabeler[]): string | null;
 
-export { type AlignItems, type AlignSelf, type AttachSnapshot, type BadgeLabeler, type BindingSpec, type Bindings, CanvasGuides, type CatalogShape, type CatalogShapeInput, type ChildData, type ChildLayout, type ClipData, type ContainerData, type ContainerLayout, ContainerizeSession, type ControlOption, CustomTextbox, DesignCanvas, type DragPayload, DropHandler, type DropHandlerConfig, type EditorConfig, FabCircle, FabPath, FabRect, FabricEditor, type FlexDirection, type FontConfig, type FontsConfig, HEART_PATH, HEXAGON_PATH, type HistoryCallbacks, HistoryManager, type HistoryState, type HtmlLayerOutput, type HtmlRenderOptions, ImageFrame, type ImageLayerOptions, InsertChildSession, type JustifyContent, type LayerData, LayerManager, type LayoutData, LayoutManager, type LayoutManagerCallbacks, type LayoutSession, type LockMode$1 as LockMode, type Lockable, MIN_PAD, MaskManager, type ObjectControlsConfig, type ObjectKind, type ObjectRules, PendingUploadsManager, PersistenceManager, PreviewCanvas, ResizeSession, type ResizeSnapResult, type SaveOptions, type SaveResult, type SelectionCallbacks, SelectionManager, type ShapeCatalogEntry, type ShapeLayerOptions, type ShapePathData, type ShapeType, type SizeMode, type SizePreset, type SizingData, type SnappingConfig, SnappingManager, type TextLayerOptions, type TextOverflow, type ToolboxImageReaction, USER_SCOPE, USER_SLOT_FIELD, type UserSlot, addCircleClip, addCropControls, addHeartClip, addHexagonClip, antiScale, applyClip, applyLockMode, badgeLabel, bindingBadgeLabel, clampTopLeft, clipDataFor, collectUserSlots, createCircle, createHeart, createHexagon, createImage, createPathShape, createPathsShape, createRect, createShape, drawBindingBadge, drawFrameBadge, fabricToHtml, getAvailableShapes, getCatalogShape, getLockMode, getNextLockMode, getShapeCatalog, hasExceededOffset, hasPendingBindings, initYoga, isChild, isChildLayout, isContainer, isContainerLayout, isContentLocked, isMonoPath, isPositionLocked, isStyleLocked, isUserSlot, isValidShape, isYogaReady, kindOf, layerToHtmlStandalone, lockBoundText, nextShape, pendingBindings, pointInObject, registerShapes, registeredShapes, removeCropControls, rulesOf, runLayout, scaledSize, setTextContent, switchClip, switchShape, topLeft, userSlotBinding, userSlotHint, wrapContainerAroundChild, yogaLayout };
+export { type AlignItems, type AlignSelf, type AttachSnapshot, type BadgeLabeler, type BindingSpec, type Bindings, CanvasGuides, type CatalogShape, type CatalogShapeInput, type ChildData, type ChildLayout, type ClipData, type ContainerData, type ContainerLayout, ContainerizeSession, type ControlOption, CustomTextbox, DesignCanvas, type DragPayload, DropHandler, type DropHandlerConfig, type DropResult, type EditorConfig, FabCircle, FabPath, FabRect, FabricEditor, type FlexDirection, type FontConfig, type FontsConfig, HEART_PATH, HEXAGON_PATH, type HistoryCallbacks, HistoryManager, type HistoryState, type HtmlLayerOutput, type HtmlRenderOptions, ImageFrame, type ImageLayerOptions, InsertChildSession, type JustifyContent, type LayerData, LayerManager, type LayoutData, LayoutManager, type LayoutManagerCallbacks, type LayoutSession, type LockMode$1 as LockMode, type Lockable, MIN_PAD, MaskManager, type ObjectControlsConfig, type ObjectKind, type ObjectRules, PendingUploadsManager, PersistenceManager, PreviewCanvas, ResizeSession, type ResizeSnapResult, type SaveOptions, type SaveResult, type SelectionCallbacks, SelectionManager, type ShapeCatalogEntry, type ShapeLayerOptions, type ShapePathData, type ShapeType, type SizeMode, type SizePreset, type SizingData, type SnappingConfig, SnappingManager, type TextLayerOptions, type TextOverflow, type ToolboxImageReaction, USER_SCOPE, USER_SLOT_FIELD, type UserSlot, addCircleClip, addCropControls, addHeartClip, addHexagonClip, antiScale, applyClip, applyLockMode, badgeLabel, bindingBadgeLabel, clampTopLeft, clipDataFor, collectUserSlots, createCircle, createHeart, createHexagon, createImage, createPathShape, createPathsShape, createRect, createShape, drawBindingBadge, drawFrameBadge, fabricToHtml, getAvailableShapes, getCatalogShape, getLockMode, getNextLockMode, getShapeCatalog, hasExceededOffset, hasPendingBindings, initYoga, isChild, isChildLayout, isContainer, isContainerLayout, isContentLocked, isMonoPath, isPositionLocked, isStyleLocked, isUserSlot, isValidShape, isYogaReady, kindOf, layerToHtmlStandalone, lockBoundText, nextShape, pendingBindings, pointInObject, registerShapes, registeredShapes, removeCropControls, rulesOf, runLayout, scaledSize, setTextContent, switchClip, switchShape, topLeft, userSlotBinding, userSlotHint, wrapContainerAroundChild, yogaLayout };

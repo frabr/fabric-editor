@@ -20,7 +20,7 @@ export { CanvasGuides } from "./ui/guides";
 
 // Handlers
 export { DropHandler } from "./DropHandler";
-export type { DropHandlerConfig, DragPayload } from "./DropHandler";
+export type { DropHandlerConfig, DragPayload, DropResult } from "./DropHandler";
 export { PendingUploadsManager } from "./PendingUploadsManager";
 
 // ImageFrame

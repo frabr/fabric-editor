@@ -31,6 +31,13 @@ export type DragPayload =
    *  survolée devient le cadre, sinon un cadre est posé. */
   | { kind: "userSlot"; opts?: Partial<ShapeLayerOptions> & { hint?: string } };
 
+/**
+ * Ce qu'un drop a produit : un calque ajouté, ou la cible remplacée — `object` est alors le
+ * calque qui l'occupe désormais (une forme remplie devient une forme-image, une image
+ * devenue cadre une forme). null : rien n'a été posé (hors artboard, annulation, erreur).
+ */
+export type DropResult = { kind: "add" | "replace"; object: FabricObject };
+
 interface DragCapabilities {
   /** The drag manifests a real Fabric object that drives layout sessions. */
   layout: boolean;
@@ -177,7 +184,7 @@ export class DropHandler {
     url: string,
     e?: DragEvent,
     opts?: Partial<ImageLayerOptions>
-  ): Promise<{ kind: "add"; object: ImageFrame } | { kind: "replace"; object?: ImageFrame } | null> {
+  ): Promise<DropResult | null> {
     const shouldReplace = this.state.replaceMode && this.state.hoveredTarget;
     const target = this.state.hoveredTarget;
 
@@ -194,9 +201,9 @@ export class DropHandler {
           return { kind: "replace", object: frame };
         }
         // Drop sur une image/ImageFrame → remplacement classique
-        await this.editor.layers.replaceImageSource(target as ImageFrame | FabricImage, url);
+        const replaced = await this.editor.layers.replaceImageSource(target as ImageFrame | FabricImage, url);
         this.config.onSuccess();
-        return { kind: "replace" };
+        return { kind: "replace", object: replaced };
       }
 
       const addOpts: ImageLayerOptions = { ...opts };
@@ -265,10 +272,9 @@ export class DropHandler {
    * - image → replaces the hovered target if replace mode armed, else adds
    * - text/shape → commits the layout session if anchored, else adds at cursor
    *
-   * Returns the newly added object, or null when nothing new was added
-   * (replace of an existing target, or error).
+   * Returns what the drop produced (see DropResult), or null.
    */
-  async completeDrag(e?: DragEvent): Promise<FabricObject | null> {
+  async completeDrag(e?: DragEvent): Promise<DropResult | null> {
     if (!this.drag) return null;
     const { payload, object } = this.drag;
 
@@ -282,8 +288,7 @@ export class DropHandler {
     if (payload.kind === "userSlot") {
       if (object && this.drag.onCanvas) this.editor.canvas.remove(object);
       this.drag = null;
-      const result = this.dropUserSlot(e, payload.opts);
-      return result?.kind === "add" ? result.object : null;
+      return this.dropUserSlot(e, payload.opts);
     }
 
     if (payload.kind === "image") {
@@ -292,8 +297,7 @@ export class DropHandler {
         this.editor.canvas.remove(object);
       }
       this.drag = null;
-      const result = await this.dropImage(payload.url, e, payload.opts);
-      return result?.kind === "add" ? result.object : null;
+      return this.dropImage(payload.url, e, payload.opts);
     }
 
     try {
@@ -317,7 +321,7 @@ export class DropHandler {
       }
       this.config.onSuccess();
       this.drag = null;
-      return object;
+      return object ? { kind: "add", object } : null;
     } catch (error) {
       this.config.onError(error);
       this.cancelDrag();
@@ -672,7 +676,7 @@ export class DropHandler {
   dropUserSlot(
     e?: DragEvent,
     opts: Partial<ShapeLayerOptions> & { hint?: string } = {},
-  ): { kind: "add" | "replace"; object: FabricObject } | null {
+  ): DropResult | null {
     const target = this.state.replaceMode ? this.state.hoveredTarget : null;
     this.clearTimer();
     this.state.pendingTarget = null;
