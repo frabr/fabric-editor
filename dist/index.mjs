@@ -115,13 +115,18 @@ var init_PendingUploadsManager = __esm({
 });
 
 // src/FabricEditor.ts
-import { FabricObject as FabricObject8, FabricImage as FabricImage7, Point as Point4, Gradient, Shadow } from "#fabric";
+import { FabricObject as FabricObject8, FabricImage as FabricImage7, Point as Point5, Gradient, Shadow } from "#fabric";
 
 // src/DesignCanvas.ts
-import { Canvas } from "#fabric";
+import { Canvas, Point } from "#fabric";
 var DesignCanvas = class {
   constructor(canvasElement, opts) {
     this._scale = 1;
+    this._frame = { left: 0, top: 0, width: 0, height: 0 };
+    this._workspace = null;
+    this._pan = { x: 0, y: 0 };
+    this._lastFit = { containerW: 0, containerH: 0, userZoom: 1 };
+    this._checker = null;
     const { width, height, ...canvasOpts } = opts;
     this._width = width;
     this._height = height;
@@ -150,6 +155,170 @@ var DesignCanvas = class {
   get scale() {
     return this._scale;
   }
+  /** Le cadre du document à l'écran (px CSS, relatifs à l'élément canvas). */
+  get frameRect() {
+    return { ...this._frame };
+  }
+  get isWorkspace() {
+    return this._workspace !== null;
+  }
+  /**
+   * Passe en plan de travail : le rendu peint le fond du plan de travail sous les objets,
+   * puis le voile et le liseré par-dessus. L'intérieur du cadre reste transparent (sauf
+   * couleur de fond du document) : ce qui est posé SOUS le canvas (iframe vidéo, fonds
+   * HTML, damier) s'y voit. Les exports (autre contexte de dessin) n'ont ni fond de plan
+   * de travail ni voile.
+   */
+  enableWorkspace(options = {}) {
+    this._workspace = {
+      margin: 32,
+      veilOpacity: 0.7,
+      // Le damier de l'app (tailwind `bg-transparency-grid bg-checker`) : 3 % de noir sur
+      // une case de 8px sur deux, sur fond blanc
+      color: "#ffffff",
+      veil: "checker",
+      checkerColor: "rgba(0, 0, 0, 0.03)",
+      checkerSize: 8,
+      frameColor: "#d946ef",
+      ...options
+    };
+    const fc = this.originalFabricCanvas;
+    const renderBackground = fc._renderBackground.bind(fc);
+    const renderObjects = fc._renderObjects.bind(fc);
+    const onScreen = (ctx) => this._workspace !== null && ctx === fc.getContext();
+    fc._renderBackground = (ctx) => {
+      if (onScreen(ctx)) this._paintWorkspace(ctx);
+      else renderBackground(ctx);
+    };
+    fc._renderObjects = (ctx, objects) => {
+      if (!onScreen(ctx)) {
+        renderObjects(ctx, objects);
+        return;
+      }
+      const isEditorObject = (obj) => obj.excludeFromExport === true;
+      renderObjects(ctx, objects.filter((obj) => !isEditorObject(obj)));
+      ctx.save();
+      const retina = fc.getRetinaScaling();
+      ctx.setTransform(retina, 0, 0, retina, 0, 0);
+      this._paintVeil(ctx);
+      ctx.restore();
+      renderObjects(ctx, objects.filter(isEditorObject));
+    };
+  }
+  /**
+   * Plan de travail : le canvas prend toute la taille du panneau, le cadre y est centré
+   * (marge à zoom 1), décalé du déplacement en cours. Returns the computed scale.
+   */
+  fitWorkspace(containerW, containerH, userZoom = 1) {
+    const margin = this._workspace?.margin ?? 0;
+    const fitScale = Math.max(0.01, Math.min(
+      (containerW - 2 * margin) / this.width,
+      (containerH - 2 * margin) / this.height
+    ));
+    const scale = fitScale * userZoom;
+    const width = this.width * scale;
+    const height = this.height * scale;
+    const left = (containerW - width) / 2 + this._pan.x;
+    const top = (containerH - height) / 2 + this._pan.y;
+    this.originalFabricCanvas.setDimensions({ width: containerW, height: containerH });
+    this.originalFabricCanvas.setViewportTransform([scale, 0, 0, scale, left, top]);
+    this._lastFit = { containerW, containerH, userZoom };
+    this._frame = { left, top, width, height };
+    this._scale = scale;
+    return scale;
+  }
+  /** Déplace la vue (px écran). */
+  panBy(dx, dy) {
+    this._pan = { x: this._pan.x + dx, y: this._pan.y + dy };
+    const { containerW, containerH, userZoom } = this._lastFit;
+    this.fitWorkspace(containerW, containerH, userZoom);
+  }
+  resetPan() {
+    this._pan = { x: 0, y: 0 };
+  }
+  /**
+   * Le cadre seul, à la résolution du document (multiplier 1 = taille du document),
+   * quelle que soit la vue — sans plan de travail ni voile.
+   */
+  toFrameDataURL(opts = {}) {
+    const f = this._frame;
+    return this.originalFabricCanvas.toDataURL({
+      format: opts.format ?? "png",
+      quality: opts.quality ?? 1,
+      multiplier: (opts.multiplier ?? 1) / this._scale,
+      left: f.left,
+      top: f.top,
+      width: f.width,
+      height: f.height
+    });
+  }
+  /** Centre un objet dans le cadre du document (pas dans le canvas). */
+  centerObject(obj) {
+    obj.setPositionByOrigin(new Point(this.width / 2, this.height / 2), "center", "center");
+    obj.setCoords();
+  }
+  /** Fond du plan de travail hors cadre ; couleur de fond du document dans le cadre. */
+  _paintWorkspace(ctx) {
+    const ws = this._workspace;
+    const f = this._frame;
+    const fc = this.originalFabricCanvas;
+    ctx.save();
+    this._fillOutsideFrame(ctx);
+    const background = fc.backgroundColor;
+    if (typeof background === "string" && background && background !== "transparent") {
+      ctx.fillStyle = background;
+      ctx.fillRect(f.left, f.top, f.width, f.height);
+    }
+    ctx.restore();
+  }
+  /** Le damier du voile, en px écran (indépendant du zoom) — construit une fois par couleurs. */
+  _checkerPattern(ctx) {
+    const ws = this._workspace;
+    const key = `${ws.color}|${ws.checkerColor}|${ws.checkerSize}`;
+    if (this._checker?.key === key) return this._checker.pattern;
+    const cell = ws.checkerSize;
+    const tile = this.originalFabricCanvas.getElement().ownerDocument.createElement("canvas");
+    tile.width = cell * 2;
+    tile.height = cell * 2;
+    const tctx = tile.getContext("2d");
+    tctx.fillStyle = ws.color;
+    tctx.fillRect(0, 0, cell * 2, cell * 2);
+    tctx.fillStyle = ws.checkerColor;
+    tctx.fillRect(cell, 0, cell, cell);
+    tctx.fillRect(0, cell, cell, cell);
+    this._checker = { key, pattern: ctx.createPattern(tile, "repeat") };
+    return this._checker.pattern;
+  }
+  /**
+   * Peint tout le canvas sauf le cadre — en damier calé sur le coin du cadre (le
+   * quadrillage continue celui du cadre de part et d'autre du liseré), ou uni.
+   */
+  _fillOutsideFrame(ctx) {
+    const ws = this._workspace;
+    const f = this._frame;
+    const fc = this.originalFabricCanvas;
+    ctx.translate(f.left, f.top);
+    ctx.beginPath();
+    ctx.rect(-f.left, -f.top, fc.width, fc.height);
+    ctx.rect(0, 0, f.width, f.height);
+    ctx.fillStyle = ws.veil === "checker" && this._checkerPattern(ctx) || ws.color;
+    ctx.fill("evenodd");
+    ctx.translate(-f.left, -f.top);
+  }
+  /** Voile sur ce qui dépasse du cadre, puis le liseré (1px écran, quel que soit le zoom). */
+  _paintVeil(ctx) {
+    const ws = this._workspace;
+    const f = this._frame;
+    const fc = this.originalFabricCanvas;
+    ctx.save();
+    ctx.globalAlpha = ws.veilOpacity;
+    this._fillOutsideFrame(ctx);
+    ctx.globalAlpha = 1;
+    ctx.strokeStyle = ws.frameColor;
+    ctx.lineWidth = 1;
+    ctx.strokeRect(Math.round(f.left) - 0.5, Math.round(f.top) - 0.5, Math.round(f.width) + 1, Math.round(f.height) + 1);
+    ctx.restore();
+  }
   /**
    * Resize the canvas buffer to fit a container and scale content
    * via Fabric's viewportTransform. Returns the computed scale.
@@ -161,6 +330,7 @@ var DesignCanvas = class {
     const bufferH = Math.round(this.height * scale);
     this.originalFabricCanvas.setDimensions({ width: bufferW, height: bufferH });
     this.originalFabricCanvas.setViewportTransform([scale, 0, 0, scale, 0, 0]);
+    this._frame = { left: 0, top: 0, width: bufferW, height: bufferH };
     this._scale = scale;
     return scale;
   }
@@ -264,7 +434,7 @@ import {
 } from "#fabric";
 
 // src/controls/CustomTextbox.ts
-import { Textbox, Point, controlsUtils } from "#fabric";
+import { Textbox, Point as Point2, controlsUtils } from "#fabric";
 
 // src/layout/types.ts
 function isContainer(l) {
@@ -679,11 +849,11 @@ var CustomTextbox = class extends Textbox {
     const upperCanvas = this.canvas.upperCanvasEl;
     const upperCanvasWidth = upperCanvas.width / retinaScaling;
     const upperCanvasHeight = upperCanvas.height / retinaScaling;
-    const p = new Point(
+    const p = new Point2(
       boundaries.left + leftOffset,
       boundaries.top + boundaries.topOffset + charHeight
     ).transform(this.calcTransformMatrix()).transform(this.canvas.viewportTransform).multiply(
-      new Point(
+      new Point2(
         upperCanvas.clientWidth / upperCanvasWidth,
         upperCanvas.clientHeight / upperCanvasHeight
       )
@@ -2822,7 +2992,7 @@ function clipOfShape(shape) {
 }
 
 // src/SelectionManager.ts
-import { ActiveSelection, Point as Point2 } from "#fabric";
+import { ActiveSelection, Point as Point3 } from "#fabric";
 var SelectionManager = class {
   constructor(canvas) {
     this.canvas = canvas;
@@ -3043,7 +3213,7 @@ var SelectionManager = class {
     const id = container.get("layerId");
     this._activeGroupId = id;
     const child = this.canvas.getObjects().slice().reverse().find(
-      (o) => o.get("layout")?.child?.parentId === id && o.containsPoint(new Point2(point.x, point.y))
+      (o) => o.get("layout")?.child?.parentId === id && o.containsPoint(new Point3(point.x, point.y))
     );
     if (child) this.canvas.setActiveObject(child);
     this.canvas.requestRenderAll();
@@ -3320,15 +3490,7 @@ var PersistenceManager = class {
    * Rasterise le canvas en image base64
    */
   async rasterize() {
-    const currentZoom = this.canvas.getZoom();
-    this.canvas.setZoom(1);
-    const dataUrl = this.canvas.toDataURL({
-      format: "png",
-      quality: 1,
-      multiplier: 1
-    });
-    this.canvas.setZoom(currentZoom);
-    return dataUrl;
+    return this.canvas.toFrameDataURL({ format: "png", quality: 1, multiplier: 1 });
   }
   /**
    * Compacte le canvas autour des calques (pour le mode standalone)
@@ -4173,7 +4335,7 @@ var SnappingManager = class {
 };
 
 // src/LayoutManager.ts
-import { Point as Point3 } from "#fabric";
+import { Point as Point4 } from "#fabric";
 
 // src/layout/yoga-engine.ts
 var yoga = null;
@@ -5445,7 +5607,7 @@ var LayoutManager2 = class {
    * The source's position is updated to follow the cursor.
    */
   tickExternalDrag(source, cursor) {
-    source.setPositionByOrigin(new Point3(cursor.x, cursor.y), "center", "center");
+    source.setPositionByOrigin(new Point4(cursor.x, cursor.y), "center", "center");
     source.setCoords();
     switch (this.dtl.phase) {
       case "anchored":
@@ -6211,6 +6373,13 @@ var _FabricEditor = class _FabricEditor {
     if (config.transparent) {
       this.canvas.backgroundColor = "transparent";
     }
+    if (config.workspace) {
+      this.canvas.enableWorkspace({
+        frameColor: gc,
+        ...typeof config.workspace === "object" ? config.workspace : {}
+      });
+      this.installWorkspacePan();
+    }
   }
   /** Largeur de l'artboard en coordonnées scène. */
   get width() {
@@ -6273,6 +6442,15 @@ var _FabricEditor = class _FabricEditor {
     if (!container) return 1;
     const boxW = container.clientWidth;
     const boxH = container.clientHeight;
+    if (this.canvas.isWorkspace) {
+      const scale2 = this.canvas.fitWorkspace(boxW, boxH, this._userZoom);
+      const canvasEl2 = container.querySelector(".canvas-container") || container;
+      canvasEl2.style.marginLeft = "";
+      canvasEl2.style.marginTop = "";
+      container.style.overflow = "hidden";
+      this._displayScale = scale2;
+      return scale2;
+    }
     const scale = this.canvas.fitToSize(boxW, boxH, this._userZoom);
     const bufferW = Math.round(this.canvas.width * scale);
     const bufferH = Math.round(this.canvas.height * scale);
@@ -6304,11 +6482,33 @@ var _FabricEditor = class _FabricEditor {
    */
   setUserZoom(zoom) {
     this._userZoom = Math.max(0.1, zoom);
+    if (this._userZoom <= 1) this.canvas.resetPan();
     this.fitToContainer();
     this._resizeCallbacks.forEach((cb) => cb());
   }
   get userZoom() {
     return this._userZoom;
+  }
+  /**
+   * Le cadre du document à l'écran (px CSS, relatifs à l'élément canvas) — pour caler
+   * dessus les couches HTML de l'hôte (iframe vidéo, fonds HTML, damier). Change à
+   * chaque ajustement, zoom ou déplacement : voir onResize.
+   */
+  get frameRect() {
+    return this.canvas.frameRect;
+  }
+  /**
+   * Plan de travail zoomé : la molette déplace la vue (le minimum pour atteindre le
+   * hors-cadre ; les gestes de zoom et les limites du déplacement viendront plus tard).
+   */
+  installWorkspacePan() {
+    this.canvas.on("mouse:wheel", (opt) => {
+      if (this._userZoom <= 1) return;
+      opt.e.preventDefault();
+      this.canvas.panBy(-opt.e.deltaX, -opt.e.deltaY);
+      this.canvas.requestRenderAll();
+      this._resizeCallbacks.forEach((cb) => cb());
+    });
   }
   /**
    * Observe the container for size changes and automatically re-fit.
@@ -6335,28 +6535,32 @@ var _FabricEditor = class _FabricEditor {
     return {
       getContainer: () => anchorEl,
       getDisplayScale: () => this._displayScale,
+      // Où tombe l'origine du document (le coin du cadre) dans l'ancre : l'élément canvas,
+      // plus la position du cadre dans le canvas (nulle hors plan de travail)
       getCanvasOffset: () => {
         const container = this.config.container;
         if (!container) return { left: 0, top: 0 };
         const canvasEl = container.querySelector(".canvas-container") || container;
         const anchorRect = anchorEl.getBoundingClientRect();
         const canvasRect = canvasEl.getBoundingClientRect();
+        const frame = this.canvas.frameRect;
         return {
-          left: canvasRect.left - anchorRect.left,
-          top: canvasRect.top - anchorRect.top
+          left: canvasRect.left - anchorRect.left + frame.left,
+          top: canvasRect.top - anchorRect.top + frame.top
         };
       }
     };
   }
   /**
-   * Convertit des coordonnées du canvas Fabric vers des coordonnées CSS affichées.
-   * Utilise le displayScale mis à jour par fitToContainer.
+   * Convertit des coordonnées du document vers des coordonnées CSS relatives à l'élément
+   * canvas : l'échelle, plus la position du cadre (nulle hors plan de travail).
    */
   canvasToDisplayCoords(rect) {
     const s = this._displayScale;
+    const frame = this.canvas.frameRect;
     return {
-      left: rect.left * s,
-      top: rect.top * s,
+      left: frame.left + rect.left * s,
+      top: frame.top + rect.top * s,
       width: rect.width * s,
       height: rect.height * s
     };
@@ -6376,8 +6580,8 @@ var _FabricEditor = class _FabricEditor {
     const { anchor = "center", offset = 0, autoFlip = false, clampToContainer = false } = options;
     const displayRect = this.canvasToDisplayCoords(obj.getBoundingRect());
     const s = this._displayScale;
-    const containerWidth = this.config.width * s;
-    const containerHeight = this.config.height * s;
+    const containerWidth = this.canvas.isWorkspace ? this.canvas.originalFabricCanvas.width : this.config.width * s;
+    const containerHeight = this.canvas.isWorkspace ? this.canvas.originalFabricCanvas.height : this.config.height * s;
     const elementWidth = element.offsetWidth || 100;
     const elementHeight = element.offsetHeight || 40;
     let effectiveAnchor = anchor;
@@ -6945,7 +7149,7 @@ var _FabricEditor = class _FabricEditor {
    * remplacement, et l'image est ajoutée.
    */
   findDropTargetAtPoint(x, y) {
-    const point = new Point4(x, y);
+    const point = new Point5(x, y);
     const objects = this.canvas.getObjects().slice().reverse();
     for (const obj of objects) {
       if (obj.get(DRAG_PREVIEW_KEY)) continue;
@@ -7046,7 +7250,7 @@ var PreviewCanvas = class extends StaticCanvas {
 };
 
 // src/DropHandler.ts
-import { FabricImage as FabricImage8, Point as Point5, Rect as Rect6 } from "#fabric";
+import { FabricImage as FabricImage8, Point as Point6, Rect as Rect6 } from "#fabric";
 var HIGHLIGHT_COLOR = "#3b82f6";
 var KIND_CAPABILITIES = {
   image: { layout: false, replaceTarget: true },
@@ -7215,7 +7419,7 @@ var DropHandler = class {
       if (!committed && object) {
         if (e) {
           const pointer = this.editor.canvas.getScenePoint(e);
-          object.setPositionByOrigin(new Point5(pointer.x, pointer.y), "center", "center");
+          object.setPositionByOrigin(new Point6(pointer.x, pointer.y), "center", "center");
           object.setCoords();
         }
         if (!this.editor.canvas.getObjects().includes(object)) {
@@ -7291,7 +7495,7 @@ var DropHandler = class {
         this.editor.layout.tickExternalDrag(object, pointer);
         return;
       }
-      object.setPositionByOrigin(new Point5(pointer.x, pointer.y), "center", "center");
+      object.setPositionByOrigin(new Point6(pointer.x, pointer.y), "center", "center");
       object.setCoords();
       this.editor.canvas.requestRenderAll();
     }
@@ -7525,7 +7729,7 @@ var DropHandler = class {
     if (e && !this.intersectsCanvas(e, null)) return null;
     const pointer = e ? this.editor.canvas.getScenePoint(e) : null;
     const object = this.editor.layers.createUserSlot(opts);
-    if (pointer) object.setPositionByOrigin(new Point5(pointer.x, pointer.y), "center", "center");
+    if (pointer) object.setPositionByOrigin(new Point6(pointer.x, pointer.y), "center", "center");
     this.editor.layers.add(object);
     this.editor.canvas.setActiveObject(object);
     this.editor.canvas.renderAll();

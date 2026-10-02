@@ -10,11 +10,50 @@ import { Canvas, FabricObject, TPointerEvent, Textbox, Group, FabricImage, Stati
  * is intentional: prefer using delegation methods when possible.
  */
 
+/**
+ * Plan de travail : le canvas remplit son panneau, le cadre du document — (0,0)–(w,h)
+ * en coordonnées du document — y est centré par la vue. Hors cadre, les objets restent
+ * visibles et manipulables sous un voile ; le cadre se lit par un liseré.
+ *
+ * Le repère ne change pas (origine = coin haut-gauche du cadre) : seule la vue change,
+ * rien n'est sauvegardé. Plan : apibots docs/plans/workspace-viewport.md.
+ */
+interface WorkspaceOptions {
+    /** Espace minimal entre le cadre et le bord du panneau, à zoom 1 (px écran). */
+    margin?: number;
+    /** Fond du plan de travail, hors cadre (le fond du damier). */
+    color?: string;
+    /** Opacité du voile sur ce qui dépasse du cadre (1 : le hors-cadre est masqué). */
+    veilOpacity?: number;
+    /**
+     * Plan de travail en damier (défaut) ou uni (`color`). Le damier est celui du cadre
+     * transparent côté hôte : à la même taille et aux mêmes couleurs, une zone vide hors
+     * cadre ne se distingue pas de l'intérieur — seuls les objets qui débordent sont voilés.
+     */
+    veil?: "checker" | "solid";
+    /** Cases foncées du damier, posées sur `color` (une sur deux : haut-droite, bas-gauche). */
+    checkerColor?: string;
+    /** Côté d'une case du damier (px écran). */
+    checkerSize?: number;
+    /** Couleur du liseré du cadre (celle des guides de l'éditeur). */
+    frameColor?: string;
+}
+/** Le cadre du document à l'écran, en px CSS relatifs à l'élément canvas. */
+interface FrameRect {
+    left: number;
+    top: number;
+    width: number;
+    height: number;
+}
 declare class DesignCanvas {
     readonly originalFabricCanvas: Canvas;
     private _width;
     private _height;
     private _scale;
+    private _frame;
+    private _workspace;
+    private _pan;
+    private _lastFit;
     /** Dimensions logiques de l'espace design (mutables : le format se décide, cf. resizeDesign). */
     get width(): number;
     get height(): number;
@@ -29,6 +68,48 @@ declare class DesignCanvas {
     } & Record<string, any>);
     /** Current viewport scale factor (set by fitToSize). */
     get scale(): number;
+    /** Le cadre du document à l'écran (px CSS, relatifs à l'élément canvas). */
+    get frameRect(): FrameRect;
+    get isWorkspace(): boolean;
+    /**
+     * Passe en plan de travail : le rendu peint le fond du plan de travail sous les objets,
+     * puis le voile et le liseré par-dessus. L'intérieur du cadre reste transparent (sauf
+     * couleur de fond du document) : ce qui est posé SOUS le canvas (iframe vidéo, fonds
+     * HTML, damier) s'y voit. Les exports (autre contexte de dessin) n'ont ni fond de plan
+     * de travail ni voile.
+     */
+    enableWorkspace(options?: WorkspaceOptions): void;
+    /**
+     * Plan de travail : le canvas prend toute la taille du panneau, le cadre y est centré
+     * (marge à zoom 1), décalé du déplacement en cours. Returns the computed scale.
+     */
+    fitWorkspace(containerW: number, containerH: number, userZoom?: number): number;
+    /** Déplace la vue (px écran). */
+    panBy(dx: number, dy: number): void;
+    resetPan(): void;
+    /**
+     * Le cadre seul, à la résolution du document (multiplier 1 = taille du document),
+     * quelle que soit la vue — sans plan de travail ni voile.
+     */
+    toFrameDataURL(opts?: {
+        format?: "png" | "jpeg";
+        quality?: number;
+        multiplier?: number;
+    }): string;
+    /** Centre un objet dans le cadre du document (pas dans le canvas). */
+    centerObject(obj: FabricObject): void;
+    /** Fond du plan de travail hors cadre ; couleur de fond du document dans le cadre. */
+    private _paintWorkspace;
+    private _checker;
+    /** Le damier du voile, en px écran (indépendant du zoom) — construit une fois par couleurs. */
+    private _checkerPattern;
+    /**
+     * Peint tout le canvas sauf le cadre — en damier calé sur le coin du cadre (le
+     * quadrillage continue celui du cadre de part et d'autre du liseré), ou uni.
+     */
+    private _fillOutsideFrame;
+    /** Voile sur ce qui dépasse du cadre, puis le liseré (1px écran, quel que soit le zoom). */
+    private _paintVeil;
     /**
      * Resize the canvas buffer to fit a container and scale content
      * via Fabric's viewportTransform. Returns the computed scale.

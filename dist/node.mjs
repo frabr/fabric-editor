@@ -2494,15 +2494,7 @@ var PersistenceManager = class {
    * Rasterise le canvas en image base64
    */
   async rasterize() {
-    const currentZoom = this.canvas.getZoom();
-    this.canvas.setZoom(1);
-    const dataUrl = this.canvas.toDataURL({
-      format: "png",
-      quality: 1,
-      multiplier: 1
-    });
-    this.canvas.setZoom(currentZoom);
-    return dataUrl;
+    return this.canvas.toFrameDataURL({ format: "png", quality: 1, multiplier: 1 });
   }
   /**
    * Compacte le canvas autour des calques (pour le mode standalone)
