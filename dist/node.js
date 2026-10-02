@@ -670,9 +670,6 @@ function applyLockMode(obj, mode) {
 // src/userSlots.ts
 var import_fabric2 = require("#fabric");
 
-// src/ui/badges.ts
-var BADGE_FONT = "500 10px ui-sans-serif, system-ui, sans-serif";
-
 // src/bindings.ts
 function pendingBindings(obj) {
   const bindings = obj.get("bindings") || {};
@@ -731,32 +728,39 @@ function checkerPattern(obj) {
 }
 var USER_SLOT_STYLE_KEY = "userSlotStyle";
 var DEFAULT_COLOR = "#d946ef";
-var ICON_SIZE = 20;
-var TEXT_LINE = 13;
-var TEXT_GAP = 6;
-var PAD = 8;
+var BASE = { icon: 20, font: 10, line: 13, gap: 6, pad: 8 };
+var SCALES = [4, 3.5, 3, 2.5, 2, 1.6];
+var fontAt = (scale) => `500 ${BASE.font * scale}px ui-sans-serif, system-ui, sans-serif`;
+function slotLayout(ctx, text, w, h) {
+  for (const scale2 of text ? SCALES : []) {
+    ctx.font = fontAt(scale2);
+    const pad = BASE.pad * scale2;
+    const lines = wrapLines(ctx, text, w - pad * 2);
+    const height = (BASE.icon + BASE.gap + lines.length * BASE.line) * scale2 + pad * 2;
+    if (lines.length && height <= h) return { scale: scale2, lines };
+  }
+  const scale = SCALES.find((s) => (BASE.icon + BASE.pad * 2) * s <= Math.min(w, h));
+  return scale ? { scale, lines: [] } : null;
+}
 function drawSlotContent(ctx, obj) {
   const style = obj.canvas?.[USER_SLOT_STYLE_KEY];
   const { x: zx, y: zy } = obj.getTotalObjectScaling();
-  const w = obj.width * zx;
-  const h = obj.height * zy;
-  if (Math.min(w, h) < ICON_SIZE + PAD * 2) return;
   ctx.save();
   ctx.scale(1 / zx, 1 / zy);
-  ctx.font = BADGE_FONT;
-  const text = userSlotHint(obj) || style?.prompt || "";
-  const lines = text ? wrapLines(ctx, text, w - PAD * 2) : [];
-  const fits = lines.length > 0 && ICON_SIZE + TEXT_GAP + lines.length * TEXT_LINE + PAD * 2 <= h;
-  const shown = fits ? lines : [];
-  const blockHeight = ICON_SIZE + (shown.length ? TEXT_GAP + shown.length * TEXT_LINE : 0);
+  const layout = slotLayout(ctx, userSlotHint(obj) || style?.prompt || "", obj.width * zx, obj.height * zy);
+  if (!layout) return ctx.restore();
+  const { scale, lines } = layout;
+  const icon = BASE.icon * scale;
+  const line = BASE.line * scale;
+  const gap = BASE.gap * scale;
+  const top = -(icon + (lines.length ? gap + lines.length * line : 0)) / 2;
   const color = style?.color ?? DEFAULT_COLOR;
-  drawUploadIcon(ctx, -blockHeight / 2, color);
+  drawUploadIcon(ctx, top, icon, color);
+  ctx.font = fontAt(scale);
   ctx.fillStyle = color;
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  shown.forEach((line, i) => {
-    ctx.fillText(line, 0, -blockHeight / 2 + ICON_SIZE + TEXT_GAP + TEXT_LINE * (i + 0.5));
-  });
+  lines.forEach((text, i) => ctx.fillText(text, 0, top + icon + gap + line * (i + 0.5)));
   ctx.restore();
 }
 function wrapLines(ctx, text, maxWidth) {
@@ -770,10 +774,10 @@ function wrapLines(ctx, text, maxWidth) {
   }
   return lines;
 }
-function drawUploadIcon(ctx, top, color) {
+function drawUploadIcon(ctx, top, size, color) {
   ctx.save();
-  ctx.translate(-ICON_SIZE / 2, top);
-  ctx.scale(ICON_SIZE / 24, ICON_SIZE / 24);
+  ctx.translate(-size / 2, top);
+  ctx.scale(size / 24, size / 24);
   ctx.lineWidth = 1.5;
   ctx.lineCap = "round";
   ctx.lineJoin = "round";

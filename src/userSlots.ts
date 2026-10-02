@@ -1,6 +1,5 @@
 import { Pattern, util, type FabricObject } from "#fabric";
 import { pendingBindings, type BindingSpec, type Bindings } from "./bindings";
-import { BADGE_FONT } from "./ui/badges";
 
 /**
  * Les images à fournir (apibots, plan user-image-slots) : un cadre que l'utilisateur final
@@ -108,41 +107,59 @@ export interface UserSlotStyle {
 
 export const USER_SLOT_STYLE_KEY = "userSlotStyle";
 const DEFAULT_COLOR = "#d946ef";
-const ICON_SIZE = 20;
-const TEXT_LINE = 13;
-const TEXT_GAP = 6;
-const PAD = 8;
+/**
+ * Les mesures à l'échelle 1 (celles des badges) ; le cadre s'affiche au plus grand facteur
+ * qui tient — ×4 dès qu'il y a la place, jusqu'à ×1,6 avant de lâcher l'invite.
+ */
+const BASE = { icon: 20, font: 10, line: 13, gap: 6, pad: 8 };
+const SCALES = [4, 3.5, 3, 2.5, 2, 1.6];
+
+type SlotLayout = { scale: number; lines: string[] };
+
+const fontAt = (scale: number) => `500 ${BASE.font * scale}px ui-sans-serif, system-ui, sans-serif`;
+
+/** Le plus grand facteur où icône + invite tiennent ; sinon l'icône seule ; sinon rien. */
+function slotLayout(ctx: CanvasRenderingContext2D, text: string, w: number, h: number): SlotLayout | null {
+  for (const scale of text ? SCALES : []) {
+    ctx.font = fontAt(scale);
+    const pad = BASE.pad * scale;
+    const lines = wrapLines(ctx, text, w - pad * 2);
+    const height = (BASE.icon + BASE.gap + lines.length * BASE.line) * scale + pad * 2;
+    if (lines.length && height <= h) return { scale, lines };
+  }
+
+  const scale = SCALES.find((s) => (BASE.icon + BASE.pad * 2) * s <= Math.min(w, h));
+  return scale ? { scale, lines: [] } : null;
+}
 
 /**
  * L'icône d'upload et l'invite, au centre du cadre, dans la couleur d'édition : le cadre
- * est « magique », il appartient à l'éditeur. Taille d'ÉCRAN, comme les badges (repère
- * ramené au pixel CSS, zoom compris — le cache se redessine au zoom). L'invite (consigne du
- * binding, sinon la phrase de l'hôte) n'apparaît que si elle tient ; l'icône aussi.
+ * est « magique », il appartient à l'éditeur. Taille d'ÉCRAN (repère ramené au pixel CSS,
+ * zoom compris — le cache se redessine au zoom), au plus grand facteur qui tient (slotLayout).
+ * L'invite : la consigne du binding, sinon la phrase de l'hôte.
  */
 function drawSlotContent(ctx: CanvasRenderingContext2D, obj: FabricObject): void {
   const style = (obj.canvas as unknown as Record<string, UserSlotStyle | undefined> | undefined)?.[USER_SLOT_STYLE_KEY];
   const { x: zx, y: zy } = obj.getTotalObjectScaling();
-  const w = obj.width * zx;
-  const h = obj.height * zy;
-  if (Math.min(w, h) < ICON_SIZE + PAD * 2) return;
 
   ctx.save();
   ctx.scale(1 / zx, 1 / zy);
-  ctx.font = BADGE_FONT;
-  const text = userSlotHint(obj) || style?.prompt || "";
-  const lines = text ? wrapLines(ctx, text, w - PAD * 2) : [];
-  const fits = lines.length > 0 && ICON_SIZE + TEXT_GAP + lines.length * TEXT_LINE + PAD * 2 <= h;
-  const shown = fits ? lines : [];
-  const blockHeight = ICON_SIZE + (shown.length ? TEXT_GAP + shown.length * TEXT_LINE : 0);
+  const layout = slotLayout(ctx, userSlotHint(obj) || style?.prompt || "", obj.width * zx, obj.height * zy);
+  if (!layout) return ctx.restore();
+
+  const { scale, lines } = layout;
+  const icon = BASE.icon * scale;
+  const line = BASE.line * scale;
+  const gap = BASE.gap * scale;
+  const top = -(icon + (lines.length ? gap + lines.length * line : 0)) / 2;
   const color = style?.color ?? DEFAULT_COLOR;
 
-  drawUploadIcon(ctx, -blockHeight / 2, color);
+  drawUploadIcon(ctx, top, icon, color);
+  ctx.font = fontAt(scale);
   ctx.fillStyle = color;
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  shown.forEach((line, i) => {
-    ctx.fillText(line, 0, -blockHeight / 2 + ICON_SIZE + TEXT_GAP + TEXT_LINE * (i + 0.5));
-  });
+  lines.forEach((text, i) => ctx.fillText(text, 0, top + icon + gap + line * (i + 0.5)));
   ctx.restore();
 }
 
@@ -161,10 +178,10 @@ function wrapLines(ctx: CanvasRenderingContext2D, text: string, maxWidth: number
 }
 
 /** L'icône d'upload (heroicons arrow-up-tray), tracée à la main : pas de Path2D côté node. */
-function drawUploadIcon(ctx: CanvasRenderingContext2D, top: number, color: string): void {
+function drawUploadIcon(ctx: CanvasRenderingContext2D, top: number, size: number, color: string): void {
   ctx.save();
-  ctx.translate(-ICON_SIZE / 2, top);
-  ctx.scale(ICON_SIZE / 24, ICON_SIZE / 24);
+  ctx.translate(-size / 2, top);
+  ctx.scale(size / 24, size / 24);
   ctx.lineWidth = 1.5;
   ctx.lineCap = "round";
   ctx.lineJoin = "round";

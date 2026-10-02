@@ -185,21 +185,30 @@ describe("rendu", () => {
       const obj = slot(new FabRect({ width, height, left: 300, top: 300, objectCaching: false }));
       obj.set({ bindings: { "image.src": { scope: "user", ...(hint ? { hint } : {}) } } });
       canvas.add(obj);
-      const fillText = vi.spyOn(canvas.getContext(), "fillText");
+      const ctx = canvas.getContext();
+      fonts = [];
+      const fillText = vi.spyOn(ctx, "fillText").mockImplementation(() => void fonts.push(ctx.font));
       canvas.renderAll();
       return fillText.mock.calls.map(([text]) => text);
     }
+    let fonts: string[] = [];
 
-    it("la phrase de l'hôte, coupée aux mots, quand elle tient", () => {
-      expect(rendered(500, 300).join(" ")).toBe(PROMPT);
+    it("la phrase de l'hôte, coupée aux mots, à ×4 quand il y a la place", () => {
+      expect(rendered(560, 460).join(" ")).toBe(PROMPT);
+      expect(fonts[0]).toMatch(/40px/);
+    });
+
+    it("moins de place : plus petit, plutôt que pas de texte", () => {
+      expect(rendered(240, 180).join(" ")).toBe(PROMPT);
+      expect(fonts[0]).not.toMatch(/40px/);
     });
 
     it("la consigne du binding passe avant la phrase de l'hôte", () => {
-      expect(rendered(500, 300, "Le logo").join(" ")).toBe("Le logo");
+      expect(rendered(560, 460, "Le logo").join(" ")).toBe("Le logo");
     });
 
     it("trop petit : pas de texte", () => {
-      expect(rendered(60, 40)).toEqual([]);
+      expect(rendered(120, 80)).toEqual([]);
     });
   });
 });
