@@ -163,6 +163,8 @@ __export(index_exports, {
   ResizeSession: () => ResizeSession,
   SelectionManager: () => SelectionManager,
   SnappingManager: () => SnappingManager,
+  USER_SCOPE: () => USER_SCOPE,
+  USER_SLOT_FIELD: () => USER_SLOT_FIELD,
   addCircleClip: () => addCircleClip,
   addCropControls: () => addCropControls,
   addHeartClip: () => addHeartClip,
@@ -172,6 +174,7 @@ __export(index_exports, {
   applyLockMode: () => applyLockMode,
   clampTopLeft: () => clampTopLeft,
   clipDataFor: () => clipDataFor,
+  collectUserSlots: () => collectUserSlots,
   createCircle: () => createCircle,
   createHeart: () => createHeart,
   createHexagon: () => createHexagon,
@@ -198,6 +201,7 @@ __export(index_exports, {
   isMonoPath: () => isMonoPath,
   isPositionLocked: () => isPositionLocked,
   isStyleLocked: () => isStyleLocked,
+  isUserSlot: () => isUserSlot,
   isValidShape: () => isValidShape,
   isYogaReady: () => isYogaReady,
   kindOf: () => kindOf,
@@ -216,13 +220,15 @@ __export(index_exports, {
   switchClip: () => switchClip,
   switchShape: () => switchShape,
   topLeft: () => topLeft,
+  userSlotBinding: () => userSlotBinding,
+  userSlotHint: () => userSlotHint,
   wrapContainerAroundChild: () => wrapContainerAroundChild,
   yogaLayout: () => yogaLayout
 });
 module.exports = __toCommonJS(index_exports);
 
 // src/FabricEditor.ts
-var import_fabric16 = require("#fabric");
+var import_fabric17 = require("#fabric");
 
 // src/DesignCanvas.ts
 var import_fabric = require("#fabric");
@@ -364,7 +370,7 @@ var DesignCanvas = class {
 };
 
 // src/LayerManager.ts
-var import_fabric10 = require("#fabric");
+var import_fabric11 = require("#fabric");
 
 // src/controls/CustomTextbox.ts
 var import_fabric2 = require("#fabric");
@@ -863,7 +869,7 @@ function sendBlockBackward(objects, obj) {
 }
 
 // src/capabilities.ts
-var import_fabric6 = require("#fabric");
+var import_fabric7 = require("#fabric");
 
 // src/layout/geometry.ts
 function scaledSize(obj) {
@@ -965,8 +971,205 @@ function isPositionLocked(obj) {
   return mode === "position" || mode === "full";
 }
 
-// src/shapes/FabRect.ts
+// src/userSlots.ts
 var import_fabric3 = require("#fabric");
+
+// src/bindings.ts
+function pendingBindings(obj) {
+  const bindings = obj.get("bindings") || {};
+  return Object.fromEntries(Object.entries(bindings).filter(([, spec]) => spec?.resolved !== true));
+}
+function hasPendingBindings(obj) {
+  return Object.keys(pendingBindings(obj)).length > 0;
+}
+function restoreBindings(obj, data) {
+  if (!data.bindings) return;
+  obj.set("bindings", data.bindings);
+  lockBoundText(obj);
+}
+function lockBoundText(obj) {
+  if (pendingBindings(obj)["text"] && "editable" in obj) {
+    obj.editable = false;
+  }
+}
+function setTextContent(obj, text) {
+  if (!("text" in obj)) return;
+  obj.set("text", text);
+  obj.initDimensions?.();
+  obj.setCoords();
+  obj.fire("changed");
+}
+var BADGE_HEIGHT = 15;
+var BADGE_PAD = 5;
+var BADGE_FONT = "500 10px ui-sans-serif, system-ui, sans-serif";
+function drawBindingBadge(ctx, obj, color, userSlotLabel = DEFAULT_USER_SLOT_LABEL) {
+  if (!hasPendingBindings(obj)) return;
+  const corner = obj.oCoords?.tl;
+  if (!corner) return;
+  const label = bindingLabel(obj, userSlotLabel);
+  ctx.save();
+  ctx.globalCompositeOperation = "destination-over";
+  ctx.font = BADGE_FONT;
+  const width = ctx.measureText(label).width + BADGE_PAD * 2;
+  const left = corner.x - 1;
+  const top = corner.y - BADGE_HEIGHT;
+  ctx.fillStyle = color;
+  ctx.fillRect(left, top, width, BADGE_HEIGHT);
+  ctx.globalCompositeOperation = "source-over";
+  ctx.fillStyle = "#ffffff";
+  ctx.textAlign = "left";
+  ctx.textBaseline = "middle";
+  ctx.fillText(label, left + BADGE_PAD, top + BADGE_HEIGHT / 2);
+  ctx.restore();
+}
+var DEFAULT_USER_SLOT_LABEL = "\xC0 fournir";
+function bindingLabel(obj, userSlotLabel) {
+  const labels = Object.values(pendingBindings(obj)).flatMap((spec) => {
+    if (spec?.scope === "user") return [userSlotLabel];
+    const expr = String(spec?.expr ?? "");
+    const tokens = expr.match(/\$\w+/g) || [];
+    return tokens.length ? tokens : expr.match(/^media\[/) ? [expr] : [];
+  });
+  return labels.length ? [...new Set(labels)].join(" ") : "$";
+}
+function drawDynamicMediaOutline(ctx, obj, color) {
+  const pending = pendingBindings(obj);
+  if (!Object.keys(pending).some((field) => field.startsWith("image."))) return;
+  const coords = obj.oCoords;
+  if (!coords) return;
+  ctx.save();
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1.5;
+  ctx.setLineDash([6, 4]);
+  ctx.globalAlpha = 0.9;
+  ctx.beginPath();
+  ctx.moveTo(coords.tl.x, coords.tl.y);
+  ctx.lineTo(coords.tr.x, coords.tr.y);
+  ctx.lineTo(coords.br.x, coords.br.y);
+  ctx.lineTo(coords.bl.x, coords.bl.y);
+  ctx.closePath();
+  ctx.stroke();
+  ctx.restore();
+}
+
+// src/userSlots.ts
+var USER_SCOPE = "user";
+var USER_SLOT_FIELD = "image.src";
+function userSlotBinding(obj) {
+  const spec = pendingBindings(obj)[USER_SLOT_FIELD];
+  return spec?.scope === USER_SCOPE ? spec : null;
+}
+function isUserSlot(obj) {
+  return userSlotBinding(obj) !== null;
+}
+function userSlotHint(obj) {
+  return String(userSlotBinding(obj)?.hint ?? "");
+}
+function resolveUserSlot(bindings) {
+  const spec = bindings?.[USER_SLOT_FIELD];
+  if (spec?.scope !== USER_SCOPE) return bindings;
+  return { ...bindings, [USER_SLOT_FIELD]: { ...spec, resolved: true } };
+}
+function collectUserSlots(objects) {
+  return objects.filter(isUserSlot).map((object) => {
+    const { left, top, width, height } = object.getBoundingRect();
+    return {
+      object,
+      layerId: object.get("layerId"),
+      hint: userSlotHint(object),
+      rect: { left, top, width, height }
+    };
+  });
+}
+var CELL = 16;
+var CHECKER_LIGHT = "#f9fafb";
+var CHECKER_DARK = "#e5e7eb";
+var ICON_COLOR = "#6b7280";
+var ICON_RING = "#d1d5db";
+var checkerSource = null;
+function checkerTile() {
+  if (checkerSource) return checkerSource;
+  const tile = import_fabric3.util.createCanvasElement();
+  tile.width = tile.height = CELL * 2;
+  const ctx = tile.getContext("2d");
+  ctx.fillStyle = CHECKER_LIGHT;
+  ctx.fillRect(0, 0, CELL * 2, CELL * 2);
+  ctx.fillStyle = CHECKER_DARK;
+  ctx.fillRect(0, 0, CELL, CELL);
+  ctx.fillRect(CELL, CELL, CELL, CELL);
+  checkerSource = tile;
+  return tile;
+}
+function checkerPattern(obj) {
+  const sx = obj.scaleX || 1;
+  const sy = obj.scaleY || 1;
+  return new import_fabric3.Pattern({ source: checkerTile(), repeat: "repeat", patternTransform: [1 / sx, 0, 0, 1 / sy, 0, 0] });
+}
+function drawUploadIcon(ctx, obj) {
+  const sx = obj.scaleX || 1;
+  const sy = obj.scaleY || 1;
+  const w = obj.width * sx;
+  const h = obj.height * sy;
+  const size = Math.max(20, Math.min(120, Math.min(w, h) * 0.22));
+  if (size * 2 > Math.min(w, h)) return;
+  ctx.save();
+  ctx.scale(1 / sx, 1 / sy);
+  ctx.beginPath();
+  ctx.arc(0, 0, size * 0.9, 0, Math.PI * 2);
+  ctx.fillStyle = "#ffffff";
+  ctx.fill();
+  ctx.lineWidth = Math.max(1, size * 0.03);
+  ctx.strokeStyle = ICON_RING;
+  ctx.stroke();
+  const unit = size / 24;
+  ctx.scale(unit * 0.8, unit * 0.8);
+  ctx.translate(-12, -12);
+  ctx.lineWidth = 1.5;
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  ctx.strokeStyle = ICON_COLOR;
+  ctx.beginPath();
+  ctx.moveTo(3, 16.5);
+  ctx.lineTo(3, 18.75);
+  ctx.quadraticCurveTo(3, 21, 5.25, 21);
+  ctx.lineTo(18.75, 21);
+  ctx.quadraticCurveTo(21, 21, 21, 18.75);
+  ctx.lineTo(21, 16.5);
+  ctx.moveTo(7.5, 7.5);
+  ctx.lineTo(12, 3);
+  ctx.lineTo(16.5, 7.5);
+  ctx.moveTo(12, 3);
+  ctx.lineTo(12, 16.5);
+  ctx.stroke();
+  ctx.restore();
+}
+function installUserSlotRendering(target) {
+  const proto = target;
+  const original = proto._render;
+  const originalIsCacheDirty = proto.isCacheDirty;
+  proto.isCacheDirty = function(skipCanvas) {
+    const slot = isUserSlot(this);
+    if (slot !== Boolean(this._wasUserSlot)) {
+      this._wasUserSlot = slot;
+      this.dirty = true;
+    }
+    return originalIsCacheDirty.call(this, skipCanvas);
+  };
+  proto._render = function(ctx) {
+    if (!isUserSlot(this)) return original.call(this, ctx);
+    const fill = this.fill;
+    this.fill = checkerPattern(this);
+    try {
+      original.call(this, ctx);
+    } finally {
+      this.fill = fill;
+    }
+    drawUploadIcon(ctx, this);
+  };
+}
+
+// src/shapes/FabRect.ts
+var import_fabric4 = require("#fabric");
 
 // src/shapes/lockMixin.ts
 var LOCK_MODES2 = ["free", "position", "full"];
@@ -1003,8 +1206,8 @@ function installLockMethods(proto) {
 }
 
 // src/shapes/FabRect.ts
-var { changeObjectWidth: changeObjectWidth2, changeObjectHeight: changeObjectHeight2 } = import_fabric3.controlsUtils;
-var FabRect = class extends import_fabric3.Rect {
+var { changeObjectWidth: changeObjectWidth2, changeObjectHeight: changeObjectHeight2 } = import_fabric4.controlsUtils;
+var FabRect = class extends import_fabric4.Rect {
   constructor(options) {
     super({
       originX: "center",
@@ -1048,10 +1251,11 @@ var FabRect = class extends import_fabric3.Rect {
 FabRect.type = "Rect";
 FabRect.customProperties = ["layerId", "layerType", "lockMode", "lockContent"];
 installLockMethods(FabRect.prototype);
-import_fabric3.classRegistry.setClass(FabRect, "Rect");
+installUserSlotRendering(FabRect.prototype);
+import_fabric4.classRegistry.setClass(FabRect, "Rect");
 
 // src/shapes/FabCircle.ts
-var import_fabric4 = require("#fabric");
+var import_fabric5 = require("#fabric");
 
 // src/shapes/resizeUtils.ts
 function isTransformCentered(transform) {
@@ -1059,8 +1263,8 @@ function isTransformCentered(transform) {
 }
 
 // src/shapes/FabCircle.ts
-var { changeObjectWidth: changeObjectWidth3, changeObjectHeight: changeObjectHeight3, getLocalPoint } = import_fabric4.controlsUtils;
-var FabCircle = class extends import_fabric4.Circle {
+var { changeObjectWidth: changeObjectWidth3, changeObjectHeight: changeObjectHeight3, getLocalPoint } = import_fabric5.controlsUtils;
+var FabCircle = class extends import_fabric5.Circle {
   constructor(options) {
     super({
       originX: "center",
@@ -1116,10 +1320,11 @@ var FabCircle = class extends import_fabric4.Circle {
 FabCircle.type = "Circle";
 FabCircle.customProperties = ["layerId", "layerType", "lockMode", "lockContent"];
 installLockMethods(FabCircle.prototype);
-import_fabric4.classRegistry.setClass(FabCircle, "Circle");
+installUserSlotRendering(FabCircle.prototype);
+import_fabric5.classRegistry.setClass(FabCircle, "Circle");
 
 // src/shapes/FabPath.ts
-var import_fabric5 = require("#fabric");
+var import_fabric6 = require("#fabric");
 
 // src/shapes/registry.ts
 var registry = [];
@@ -1149,9 +1354,9 @@ function normalizeEntry(entry) {
 }
 
 // src/shapes/FabPath.ts
-var { changeObjectWidth: changeObjectWidth4, changeObjectHeight: changeObjectHeight4, getLocalPoint: getLocalPoint2 } = import_fabric5.controlsUtils;
+var { changeObjectWidth: changeObjectWidth4, changeObjectHeight: changeObjectHeight4, getLocalPoint: getLocalPoint2 } = import_fabric6.controlsUtils;
 var DEFAULT_SIZE = 300;
-var _FabPath = class _FabPath extends import_fabric5.Path {
+var _FabPath = class _FabPath extends import_fabric6.Path {
   constructor(path, options) {
     super(path, {
       originX: "center",
@@ -1263,21 +1468,27 @@ _FabPath.type = "Path";
 _FabPath.customProperties = ["layerId", "layerType", "lockMode", "lockContent"];
 var FabPath = _FabPath;
 installLockMethods(FabPath.prototype);
-import_fabric5.classRegistry.setClass(FabPath, "Path");
+installUserSlotRendering(FabPath.prototype);
+import_fabric6.classRegistry.setClass(FabPath, "Path");
 
 // src/capabilities.ts
 function kindOf(obj) {
   const layerType = obj.layerType;
   if (isTextObject(obj)) return "text";
   if (layerType === "imageFrame") return "imageShape";
-  if (obj instanceof import_fabric6.FabricImage) return "legacyImage";
-  if (layerType === "shape" || obj instanceof import_fabric6.Rect) return "shape";
+  if (obj instanceof import_fabric7.FabricImage) return "legacyImage";
+  if (layerType === "shape" || obj instanceof import_fabric7.Rect) return "shape";
   return "other";
 }
 function rulesOf(obj, { ignoreLock = false } = {}) {
   const rules = kindRules(obj, kindOf(obj));
   if (isOutOfPlay(obj)) Object.assign(rules, { onToolboxImage: null, hosts: false });
-  switch (ignoreLock ? "free" : getLockMode(obj)) {
+  const locked = lockedRules(rules, ignoreLock ? "free" : getLockMode(obj));
+  if (rules.onToolboxImage !== "fill" || !isUserSlot(obj)) return locked;
+  return { ...locked, onToolboxImage: "fill", options: [...locked.options, "image"] };
+}
+function lockedRules(rules, lockMode) {
+  switch (lockMode) {
     case "position":
       return {
         ...rules,
@@ -1308,7 +1519,7 @@ function kindRules(obj, kind) {
     case "shape":
       return {
         kind,
-        onToolboxImage: obj instanceof import_fabric6.Group ? null : "fill",
+        onToolboxImage: obj instanceof import_fabric7.Group ? null : "fill",
         hosts: true,
         options: shapeOptions(obj),
         ...free
@@ -1337,10 +1548,10 @@ function isOutOfPlay(obj) {
 }
 
 // src/shapes/factories.ts
-var import_fabric8 = require("#fabric");
+var import_fabric9 = require("#fabric");
 
 // src/controls/cropControls.ts
-var import_fabric7 = require("#fabric");
+var import_fabric8 = require("#fabric");
 var CROP_CONFIGS = {
   left: {
     dimension: "width",
@@ -1434,7 +1645,7 @@ function addCropControls(obj) {
   sides.forEach((side) => {
     const position = CONTROL_POSITIONS[side];
     const controlName = CONTROL_NAMES[side];
-    obj.controls[controlName] = new import_fabric7.Control({
+    obj.controls[controlName] = new import_fabric8.Control({
       x: position.x,
       y: position.y,
       actionHandler: createCropActionHandler(side),
@@ -1468,7 +1679,7 @@ function createPathShape(shapeId, options) {
   return FabPath.createFromCatalog(shapeId, options);
 }
 async function createImage(url, options) {
-  const img = await import_fabric8.FabricImage.fromURL(url, { crossOrigin: "anonymous" });
+  const img = await import_fabric9.FabricImage.fromURL(url, { crossOrigin: "anonymous" });
   let scale = 1;
   if (img.width > 300 || img.height > 300) {
     scale = Math.min(300 / img.width, 300 / img.height);
@@ -1510,7 +1721,7 @@ function createPathsShape(paths, options = {}) {
     child.setCoords();
     return child;
   });
-  const group = new import_fabric8.Group(children, { originX: "center", originY: "center", ...withoutUndefined({ left, top }) });
+  const group = new import_fabric9.Group(children, { originX: "center", originY: "center", ...withoutUndefined({ left, top }) });
   if (id) group.set({ id });
   const target = targetDims(group.width, group.height, options.width, options.height);
   group.set({ scaleX: target.width / group.width, scaleY: target.height / group.height });
@@ -1611,7 +1822,7 @@ function getAvailableShapes() {
 }
 
 // src/ImageFrame.ts
-var import_fabric9 = require("#fabric");
+var import_fabric10 = require("#fabric");
 function rotatePoint(dx, dy, angleDeg) {
   const angle = -angleDeg * Math.PI / 180;
   return {
@@ -1619,7 +1830,7 @@ function rotatePoint(dx, dy, angleDeg) {
     y: dx * Math.sin(angle) + dy * Math.cos(angle)
   };
 }
-var ImageFrame = class _ImageFrame extends import_fabric9.Group {
+var ImageFrame = class _ImageFrame extends import_fabric10.Group {
   constructor(image, options = {}) {
     const frameScale = options.frameScale ?? 1;
     const frameWidth = options.frameWidth ?? image.width * frameScale;
@@ -1647,7 +1858,7 @@ var ImageFrame = class _ImageFrame extends import_fabric9.Group {
       height: frameHeight,
       subTargetCheck: false,
       interactive: false,
-      layoutManager: new import_fabric9.LayoutManager(new import_fabric9.FixedLayout()),
+      layoutManager: new import_fabric10.LayoutManager(new import_fabric10.FixedLayout()),
       // Désactiver le cache pour que le clipPath soit redessiné à chaque frame
       objectCaching: false
     });
@@ -2063,7 +2274,7 @@ var ImageFrame = class _ImageFrame extends import_fabric9.Group {
     };
   }
   static async fromObject(data) {
-    const img = await import_fabric9.FabricImage.fromURL(data.image.src, { crossOrigin: "anonymous" });
+    const img = await import_fabric10.FabricImage.fromURL(data.image.src, { crossOrigin: "anonymous" });
     const frame = new _ImageFrame(img, {
       left: data.left,
       top: data.top,
@@ -2126,84 +2337,8 @@ var ImageFrame = class _ImageFrame extends import_fabric9.Group {
     });
   }
 };
-import_fabric9.classRegistry.setClass(ImageFrame);
-import_fabric9.classRegistry.setClass(ImageFrame, "ImageFrame");
-
-// src/bindings.ts
-function pendingBindings(obj) {
-  const bindings = obj.get("bindings") || {};
-  return Object.fromEntries(Object.entries(bindings).filter(([, spec]) => spec?.resolved !== true));
-}
-function hasPendingBindings(obj) {
-  return Object.keys(pendingBindings(obj)).length > 0;
-}
-function restoreBindings(obj, data) {
-  if (!data.bindings) return;
-  obj.set("bindings", data.bindings);
-  lockBoundText(obj);
-}
-function lockBoundText(obj) {
-  if (pendingBindings(obj)["text"] && "editable" in obj) {
-    obj.editable = false;
-  }
-}
-function setTextContent(obj, text) {
-  if (!("text" in obj)) return;
-  obj.set("text", text);
-  obj.initDimensions?.();
-  obj.setCoords();
-  obj.fire("changed");
-}
-var BADGE_HEIGHT = 15;
-var BADGE_PAD = 5;
-var BADGE_FONT = "500 10px ui-sans-serif, system-ui, sans-serif";
-function drawBindingBadge(ctx, obj, color) {
-  if (!hasPendingBindings(obj)) return;
-  const corner = obj.oCoords?.tl;
-  if (!corner) return;
-  const label = bindingLabel(obj);
-  ctx.save();
-  ctx.globalCompositeOperation = "destination-over";
-  ctx.font = BADGE_FONT;
-  const width = ctx.measureText(label).width + BADGE_PAD * 2;
-  const left = corner.x - 1;
-  const top = corner.y - BADGE_HEIGHT;
-  ctx.fillStyle = color;
-  ctx.fillRect(left, top, width, BADGE_HEIGHT);
-  ctx.globalCompositeOperation = "source-over";
-  ctx.fillStyle = "#ffffff";
-  ctx.textAlign = "left";
-  ctx.textBaseline = "middle";
-  ctx.fillText(label, left + BADGE_PAD, top + BADGE_HEIGHT / 2);
-  ctx.restore();
-}
-function bindingLabel(obj) {
-  const labels = Object.values(pendingBindings(obj)).flatMap((spec) => {
-    const expr = String(spec?.expr ?? "");
-    const tokens = expr.match(/\$\w+/g) || [];
-    return tokens.length ? tokens : expr.match(/^media\[/) ? [expr] : [];
-  });
-  return labels.length ? [...new Set(labels)].join(" ") : "$";
-}
-function drawDynamicMediaOutline(ctx, obj, color) {
-  const pending = pendingBindings(obj);
-  if (!Object.keys(pending).some((field) => field.startsWith("image."))) return;
-  const coords = obj.oCoords;
-  if (!coords) return;
-  ctx.save();
-  ctx.strokeStyle = color;
-  ctx.lineWidth = 1.5;
-  ctx.setLineDash([6, 4]);
-  ctx.globalAlpha = 0.9;
-  ctx.beginPath();
-  ctx.moveTo(coords.tl.x, coords.tl.y);
-  ctx.lineTo(coords.tr.x, coords.tr.y);
-  ctx.lineTo(coords.br.x, coords.br.y);
-  ctx.lineTo(coords.bl.x, coords.bl.y);
-  ctx.closePath();
-  ctx.stroke();
-  ctx.restore();
-}
+import_fabric10.classRegistry.setClass(ImageFrame);
+import_fabric10.classRegistry.setClass(ImageFrame, "ImageFrame");
 
 // src/LayerManager.ts
 var BACKGROUND_LAYER_ID = "originalImage";
@@ -2233,7 +2368,7 @@ var LayerManager = class {
    * Charge l'image de fond
    */
   async loadBackgroundImage(url) {
-    const img = await import_fabric10.FabricImage.fromURL(url, { crossOrigin: "anonymous" });
+    const img = await import_fabric11.FabricImage.fromURL(url, { crossOrigin: "anonymous" });
     const scaleX = this.canvas.width / img.width;
     const scaleY = this.canvas.height / img.height;
     const scale = Math.max(scaleX, scaleY);
@@ -2359,7 +2494,7 @@ var LayerManager = class {
    */
   async addImage(url, options = {}) {
     const { left = 100, top = 100, layerId = this.generateId() } = options;
-    const img = await import_fabric10.FabricImage.fromURL(url, { crossOrigin: "anonymous" });
+    const img = await import_fabric11.FabricImage.fromURL(url, { crossOrigin: "anonymous" });
     let frameScale = 1;
     if (img.width > 300 || img.height > 300) {
       frameScale = Math.min(300 / img.width, 300 / img.height);
@@ -2387,7 +2522,7 @@ var LayerManager = class {
   async replaceImageSource(target, newUrl, options) {
     if (kindOf(target) === "imageShape") {
       const frame = target;
-      const newImg = await import_fabric10.FabricImage.fromURL(newUrl, { crossOrigin: "anonymous" });
+      const newImg = await import_fabric11.FabricImage.fromURL(newUrl, { crossOrigin: "anonymous" });
       await frame.replaceImage(newImg);
       if (options?.opacity !== void 0) {
         frame.opacity = options.opacity;
@@ -2413,7 +2548,7 @@ var LayerManager = class {
       layerType: target.get("layerType")
     };
     const lockMode = getLockMode(target);
-    const newImg = await import_fabric10.FabricImage.fromURL(newUrl, { crossOrigin: "anonymous" });
+    const newImg = await import_fabric11.FabricImage.fromURL(newUrl, { crossOrigin: "anonymous" });
     const oldWidth = target.width * target.scaleX;
     const oldHeight = target.height * target.scaleY;
     const coverScale = Math.max(oldWidth / newImg.width, oldHeight / newImg.height);
@@ -2456,8 +2591,7 @@ var LayerManager = class {
     const { clipShape, clipData, cornerRadius } = clipOfShape(shape);
     const { w: displayedWidth, h: displayedHeight } = scaledSize(shape);
     const center = shape.getRelativeCenterPoint();
-    const zIndex = this.canvas.getObjects().indexOf(shape);
-    const img = await import_fabric10.FabricImage.fromURL(imageUrl, { crossOrigin: "anonymous" });
+    const img = await import_fabric11.FabricImage.fromURL(imageUrl, { crossOrigin: "anonymous" });
     const frame = new ImageFrame(img, {
       left: center.x,
       top: center.y,
@@ -2469,20 +2603,59 @@ var LayerManager = class {
       frameHeight: displayedHeight,
       cornerRadius
     });
-    const layout = shape.get("layout");
-    if (layout) frame.set("layout", JSON.parse(JSON.stringify(layout)));
-    const lockMode = getLockMode(shape);
-    if (lockMode !== "free") applyLockMode(frame, lockMode);
-    const bindings = shape.get("bindings");
+    const bindings = resolveUserSlot(shape.get("bindings"));
     if (bindings) frame.set("bindings", bindings);
-    this.canvas.remove(shape);
-    this.canvas.add(frame);
-    if (zIndex >= 0 && zIndex < this.canvas.getObjects().length) {
-      this.canvas.moveObjectTo(frame, zIndex);
-    }
-    this.canvas.setActiveObject(frame);
-    this.canvas.renderAll();
+    this.takeOver(shape, frame);
     return frame;
+  }
+  /**
+   * Demande l'image à l'utilisateur final (userSlots) : le calque devient une forme liée à
+   * une image à fournir, avec sa consigne. Une forme le reste ; une forme-image redevient la
+   * forme de sa découpe, aux mêmes dimensions — son image est abandonnée (pas d'exemple :
+   * le damier dit « à fournir »), ses autres bindings la suivent.
+   *
+   * Rend la forme, ou null si le calque ne peut pas recevoir d'image (texte, groupe de paths).
+   */
+  requestUserImage(obj, hint = "") {
+    const bindings = {
+      ...obj.get("bindings") || {},
+      [USER_SLOT_FIELD]: { scope: USER_SCOPE, hint }
+    };
+    if (obj instanceof ImageFrame) {
+      const shape = shapeOfFrame(obj);
+      shape.set({
+        layerId: obj.get("layerId") || this.generateId(),
+        layerType: "shape",
+        angle: obj.angle,
+        bindings
+      });
+      shape.setPositionByOrigin(obj.getRelativeCenterPoint(), "center", "center");
+      this.takeOver(obj, shape);
+      return shape;
+    }
+    if (rulesOf(obj, { ignoreLock: true }).onToolboxImage !== "fill") return null;
+    obj.set({ bindings });
+    this.canvas.requestRenderAll();
+    return obj;
+  }
+  /**
+   * Un calque en remplace un autre à sa place : son layout (container, enfant) et son
+   * verrouillage — sinon ses enfants restent orphelins, ou il sort de son container — et
+   * son rang dans la pile (sous ses enfants).
+   */
+  takeOver(previous, next) {
+    const layout = previous.get("layout");
+    if (layout) next.set("layout", JSON.parse(JSON.stringify(layout)));
+    const lockMode = getLockMode(previous);
+    if (lockMode !== "free") applyLockMode(next, lockMode);
+    const zIndex = this.canvas.getObjects().indexOf(previous);
+    this.canvas.remove(previous);
+    this.canvas.add(next);
+    if (zIndex >= 0 && zIndex < this.canvas.getObjects().length) {
+      this.canvas.moveObjectTo(next, zIndex);
+    }
+    this.canvas.setActiveObject(next);
+    this.canvas.renderAll();
   }
   /**
    * Crée et ajoute un calque forme (rectangle par défaut)
@@ -2515,7 +2688,7 @@ var LayerManager = class {
    * Groupe plusieurs objets ensemble
    */
   groupObjects(objects) {
-    const group = new import_fabric10.Group(objects);
+    const group = new import_fabric11.Group(objects);
     objects.forEach((obj) => this.canvas.remove(obj));
     this.canvas.add(group);
     this.canvas.setActiveObject(group);
@@ -2552,7 +2725,7 @@ var LayerManager = class {
       }
       case "Image":
       case "image": {
-        const img = await import_fabric10.FabricImage.fromObject({
+        const img = await import_fabric11.FabricImage.fromObject({
           ...layer,
           crossOrigin: "anonymous"
         });
@@ -2566,7 +2739,7 @@ var LayerManager = class {
       }
       case "Group":
       case "group":
-        obj = await import_fabric10.Group.fromObject(layer);
+        obj = await import_fabric11.Group.fromObject(layer);
         break;
       case "Rect":
       case "rect":
@@ -2658,19 +2831,33 @@ var LayerManager = class {
     return "heart";
   }
 };
+function shapeOfFrame(frame) {
+  const { w, h } = scaledSize(frame);
+  const fill = "#ffffff";
+  const strokeWidth = 0;
+  const clipShape = frame.clipShape || "rect";
+  if (clipShape === "circle") {
+    const circle = new FabCircle({ radius: Math.min(w, h) / 2, fill, strokeWidth });
+    circle.setSize(w, h);
+    return circle;
+  }
+  const clipData = clipShape === "rect" ? void 0 : frame.clipData ?? clipDataFor(clipShape);
+  if (clipData) return FabPath.fromPathData({ d: clipData.d }, { id: clipShape, fill, strokeWidth, width: w, height: h });
+  return new FabRect({ width: w, height: h, rx: frame.cornerRadius, ry: frame.cornerRadius, fill, strokeWidth });
+}
 function clipOfShape(shape) {
   if (shape instanceof FabRect) return { clipShape: "rect", cornerRadius: shape.getCornerRadius() };
   if (shape instanceof FabCircle) return { clipShape: "circle", cornerRadius: 0 };
   if (shape instanceof FabPath) {
     const id = shape.id;
-    const clipData = { d: import_fabric10.util.joinPath(shape.path), width: shape.width, height: shape.height };
+    const clipData = { d: import_fabric11.util.joinPath(shape.path), width: shape.width, height: shape.height };
     return { clipShape: id && isValidShape(id) ? id : id || "custom", clipData, cornerRadius: 0 };
   }
   return { clipShape: "rect", cornerRadius: 0 };
 }
 
 // src/SelectionManager.ts
-var import_fabric11 = require("#fabric");
+var import_fabric12 = require("#fabric");
 var SelectionManager = class {
   constructor(canvas) {
     this.canvas = canvas;
@@ -2891,7 +3078,7 @@ var SelectionManager = class {
     const id = container.get("layerId");
     this._activeGroupId = id;
     const child = this.canvas.getObjects().slice().reverse().find(
-      (o) => o.get("layout")?.child?.parentId === id && o.containsPoint(new import_fabric11.Point(point.x, point.y))
+      (o) => o.get("layout")?.child?.parentId === id && o.containsPoint(new import_fabric12.Point(point.x, point.y))
     );
     if (child) this.canvas.setActiveObject(child);
     this.canvas.requestRenderAll();
@@ -2939,7 +3126,7 @@ var SelectionManager = class {
       }
       if (unlocked.length < e.selected.length) {
         this.canvas.discardActiveObject();
-        const newSelection = new import_fabric11.ActiveSelection(unlocked, { canvas: this.canvas.originalFabricCanvas });
+        const newSelection = new import_fabric12.ActiveSelection(unlocked, { canvas: this.canvas.originalFabricCanvas });
         this.canvas.setActiveObject(newSelection);
         this._current = unlocked;
         if (this.callbacks.onSelect && unlocked[0]) {
@@ -3014,7 +3201,7 @@ var SelectionManager = class {
 };
 
 // src/MaskManager.ts
-var import_fabric12 = require("#fabric");
+var import_fabric13 = require("#fabric");
 var MASK_LAYER_ID = "mask";
 var BACKGROUND_LAYER_ID2 = "originalImage";
 var MaskManager = class {
@@ -3059,7 +3246,7 @@ var MaskManager = class {
     if (!bgImage) {
       throw new Error("Pas d'image de fond pour appliquer le masque");
     }
-    const maskImage = await import_fabric12.FabricImage.fromURL(maskUrl, {
+    const maskImage = await import_fabric13.FabricImage.fromURL(maskUrl, {
       crossOrigin: "anonymous"
     });
     this.cropCanvasToMask(maskImage, bgImage.height);
@@ -3373,7 +3560,7 @@ var HistoryManager = class {
 };
 
 // src/ui/guides.ts
-var import_fabric13 = require("#fabric");
+var import_fabric14 = require("#fabric");
 
 // src/ui/color.ts
 function parseHex(hex) {
@@ -3409,7 +3596,7 @@ var CanvasGuides = class {
   // ── Low-level primitives ──────────────────────────────────────────
   /** Add a line guide. */
   addLine(coords, opts = {}) {
-    const line = new import_fabric13.Line(coords, {
+    const line = new import_fabric14.Line(coords, {
       stroke: opts.stroke ?? this.color,
       strokeWidth: opts.strokeWidth ?? 1,
       strokeDashArray: opts.strokeDashArray ?? [5, 5],
@@ -3422,7 +3609,7 @@ var CanvasGuides = class {
   }
   /** Add a rectangle guide (highlight zone, margin indicator, etc.). */
   addRect(opts, insertAbove) {
-    const rect = new import_fabric13.Rect({
+    const rect = new import_fabric14.Rect({
       left: opts.left,
       top: opts.top,
       originX: "left",
@@ -3665,7 +3852,7 @@ function createHatchPattern(hex) {
   ctx.moveTo(size / 2, size + size / 2);
   ctx.lineTo(size + size / 2, size / 2);
   ctx.stroke();
-  return new import_fabric13.Pattern({ source: canvas, repeat: "repeat" });
+  return new import_fabric14.Pattern({ source: canvas, repeat: "repeat" });
 }
 
 // src/SnappingManager.ts
@@ -4021,7 +4208,7 @@ var SnappingManager = class {
 };
 
 // src/LayoutManager.ts
-var import_fabric14 = require("#fabric");
+var import_fabric15 = require("#fabric");
 
 // src/layout/yoga-engine.ts
 var yoga = null;
@@ -5293,7 +5480,7 @@ var LayoutManager2 = class {
    * The source's position is updated to follow the cursor.
    */
   tickExternalDrag(source, cursor) {
-    source.setPositionByOrigin(new import_fabric14.Point(cursor.x, cursor.y), "center", "center");
+    source.setPositionByOrigin(new import_fabric15.Point(cursor.x, cursor.y), "center", "center");
     source.setCoords();
     switch (this.dtl.phase) {
       case "anchored":
@@ -5766,21 +5953,21 @@ function applyClip(obj, shapeType) {
 }
 
 // src/ui/controls.ts
-var import_fabric15 = require("#fabric");
-function applyControlStyle(canvas, guideColor, resolveTarget) {
+var import_fabric16 = require("#fabric");
+function applyControlStyle(canvas, guideColor, resolveTarget, userSlotLabel) {
   const gc = guideColor;
-  import_fabric15.FabricObject.ownDefaults.borderColor = gc;
-  import_fabric15.FabricObject.ownDefaults.borderScaleFactor = 2;
-  import_fabric15.FabricObject.ownDefaults.borderOpacityWhenMoving = 1;
-  import_fabric15.FabricObject.ownDefaults.cornerColor = "#ffffff";
-  import_fabric15.FabricObject.ownDefaults.cornerStrokeColor = "#000000";
-  import_fabric15.FabricObject.ownDefaults.transparentCorners = false;
-  import_fabric15.FabricObject.ownDefaults.cornerSize = 16;
+  import_fabric16.FabricObject.ownDefaults.borderColor = gc;
+  import_fabric16.FabricObject.ownDefaults.borderScaleFactor = 2;
+  import_fabric16.FabricObject.ownDefaults.borderOpacityWhenMoving = 1;
+  import_fabric16.FabricObject.ownDefaults.cornerColor = "#ffffff";
+  import_fabric16.FabricObject.ownDefaults.cornerStrokeColor = "#000000";
+  import_fabric16.FabricObject.ownDefaults.transparentCorners = false;
+  import_fabric16.FabricObject.ownDefaults.cornerSize = 16;
   const hoverProgress = /* @__PURE__ */ new WeakMap();
   installControlRenderer(gc, hoverProgress);
   installControlHitAreas(canvas);
   installHoverAnimation(canvas, hoverProgress);
-  installHoverBorder(canvas, gc, resolveTarget);
+  installHoverBorder(canvas, gc, resolveTarget, userSlotLabel);
 }
 var EDGE_CONTROLS = /* @__PURE__ */ new Set(["mt", "mb", "ml", "mr"]);
 var CORNER_CONTROLS = /* @__PURE__ */ new Set(["tl", "tr", "bl", "br"]);
@@ -5790,7 +5977,7 @@ var ANIM_SPEED = 10;
 function installControlRenderer(gc, hoverProgress) {
   const [activeR, activeG, activeB] = parseHex(gc);
   const hoverStart = /* @__PURE__ */ new WeakMap();
-  import_fabric15.Control.prototype.render = function(ctx, left, top, styleOverride, fabricObject) {
+  import_fabric16.Control.prototype.render = function(ctx, left, top, styleOverride, fabricObject) {
     if (fabricObject.isMoving) return;
     const baseColor = styleOverride?.cornerColor ?? fabricObject.cornerColor;
     const isDefault = baseColor === DEFAULT_COLOR;
@@ -5874,13 +6061,13 @@ var resizeEdge = (eventData, transform, x, y) => {
   return changed;
 };
 function installControlHitAreas(canvas) {
-  const createSideRotationControl = () => new import_fabric15.Control({
+  const createSideRotationControl = () => new import_fabric16.Control({
     x: 0.5,
     y: 0,
     offsetX: 30,
     offsetY: 0,
-    actionHandler: import_fabric15.controlsUtils.rotationWithSnapping,
-    cursorStyleHandler: import_fabric15.controlsUtils.rotationStyleHandler,
+    actionHandler: import_fabric16.controlsUtils.rotationWithSnapping,
+    cursorStyleHandler: import_fabric16.controlsUtils.rotationStyleHandler,
     withConnection: true,
     actionName: "rotate"
   });
@@ -5967,7 +6154,7 @@ function installHoverAnimation(canvas, hoverProgress) {
     }
   });
 }
-function installHoverBorder(canvas, guideColor, resolveTarget) {
+function installHoverBorder(canvas, guideColor, resolveTarget, userSlotLabel) {
   let hoveredObj = null;
   const clearTopCtx = () => {
     const fc = canvas.originalFabricCanvas;
@@ -6000,10 +6187,10 @@ function installHoverBorder(canvas, guideColor, resolveTarget) {
       if (obj === active || obj === hoveredObj) return;
       drawDynamicMediaOutline(ctx, obj, guideColor);
     });
-    if (active) drawBindingBadge(ctx, active, guideColor);
+    if (active) drawBindingBadge(ctx, active, guideColor, userSlotLabel);
     if (!hoveredObj || hoveredObj === active) return;
     hoveredObj._renderControls(ctx, { hasControls: false, hasBorders: true });
-    drawBindingBadge(ctx, hoveredObj, guideColor);
+    drawBindingBadge(ctx, hoveredObj, guideColor, userSlotLabel);
   });
 }
 
@@ -6035,7 +6222,7 @@ var _FabricEditor = class _FabricEditor {
     });
     this.layers = new LayerManager(this.canvas);
     this.selection = new SelectionManager(this.canvas);
-    applyControlStyle(this.canvas, gc, (obj) => this.selection.resolveTarget(obj));
+    applyControlStyle(this.canvas, gc, (obj) => this.selection.resolveTarget(obj), config.userSlotLabel);
     this.masks = new MaskManager(this.canvas);
     this.persistence = new PersistenceManager(this.canvas, this.layers);
     this.history = new HistoryManager(this.canvas, this.layers);
@@ -6419,7 +6606,7 @@ var _FabricEditor = class _FabricEditor {
       obj.nextClipShape();
       obj.dirty = true;
       this.canvas.requestRenderAll();
-    } else if (obj instanceof import_fabric16.FabricImage) {
+    } else if (obj instanceof import_fabric17.FabricImage) {
       switchClip(obj);
       obj.dirty = true;
       this.canvas.remove(obj);
@@ -6431,7 +6618,7 @@ var _FabricEditor = class _FabricEditor {
    */
   switchShape() {
     const obj = this.selection.current;
-    if (!obj || obj instanceof import_fabric16.FabricImage) return;
+    if (!obj || obj instanceof import_fabric17.FabricImage) return;
     const currentShapeId = obj.id;
     const nextShapeType = nextShape(currentShapeId);
     this.changeShape(nextShapeType);
@@ -6446,7 +6633,7 @@ var _FabricEditor = class _FabricEditor {
       obj.applyClipShape(shapeType);
       obj.dirty = true;
       this.canvas.requestRenderAll();
-    } else if (!(obj instanceof import_fabric16.FabricImage)) {
+    } else if (!(obj instanceof import_fabric17.FabricImage)) {
       const newObj = switchShape(obj, shapeType);
       const layerId = obj.get("layerId");
       const layerType = obj.get("layerType");
@@ -6560,7 +6747,7 @@ var _FabricEditor = class _FabricEditor {
     const rad = angleDeg * Math.PI / 180;
     const cos = Math.cos(rad);
     const sin = Math.sin(rad);
-    const gradient = new import_fabric16.Gradient({
+    const gradient = new import_fabric17.Gradient({
       type: "linear",
       gradientUnits: "percentage",
       coords: {
@@ -6636,7 +6823,7 @@ var _FabricEditor = class _FabricEditor {
     const obj = this.selection.current;
     if (!obj) return;
     const existing = obj.shadow;
-    const shadow = new import_fabric16.Shadow({
+    const shadow = new import_fabric17.Shadow({
       color: opts.color ?? existing?.color ?? "rgba(0,0,0,0.5)",
       blur: opts.blur ?? existing?.blur ?? 10,
       offsetX: opts.offsetX ?? existing?.offsetX ?? 5,
@@ -6717,6 +6904,44 @@ var _FabricEditor = class _FabricEditor {
     this.canvas.renderAll();
     return objects;
   }
+  /** Les images à fournir de la page (userSlots), boîtes en coordonnées scène. */
+  userSlots() {
+    return collectUserSlots(this.layers.all);
+  }
+  /**
+   * Prévient l'hôte quand les images à fournir changent — apparition, disparition,
+   * consigne, boîte, échelle ou cadrage d'affichage : de quoi (re)placer ses bulles. Comparé
+   * à chaque rendu et à chaque redimensionnement, appelé seulement sur changement (et une
+   * fois tout de suite). Rend la fonction de désabonnement.
+   */
+  onUserSlotsChange(callback) {
+    let last = null;
+    const check = () => {
+      const slots = this.userSlots();
+      const signature = JSON.stringify([
+        this._displayScale,
+        this._userZoom,
+        slots.map(({ layerId, hint, rect }) => [
+          layerId,
+          hint,
+          Math.round(rect.left),
+          Math.round(rect.top),
+          Math.round(rect.width),
+          Math.round(rect.height)
+        ])
+      ]);
+      if (signature === last) return;
+      last = signature;
+      callback(slots);
+    };
+    this.canvas.on("after:render", check);
+    this._resizeCallbacks.push(check);
+    check();
+    return () => {
+      this.canvas.off("after:render", check);
+      this._resizeCallbacks = this._resizeCallbacks.filter((cb) => cb !== check);
+    };
+  }
   /**
    * Supprime l'objet ou les objets sélectionnés
    * Les objets verrouillés (position ou full) ne peuvent pas être supprimés
@@ -6746,7 +6971,7 @@ var _FabricEditor = class _FabricEditor {
    * remplacement, et l'image est ajoutée.
    */
   findDropTargetAtPoint(x, y) {
-    const point = new import_fabric16.Point(x, y);
+    const point = new import_fabric17.Point(x, y);
     const objects = this.canvas.getObjects().slice().reverse();
     for (const obj of objects) {
       if (obj.get(DRAG_PREVIEW_KEY)) continue;
@@ -6770,8 +6995,8 @@ var _FabricEditor = class _FabricEditor {
   extendFabricObject() {
     if (_FabricEditor._toObjectExtended) return;
     _FabricEditor._toObjectExtended = true;
-    const originalToObject = import_fabric16.FabricObject.prototype.toObject;
-    import_fabric16.FabricObject.prototype.toObject = function(propertiesToInclude) {
+    const originalToObject = import_fabric17.FabricObject.prototype.toObject;
+    import_fabric17.FabricObject.prototype.toObject = function(propertiesToInclude) {
       return originalToObject.call(
         this,
         ["layerId", "layout", "bindings"].concat(propertiesToInclude || [])
@@ -6786,8 +7011,8 @@ _FabricEditor._toObjectExtended = false;
 var FabricEditor = _FabricEditor;
 
 // src/PreviewCanvas.ts
-var import_fabric17 = require("#fabric");
-var PreviewCanvas = class extends import_fabric17.StaticCanvas {
+var import_fabric18 = require("#fabric");
+var PreviewCanvas = class extends import_fabric18.StaticCanvas {
   constructor(el, opts) {
     const { width, height, ...canvasOpts } = opts;
     super(el, {
@@ -6847,7 +7072,7 @@ var PreviewCanvas = class extends import_fabric17.StaticCanvas {
 };
 
 // src/DropHandler.ts
-var import_fabric18 = require("#fabric");
+var import_fabric19 = require("#fabric");
 var HIGHLIGHT_COLOR = "#3b82f6";
 var KIND_CAPABILITIES = {
   image: { layout: false, replaceTarget: true },
@@ -7010,7 +7235,7 @@ var DropHandler = class {
       if (!committed && object) {
         if (e) {
           const pointer = this.editor.canvas.getScenePoint(e);
-          object.setPositionByOrigin(new import_fabric18.Point(pointer.x, pointer.y), "center", "center");
+          object.setPositionByOrigin(new import_fabric19.Point(pointer.x, pointer.y), "center", "center");
           object.setCoords();
         }
         if (!this.editor.canvas.getObjects().includes(object)) {
@@ -7086,7 +7311,7 @@ var DropHandler = class {
         this.editor.layout.tickExternalDrag(object, pointer);
         return;
       }
-      object.setPositionByOrigin(new import_fabric18.Point(pointer.x, pointer.y), "center", "center");
+      object.setPositionByOrigin(new import_fabric19.Point(pointer.x, pointer.y), "center", "center");
       object.setCoords();
       this.editor.canvas.requestRenderAll();
     }
@@ -7192,7 +7417,7 @@ var DropHandler = class {
       height = target.height;
       clipPath = target.clipPath;
     }
-    const fabricOverlay = new import_fabric18.Rect({
+    const fabricOverlay = new import_fabric19.Rect({
       left: target.left,
       top: target.top,
       width,
@@ -7285,7 +7510,7 @@ var DropHandler = class {
    * drop-target detection.
    */
   async createImagePreview(url) {
-    const img = await import_fabric18.FabricImage.fromURL(url, { crossOrigin: "anonymous" });
+    const img = await import_fabric19.FabricImage.fromURL(url, { crossOrigin: "anonymous" });
     let scale = 1;
     if (img.width > 300 || img.height > 300) {
       scale = Math.min(300 / img.width, 300 / img.height);
@@ -7841,6 +8066,8 @@ function layerToHtmlStandalone(layer, zIndex) {
   ResizeSession,
   SelectionManager,
   SnappingManager,
+  USER_SCOPE,
+  USER_SLOT_FIELD,
   addCircleClip,
   addCropControls,
   addHeartClip,
@@ -7850,6 +8077,7 @@ function layerToHtmlStandalone(layer, zIndex) {
   applyLockMode,
   clampTopLeft,
   clipDataFor,
+  collectUserSlots,
   createCircle,
   createHeart,
   createHexagon,
@@ -7876,6 +8104,7 @@ function layerToHtmlStandalone(layer, zIndex) {
   isMonoPath,
   isPositionLocked,
   isStyleLocked,
+  isUserSlot,
   isValidShape,
   isYogaReady,
   kindOf,
@@ -7894,6 +8123,8 @@ function layerToHtmlStandalone(layer, zIndex) {
   switchClip,
   switchShape,
   topLeft,
+  userSlotBinding,
+  userSlotHint,
   wrapContainerAroundChild,
   yogaLayout
 });

@@ -260,7 +260,7 @@ var DesignCanvas = class {
 import {
   FabricImage as FabricImage5,
   Group as Group4,
-  util
+  util as util2
 } from "#fabric";
 
 // src/controls/CustomTextbox.ts
@@ -862,6 +862,203 @@ function isPositionLocked(obj) {
   return mode === "position" || mode === "full";
 }
 
+// src/userSlots.ts
+import { Pattern, util } from "#fabric";
+
+// src/bindings.ts
+function pendingBindings(obj) {
+  const bindings = obj.get("bindings") || {};
+  return Object.fromEntries(Object.entries(bindings).filter(([, spec]) => spec?.resolved !== true));
+}
+function hasPendingBindings(obj) {
+  return Object.keys(pendingBindings(obj)).length > 0;
+}
+function restoreBindings(obj, data) {
+  if (!data.bindings) return;
+  obj.set("bindings", data.bindings);
+  lockBoundText(obj);
+}
+function lockBoundText(obj) {
+  if (pendingBindings(obj)["text"] && "editable" in obj) {
+    obj.editable = false;
+  }
+}
+function setTextContent(obj, text) {
+  if (!("text" in obj)) return;
+  obj.set("text", text);
+  obj.initDimensions?.();
+  obj.setCoords();
+  obj.fire("changed");
+}
+var BADGE_HEIGHT = 15;
+var BADGE_PAD = 5;
+var BADGE_FONT = "500 10px ui-sans-serif, system-ui, sans-serif";
+function drawBindingBadge(ctx, obj, color, userSlotLabel = DEFAULT_USER_SLOT_LABEL) {
+  if (!hasPendingBindings(obj)) return;
+  const corner = obj.oCoords?.tl;
+  if (!corner) return;
+  const label = bindingLabel(obj, userSlotLabel);
+  ctx.save();
+  ctx.globalCompositeOperation = "destination-over";
+  ctx.font = BADGE_FONT;
+  const width = ctx.measureText(label).width + BADGE_PAD * 2;
+  const left = corner.x - 1;
+  const top = corner.y - BADGE_HEIGHT;
+  ctx.fillStyle = color;
+  ctx.fillRect(left, top, width, BADGE_HEIGHT);
+  ctx.globalCompositeOperation = "source-over";
+  ctx.fillStyle = "#ffffff";
+  ctx.textAlign = "left";
+  ctx.textBaseline = "middle";
+  ctx.fillText(label, left + BADGE_PAD, top + BADGE_HEIGHT / 2);
+  ctx.restore();
+}
+var DEFAULT_USER_SLOT_LABEL = "\xC0 fournir";
+function bindingLabel(obj, userSlotLabel) {
+  const labels = Object.values(pendingBindings(obj)).flatMap((spec) => {
+    if (spec?.scope === "user") return [userSlotLabel];
+    const expr = String(spec?.expr ?? "");
+    const tokens = expr.match(/\$\w+/g) || [];
+    return tokens.length ? tokens : expr.match(/^media\[/) ? [expr] : [];
+  });
+  return labels.length ? [...new Set(labels)].join(" ") : "$";
+}
+function drawDynamicMediaOutline(ctx, obj, color) {
+  const pending = pendingBindings(obj);
+  if (!Object.keys(pending).some((field) => field.startsWith("image."))) return;
+  const coords = obj.oCoords;
+  if (!coords) return;
+  ctx.save();
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1.5;
+  ctx.setLineDash([6, 4]);
+  ctx.globalAlpha = 0.9;
+  ctx.beginPath();
+  ctx.moveTo(coords.tl.x, coords.tl.y);
+  ctx.lineTo(coords.tr.x, coords.tr.y);
+  ctx.lineTo(coords.br.x, coords.br.y);
+  ctx.lineTo(coords.bl.x, coords.bl.y);
+  ctx.closePath();
+  ctx.stroke();
+  ctx.restore();
+}
+
+// src/userSlots.ts
+var USER_SCOPE = "user";
+var USER_SLOT_FIELD = "image.src";
+function userSlotBinding(obj) {
+  const spec = pendingBindings(obj)[USER_SLOT_FIELD];
+  return spec?.scope === USER_SCOPE ? spec : null;
+}
+function isUserSlot(obj) {
+  return userSlotBinding(obj) !== null;
+}
+function userSlotHint(obj) {
+  return String(userSlotBinding(obj)?.hint ?? "");
+}
+function resolveUserSlot(bindings) {
+  const spec = bindings?.[USER_SLOT_FIELD];
+  if (spec?.scope !== USER_SCOPE) return bindings;
+  return { ...bindings, [USER_SLOT_FIELD]: { ...spec, resolved: true } };
+}
+function collectUserSlots(objects) {
+  return objects.filter(isUserSlot).map((object) => {
+    const { left, top, width, height } = object.getBoundingRect();
+    return {
+      object,
+      layerId: object.get("layerId"),
+      hint: userSlotHint(object),
+      rect: { left, top, width, height }
+    };
+  });
+}
+var CELL = 16;
+var CHECKER_LIGHT = "#f9fafb";
+var CHECKER_DARK = "#e5e7eb";
+var ICON_COLOR = "#6b7280";
+var ICON_RING = "#d1d5db";
+var checkerSource = null;
+function checkerTile() {
+  if (checkerSource) return checkerSource;
+  const tile = util.createCanvasElement();
+  tile.width = tile.height = CELL * 2;
+  const ctx = tile.getContext("2d");
+  ctx.fillStyle = CHECKER_LIGHT;
+  ctx.fillRect(0, 0, CELL * 2, CELL * 2);
+  ctx.fillStyle = CHECKER_DARK;
+  ctx.fillRect(0, 0, CELL, CELL);
+  ctx.fillRect(CELL, CELL, CELL, CELL);
+  checkerSource = tile;
+  return tile;
+}
+function checkerPattern(obj) {
+  const sx = obj.scaleX || 1;
+  const sy = obj.scaleY || 1;
+  return new Pattern({ source: checkerTile(), repeat: "repeat", patternTransform: [1 / sx, 0, 0, 1 / sy, 0, 0] });
+}
+function drawUploadIcon(ctx, obj) {
+  const sx = obj.scaleX || 1;
+  const sy = obj.scaleY || 1;
+  const w = obj.width * sx;
+  const h = obj.height * sy;
+  const size = Math.max(20, Math.min(120, Math.min(w, h) * 0.22));
+  if (size * 2 > Math.min(w, h)) return;
+  ctx.save();
+  ctx.scale(1 / sx, 1 / sy);
+  ctx.beginPath();
+  ctx.arc(0, 0, size * 0.9, 0, Math.PI * 2);
+  ctx.fillStyle = "#ffffff";
+  ctx.fill();
+  ctx.lineWidth = Math.max(1, size * 0.03);
+  ctx.strokeStyle = ICON_RING;
+  ctx.stroke();
+  const unit = size / 24;
+  ctx.scale(unit * 0.8, unit * 0.8);
+  ctx.translate(-12, -12);
+  ctx.lineWidth = 1.5;
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  ctx.strokeStyle = ICON_COLOR;
+  ctx.beginPath();
+  ctx.moveTo(3, 16.5);
+  ctx.lineTo(3, 18.75);
+  ctx.quadraticCurveTo(3, 21, 5.25, 21);
+  ctx.lineTo(18.75, 21);
+  ctx.quadraticCurveTo(21, 21, 21, 18.75);
+  ctx.lineTo(21, 16.5);
+  ctx.moveTo(7.5, 7.5);
+  ctx.lineTo(12, 3);
+  ctx.lineTo(16.5, 7.5);
+  ctx.moveTo(12, 3);
+  ctx.lineTo(12, 16.5);
+  ctx.stroke();
+  ctx.restore();
+}
+function installUserSlotRendering(target) {
+  const proto = target;
+  const original = proto._render;
+  const originalIsCacheDirty = proto.isCacheDirty;
+  proto.isCacheDirty = function(skipCanvas) {
+    const slot = isUserSlot(this);
+    if (slot !== Boolean(this._wasUserSlot)) {
+      this._wasUserSlot = slot;
+      this.dirty = true;
+    }
+    return originalIsCacheDirty.call(this, skipCanvas);
+  };
+  proto._render = function(ctx) {
+    if (!isUserSlot(this)) return original.call(this, ctx);
+    const fill = this.fill;
+    this.fill = checkerPattern(this);
+    try {
+      original.call(this, ctx);
+    } finally {
+      this.fill = fill;
+    }
+    drawUploadIcon(ctx, this);
+  };
+}
+
 // src/shapes/FabRect.ts
 import { Rect, classRegistry, controlsUtils as controlsUtils2 } from "#fabric";
 
@@ -945,6 +1142,7 @@ var FabRect = class extends Rect {
 FabRect.type = "Rect";
 FabRect.customProperties = ["layerId", "layerType", "lockMode", "lockContent"];
 installLockMethods(FabRect.prototype);
+installUserSlotRendering(FabRect.prototype);
 classRegistry.setClass(FabRect, "Rect");
 
 // src/shapes/FabCircle.ts
@@ -1013,6 +1211,7 @@ var FabCircle = class extends Circle {
 FabCircle.type = "Circle";
 FabCircle.customProperties = ["layerId", "layerType", "lockMode", "lockContent"];
 installLockMethods(FabCircle.prototype);
+installUserSlotRendering(FabCircle.prototype);
 classRegistry2.setClass(FabCircle, "Circle");
 
 // src/shapes/FabPath.ts
@@ -1160,6 +1359,7 @@ _FabPath.type = "Path";
 _FabPath.customProperties = ["layerId", "layerType", "lockMode", "lockContent"];
 var FabPath = _FabPath;
 installLockMethods(FabPath.prototype);
+installUserSlotRendering(FabPath.prototype);
 classRegistry3.setClass(FabPath, "Path");
 
 // src/capabilities.ts
@@ -1174,7 +1374,12 @@ function kindOf(obj) {
 function rulesOf(obj, { ignoreLock = false } = {}) {
   const rules = kindRules(obj, kindOf(obj));
   if (isOutOfPlay(obj)) Object.assign(rules, { onToolboxImage: null, hosts: false });
-  switch (ignoreLock ? "free" : getLockMode(obj)) {
+  const locked = lockedRules(rules, ignoreLock ? "free" : getLockMode(obj));
+  if (rules.onToolboxImage !== "fill" || !isUserSlot(obj)) return locked;
+  return { ...locked, onToolboxImage: "fill", options: [...locked.options, "image"] };
+}
+function lockedRules(rules, lockMode) {
+  switch (lockMode) {
     case "position":
       return {
         ...rules,
@@ -2037,82 +2242,6 @@ var ImageFrame = class _ImageFrame extends Group3 {
 classRegistry4.setClass(ImageFrame);
 classRegistry4.setClass(ImageFrame, "ImageFrame");
 
-// src/bindings.ts
-function pendingBindings(obj) {
-  const bindings = obj.get("bindings") || {};
-  return Object.fromEntries(Object.entries(bindings).filter(([, spec]) => spec?.resolved !== true));
-}
-function hasPendingBindings(obj) {
-  return Object.keys(pendingBindings(obj)).length > 0;
-}
-function restoreBindings(obj, data) {
-  if (!data.bindings) return;
-  obj.set("bindings", data.bindings);
-  lockBoundText(obj);
-}
-function lockBoundText(obj) {
-  if (pendingBindings(obj)["text"] && "editable" in obj) {
-    obj.editable = false;
-  }
-}
-function setTextContent(obj, text) {
-  if (!("text" in obj)) return;
-  obj.set("text", text);
-  obj.initDimensions?.();
-  obj.setCoords();
-  obj.fire("changed");
-}
-var BADGE_HEIGHT = 15;
-var BADGE_PAD = 5;
-var BADGE_FONT = "500 10px ui-sans-serif, system-ui, sans-serif";
-function drawBindingBadge(ctx, obj, color) {
-  if (!hasPendingBindings(obj)) return;
-  const corner = obj.oCoords?.tl;
-  if (!corner) return;
-  const label = bindingLabel(obj);
-  ctx.save();
-  ctx.globalCompositeOperation = "destination-over";
-  ctx.font = BADGE_FONT;
-  const width = ctx.measureText(label).width + BADGE_PAD * 2;
-  const left = corner.x - 1;
-  const top = corner.y - BADGE_HEIGHT;
-  ctx.fillStyle = color;
-  ctx.fillRect(left, top, width, BADGE_HEIGHT);
-  ctx.globalCompositeOperation = "source-over";
-  ctx.fillStyle = "#ffffff";
-  ctx.textAlign = "left";
-  ctx.textBaseline = "middle";
-  ctx.fillText(label, left + BADGE_PAD, top + BADGE_HEIGHT / 2);
-  ctx.restore();
-}
-function bindingLabel(obj) {
-  const labels = Object.values(pendingBindings(obj)).flatMap((spec) => {
-    const expr = String(spec?.expr ?? "");
-    const tokens = expr.match(/\$\w+/g) || [];
-    return tokens.length ? tokens : expr.match(/^media\[/) ? [expr] : [];
-  });
-  return labels.length ? [...new Set(labels)].join(" ") : "$";
-}
-function drawDynamicMediaOutline(ctx, obj, color) {
-  const pending = pendingBindings(obj);
-  if (!Object.keys(pending).some((field) => field.startsWith("image."))) return;
-  const coords = obj.oCoords;
-  if (!coords) return;
-  ctx.save();
-  ctx.strokeStyle = color;
-  ctx.lineWidth = 1.5;
-  ctx.setLineDash([6, 4]);
-  ctx.globalAlpha = 0.9;
-  ctx.beginPath();
-  ctx.moveTo(coords.tl.x, coords.tl.y);
-  ctx.lineTo(coords.tr.x, coords.tr.y);
-  ctx.lineTo(coords.br.x, coords.br.y);
-  ctx.lineTo(coords.bl.x, coords.bl.y);
-  ctx.closePath();
-  ctx.stroke();
-  ctx.restore();
-}
-
 // src/LayerManager.ts
 var BACKGROUND_LAYER_ID = "originalImage";
 var LayerManager = class {
@@ -2364,7 +2493,6 @@ var LayerManager = class {
     const { clipShape, clipData, cornerRadius } = clipOfShape(shape);
     const { w: displayedWidth, h: displayedHeight } = scaledSize(shape);
     const center = shape.getRelativeCenterPoint();
-    const zIndex = this.canvas.getObjects().indexOf(shape);
     const img = await FabricImage5.fromURL(imageUrl, { crossOrigin: "anonymous" });
     const frame = new ImageFrame(img, {
       left: center.x,
@@ -2377,20 +2505,59 @@ var LayerManager = class {
       frameHeight: displayedHeight,
       cornerRadius
     });
-    const layout = shape.get("layout");
-    if (layout) frame.set("layout", JSON.parse(JSON.stringify(layout)));
-    const lockMode = getLockMode(shape);
-    if (lockMode !== "free") applyLockMode(frame, lockMode);
-    const bindings = shape.get("bindings");
+    const bindings = resolveUserSlot(shape.get("bindings"));
     if (bindings) frame.set("bindings", bindings);
-    this.canvas.remove(shape);
-    this.canvas.add(frame);
-    if (zIndex >= 0 && zIndex < this.canvas.getObjects().length) {
-      this.canvas.moveObjectTo(frame, zIndex);
-    }
-    this.canvas.setActiveObject(frame);
-    this.canvas.renderAll();
+    this.takeOver(shape, frame);
     return frame;
+  }
+  /**
+   * Demande l'image à l'utilisateur final (userSlots) : le calque devient une forme liée à
+   * une image à fournir, avec sa consigne. Une forme le reste ; une forme-image redevient la
+   * forme de sa découpe, aux mêmes dimensions — son image est abandonnée (pas d'exemple :
+   * le damier dit « à fournir »), ses autres bindings la suivent.
+   *
+   * Rend la forme, ou null si le calque ne peut pas recevoir d'image (texte, groupe de paths).
+   */
+  requestUserImage(obj, hint = "") {
+    const bindings = {
+      ...obj.get("bindings") || {},
+      [USER_SLOT_FIELD]: { scope: USER_SCOPE, hint }
+    };
+    if (obj instanceof ImageFrame) {
+      const shape = shapeOfFrame(obj);
+      shape.set({
+        layerId: obj.get("layerId") || this.generateId(),
+        layerType: "shape",
+        angle: obj.angle,
+        bindings
+      });
+      shape.setPositionByOrigin(obj.getRelativeCenterPoint(), "center", "center");
+      this.takeOver(obj, shape);
+      return shape;
+    }
+    if (rulesOf(obj, { ignoreLock: true }).onToolboxImage !== "fill") return null;
+    obj.set({ bindings });
+    this.canvas.requestRenderAll();
+    return obj;
+  }
+  /**
+   * Un calque en remplace un autre à sa place : son layout (container, enfant) et son
+   * verrouillage — sinon ses enfants restent orphelins, ou il sort de son container — et
+   * son rang dans la pile (sous ses enfants).
+   */
+  takeOver(previous, next) {
+    const layout = previous.get("layout");
+    if (layout) next.set("layout", JSON.parse(JSON.stringify(layout)));
+    const lockMode = getLockMode(previous);
+    if (lockMode !== "free") applyLockMode(next, lockMode);
+    const zIndex = this.canvas.getObjects().indexOf(previous);
+    this.canvas.remove(previous);
+    this.canvas.add(next);
+    if (zIndex >= 0 && zIndex < this.canvas.getObjects().length) {
+      this.canvas.moveObjectTo(next, zIndex);
+    }
+    this.canvas.setActiveObject(next);
+    this.canvas.renderAll();
   }
   /**
    * Crée et ajoute un calque forme (rectangle par défaut)
@@ -2566,12 +2733,26 @@ var LayerManager = class {
     return "heart";
   }
 };
+function shapeOfFrame(frame) {
+  const { w, h } = scaledSize(frame);
+  const fill = "#ffffff";
+  const strokeWidth = 0;
+  const clipShape = frame.clipShape || "rect";
+  if (clipShape === "circle") {
+    const circle = new FabCircle({ radius: Math.min(w, h) / 2, fill, strokeWidth });
+    circle.setSize(w, h);
+    return circle;
+  }
+  const clipData = clipShape === "rect" ? void 0 : frame.clipData ?? clipDataFor(clipShape);
+  if (clipData) return FabPath.fromPathData({ d: clipData.d }, { id: clipShape, fill, strokeWidth, width: w, height: h });
+  return new FabRect({ width: w, height: h, rx: frame.cornerRadius, ry: frame.cornerRadius, fill, strokeWidth });
+}
 function clipOfShape(shape) {
   if (shape instanceof FabRect) return { clipShape: "rect", cornerRadius: shape.getCornerRadius() };
   if (shape instanceof FabCircle) return { clipShape: "circle", cornerRadius: 0 };
   if (shape instanceof FabPath) {
     const id = shape.id;
-    const clipData = { d: util.joinPath(shape.path), width: shape.width, height: shape.height };
+    const clipData = { d: util2.joinPath(shape.path), width: shape.width, height: shape.height };
     return { clipShape: id && isValidShape(id) ? id : id || "custom", clipData, cornerRadius: 0 };
   }
   return { clipShape: "rect", cornerRadius: 0 };
@@ -3281,7 +3462,7 @@ var HistoryManager = class {
 };
 
 // src/ui/guides.ts
-import { Line, Rect as Rect5, Pattern } from "#fabric";
+import { Line, Rect as Rect5, Pattern as Pattern2 } from "#fabric";
 
 // src/ui/color.ts
 function parseHex(hex) {
@@ -3573,7 +3754,7 @@ function createHatchPattern(hex) {
   ctx.moveTo(size / 2, size + size / 2);
   ctx.lineTo(size + size / 2, size / 2);
   ctx.stroke();
-  return new Pattern({ source: canvas, repeat: "repeat" });
+  return new Pattern2({ source: canvas, repeat: "repeat" });
 }
 
 // src/SnappingManager.ts
@@ -5675,7 +5856,7 @@ function applyClip(obj, shapeType) {
 
 // src/ui/controls.ts
 import { FabricObject as FabricObject7, Control as Control2, controlsUtils as controlsUtils5 } from "#fabric";
-function applyControlStyle(canvas, guideColor, resolveTarget) {
+function applyControlStyle(canvas, guideColor, resolveTarget, userSlotLabel) {
   const gc = guideColor;
   FabricObject7.ownDefaults.borderColor = gc;
   FabricObject7.ownDefaults.borderScaleFactor = 2;
@@ -5688,7 +5869,7 @@ function applyControlStyle(canvas, guideColor, resolveTarget) {
   installControlRenderer(gc, hoverProgress);
   installControlHitAreas(canvas);
   installHoverAnimation(canvas, hoverProgress);
-  installHoverBorder(canvas, gc, resolveTarget);
+  installHoverBorder(canvas, gc, resolveTarget, userSlotLabel);
 }
 var EDGE_CONTROLS = /* @__PURE__ */ new Set(["mt", "mb", "ml", "mr"]);
 var CORNER_CONTROLS = /* @__PURE__ */ new Set(["tl", "tr", "bl", "br"]);
@@ -5875,7 +6056,7 @@ function installHoverAnimation(canvas, hoverProgress) {
     }
   });
 }
-function installHoverBorder(canvas, guideColor, resolveTarget) {
+function installHoverBorder(canvas, guideColor, resolveTarget, userSlotLabel) {
   let hoveredObj = null;
   const clearTopCtx = () => {
     const fc = canvas.originalFabricCanvas;
@@ -5908,10 +6089,10 @@ function installHoverBorder(canvas, guideColor, resolveTarget) {
       if (obj === active || obj === hoveredObj) return;
       drawDynamicMediaOutline(ctx, obj, guideColor);
     });
-    if (active) drawBindingBadge(ctx, active, guideColor);
+    if (active) drawBindingBadge(ctx, active, guideColor, userSlotLabel);
     if (!hoveredObj || hoveredObj === active) return;
     hoveredObj._renderControls(ctx, { hasControls: false, hasBorders: true });
-    drawBindingBadge(ctx, hoveredObj, guideColor);
+    drawBindingBadge(ctx, hoveredObj, guideColor, userSlotLabel);
   });
 }
 
@@ -5943,7 +6124,7 @@ var _FabricEditor = class _FabricEditor {
     });
     this.layers = new LayerManager(this.canvas);
     this.selection = new SelectionManager(this.canvas);
-    applyControlStyle(this.canvas, gc, (obj) => this.selection.resolveTarget(obj));
+    applyControlStyle(this.canvas, gc, (obj) => this.selection.resolveTarget(obj), config.userSlotLabel);
     this.masks = new MaskManager(this.canvas);
     this.persistence = new PersistenceManager(this.canvas, this.layers);
     this.history = new HistoryManager(this.canvas, this.layers);
@@ -6624,6 +6805,44 @@ var _FabricEditor = class _FabricEditor {
     }
     this.canvas.renderAll();
     return objects;
+  }
+  /** Les images à fournir de la page (userSlots), boîtes en coordonnées scène. */
+  userSlots() {
+    return collectUserSlots(this.layers.all);
+  }
+  /**
+   * Prévient l'hôte quand les images à fournir changent — apparition, disparition,
+   * consigne, boîte, échelle ou cadrage d'affichage : de quoi (re)placer ses bulles. Comparé
+   * à chaque rendu et à chaque redimensionnement, appelé seulement sur changement (et une
+   * fois tout de suite). Rend la fonction de désabonnement.
+   */
+  onUserSlotsChange(callback) {
+    let last = null;
+    const check = () => {
+      const slots = this.userSlots();
+      const signature = JSON.stringify([
+        this._displayScale,
+        this._userZoom,
+        slots.map(({ layerId, hint, rect }) => [
+          layerId,
+          hint,
+          Math.round(rect.left),
+          Math.round(rect.top),
+          Math.round(rect.width),
+          Math.round(rect.height)
+        ])
+      ]);
+      if (signature === last) return;
+      last = signature;
+      callback(slots);
+    };
+    this.canvas.on("after:render", check);
+    this._resizeCallbacks.push(check);
+    check();
+    return () => {
+      this.canvas.off("after:render", check);
+      this._resizeCallbacks = this._resizeCallbacks.filter((cb) => cb !== check);
+    };
   }
   /**
    * Supprime l'objet ou les objets sélectionnés
@@ -7748,6 +7967,8 @@ export {
   ResizeSession,
   SelectionManager,
   SnappingManager,
+  USER_SCOPE,
+  USER_SLOT_FIELD,
   addCircleClip,
   addCropControls,
   addHeartClip,
@@ -7757,6 +7978,7 @@ export {
   applyLockMode,
   clampTopLeft,
   clipDataFor,
+  collectUserSlots,
   createCircle,
   createHeart,
   createHexagon,
@@ -7783,6 +8005,7 @@ export {
   isMonoPath,
   isPositionLocked,
   isStyleLocked,
+  isUserSlot,
   isValidShape,
   isYogaReady,
   kindOf,
@@ -7801,6 +8024,8 @@ export {
   switchClip,
   switchShape,
   topLeft,
+  userSlotBinding,
+  userSlotHint,
   wrapContainerAroundChild,
   yogaLayout
 };

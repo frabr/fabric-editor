@@ -771,6 +771,8 @@ interface EditorConfig {
     defaultColor?: string;
     /** Base color for all visual guides (snap lines, layout margins, hints). */
     guideColor?: string;
+    /** Badge des images à fournir (défaut : « À fournir ») — la traduction de l'hôte. */
+    userSlotLabel?: string;
     container?: HTMLElement;
     transparent?: boolean;
 }
@@ -1114,6 +1116,21 @@ declare class LayerManager {
      * L'ImageFrame est inséré au même z-index que la forme d'origine.
      */
     replaceShapeWithImage(shape: FabricObject, imageUrl: string): Promise<ImageFrame>;
+    /**
+     * Demande l'image à l'utilisateur final (userSlots) : le calque devient une forme liée à
+     * une image à fournir, avec sa consigne. Une forme le reste ; une forme-image redevient la
+     * forme de sa découpe, aux mêmes dimensions — son image est abandonnée (pas d'exemple :
+     * le damier dit « à fournir »), ses autres bindings la suivent.
+     *
+     * Rend la forme, ou null si le calque ne peut pas recevoir d'image (texte, groupe de paths).
+     */
+    requestUserImage(obj: FabricObject, hint?: string): FabricObject | null;
+    /**
+     * Un calque en remplace un autre à sa place : son layout (container, enfant) et son
+     * verrouillage — sinon ses enfants restent orphelins, ou il sort de son container — et
+     * son rang dans la pile (sous ses enfants).
+     */
+    private takeOver;
     /**
      * Crée et ajoute un calque forme (rectangle par défaut)
      */
@@ -1725,6 +1742,84 @@ declare class LayoutManager {
 }
 
 /**
+ * Les bindings du dialecte template (apibots, plan media-template-generators §4) : un calque
+ * peut porter `bindings` — { champ: { expr, scope, resolved } } — et le champ stocké reste
+ * une valeur plate (le sample), donc le canvas rend le calque tel quel. L'éditeur, lui, doit
+ * SAVOIR qu'un champ est lié :
+ *
+ * - la donnée voyage avec le calque (sérialisation/désérialisation, comme layerId) ;
+ * - un texte au binding `text` en attente ne s'édite pas directement (règle : on édite le
+ *   binding ou on délie — sinon sample et expression divergent en silence) → editable=false ;
+ * - le lien est visible AVANT toute sélection : une pastille « $ » dans la couleur d'édition
+ *   (guideColor), dessinée en overlay au coin du calque.
+ */
+/** `hint` : la consigne d'une image à fournir (scope `user`, cf. userSlots). */
+type BindingSpec = {
+    expr?: string;
+    scope?: string;
+    resolved?: boolean;
+    hint?: string;
+};
+type Bindings = Record<string, BindingSpec>;
+declare function pendingBindings(obj: FabricObject): Bindings;
+declare function hasPendingBindings(obj: FabricObject): boolean;
+declare function lockBoundText(obj: FabricObject): void;
+/**
+ * Pose un texte par programme et REMET LA MISE EN PAGE À JOUR : un `set("text", …)` nu ne
+ * remesure pas l'objet et n'émet pas l'événement `changed` que les sessions de layout
+ * écoutent — le conteneur (hug) garderait son ancienne taille alors que le texte a grandi.
+ * C'est le verbe qu'utilise l'aperçu live d'une expression liée (apibots, §9).
+ */
+declare function setTextContent(obj: FabricObject, text: string): void;
+/**
+ * Le badge de liaison — brutaliste : un rectangle net, collé au contour, sans arrondi. Il
+ * accompagne le CADRE, pas le calque : il ne s'affiche qu'avec lui (survol ou sélection),
+ * comme une étiquette du cadre.
+ *
+ * Il réutilise la position que fabric a déjà calculée pour ses poignées : `oCoords` est en
+ * espace écran (viewportTransform et zoom compris) — aucune transformation à recalculer,
+ * c'est ce qui le fait suivre à toutes les échelles.
+ */
+declare function drawBindingBadge(ctx: CanvasRenderingContext2D, obj: FabricObject, color: string, userSlotLabel?: string): void;
+
+/**
+ * Les images à fournir (apibots, plan user-image-slots) : un cadre que l'utilisateur final
+ * doit remplir lui-même. C'est un binding `image.src` de scope `user` — pas d'expression,
+ * une consigne :
+ *
+ *   bindings: { "image.src": { scope: "user", hint: "Photo de l'équipe" } }
+ *
+ * `expand!` et `interpolate!` n'évaluent pas ce scope : le cadre traverse la chaîne
+ * intact, et tant qu'il est en attente le document n'est pas résolu (pas de rendu).
+ *
+ * Le cadre est une FORME (rect, cercle, path) : elle prend en fond l'image qu'on lui
+ * lâche, comme toute forme (règlement : `onToolboxImage: "fill"`). En attente, elle se
+ * dessine en damier avec une icône d'upload — dans son propre rendu, pas en overlay, pour
+ * que les aperçus (vignettes de pages, PreviewCanvas) montrent aussi le trou à combler.
+ * Remplie, le binding passe `resolved` et reste comme provenance.
+ */
+declare const USER_SCOPE = "user";
+declare const USER_SLOT_FIELD = "image.src";
+/** Un cadre en attente, et sa boîte en coordonnées scène (le repère de getBoundingRect). */
+interface UserSlot {
+    object: FabricObject;
+    layerId?: string;
+    hint: string;
+    rect: {
+        left: number;
+        top: number;
+        width: number;
+        height: number;
+    };
+}
+/** Le binding d'image à fournir, s'il est en attente. */
+declare function userSlotBinding(obj: FabricObject): BindingSpec | null;
+declare function isUserSlot(obj: FabricObject): boolean;
+declare function userSlotHint(obj: FabricObject): string;
+/** Les cadres en attente parmi des objets, dans l'ordre de la pile. */
+declare function collectUserSlots(objects: FabricObject[]): UserSlot[];
+
+/**
  * Éditeur d'images basé sur Fabric.js
  *
  * Coordonne les différents managers pour fournir une API unifiée
@@ -1949,6 +2044,15 @@ declare class FabricEditor {
      * Offsets pasted objects by 20px so they don't overlap the originals.
      */
     pasteClipboard(): Promise<FabricObject[]>;
+    /** Les images à fournir de la page (userSlots), boîtes en coordonnées scène. */
+    userSlots(): UserSlot[];
+    /**
+     * Prévient l'hôte quand les images à fournir changent — apparition, disparition,
+     * consigne, boîte, échelle ou cadrage d'affichage : de quoi (re)placer ses bulles. Comparé
+     * à chaque rendu et à chaque redimensionnement, appelé seulement sur changement (et une
+     * fois tout de suite). Rend la fonction de désabonnement.
+     */
+    onUserSlotsChange(callback: (slots: UserSlot[]) => void): () => void;
     /**
      * Supprime l'objet ou les objets sélectionnés
      * Les objets verrouillés (position ou full) ne peuvent pas être supprimés
@@ -2471,7 +2575,9 @@ declare function getAvailableShapes(): ShapeType[];
  * - hors-jeu (fond legacy, calque inerte, objet de l'éditeur) : aucune réaction ;
  * - verrou de position : plus de style ni de place dans la pile, seules les options
  *   d'image restent (le placeholder reçoit son image) ;
- * - verrou total : plus rien.
+ * - verrou total : plus rien ;
+ * - image à fournir (userSlots) : la forme propose l'image et la prend en fond, quel que
+ *   soit son verrou — c'est tout son contrat.
  *
  * Être container n'est pas une sorte d'objet : c'est la capacité d'accueillir (`hosts`)
  * plus l'état d'avoir des enfants.
@@ -2620,43 +2726,4 @@ declare function fabricToHtml(layers: LayerData[], options: HtmlRenderOptions): 
  */
 declare function layerToHtmlStandalone(layer: LayerData, zIndex: number): HtmlLayerOutput;
 
-/**
- * Les bindings du dialecte template (apibots, plan media-template-generators §4) : un calque
- * peut porter `bindings` — { champ: { expr, scope, resolved } } — et le champ stocké reste
- * une valeur plate (le sample), donc le canvas rend le calque tel quel. L'éditeur, lui, doit
- * SAVOIR qu'un champ est lié :
- *
- * - la donnée voyage avec le calque (sérialisation/désérialisation, comme layerId) ;
- * - un texte au binding `text` en attente ne s'édite pas directement (règle : on édite le
- *   binding ou on délie — sinon sample et expression divergent en silence) → editable=false ;
- * - le lien est visible AVANT toute sélection : une pastille « $ » dans la couleur d'édition
- *   (guideColor), dessinée en overlay au coin du calque.
- */
-type BindingSpec = {
-    expr?: string;
-    scope?: string;
-    resolved?: boolean;
-};
-type Bindings = Record<string, BindingSpec>;
-declare function pendingBindings(obj: FabricObject): Bindings;
-declare function hasPendingBindings(obj: FabricObject): boolean;
-declare function lockBoundText(obj: FabricObject): void;
-/**
- * Pose un texte par programme et REMET LA MISE EN PAGE À JOUR : un `set("text", …)` nu ne
- * remesure pas l'objet et n'émet pas l'événement `changed` que les sessions de layout
- * écoutent — le conteneur (hug) garderait son ancienne taille alors que le texte a grandi.
- * C'est le verbe qu'utilise l'aperçu live d'une expression liée (apibots, §9).
- */
-declare function setTextContent(obj: FabricObject, text: string): void;
-/**
- * Le badge de liaison — brutaliste : un rectangle net, collé au contour, sans arrondi. Il
- * accompagne le CADRE, pas le calque : il ne s'affiche qu'avec lui (survol ou sélection),
- * comme une étiquette du cadre.
- *
- * Il réutilise la position que fabric a déjà calculée pour ses poignées : `oCoords` est en
- * espace écran (viewportTransform et zoom compris) — aucune transformation à recalculer,
- * c'est ce qui le fait suivre à toutes les échelles.
- */
-declare function drawBindingBadge(ctx: CanvasRenderingContext2D, obj: FabricObject, color: string): void;
-
-export { type AlignItems, type AlignSelf, type AttachSnapshot, type BindingSpec, type Bindings, CanvasGuides, type CatalogShape, type CatalogShapeInput, type ChildData, type ChildLayout, type ClipData, type ContainerData, type ContainerLayout, ContainerizeSession, type ControlOption, CustomTextbox, DesignCanvas, type DragPayload, DropHandler, type DropHandlerConfig, type EditorConfig, FabCircle, FabPath, FabRect, FabricEditor, type FlexDirection, type FontConfig, type FontsConfig, HEART_PATH, HEXAGON_PATH, type HistoryCallbacks, HistoryManager, type HistoryState, type HtmlLayerOutput, type HtmlRenderOptions, ImageFrame, type ImageLayerOptions, InsertChildSession, type JustifyContent, type LayerData, LayerManager, type LayoutData, LayoutManager, type LayoutManagerCallbacks, type LayoutSession, type LockMode$1 as LockMode, type Lockable, MIN_PAD, MaskManager, type ObjectControlsConfig, type ObjectKind, type ObjectRules, PendingUploadsManager, PersistenceManager, PreviewCanvas, ResizeSession, type ResizeSnapResult, type SaveOptions, type SaveResult, type SelectionCallbacks, SelectionManager, type ShapeCatalogEntry, type ShapeLayerOptions, type ShapePathData, type ShapeType, type SizeMode, type SizePreset, type SizingData, type SnappingConfig, SnappingManager, type TextLayerOptions, type TextOverflow, type ToolboxImageReaction, addCircleClip, addCropControls, addHeartClip, addHexagonClip, antiScale, applyClip, applyLockMode, clampTopLeft, clipDataFor, createCircle, createHeart, createHexagon, createImage, createPathShape, createPathsShape, createRect, createShape, drawBindingBadge, fabricToHtml, getAvailableShapes, getCatalogShape, getLockMode, getNextLockMode, getShapeCatalog, hasExceededOffset, hasPendingBindings, initYoga, isChild, isChildLayout, isContainer, isContainerLayout, isContentLocked, isMonoPath, isPositionLocked, isStyleLocked, isValidShape, isYogaReady, kindOf, layerToHtmlStandalone, lockBoundText, nextShape, pendingBindings, pointInObject, registerShapes, registeredShapes, removeCropControls, rulesOf, runLayout, scaledSize, setTextContent, switchClip, switchShape, topLeft, wrapContainerAroundChild, yogaLayout };
+export { type AlignItems, type AlignSelf, type AttachSnapshot, type BindingSpec, type Bindings, CanvasGuides, type CatalogShape, type CatalogShapeInput, type ChildData, type ChildLayout, type ClipData, type ContainerData, type ContainerLayout, ContainerizeSession, type ControlOption, CustomTextbox, DesignCanvas, type DragPayload, DropHandler, type DropHandlerConfig, type EditorConfig, FabCircle, FabPath, FabRect, FabricEditor, type FlexDirection, type FontConfig, type FontsConfig, HEART_PATH, HEXAGON_PATH, type HistoryCallbacks, HistoryManager, type HistoryState, type HtmlLayerOutput, type HtmlRenderOptions, ImageFrame, type ImageLayerOptions, InsertChildSession, type JustifyContent, type LayerData, LayerManager, type LayoutData, LayoutManager, type LayoutManagerCallbacks, type LayoutSession, type LockMode$1 as LockMode, type Lockable, MIN_PAD, MaskManager, type ObjectControlsConfig, type ObjectKind, type ObjectRules, PendingUploadsManager, PersistenceManager, PreviewCanvas, ResizeSession, type ResizeSnapResult, type SaveOptions, type SaveResult, type SelectionCallbacks, SelectionManager, type ShapeCatalogEntry, type ShapeLayerOptions, type ShapePathData, type ShapeType, type SizeMode, type SizePreset, type SizingData, type SnappingConfig, SnappingManager, type TextLayerOptions, type TextOverflow, type ToolboxImageReaction, USER_SCOPE, USER_SLOT_FIELD, type UserSlot, addCircleClip, addCropControls, addHeartClip, addHexagonClip, antiScale, applyClip, applyLockMode, clampTopLeft, clipDataFor, collectUserSlots, createCircle, createHeart, createHexagon, createImage, createPathShape, createPathsShape, createRect, createShape, drawBindingBadge, fabricToHtml, getAvailableShapes, getCatalogShape, getLockMode, getNextLockMode, getShapeCatalog, hasExceededOffset, hasPendingBindings, initYoga, isChild, isChildLayout, isContainer, isContainerLayout, isContentLocked, isMonoPath, isPositionLocked, isStyleLocked, isUserSlot, isValidShape, isYogaReady, kindOf, layerToHtmlStandalone, lockBoundText, nextShape, pendingBindings, pointInObject, registerShapes, registeredShapes, removeCropControls, rulesOf, runLayout, scaledSize, setTextContent, switchClip, switchShape, topLeft, userSlotBinding, userSlotHint, wrapContainerAroundChild, yogaLayout };

@@ -687,6 +687,21 @@ declare class LayerManager {
      */
     replaceShapeWithImage(shape: FabricObject, imageUrl: string): Promise<ImageFrame>;
     /**
+     * Demande l'image à l'utilisateur final (userSlots) : le calque devient une forme liée à
+     * une image à fournir, avec sa consigne. Une forme le reste ; une forme-image redevient la
+     * forme de sa découpe, aux mêmes dimensions — son image est abandonnée (pas d'exemple :
+     * le damier dit « à fournir »), ses autres bindings la suivent.
+     *
+     * Rend la forme, ou null si le calque ne peut pas recevoir d'image (texte, groupe de paths).
+     */
+    requestUserImage(obj: FabricObject, hint?: string): FabricObject | null;
+    /**
+     * Un calque en remplace un autre à sa place : son layout (container, enfant) et son
+     * verrouillage — sinon ses enfants restent orphelins, ou il sort de son container — et
+     * son rang dans la pile (sous ses enfants).
+     */
+    private takeOver;
+    /**
      * Crée et ajoute un calque forme (rectangle par défaut)
      */
     /**
