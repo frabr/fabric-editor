@@ -364,7 +364,7 @@ var DesignCanvas = class {
 };
 
 // src/LayerManager.ts
-var import_fabric9 = require("#fabric");
+var import_fabric10 = require("#fabric");
 
 // src/controls/CustomTextbox.ts
 var import_fabric2 = require("#fabric");
@@ -862,153 +862,114 @@ function sendBlockBackward(objects, obj) {
   return placeBelow(objects, obj, prev);
 }
 
-// src/shapes/factories.ts
-var import_fabric7 = require("#fabric");
+// src/capabilities.ts
+var import_fabric6 = require("#fabric");
 
-// src/shapes/registry.ts
-var registry = [];
-function registerShapes(shapes) {
-  registry = shapes.map(normalizeEntry);
-}
-function registeredShapes() {
-  return registry;
-}
-function getCatalogShape(id) {
-  return registry.find((s) => s.id === id);
-}
-function isMonoPath(shape) {
-  return shape.paths.length === 1;
-}
-function clipDataFor(id) {
-  const shape = getCatalogShape(id);
-  if (!shape || !isMonoPath(shape)) return void 0;
-  return { d: shape.paths[0].d, width: shape.width, height: shape.height };
-}
-function normalizeEntry(entry) {
-  if ("paths" in entry && Array.isArray(entry.paths)) {
-    return { id: entry.id, paths: entry.paths, width: entry.width ?? 100, height: entry.height ?? 100 };
-  }
-  const legacy = entry;
-  return { id: legacy.id, paths: [{ d: legacy.d }], width: legacy.width ?? 100, height: legacy.height ?? 100 };
-}
-
-// src/controls/cropControls.ts
-var import_fabric3 = require("#fabric");
-var CROP_CONFIGS = {
-  left: {
-    dimension: "width",
-    position: "left",
-    crop: "cropX",
-    anchor: "tr",
-    sign: 1
-  },
-  right: {
-    dimension: "width",
-    position: "left",
-    crop: "cropX",
-    anchor: "tl",
-    sign: -1
-  },
-  top: {
-    dimension: "height",
-    position: "top",
-    crop: "cropY",
-    anchor: "bl",
-    sign: 1
-  },
-  bottom: {
-    dimension: "height",
-    position: "top",
-    crop: "cropY",
-    anchor: "tl",
-    sign: -1
-  }
-};
-var CONTROL_POSITIONS = {
-  left: { x: -0.5, y: 0 },
-  right: { x: 0.5, y: 0 },
-  top: { x: 0, y: -0.5 },
-  bottom: { x: 0, y: 0.5 }
-};
-var CONTROL_NAMES = {
-  left: "ml",
-  right: "mr",
-  top: "mt",
-  bottom: "mb"
-};
-function createCropActionHandler(side) {
-  return function actionHandler(eventData, transform) {
-    const target = transform.target;
-    const canvas = target.canvas;
-    if (!canvas) return true;
-    target.fire("scaling");
-    const config = CROP_CONFIGS[side];
-    const anchorPoint = target.aCoords?.[config.anchor];
-    if (!anchorPoint) return true;
-    const pointer = canvas.getScenePoint(eventData);
-    const currentPos = target[config.position] || 0;
-    const currentDim = target[config.dimension] || 0;
-    let delta;
-    if (side === "left" || side === "top") {
-      delta = (side === "left" ? pointer.x : pointer.y) - currentPos;
-    } else {
-      delta = side === "right" ? (currentPos + (currentDim * target.scaleX - pointer.x)) / target.scaleX : (currentPos + (currentDim * target.scaleY - pointer.y)) / target.scaleY;
-    }
-    const currentCrop = target[config.crop] || 0;
-    const newCrop = side === "left" || side === "top" ? currentCrop + delta : currentCrop;
-    const newDimension = currentDim - delta;
-    if (newDimension > 1 && newCrop >= 0) {
-      target[config.crop] = newCrop;
-      target[config.dimension] = newDimension;
-      target.setCoords();
-      const newAnchorPoint = target.aCoords?.[config.anchor];
-      if (newAnchorPoint) {
-        target.left += anchorPoint.x - newAnchorPoint.x;
-        target.top += anchorPoint.y - newAnchorPoint.y;
-        target.setCoords();
-      }
-      canvas.requestRenderAll();
-    }
-    return true;
+// src/layout/geometry.ts
+function scaledSize(obj) {
+  return {
+    w: obj.width * (obj.scaleX || 1),
+    h: obj.height * (obj.scaleY || 1)
   };
 }
-function createCursorStyleHandler(side) {
-  return function cursorStyleHandler(_eventData, _control, fabricObject) {
-    const angle = (fabricObject.angle || 0) % 180;
-    const isHorizontalControl = side === "left" || side === "right";
-    if (angle >= 45 && angle <= 135) {
-      return isHorizontalControl ? "ns-resize" : "ew-resize";
-    }
-    return isHorizontalControl ? "ew-resize" : "ns-resize";
+function setShapeSize(obj, w, h) {
+  const sized = obj;
+  if (typeof sized.setSize === "function") sized.setSize(w, h);
+  else obj.set({ scaleX: w / (obj.width || 1), scaleY: h / (obj.height || 1) });
+}
+function topLeft(obj) {
+  const { w, h } = scaledSize(obj);
+  const center = obj.getRelativeCenterPoint();
+  return { x: center.x - w / 2, y: center.y - h / 2 };
+}
+function pointInObject(point, obj, margin = 0) {
+  const tl = topLeft(obj);
+  const { w, h } = scaledSize(obj);
+  return point.x >= tl.x - margin && point.x <= tl.x + w + margin && point.y >= tl.y - margin && point.y <= tl.y + h + margin;
+}
+var TEXT_TYPES = ["i-text", "textbox"];
+function isTextObject(obj) {
+  return TEXT_TYPES.includes(obj.type);
+}
+function clampTopLeft(obj, reference, padding) {
+  const tl = topLeft(obj);
+  const refTl = topLeft(reference);
+  return {
+    x: Math.max(refTl.x + padding, tl.x),
+    y: Math.max(refTl.y + padding, tl.y)
   };
 }
-function addCropControls(obj) {
-  const sides = ["left", "right", "top", "bottom"];
-  sides.forEach((side) => {
-    const position = CONTROL_POSITIONS[side];
-    const controlName = CONTROL_NAMES[side];
-    obj.controls[controlName] = new import_fabric3.Control({
-      x: position.x,
-      y: position.y,
-      actionHandler: createCropActionHandler(side),
-      cursorStyleHandler: createCursorStyleHandler(side)
-    });
-  });
-  return obj;
+function hasExceededOffset(current, origin, offsetX, offsetY, margin) {
+  const dx = current.x - origin.x;
+  const dy = current.y - origin.y;
+  return offsetX > 0 && dx < -(offsetX + margin) || offsetX < 0 && dx > -offsetX + margin || offsetY > 0 && dy < -(offsetY + margin) || offsetY < 0 && dy > -offsetY + margin;
 }
-function removeCropControls(obj) {
-  const sides = ["left", "right", "top", "bottom"];
-  sides.forEach((side) => {
-    const controlName = CONTROL_NAMES[side];
-    delete obj.controls[controlName];
-  });
+function detachChild(obj) {
+  const layout = obj.get?.("layout");
+  if (layout?.child) {
+    const { child: _child, ...rest } = layout;
+    obj.set("layout", Object.keys(rest).length ? rest : void 0);
+  }
+  if (isTextObject(obj)) obj.layoutWith(null);
+}
+function cloneLayout(obj) {
+  const layout = obj.get?.("layout");
+  return layout ? JSON.parse(JSON.stringify(layout)) : void 0;
+}
+function syncCoords(container, children) {
+  container.setCoords();
+  for (const { obj } of children) {
+    obj.setCoords();
+  }
+}
+function cornerToAxes(corner) {
+  if (!corner) return { x: true, y: true };
+  const hasX = corner.includes("l") || corner.includes("r");
+  const hasY = corner.includes("t") || corner.includes("b");
+  return { x: hasX, y: hasY };
+}
+
+// src/locking.ts
+var LOCK_MODES = ["free", "position", "full"];
+function getLockMode(obj) {
+  return obj.lockMode || "free";
+}
+function getNextLockMode(currentMode) {
+  const currentIndex = LOCK_MODES.indexOf(currentMode);
+  const nextIndex = (currentIndex + 1) % LOCK_MODES.length;
+  return LOCK_MODES[nextIndex];
+}
+function applyLockMode(obj, mode) {
+  obj.lockMode = mode;
+  const lockPosition = mode === "position" || mode === "full";
+  obj.lockMovementX = lockPosition;
+  obj.lockMovementY = lockPosition;
+  obj.lockRotation = lockPosition;
+  obj.lockScalingX = lockPosition;
+  obj.lockScalingY = lockPosition;
+  obj.hasControls = mode === "free";
+  obj.lockContent = mode === "full";
+  if (obj.type === "i-text" || obj.type === "textbox") {
+    obj.editable = mode !== "full";
+  }
+}
+function isStyleLocked(obj) {
+  const mode = getLockMode(obj);
+  return mode === "position" || mode === "full";
+}
+function isContentLocked(obj) {
+  return obj.lockContent === true;
+}
+function isPositionLocked(obj) {
+  const mode = getLockMode(obj);
+  return mode === "position" || mode === "full";
 }
 
 // src/shapes/FabRect.ts
-var import_fabric4 = require("#fabric");
+var import_fabric3 = require("#fabric");
 
 // src/shapes/lockMixin.ts
-var LOCK_MODES = ["free", "position", "full"];
+var LOCK_MODES2 = ["free", "position", "full"];
 function installLockMethods(proto) {
   proto.applyLockMode = function(mode) {
     this.lockMode = mode;
@@ -1025,8 +986,8 @@ function installLockMethods(proto) {
     return this.lockMode || "free";
   };
   proto.getNextLockMode = function() {
-    const currentIndex = LOCK_MODES.indexOf(this.getLockMode());
-    return LOCK_MODES[(currentIndex + 1) % LOCK_MODES.length];
+    const currentIndex = LOCK_MODES2.indexOf(this.getLockMode());
+    return LOCK_MODES2[(currentIndex + 1) % LOCK_MODES2.length];
   };
   proto.isPositionLocked = function() {
     const mode = this.getLockMode();
@@ -1042,8 +1003,8 @@ function installLockMethods(proto) {
 }
 
 // src/shapes/FabRect.ts
-var { changeObjectWidth: changeObjectWidth2, changeObjectHeight: changeObjectHeight2 } = import_fabric4.controlsUtils;
-var FabRect = class extends import_fabric4.Rect {
+var { changeObjectWidth: changeObjectWidth2, changeObjectHeight: changeObjectHeight2 } = import_fabric3.controlsUtils;
+var FabRect = class extends import_fabric3.Rect {
   constructor(options) {
     super({
       originX: "center",
@@ -1087,10 +1048,10 @@ var FabRect = class extends import_fabric4.Rect {
 FabRect.type = "Rect";
 FabRect.customProperties = ["layerId", "layerType", "lockMode", "lockContent"];
 installLockMethods(FabRect.prototype);
-import_fabric4.classRegistry.setClass(FabRect, "Rect");
+import_fabric3.classRegistry.setClass(FabRect, "Rect");
 
 // src/shapes/FabCircle.ts
-var import_fabric5 = require("#fabric");
+var import_fabric4 = require("#fabric");
 
 // src/shapes/resizeUtils.ts
 function isTransformCentered(transform) {
@@ -1098,8 +1059,8 @@ function isTransformCentered(transform) {
 }
 
 // src/shapes/FabCircle.ts
-var { changeObjectWidth: changeObjectWidth3, changeObjectHeight: changeObjectHeight3, getLocalPoint } = import_fabric5.controlsUtils;
-var FabCircle = class extends import_fabric5.Circle {
+var { changeObjectWidth: changeObjectWidth3, changeObjectHeight: changeObjectHeight3, getLocalPoint } = import_fabric4.controlsUtils;
+var FabCircle = class extends import_fabric4.Circle {
   constructor(options) {
     super({
       originX: "center",
@@ -1155,13 +1116,42 @@ var FabCircle = class extends import_fabric5.Circle {
 FabCircle.type = "Circle";
 FabCircle.customProperties = ["layerId", "layerType", "lockMode", "lockContent"];
 installLockMethods(FabCircle.prototype);
-import_fabric5.classRegistry.setClass(FabCircle, "Circle");
+import_fabric4.classRegistry.setClass(FabCircle, "Circle");
 
 // src/shapes/FabPath.ts
-var import_fabric6 = require("#fabric");
-var { changeObjectWidth: changeObjectWidth4, changeObjectHeight: changeObjectHeight4, getLocalPoint: getLocalPoint2 } = import_fabric6.controlsUtils;
+var import_fabric5 = require("#fabric");
+
+// src/shapes/registry.ts
+var registry = [];
+function registerShapes(shapes) {
+  registry = shapes.map(normalizeEntry);
+}
+function registeredShapes() {
+  return registry;
+}
+function getCatalogShape(id) {
+  return registry.find((s) => s.id === id);
+}
+function isMonoPath(shape) {
+  return shape.paths.length === 1;
+}
+function clipDataFor(id) {
+  const shape = getCatalogShape(id);
+  if (!shape || !isMonoPath(shape)) return void 0;
+  return { d: shape.paths[0].d, width: shape.width, height: shape.height };
+}
+function normalizeEntry(entry) {
+  if ("paths" in entry && Array.isArray(entry.paths)) {
+    return { id: entry.id, paths: entry.paths, width: entry.width ?? 100, height: entry.height ?? 100 };
+  }
+  const legacy = entry;
+  return { id: legacy.id, paths: [{ d: legacy.d }], width: legacy.width ?? 100, height: legacy.height ?? 100 };
+}
+
+// src/shapes/FabPath.ts
+var { changeObjectWidth: changeObjectWidth4, changeObjectHeight: changeObjectHeight4, getLocalPoint: getLocalPoint2 } = import_fabric5.controlsUtils;
 var DEFAULT_SIZE = 300;
-var _FabPath = class _FabPath extends import_fabric6.Path {
+var _FabPath = class _FabPath extends import_fabric5.Path {
   constructor(path, options) {
     super(path, {
       originX: "center",
@@ -1273,7 +1263,193 @@ _FabPath.type = "Path";
 _FabPath.customProperties = ["layerId", "layerType", "lockMode", "lockContent"];
 var FabPath = _FabPath;
 installLockMethods(FabPath.prototype);
-import_fabric6.classRegistry.setClass(FabPath, "Path");
+import_fabric5.classRegistry.setClass(FabPath, "Path");
+
+// src/capabilities.ts
+function kindOf(obj) {
+  const layerType = obj.layerType;
+  if (isTextObject(obj)) return "text";
+  if (layerType === "imageFrame") return "imageShape";
+  if (obj instanceof import_fabric6.FabricImage) return "legacyImage";
+  if (layerType === "shape" || obj instanceof import_fabric6.Rect) return "shape";
+  return "other";
+}
+function rulesOf(obj, { ignoreLock = false } = {}) {
+  const rules = kindRules(obj, kindOf(obj));
+  if (isOutOfPlay(obj)) Object.assign(rules, { onToolboxImage: null, hosts: false });
+  switch (ignoreLock ? "free" : getLockMode(obj)) {
+    case "position":
+      return {
+        ...rules,
+        options: rules.options.filter((option) => option === "image"),
+        restyles: false,
+        restacks: false,
+        deletes: false
+      };
+    case "full":
+      return {
+        ...rules,
+        onToolboxImage: null,
+        hosts: false,
+        options: [],
+        restyles: false,
+        restacks: false,
+        deletes: false
+      };
+    default:
+      return rules;
+  }
+}
+function kindRules(obj, kind) {
+  const free = { restyles: true, restacks: true, deletes: true };
+  switch (kind) {
+    case "text":
+      return { kind, onToolboxImage: null, hosts: false, options: ["color", "font"], ...free };
+    case "shape":
+      return {
+        kind,
+        onToolboxImage: obj instanceof import_fabric6.Group ? null : "fill",
+        hosts: true,
+        options: shapeOptions(obj),
+        ...free
+      };
+    case "imageShape":
+      return {
+        kind,
+        onToolboxImage: "replaceImage",
+        hosts: true,
+        options: ["outline", "clip", "corner_radius", "image"],
+        ...free
+      };
+    case "legacyImage":
+      return { kind, onToolboxImage: "replaceImage", hosts: false, options: [], ...free };
+    default:
+      return { kind, onToolboxImage: null, hosts: false, options: [], ...free };
+  }
+}
+function shapeOptions(obj) {
+  if (obj instanceof FabRect) return ["outline", "clip", "color", "corner_radius"];
+  if (obj instanceof FabCircle || obj instanceof FabPath) return ["outline", "clip", "color"];
+  return [];
+}
+function isOutOfPlay(obj) {
+  return obj.get("layerId") === "originalImage" || obj.evented === false || obj.excludeFromExport === true;
+}
+
+// src/shapes/factories.ts
+var import_fabric8 = require("#fabric");
+
+// src/controls/cropControls.ts
+var import_fabric7 = require("#fabric");
+var CROP_CONFIGS = {
+  left: {
+    dimension: "width",
+    position: "left",
+    crop: "cropX",
+    anchor: "tr",
+    sign: 1
+  },
+  right: {
+    dimension: "width",
+    position: "left",
+    crop: "cropX",
+    anchor: "tl",
+    sign: -1
+  },
+  top: {
+    dimension: "height",
+    position: "top",
+    crop: "cropY",
+    anchor: "bl",
+    sign: 1
+  },
+  bottom: {
+    dimension: "height",
+    position: "top",
+    crop: "cropY",
+    anchor: "tl",
+    sign: -1
+  }
+};
+var CONTROL_POSITIONS = {
+  left: { x: -0.5, y: 0 },
+  right: { x: 0.5, y: 0 },
+  top: { x: 0, y: -0.5 },
+  bottom: { x: 0, y: 0.5 }
+};
+var CONTROL_NAMES = {
+  left: "ml",
+  right: "mr",
+  top: "mt",
+  bottom: "mb"
+};
+function createCropActionHandler(side) {
+  return function actionHandler(eventData, transform) {
+    const target = transform.target;
+    const canvas = target.canvas;
+    if (!canvas) return true;
+    target.fire("scaling");
+    const config = CROP_CONFIGS[side];
+    const anchorPoint = target.aCoords?.[config.anchor];
+    if (!anchorPoint) return true;
+    const pointer = canvas.getScenePoint(eventData);
+    const currentPos = target[config.position] || 0;
+    const currentDim = target[config.dimension] || 0;
+    let delta;
+    if (side === "left" || side === "top") {
+      delta = (side === "left" ? pointer.x : pointer.y) - currentPos;
+    } else {
+      delta = side === "right" ? (currentPos + (currentDim * target.scaleX - pointer.x)) / target.scaleX : (currentPos + (currentDim * target.scaleY - pointer.y)) / target.scaleY;
+    }
+    const currentCrop = target[config.crop] || 0;
+    const newCrop = side === "left" || side === "top" ? currentCrop + delta : currentCrop;
+    const newDimension = currentDim - delta;
+    if (newDimension > 1 && newCrop >= 0) {
+      target[config.crop] = newCrop;
+      target[config.dimension] = newDimension;
+      target.setCoords();
+      const newAnchorPoint = target.aCoords?.[config.anchor];
+      if (newAnchorPoint) {
+        target.left += anchorPoint.x - newAnchorPoint.x;
+        target.top += anchorPoint.y - newAnchorPoint.y;
+        target.setCoords();
+      }
+      canvas.requestRenderAll();
+    }
+    return true;
+  };
+}
+function createCursorStyleHandler(side) {
+  return function cursorStyleHandler(_eventData, _control, fabricObject) {
+    const angle = (fabricObject.angle || 0) % 180;
+    const isHorizontalControl = side === "left" || side === "right";
+    if (angle >= 45 && angle <= 135) {
+      return isHorizontalControl ? "ns-resize" : "ew-resize";
+    }
+    return isHorizontalControl ? "ew-resize" : "ns-resize";
+  };
+}
+function addCropControls(obj) {
+  const sides = ["left", "right", "top", "bottom"];
+  sides.forEach((side) => {
+    const position = CONTROL_POSITIONS[side];
+    const controlName = CONTROL_NAMES[side];
+    obj.controls[controlName] = new import_fabric7.Control({
+      x: position.x,
+      y: position.y,
+      actionHandler: createCropActionHandler(side),
+      cursorStyleHandler: createCursorStyleHandler(side)
+    });
+  });
+  return obj;
+}
+function removeCropControls(obj) {
+  const sides = ["left", "right", "top", "bottom"];
+  sides.forEach((side) => {
+    const controlName = CONTROL_NAMES[side];
+    delete obj.controls[controlName];
+  });
+}
 
 // src/shapes/factories.ts
 function createRect(options) {
@@ -1292,7 +1468,7 @@ function createPathShape(shapeId, options) {
   return FabPath.createFromCatalog(shapeId, options);
 }
 async function createImage(url, options) {
-  const img = await import_fabric7.FabricImage.fromURL(url, { crossOrigin: "anonymous" });
+  const img = await import_fabric8.FabricImage.fromURL(url, { crossOrigin: "anonymous" });
   let scale = 1;
   if (img.width > 300 || img.height > 300) {
     scale = Math.min(300 / img.width, 300 / img.height);
@@ -1334,7 +1510,7 @@ function createPathsShape(paths, options = {}) {
     child.setCoords();
     return child;
   });
-  const group = new import_fabric7.Group(children, { originX: "center", originY: "center", ...withoutUndefined({ left, top }) });
+  const group = new import_fabric8.Group(children, { originX: "center", originY: "center", ...withoutUndefined({ left, top }) });
   if (id) group.set({ id });
   const target = targetDims(group.width, group.height, options.width, options.height);
   group.set({ scaleX: target.width / group.width, scaleY: target.height / group.height });
@@ -1434,108 +1610,8 @@ function getAvailableShapes() {
   return shapeIds();
 }
 
-// src/layout/geometry.ts
-function scaledSize(obj) {
-  return {
-    w: obj.width * (obj.scaleX || 1),
-    h: obj.height * (obj.scaleY || 1)
-  };
-}
-function setShapeSize(obj, w, h) {
-  const sized = obj;
-  if (typeof sized.setSize === "function") sized.setSize(w, h);
-  else obj.set({ scaleX: w / (obj.width || 1), scaleY: h / (obj.height || 1) });
-}
-function topLeft(obj) {
-  const { w, h } = scaledSize(obj);
-  const center = obj.getRelativeCenterPoint();
-  return { x: center.x - w / 2, y: center.y - h / 2 };
-}
-function pointInObject(point, obj, margin = 0) {
-  const tl = topLeft(obj);
-  const { w, h } = scaledSize(obj);
-  return point.x >= tl.x - margin && point.x <= tl.x + w + margin && point.y >= tl.y - margin && point.y <= tl.y + h + margin;
-}
-var TEXT_TYPES = ["i-text", "textbox"];
-function isTextObject(obj) {
-  return TEXT_TYPES.includes(obj.type);
-}
-function clampTopLeft(obj, reference, padding) {
-  const tl = topLeft(obj);
-  const refTl = topLeft(reference);
-  return {
-    x: Math.max(refTl.x + padding, tl.x),
-    y: Math.max(refTl.y + padding, tl.y)
-  };
-}
-function hasExceededOffset(current, origin, offsetX, offsetY, margin) {
-  const dx = current.x - origin.x;
-  const dy = current.y - origin.y;
-  return offsetX > 0 && dx < -(offsetX + margin) || offsetX < 0 && dx > -offsetX + margin || offsetY > 0 && dy < -(offsetY + margin) || offsetY < 0 && dy > -offsetY + margin;
-}
-function detachChild(obj) {
-  const layout = obj.get?.("layout");
-  if (layout?.child) {
-    const { child: _child, ...rest } = layout;
-    obj.set("layout", Object.keys(rest).length ? rest : void 0);
-  }
-  if (isTextObject(obj)) obj.layoutWith(null);
-}
-function cloneLayout(obj) {
-  const layout = obj.get?.("layout");
-  return layout ? JSON.parse(JSON.stringify(layout)) : void 0;
-}
-function syncCoords(container, children) {
-  container.setCoords();
-  for (const { obj } of children) {
-    obj.setCoords();
-  }
-}
-function cornerToAxes(corner) {
-  if (!corner) return { x: true, y: true };
-  const hasX = corner.includes("l") || corner.includes("r");
-  const hasY = corner.includes("t") || corner.includes("b");
-  return { x: hasX, y: hasY };
-}
-
-// src/locking.ts
-var LOCK_MODES2 = ["free", "position", "full"];
-function getLockMode(obj) {
-  return obj.lockMode || "free";
-}
-function getNextLockMode(currentMode) {
-  const currentIndex = LOCK_MODES2.indexOf(currentMode);
-  const nextIndex = (currentIndex + 1) % LOCK_MODES2.length;
-  return LOCK_MODES2[nextIndex];
-}
-function applyLockMode(obj, mode) {
-  obj.lockMode = mode;
-  const lockPosition = mode === "position" || mode === "full";
-  obj.lockMovementX = lockPosition;
-  obj.lockMovementY = lockPosition;
-  obj.lockRotation = lockPosition;
-  obj.lockScalingX = lockPosition;
-  obj.lockScalingY = lockPosition;
-  obj.hasControls = mode === "free";
-  obj.lockContent = mode === "full";
-  if (obj.type === "i-text" || obj.type === "textbox") {
-    obj.editable = mode !== "full";
-  }
-}
-function isStyleLocked(obj) {
-  const mode = getLockMode(obj);
-  return mode === "position" || mode === "full";
-}
-function isContentLocked(obj) {
-  return obj.lockContent === true;
-}
-function isPositionLocked(obj) {
-  const mode = getLockMode(obj);
-  return mode === "position" || mode === "full";
-}
-
 // src/ImageFrame.ts
-var import_fabric8 = require("#fabric");
+var import_fabric9 = require("#fabric");
 function rotatePoint(dx, dy, angleDeg) {
   const angle = -angleDeg * Math.PI / 180;
   return {
@@ -1543,7 +1619,7 @@ function rotatePoint(dx, dy, angleDeg) {
     y: dx * Math.sin(angle) + dy * Math.cos(angle)
   };
 }
-var ImageFrame = class _ImageFrame extends import_fabric8.Group {
+var ImageFrame = class _ImageFrame extends import_fabric9.Group {
   constructor(image, options = {}) {
     const frameScale = options.frameScale ?? 1;
     const frameWidth = options.frameWidth ?? image.width * frameScale;
@@ -1571,7 +1647,7 @@ var ImageFrame = class _ImageFrame extends import_fabric8.Group {
       height: frameHeight,
       subTargetCheck: false,
       interactive: false,
-      layoutManager: new import_fabric8.LayoutManager(new import_fabric8.FixedLayout()),
+      layoutManager: new import_fabric9.LayoutManager(new import_fabric9.FixedLayout()),
       // Désactiver le cache pour que le clipPath soit redessiné à chaque frame
       objectCaching: false
     });
@@ -1987,7 +2063,7 @@ var ImageFrame = class _ImageFrame extends import_fabric8.Group {
     };
   }
   static async fromObject(data) {
-    const img = await import_fabric8.FabricImage.fromURL(data.image.src, { crossOrigin: "anonymous" });
+    const img = await import_fabric9.FabricImage.fromURL(data.image.src, { crossOrigin: "anonymous" });
     const frame = new _ImageFrame(img, {
       left: data.left,
       top: data.top,
@@ -2050,8 +2126,8 @@ var ImageFrame = class _ImageFrame extends import_fabric8.Group {
     });
   }
 };
-import_fabric8.classRegistry.setClass(ImageFrame);
-import_fabric8.classRegistry.setClass(ImageFrame, "ImageFrame");
+import_fabric9.classRegistry.setClass(ImageFrame);
+import_fabric9.classRegistry.setClass(ImageFrame, "ImageFrame");
 
 // src/bindings.ts
 function pendingBindings(obj) {
@@ -2157,7 +2233,7 @@ var LayerManager = class {
    * Charge l'image de fond
    */
   async loadBackgroundImage(url) {
-    const img = await import_fabric9.FabricImage.fromURL(url, { crossOrigin: "anonymous" });
+    const img = await import_fabric10.FabricImage.fromURL(url, { crossOrigin: "anonymous" });
     const scaleX = this.canvas.width / img.width;
     const scaleY = this.canvas.height / img.height;
     const scale = Math.max(scaleX, scaleY);
@@ -2283,7 +2359,7 @@ var LayerManager = class {
    */
   async addImage(url, options = {}) {
     const { left = 100, top = 100, layerId = this.generateId() } = options;
-    const img = await import_fabric9.FabricImage.fromURL(url, { crossOrigin: "anonymous" });
+    const img = await import_fabric10.FabricImage.fromURL(url, { crossOrigin: "anonymous" });
     let frameScale = 1;
     if (img.width > 300 || img.height > 300) {
       frameScale = Math.min(300 / img.width, 300 / img.height);
@@ -2309,10 +2385,9 @@ var LayerManager = class {
    * @param options.opacity - Opacité à appliquer (utile si target.opacity est temporairement modifiée)
    */
   async replaceImageSource(target, newUrl, options) {
-    const layerType = target.layerType;
-    if (layerType === "imageFrame" || target instanceof ImageFrame) {
+    if (kindOf(target) === "imageShape") {
       const frame = target;
-      const newImg = await import_fabric9.FabricImage.fromURL(newUrl, { crossOrigin: "anonymous" });
+      const newImg = await import_fabric10.FabricImage.fromURL(newUrl, { crossOrigin: "anonymous" });
       await frame.replaceImage(newImg);
       if (options?.opacity !== void 0) {
         frame.opacity = options.opacity;
@@ -2338,7 +2413,7 @@ var LayerManager = class {
       layerType: target.get("layerType")
     };
     const lockMode = getLockMode(target);
-    const newImg = await import_fabric9.FabricImage.fromURL(newUrl, { crossOrigin: "anonymous" });
+    const newImg = await import_fabric10.FabricImage.fromURL(newUrl, { crossOrigin: "anonymous" });
     const oldWidth = target.width * target.scaleX;
     const oldHeight = target.height * target.scaleY;
     const coverScale = Math.max(oldWidth / newImg.width, oldHeight / newImg.height);
@@ -2382,7 +2457,7 @@ var LayerManager = class {
     const { w: displayedWidth, h: displayedHeight } = scaledSize(shape);
     const center = shape.getRelativeCenterPoint();
     const zIndex = this.canvas.getObjects().indexOf(shape);
-    const img = await import_fabric9.FabricImage.fromURL(imageUrl, { crossOrigin: "anonymous" });
+    const img = await import_fabric10.FabricImage.fromURL(imageUrl, { crossOrigin: "anonymous" });
     const frame = new ImageFrame(img, {
       left: center.x,
       top: center.y,
@@ -2440,7 +2515,7 @@ var LayerManager = class {
    * Groupe plusieurs objets ensemble
    */
   groupObjects(objects) {
-    const group = new import_fabric9.Group(objects);
+    const group = new import_fabric10.Group(objects);
     objects.forEach((obj) => this.canvas.remove(obj));
     this.canvas.add(group);
     this.canvas.setActiveObject(group);
@@ -2477,7 +2552,7 @@ var LayerManager = class {
       }
       case "Image":
       case "image": {
-        const img = await import_fabric9.FabricImage.fromObject({
+        const img = await import_fabric10.FabricImage.fromObject({
           ...layer,
           crossOrigin: "anonymous"
         });
@@ -2491,7 +2566,7 @@ var LayerManager = class {
       }
       case "Group":
       case "group":
-        obj = await import_fabric9.Group.fromObject(layer);
+        obj = await import_fabric10.Group.fromObject(layer);
         break;
       case "Rect":
       case "rect":
@@ -2588,7 +2663,7 @@ function clipOfShape(shape) {
   if (shape instanceof FabCircle) return { clipShape: "circle", cornerRadius: 0 };
   if (shape instanceof FabPath) {
     const id = shape.id;
-    const clipData = { d: import_fabric9.util.joinPath(shape.path), width: shape.width, height: shape.height };
+    const clipData = { d: import_fabric10.util.joinPath(shape.path), width: shape.width, height: shape.height };
     return { clipShape: id && isValidShape(id) ? id : id || "custom", clipData, cornerRadius: 0 };
   }
   return { clipShape: "rect", cornerRadius: 0 };
@@ -2596,53 +2671,6 @@ function clipOfShape(shape) {
 
 // src/SelectionManager.ts
 var import_fabric11 = require("#fabric");
-
-// src/capabilities.ts
-var import_fabric10 = require("#fabric");
-function kindOf(obj) {
-  if (isTextObject(obj)) return "text";
-  if (obj.layerType === "imageFrame") return "imageShape";
-  if (obj instanceof import_fabric10.FabricImage) return "legacyImage";
-  if (obj.layerType === "shape" || obj instanceof import_fabric10.Rect) return "shape";
-  return "other";
-}
-function isOutOfPlay(obj) {
-  return obj.get("layerId") === "originalImage" || obj.evented === false || obj.excludeFromExport === true;
-}
-var NO_RULES = { onToolboxImage: null, hosts: false, options: [] };
-function rulesOf(obj) {
-  const kind = kindOf(obj);
-  const options = optionsOf(obj, kind);
-  if (isOutOfPlay(obj)) return { kind, ...NO_RULES, options };
-  switch (kind) {
-    case "text":
-      return { kind, onToolboxImage: null, hosts: false, options };
-    case "shape":
-      return { kind, onToolboxImage: "fill", hosts: true, options };
-    case "imageShape":
-      return { kind, onToolboxImage: "replaceImage", hosts: true, options };
-    case "legacyImage":
-      return { kind, onToolboxImage: "replaceImage", hosts: false, options };
-    default:
-      return { kind, ...NO_RULES, options };
-  }
-}
-function optionsOf(obj, kind) {
-  switch (kind) {
-    case "text":
-      return ["color", "font"];
-    case "shape":
-      if (obj instanceof FabRect) return ["outline", "clip", "color", "corner_radius"];
-      if (obj instanceof FabCircle || obj instanceof FabPath) return ["outline", "clip", "color"];
-      return [];
-    case "imageShape":
-      return ["outline", "clip", "corner_radius", "image"];
-    default:
-      return [];
-  }
-}
-
-// src/SelectionManager.ts
 var SelectionManager = class {
   constructor(canvas) {
     this.canvas = canvas;
@@ -6696,7 +6724,7 @@ var _FabricEditor = class _FabricEditor {
   deleteSelection() {
     const selected = this.selection.selected;
     if (selected.length === 0) return;
-    const deletable = selected.filter((obj) => !isPositionLocked(obj));
+    const deletable = selected.filter((obj) => rulesOf(obj).deletes);
     if (deletable.length === 0) return;
     this.layers.removeMany(deletable);
     this.canvas.discardActiveObject();
@@ -6708,20 +6736,22 @@ var _FabricEditor = class _FabricEditor {
    */
   findImageAtPoint(x, y) {
     const target = this.findDropTargetAtPoint(x, y);
-    if (!target || rulesOf(target).onToolboxImage !== "replaceImage") return null;
+    if (!target || rulesOf(target, { ignoreLock: true }).onToolboxImage !== "replaceImage") return null;
     return target;
   }
   /**
-   * Trouve l'objet qui réagit à une image de la toolbox sous un point (le plus haut :
-   * une forme la prend en fond, une forme-image remplace la sienne — voir rulesOf).
-   * Utilisé par DropHandler pour le drop d'images sur images ET sur formes.
+   * Trouve la cible d'une image de la toolbox sous un point : le plus haut objet opaque
+   * (une forme la prend en fond, une forme-image remplace la sienne — voir rulesOf). Il
+   * peut ne pas réagir (verrouillé, groupe de paths) : DropHandler n'arme alors pas le
+   * remplacement, et l'image est ajoutée.
    */
   findDropTargetAtPoint(x, y) {
     const point = new import_fabric16.Point(x, y);
     const objects = this.canvas.getObjects().slice().reverse();
     for (const obj of objects) {
       if (obj.get(DRAG_PREVIEW_KEY)) continue;
-      if (!rulesOf(obj).onToolboxImage) continue;
+      const rules = rulesOf(obj, { ignoreLock: true });
+      if (!rules.onToolboxImage && !rules.hosts) continue;
       if (obj.containsPoint(point)) return obj;
     }
     return null;
@@ -7104,7 +7134,7 @@ var DropHandler = class {
     return file;
   }
   activateReplaceMode(target) {
-    if (isContentLocked(target)) {
+    if (!rulesOf(target).onToolboxImage) {
       return;
     }
     console.debug("[drop] replace armed on", {

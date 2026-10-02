@@ -1960,9 +1960,10 @@ declare class FabricEditor {
      */
     findImageAtPoint(x: number, y: number): FabricImage | ImageFrame | null;
     /**
-     * Trouve l'objet qui réagit à une image de la toolbox sous un point (le plus haut :
-     * une forme la prend en fond, une forme-image remplace la sienne — voir rulesOf).
-     * Utilisé par DropHandler pour le drop d'images sur images ET sur formes.
+     * Trouve la cible d'une image de la toolbox sous un point : le plus haut objet opaque
+     * (une forme la prend en fond, une forme-image remplace la sienne — voir rulesOf). Il
+     * peut ne pas réagir (verrouillé, groupe de paths) : DropHandler n'arme alors pas le
+     * remplacement, et l'image est ajoutée.
      */
     findDropTargetAtPoint(x: number, y: number): FabricObject | null;
     /**
@@ -2464,11 +2465,19 @@ declare function getAvailableShapes(): ShapeType[];
 /**
  * Règlement des capacités : pour un objet, « que fais-je quand… » et « quelles
  * options je propose ». Le code pose ses questions ici au lieu de tester des types
- * (layerType, instanceof) chacun de son côté.
+ * (layerType, instanceof) ou des verrous chacun de son côté.
  *
- * La sorte d'objet décide des réactions ; l'état les affine. Être container n'est pas
- * une sorte d'objet : c'est la capacité d'accueillir (`hosts`) plus l'état d'avoir des
- * enfants.
+ * La sorte d'objet décide des réactions ; l'état les affine :
+ * - hors-jeu (fond legacy, calque inerte, objet de l'éditeur) : aucune réaction ;
+ * - verrou de position : plus de style ni de place dans la pile, seules les options
+ *   d'image restent (le placeholder reçoit son image) ;
+ * - verrou total : plus rien.
+ *
+ * Être container n'est pas une sorte d'objet : c'est la capacité d'accueillir (`hosts`)
+ * plus l'état d'avoir des enfants.
+ *
+ * C'est le seul endroit qui lit `layerType` (toujours écrit sur les objets : il est
+ * sauvegardé dans les documents).
  *
  * Plan : apibots docs/plans/object-capabilities.md.
  */
@@ -2490,11 +2499,25 @@ interface ObjectRules {
     onToolboxImage: ToolboxImageReaction | null;
     /** Un objet traîné au-dessus : l'accueillir comme enfant (devenir container). */
     hosts: boolean;
-    /** Options proposées par la toolbox. */
+    /** Options proposées par la toolbox (`image` : remplacer, recadrer). */
     options: ControlOption[];
+    /** Changer de style : couleur, police, contour, opacité, découpe. */
+    restyles: boolean;
+    /** Changer de place dans la pile : monter, descendre, passer en fond. */
+    restacks: boolean;
+    /** Être supprimé. */
+    deletes: boolean;
+}
+interface RulesQuery {
+    /**
+     * Les réactions de la sorte d'objet, verrou ignoré. Pour la recherche de cible d'un
+     * drop : un objet verrouillé reste opaque (une image lâchée sur une image verrouillée
+     * ne va pas remplir la forme cachée dessous) — c'est l'armement qui lit le verrou.
+     */
+    ignoreLock?: boolean;
 }
 declare function kindOf(obj: FabricObject): ObjectKind;
-declare function rulesOf(obj: FabricObject): ObjectRules;
+declare function rulesOf(obj: FabricObject, { ignoreLock }?: RulesQuery): ObjectRules;
 
 /**
  * Calcule les facteurs d'anti-scale pour maintenir les proportions d'un clip

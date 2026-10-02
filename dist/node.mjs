@@ -120,8 +120,8 @@ import { StaticCanvas, FabricObject as FabricObject4 } from "#fabric";
 
 // src/LayerManager.ts
 import {
-  FabricImage as FabricImage4,
-  Group as Group3,
+  FabricImage as FabricImage5,
+  Group as Group4,
   util
 } from "#fabric";
 
@@ -604,134 +604,38 @@ function sendBlockBackward(objects, obj) {
   return placeBelow(objects, obj, prev);
 }
 
-// src/shapes/factories.ts
-import {
-  FabricImage as FabricImage2,
-  Group
-} from "#fabric";
+// src/capabilities.ts
+import { FabricImage, Group, Rect as Rect2 } from "#fabric";
 
-// src/shapes/registry.ts
-var registry = [];
-function registeredShapes() {
-  return registry;
+// src/layout/geometry.ts
+function scaledSize(obj) {
+  return {
+    w: obj.width * (obj.scaleX || 1),
+    h: obj.height * (obj.scaleY || 1)
+  };
 }
-function getCatalogShape(id) {
-  return registry.find((s) => s.id === id);
-}
-function isMonoPath(shape) {
-  return shape.paths.length === 1;
-}
-function clipDataFor(id) {
-  const shape = getCatalogShape(id);
-  if (!shape || !isMonoPath(shape)) return void 0;
-  return { d: shape.paths[0].d, width: shape.width, height: shape.height };
+var TEXT_TYPES = ["i-text", "textbox"];
+function isTextObject(obj) {
+  return TEXT_TYPES.includes(obj.type);
 }
 
-// src/controls/cropControls.ts
-import {
-  Control
-} from "#fabric";
-var CROP_CONFIGS = {
-  left: {
-    dimension: "width",
-    position: "left",
-    crop: "cropX",
-    anchor: "tr",
-    sign: 1
-  },
-  right: {
-    dimension: "width",
-    position: "left",
-    crop: "cropX",
-    anchor: "tl",
-    sign: -1
-  },
-  top: {
-    dimension: "height",
-    position: "top",
-    crop: "cropY",
-    anchor: "bl",
-    sign: 1
-  },
-  bottom: {
-    dimension: "height",
-    position: "top",
-    crop: "cropY",
-    anchor: "tl",
-    sign: -1
+// src/locking.ts
+function getLockMode(obj) {
+  return obj.lockMode || "free";
+}
+function applyLockMode(obj, mode) {
+  obj.lockMode = mode;
+  const lockPosition = mode === "position" || mode === "full";
+  obj.lockMovementX = lockPosition;
+  obj.lockMovementY = lockPosition;
+  obj.lockRotation = lockPosition;
+  obj.lockScalingX = lockPosition;
+  obj.lockScalingY = lockPosition;
+  obj.hasControls = mode === "free";
+  obj.lockContent = mode === "full";
+  if (obj.type === "i-text" || obj.type === "textbox") {
+    obj.editable = mode !== "full";
   }
-};
-var CONTROL_POSITIONS = {
-  left: { x: -0.5, y: 0 },
-  right: { x: 0.5, y: 0 },
-  top: { x: 0, y: -0.5 },
-  bottom: { x: 0, y: 0.5 }
-};
-var CONTROL_NAMES = {
-  left: "ml",
-  right: "mr",
-  top: "mt",
-  bottom: "mb"
-};
-function createCropActionHandler(side) {
-  return function actionHandler(eventData, transform) {
-    const target = transform.target;
-    const canvas = target.canvas;
-    if (!canvas) return true;
-    target.fire("scaling");
-    const config = CROP_CONFIGS[side];
-    const anchorPoint = target.aCoords?.[config.anchor];
-    if (!anchorPoint) return true;
-    const pointer = canvas.getScenePoint(eventData);
-    const currentPos = target[config.position] || 0;
-    const currentDim = target[config.dimension] || 0;
-    let delta;
-    if (side === "left" || side === "top") {
-      delta = (side === "left" ? pointer.x : pointer.y) - currentPos;
-    } else {
-      delta = side === "right" ? (currentPos + (currentDim * target.scaleX - pointer.x)) / target.scaleX : (currentPos + (currentDim * target.scaleY - pointer.y)) / target.scaleY;
-    }
-    const currentCrop = target[config.crop] || 0;
-    const newCrop = side === "left" || side === "top" ? currentCrop + delta : currentCrop;
-    const newDimension = currentDim - delta;
-    if (newDimension > 1 && newCrop >= 0) {
-      target[config.crop] = newCrop;
-      target[config.dimension] = newDimension;
-      target.setCoords();
-      const newAnchorPoint = target.aCoords?.[config.anchor];
-      if (newAnchorPoint) {
-        target.left += anchorPoint.x - newAnchorPoint.x;
-        target.top += anchorPoint.y - newAnchorPoint.y;
-        target.setCoords();
-      }
-      canvas.requestRenderAll();
-    }
-    return true;
-  };
-}
-function createCursorStyleHandler(side) {
-  return function cursorStyleHandler(_eventData, _control, fabricObject) {
-    const angle = (fabricObject.angle || 0) % 180;
-    const isHorizontalControl = side === "left" || side === "right";
-    if (angle >= 45 && angle <= 135) {
-      return isHorizontalControl ? "ns-resize" : "ew-resize";
-    }
-    return isHorizontalControl ? "ew-resize" : "ns-resize";
-  };
-}
-function addCropControls(obj) {
-  const sides = ["left", "right", "top", "bottom"];
-  sides.forEach((side) => {
-    const position = CONTROL_POSITIONS[side];
-    const controlName = CONTROL_NAMES[side];
-    obj.controls[controlName] = new Control({
-      x: position.x,
-      y: position.y,
-      actionHandler: createCropActionHandler(side),
-      cursorStyleHandler: createCursorStyleHandler(side)
-    });
-  });
-  return obj;
 }
 
 // src/shapes/FabRect.ts
@@ -889,6 +793,25 @@ classRegistry2.setClass(FabCircle, "Circle");
 
 // src/shapes/FabPath.ts
 import { Path, classRegistry as classRegistry3, controlsUtils as controlsUtils4 } from "#fabric";
+
+// src/shapes/registry.ts
+var registry = [];
+function registeredShapes() {
+  return registry;
+}
+function getCatalogShape(id) {
+  return registry.find((s) => s.id === id);
+}
+function isMonoPath(shape) {
+  return shape.paths.length === 1;
+}
+function clipDataFor(id) {
+  const shape = getCatalogShape(id);
+  if (!shape || !isMonoPath(shape)) return void 0;
+  return { d: shape.paths[0].d, width: shape.width, height: shape.height };
+}
+
+// src/shapes/FabPath.ts
 var { changeObjectWidth: changeObjectWidth4, changeObjectHeight: changeObjectHeight4, getLocalPoint: getLocalPoint2 } = controlsUtils4;
 var DEFAULT_SIZE = 300;
 var _FabPath = class _FabPath extends Path {
@@ -1005,6 +928,129 @@ var FabPath = _FabPath;
 installLockMethods(FabPath.prototype);
 classRegistry3.setClass(FabPath, "Path");
 
+// src/capabilities.ts
+function kindOf(obj) {
+  const layerType = obj.layerType;
+  if (isTextObject(obj)) return "text";
+  if (layerType === "imageFrame") return "imageShape";
+  if (obj instanceof FabricImage) return "legacyImage";
+  if (layerType === "shape" || obj instanceof Rect2) return "shape";
+  return "other";
+}
+
+// src/shapes/factories.ts
+import {
+  FabricImage as FabricImage3,
+  Group as Group2
+} from "#fabric";
+
+// src/controls/cropControls.ts
+import {
+  Control
+} from "#fabric";
+var CROP_CONFIGS = {
+  left: {
+    dimension: "width",
+    position: "left",
+    crop: "cropX",
+    anchor: "tr",
+    sign: 1
+  },
+  right: {
+    dimension: "width",
+    position: "left",
+    crop: "cropX",
+    anchor: "tl",
+    sign: -1
+  },
+  top: {
+    dimension: "height",
+    position: "top",
+    crop: "cropY",
+    anchor: "bl",
+    sign: 1
+  },
+  bottom: {
+    dimension: "height",
+    position: "top",
+    crop: "cropY",
+    anchor: "tl",
+    sign: -1
+  }
+};
+var CONTROL_POSITIONS = {
+  left: { x: -0.5, y: 0 },
+  right: { x: 0.5, y: 0 },
+  top: { x: 0, y: -0.5 },
+  bottom: { x: 0, y: 0.5 }
+};
+var CONTROL_NAMES = {
+  left: "ml",
+  right: "mr",
+  top: "mt",
+  bottom: "mb"
+};
+function createCropActionHandler(side) {
+  return function actionHandler(eventData, transform) {
+    const target = transform.target;
+    const canvas = target.canvas;
+    if (!canvas) return true;
+    target.fire("scaling");
+    const config = CROP_CONFIGS[side];
+    const anchorPoint = target.aCoords?.[config.anchor];
+    if (!anchorPoint) return true;
+    const pointer = canvas.getScenePoint(eventData);
+    const currentPos = target[config.position] || 0;
+    const currentDim = target[config.dimension] || 0;
+    let delta;
+    if (side === "left" || side === "top") {
+      delta = (side === "left" ? pointer.x : pointer.y) - currentPos;
+    } else {
+      delta = side === "right" ? (currentPos + (currentDim * target.scaleX - pointer.x)) / target.scaleX : (currentPos + (currentDim * target.scaleY - pointer.y)) / target.scaleY;
+    }
+    const currentCrop = target[config.crop] || 0;
+    const newCrop = side === "left" || side === "top" ? currentCrop + delta : currentCrop;
+    const newDimension = currentDim - delta;
+    if (newDimension > 1 && newCrop >= 0) {
+      target[config.crop] = newCrop;
+      target[config.dimension] = newDimension;
+      target.setCoords();
+      const newAnchorPoint = target.aCoords?.[config.anchor];
+      if (newAnchorPoint) {
+        target.left += anchorPoint.x - newAnchorPoint.x;
+        target.top += anchorPoint.y - newAnchorPoint.y;
+        target.setCoords();
+      }
+      canvas.requestRenderAll();
+    }
+    return true;
+  };
+}
+function createCursorStyleHandler(side) {
+  return function cursorStyleHandler(_eventData, _control, fabricObject) {
+    const angle = (fabricObject.angle || 0) % 180;
+    const isHorizontalControl = side === "left" || side === "right";
+    if (angle >= 45 && angle <= 135) {
+      return isHorizontalControl ? "ns-resize" : "ew-resize";
+    }
+    return isHorizontalControl ? "ew-resize" : "ns-resize";
+  };
+}
+function addCropControls(obj) {
+  const sides = ["left", "right", "top", "bottom"];
+  sides.forEach((side) => {
+    const position = CONTROL_POSITIONS[side];
+    const controlName = CONTROL_NAMES[side];
+    obj.controls[controlName] = new Control({
+      x: position.x,
+      y: position.y,
+      actionHandler: createCropActionHandler(side),
+      cursorStyleHandler: createCursorStyleHandler(side)
+    });
+  });
+  return obj;
+}
+
 // src/shapes/factories.ts
 function createRect(options) {
   return new FabRect(options);
@@ -1013,7 +1059,7 @@ function createCircle(options) {
   return new FabCircle(options);
 }
 async function createImage(url, options) {
-  const img = await FabricImage2.fromURL(url, { crossOrigin: "anonymous" });
+  const img = await FabricImage3.fromURL(url, { crossOrigin: "anonymous" });
   let scale = 1;
   if (img.width > 300 || img.height > 300) {
     scale = Math.min(300 / img.width, 300 / img.height);
@@ -1055,7 +1101,7 @@ function createPathsShape(paths, options = {}) {
     child.setCoords();
     return child;
   });
-  const group = new Group(children, { originX: "center", originY: "center", ...withoutUndefined({ left, top }) });
+  const group = new Group2(children, { originX: "center", originY: "center", ...withoutUndefined({ left, top }) });
   if (id) group.set({ id });
   const target = targetDims(group.width, group.height, options.width, options.height);
   group.set({ scaleX: target.width / group.width, scaleY: target.height / group.height });
@@ -1119,37 +1165,10 @@ function isValidShape(id) {
   return shapeIds().includes(id);
 }
 
-// src/layout/geometry.ts
-function scaledSize(obj) {
-  return {
-    w: obj.width * (obj.scaleX || 1),
-    h: obj.height * (obj.scaleY || 1)
-  };
-}
-
-// src/locking.ts
-function getLockMode(obj) {
-  return obj.lockMode || "free";
-}
-function applyLockMode(obj, mode) {
-  obj.lockMode = mode;
-  const lockPosition = mode === "position" || mode === "full";
-  obj.lockMovementX = lockPosition;
-  obj.lockMovementY = lockPosition;
-  obj.lockRotation = lockPosition;
-  obj.lockScalingX = lockPosition;
-  obj.lockScalingY = lockPosition;
-  obj.hasControls = mode === "free";
-  obj.lockContent = mode === "full";
-  if (obj.type === "i-text" || obj.type === "textbox") {
-    obj.editable = mode !== "full";
-  }
-}
-
 // src/ImageFrame.ts
 import {
-  Group as Group2,
-  FabricImage as FabricImage3,
+  Group as Group3,
+  FabricImage as FabricImage4,
   classRegistry as classRegistry4,
   LayoutManager,
   FixedLayout
@@ -1161,7 +1180,7 @@ function rotatePoint(dx, dy, angleDeg) {
     y: dx * Math.sin(angle) + dy * Math.cos(angle)
   };
 }
-var ImageFrame = class _ImageFrame extends Group2 {
+var ImageFrame = class _ImageFrame extends Group3 {
   constructor(image, options = {}) {
     const frameScale = options.frameScale ?? 1;
     const frameWidth = options.frameWidth ?? image.width * frameScale;
@@ -1605,7 +1624,7 @@ var ImageFrame = class _ImageFrame extends Group2 {
     };
   }
   static async fromObject(data) {
-    const img = await FabricImage3.fromURL(data.image.src, { crossOrigin: "anonymous" });
+    const img = await FabricImage4.fromURL(data.image.src, { crossOrigin: "anonymous" });
     const frame = new _ImageFrame(img, {
       left: data.left,
       top: data.top,
@@ -1715,7 +1734,7 @@ var LayerManager = class {
    * Charge l'image de fond
    */
   async loadBackgroundImage(url) {
-    const img = await FabricImage4.fromURL(url, { crossOrigin: "anonymous" });
+    const img = await FabricImage5.fromURL(url, { crossOrigin: "anonymous" });
     const scaleX = this.canvas.width / img.width;
     const scaleY = this.canvas.height / img.height;
     const scale = Math.max(scaleX, scaleY);
@@ -1841,7 +1860,7 @@ var LayerManager = class {
    */
   async addImage(url, options = {}) {
     const { left = 100, top = 100, layerId = this.generateId() } = options;
-    const img = await FabricImage4.fromURL(url, { crossOrigin: "anonymous" });
+    const img = await FabricImage5.fromURL(url, { crossOrigin: "anonymous" });
     let frameScale = 1;
     if (img.width > 300 || img.height > 300) {
       frameScale = Math.min(300 / img.width, 300 / img.height);
@@ -1867,10 +1886,9 @@ var LayerManager = class {
    * @param options.opacity - Opacité à appliquer (utile si target.opacity est temporairement modifiée)
    */
   async replaceImageSource(target, newUrl, options) {
-    const layerType = target.layerType;
-    if (layerType === "imageFrame" || target instanceof ImageFrame) {
+    if (kindOf(target) === "imageShape") {
       const frame = target;
-      const newImg = await FabricImage4.fromURL(newUrl, { crossOrigin: "anonymous" });
+      const newImg = await FabricImage5.fromURL(newUrl, { crossOrigin: "anonymous" });
       await frame.replaceImage(newImg);
       if (options?.opacity !== void 0) {
         frame.opacity = options.opacity;
@@ -1896,7 +1914,7 @@ var LayerManager = class {
       layerType: target.get("layerType")
     };
     const lockMode = getLockMode(target);
-    const newImg = await FabricImage4.fromURL(newUrl, { crossOrigin: "anonymous" });
+    const newImg = await FabricImage5.fromURL(newUrl, { crossOrigin: "anonymous" });
     const oldWidth = target.width * target.scaleX;
     const oldHeight = target.height * target.scaleY;
     const coverScale = Math.max(oldWidth / newImg.width, oldHeight / newImg.height);
@@ -1940,7 +1958,7 @@ var LayerManager = class {
     const { w: displayedWidth, h: displayedHeight } = scaledSize(shape);
     const center = shape.getRelativeCenterPoint();
     const zIndex = this.canvas.getObjects().indexOf(shape);
-    const img = await FabricImage4.fromURL(imageUrl, { crossOrigin: "anonymous" });
+    const img = await FabricImage5.fromURL(imageUrl, { crossOrigin: "anonymous" });
     const frame = new ImageFrame(img, {
       left: center.x,
       top: center.y,
@@ -1998,7 +2016,7 @@ var LayerManager = class {
    * Groupe plusieurs objets ensemble
    */
   groupObjects(objects) {
-    const group = new Group3(objects);
+    const group = new Group4(objects);
     objects.forEach((obj) => this.canvas.remove(obj));
     this.canvas.add(group);
     this.canvas.setActiveObject(group);
@@ -2035,7 +2053,7 @@ var LayerManager = class {
       }
       case "Image":
       case "image": {
-        const img = await FabricImage4.fromObject({
+        const img = await FabricImage5.fromObject({
           ...layer,
           crossOrigin: "anonymous"
         });
@@ -2049,7 +2067,7 @@ var LayerManager = class {
       }
       case "Group":
       case "group":
-        obj = await Group3.fromObject(layer);
+        obj = await Group4.fromObject(layer);
         break;
       case "Rect":
       case "rect":
