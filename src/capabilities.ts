@@ -7,7 +7,9 @@
  * - hors-jeu (fond legacy, calque inerte, objet de l'éditeur) : aucune réaction ;
  * - verrou de position : plus de style ni de place dans la pile, seules les options
  *   d'image restent (le placeholder reçoit son image) ;
- * - verrou total : plus rien.
+ * - verrou total : plus rien ;
+ * - image à fournir (userSlots) : la forme propose l'image et la prend en fond, quel que
+ *   soit son verrou — c'est tout son contrat.
  *
  * Être container n'est pas une sorte d'objet : c'est la capacité d'accueillir (`hosts`)
  * plus l'état d'avoir des enfants.
@@ -19,7 +21,8 @@
  */
 import { FabricImage, Group, Rect, type FabricObject } from "#fabric";
 import { isTextObject } from "./layout/geometry";
-import { getLockMode } from "./locking";
+import { getLockMode, type LockMode } from "./locking";
+import { isUserSlot } from "./userSlots";
 import { FabRect } from "./shapes/FabRect";
 import { FabCircle } from "./shapes/FabCircle";
 import { FabPath } from "./shapes/FabPath";
@@ -75,8 +78,15 @@ export function kindOf(obj: FabricObject): ObjectKind {
 export function rulesOf(obj: FabricObject, { ignoreLock = false }: RulesQuery = {}): ObjectRules {
   const rules = kindRules(obj, kindOf(obj));
   if (isOutOfPlay(obj)) Object.assign(rules, { onToolboxImage: null, hosts: false });
+  const locked = lockedRules(rules, ignoreLock ? "free" : getLockMode(obj));
+  if (rules.onToolboxImage !== "fill" || !isUserSlot(obj)) return locked;
 
-  switch (ignoreLock ? "free" : getLockMode(obj)) {
+  return { ...locked, onToolboxImage: "fill", options: [...locked.options, "image"] };
+}
+
+/** Le verrou de position retire style et pile, le verrou total retire tout. */
+function lockedRules(rules: ObjectRules, lockMode: LockMode): ObjectRules {
+  switch (lockMode) {
     case "position":
       return {
         ...rules,

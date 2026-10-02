@@ -1,5 +1,6 @@
 import { Path, classRegistry, controlsUtils, type TOptions, type PathProps } from "#fabric";
 import { installLockMethods, type Lockable } from "./lockMixin";
+import { installUserSlotRendering } from "../userSlots";
 import { isTransformCentered } from "./resizeUtils";
 import { getCatalogShape, type ShapePathData } from "./registry";
 import type { LockMode } from "../locking";
@@ -166,4 +167,5 @@ export class FabPath extends Path implements Lockable {
 }
 
 installLockMethods(FabPath.prototype);
+installUserSlotRendering(FabPath.prototype);
 classRegistry.setClass(FabPath, "Path");

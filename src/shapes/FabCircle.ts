@@ -1,5 +1,6 @@
 import { Circle, classRegistry, controlsUtils, type TOptions, type CircleProps } from "#fabric";
 import { installLockMethods, type Lockable } from "./lockMixin";
+import { installUserSlotRendering } from "../userSlots";
 import { isTransformCentered } from "./resizeUtils";
 import type { LockMode } from "../locking";
 
@@ -94,4 +95,5 @@ export class FabCircle extends Circle implements Lockable {
 }
 
 installLockMethods(FabCircle.prototype);
+installUserSlotRendering(FabCircle.prototype);
 classRegistry.setClass(FabCircle, "Circle");

@@ -14,6 +14,8 @@ export interface EditorConfig {
   defaultColor?: string;
   /** Base color for all visual guides (snap lines, layout margins, hints). */
   guideColor?: string;
+  /** Badge des images à fournir (défaut : « À fournir ») — la traduction de l'hôte. */
+  userSlotLabel?: string;
   container?: HTMLElement;
   transparent?: boolean;
 }

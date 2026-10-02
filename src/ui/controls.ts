@@ -19,6 +19,7 @@ export function applyControlStyle(
   canvas: DesignCanvas,
   guideColor: string,
   resolveTarget?: ResolveTargetFn,
+  userSlotLabel?: string,
 ): void {
   const gc = guideColor;
 
@@ -38,7 +39,7 @@ export function applyControlStyle(
   // Wire up canvas events
   installControlHitAreas(canvas);
   installHoverAnimation(canvas, hoverProgress);
-  installHoverBorder(canvas, gc, resolveTarget);
+  installHoverBorder(canvas, gc, resolveTarget, userSlotLabel);
 }
 
 // ── Custom control renderer ────────────────────────────────────────
@@ -286,7 +287,12 @@ function installHoverAnimation(
 
 // ── Hover border on non-selected objects ───────────────────────────
 
-function installHoverBorder(canvas: DesignCanvas, guideColor: string, resolveTarget?: ResolveTargetFn): void {
+function installHoverBorder(
+  canvas: DesignCanvas,
+  guideColor: string,
+  resolveTarget?: ResolveTargetFn,
+  userSlotLabel?: string,
+): void {
   let hoveredObj: FabricObject | null = null;
 
   const clearTopCtx = () => {
@@ -332,10 +338,10 @@ function installHoverBorder(canvas: DesignCanvas, guideColor: string, resolveTar
 
       drawDynamicMediaOutline(ctx, obj, guideColor);
     });
-    if (active) drawBindingBadge(ctx, active, guideColor);
+    if (active) drawBindingBadge(ctx, active, guideColor, userSlotLabel);
 
     if (!hoveredObj || hoveredObj === active) return;
     (hoveredObj as any)._renderControls(ctx, { hasControls: false, hasBorders: true });
-    drawBindingBadge(ctx, hoveredObj, guideColor);
+    drawBindingBadge(ctx, hoveredObj, guideColor, userSlotLabel);
   });
 }

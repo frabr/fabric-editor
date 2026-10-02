@@ -17,6 +17,7 @@ import type { EditorConfig, LayerData, FontsConfig, ShapeType } from "./types";
 import { initYoga } from "./layout/yoga-engine";
 import { isTextObject } from "./layout/geometry";
 import { rulesOf } from "./capabilities";
+import { collectUserSlots, type UserSlot } from "./userSlots";
 
 /**
  * Éditeur d'images basé sur Fabric.js
@@ -73,7 +74,7 @@ export class FabricEditor {
     this.layers = new LayerManager(this.canvas);
     this.selection = new SelectionManager(this.canvas);
 
-    applyControlStyle(this.canvas, gc, (obj) => this.selection.resolveTarget(obj));
+    applyControlStyle(this.canvas, gc, (obj) => this.selection.resolveTarget(obj), config.userSlotLabel);
     this.masks = new MaskManager(this.canvas);
     this.persistence = new PersistenceManager(this.canvas, this.layers);
     this.history = new HistoryManager(this.canvas, this.layers);
@@ -905,6 +906,43 @@ export class FabricEditor {
     }
     this.canvas.renderAll();
     return objects;
+  }
+
+  /** Les images à fournir de la page (userSlots), boîtes en coordonnées scène. */
+  userSlots(): UserSlot[] {
+    return collectUserSlots(this.layers.all);
+  }
+
+  /**
+   * Prévient l'hôte quand les images à fournir changent — apparition, disparition,
+   * consigne, boîte, échelle ou cadrage d'affichage : de quoi (re)placer ses bulles. Comparé
+   * à chaque rendu et à chaque redimensionnement, appelé seulement sur changement (et une
+   * fois tout de suite). Rend la fonction de désabonnement.
+   */
+  onUserSlotsChange(callback: (slots: UserSlot[]) => void): () => void {
+    let last: string | null = null;
+    const check = () => {
+      const slots = this.userSlots();
+      const signature = JSON.stringify([
+        this._displayScale,
+        this._userZoom,
+        slots.map(({ layerId, hint, rect }) => [
+          layerId, hint, Math.round(rect.left), Math.round(rect.top), Math.round(rect.width), Math.round(rect.height),
+        ]),
+      ]);
+      if (signature === last) return;
+
+      last = signature;
+      callback(slots);
+    };
+
+    this.canvas.on("after:render", check);
+    this._resizeCallbacks.push(check);
+    check();
+    return () => {
+      this.canvas.off("after:render", check);
+      this._resizeCallbacks = this._resizeCallbacks.filter((cb) => cb !== check);
+    };
   }
 
   /**

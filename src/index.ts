@@ -124,3 +124,7 @@ export type { SnappingConfig, ResizeSnapResult } from "./SnappingManager";
 export type { LayoutManagerCallbacks, SizePreset } from "./LayoutManager";
 export { pendingBindings, hasPendingBindings, lockBoundText, setTextContent, drawBindingBadge } from "./bindings";
 export type { Bindings, BindingSpec } from "./bindings";
+export {
+  isUserSlot, userSlotHint, userSlotBinding, collectUserSlots, USER_SCOPE, USER_SLOT_FIELD,
+} from "./userSlots";
+export type { UserSlot } from "./userSlots";

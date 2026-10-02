@@ -11,19 +11,20 @@ import type { DesignCanvas } from "./DesignCanvas";
 import { CustomTextbox } from "./controls/CustomTextbox";
 import { migrateLegacyLayout } from "./layout/legacy";
 import { bringBlockForward, sendBlockBackward } from "./layout/stacking";
-import { kindOf } from "./capabilities";
+import { kindOf, rulesOf } from "./capabilities";
 import type { LayoutData } from "./layout/types";
 import { createShape as createShapeObject, createPathsShape, createImage } from "./shapes/factories";
 import { FabRect } from "./shapes/FabRect";
 import { FabCircle } from "./shapes/FabCircle";
 import { FabPath } from "./shapes/FabPath";
 import { isValidShape } from "./shapes";
-import type { ClipData } from "./shapes/registry";
+import { clipDataFor, type ClipData } from "./shapes/registry";
 import { scaledSize } from "./layout/geometry";
 import { applyLockMode, getLockMode, type LockMode } from "./locking";
 import { ImageFrame, type ImageFrameData } from "./ImageFrame";
 import type { LayerData, TextLayerOptions, ImageLayerOptions, ShapeLayerOptions, ShapeType } from "./types";
-import { restoreBindings } from "./bindings";
+import { restoreBindings, type Bindings } from "./bindings";
+import { resolveUserSlot, USER_SCOPE, USER_SLOT_FIELD } from "./userSlots";
 
 const BACKGROUND_LAYER_ID = "originalImage";
 
@@ -361,9 +362,6 @@ export class LayerManager {
     const { w: displayedWidth, h: displayedHeight } = scaledSize(shape);
     const center = shape.getRelativeCenterPoint();
 
-    // Sauvegarder le z-index
-    const zIndex = this.canvas.getObjects().indexOf(shape);
-
     // Charger l'image
     const img = await FabricImage.fromURL(imageUrl, { crossOrigin: "anonymous" });
 
@@ -380,27 +378,68 @@ export class LayerManager {
       cornerRadius,
     });
 
-    // La forme-image reprend la place de la forme : son layout (container, enfant), son
-    // verrouillage et ses bindings — sinon ses enfants restent orphelins, ou elle sort
-    // de son container.
-    const layout = shape.get("layout") as LayoutData | undefined;
-    if (layout) frame.set("layout", JSON.parse(JSON.stringify(layout)));
-    const lockMode = getLockMode(shape);
-    if (lockMode !== "free") applyLockMode(frame, lockMode);
-    const bindings = shape.get("bindings");
+    // Ses bindings suivent ; une image à fournir est, du coup, fournie
+    const bindings = resolveUserSlot(shape.get("bindings") as Bindings | undefined);
     if (bindings) frame.set("bindings", bindings);
-
-    // Supprimer la shape et insérer l'ImageFrame au même z-index (sous ses enfants)
-    this.canvas.remove(shape);
-    this.canvas.add(frame);
-    if (zIndex >= 0 && zIndex < this.canvas.getObjects().length) {
-      this.canvas.moveObjectTo(frame, zIndex);
-    }
-
-    this.canvas.setActiveObject(frame);
-    this.canvas.renderAll();
+    this.takeOver(shape, frame);
 
     return frame;
+  }
+
+  /**
+   * Demande l'image à l'utilisateur final (userSlots) : le calque devient une forme liée à
+   * une image à fournir, avec sa consigne. Une forme le reste ; une forme-image redevient la
+   * forme de sa découpe, aux mêmes dimensions — son image est abandonnée (pas d'exemple :
+   * le damier dit « à fournir »), ses autres bindings la suivent.
+   *
+   * Rend la forme, ou null si le calque ne peut pas recevoir d'image (texte, groupe de paths).
+   */
+  requestUserImage(obj: FabricObject, hint = ""): FabricObject | null {
+    const bindings = {
+      ...((obj.get("bindings") as Bindings) || {}),
+      [USER_SLOT_FIELD]: { scope: USER_SCOPE, hint },
+    };
+
+    if (obj instanceof ImageFrame) {
+      const shape = shapeOfFrame(obj);
+      shape.set({
+        layerId: obj.get("layerId") || this.generateId(),
+        layerType: "shape",
+        angle: obj.angle,
+        bindings,
+      });
+      shape.setPositionByOrigin(obj.getRelativeCenterPoint(), "center", "center");
+      this.takeOver(obj, shape);
+      return shape;
+    }
+
+    if (rulesOf(obj, { ignoreLock: true }).onToolboxImage !== "fill") return null;
+
+    obj.set({ bindings });
+    this.canvas.requestRenderAll();
+    return obj;
+  }
+
+  /**
+   * Un calque en remplace un autre à sa place : son layout (container, enfant) et son
+   * verrouillage — sinon ses enfants restent orphelins, ou il sort de son container — et
+   * son rang dans la pile (sous ses enfants).
+   */
+  private takeOver(previous: FabricObject, next: FabricObject): void {
+    const layout = previous.get("layout") as LayoutData | undefined;
+    if (layout) next.set("layout", JSON.parse(JSON.stringify(layout)));
+    const lockMode = getLockMode(previous);
+    if (lockMode !== "free") applyLockMode(next, lockMode);
+
+    const zIndex = this.canvas.getObjects().indexOf(previous);
+    this.canvas.remove(previous);
+    this.canvas.add(next);
+    if (zIndex >= 0 && zIndex < this.canvas.getObjects().length) {
+      this.canvas.moveObjectTo(next, zIndex);
+    }
+
+    this.canvas.setActiveObject(next);
+    this.canvas.renderAll();
   }
 
   /**
@@ -633,6 +672,26 @@ export class LayerManager {
     // Fallback sécurisé
     return "heart";
   }
+}
+
+/** La forme d'une découpe de forme-image, à ses dimensions affichées — l'inverse de clipOfShape. */
+function shapeOfFrame(frame: ImageFrame): FabricObject {
+  const { w, h } = scaledSize(frame);
+  // Pas de contour : le défaut fabric (1) déborderait du cadre
+  const fill = "#ffffff";
+  const strokeWidth = 0;
+  const clipShape = frame.clipShape || "rect";
+
+  if (clipShape === "circle") {
+    const circle = new FabCircle({ radius: Math.min(w, h) / 2, fill, strokeWidth });
+    circle.setSize(w, h);
+    return circle;
+  }
+
+  const clipData = clipShape === "rect" ? undefined : frame.clipData ?? clipDataFor(clipShape);
+  if (clipData) return FabPath.fromPathData({ d: clipData.d }, { id: clipShape, fill, strokeWidth, width: w, height: h });
+
+  return new FabRect({ width: w, height: h, rx: frame.cornerRadius, ry: frame.cornerRadius, fill, strokeWidth });
 }
 
 /**

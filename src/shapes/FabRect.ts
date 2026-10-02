@@ -1,5 +1,6 @@
 import { Rect, classRegistry, controlsUtils, type TOptions, type RectProps } from "#fabric";
 import { installLockMethods, type Lockable } from "./lockMixin";
+import { installUserSlotRendering } from "../userSlots";
 import type { LockMode } from "../locking";
 
 const { changeObjectWidth, changeObjectHeight } = controlsUtils;
@@ -70,4 +71,5 @@ export class FabRect extends Rect implements Lockable {
 }
 
 installLockMethods(FabRect.prototype);
+installUserSlotRendering(FabRect.prototype);
 classRegistry.setClass(FabRect, "Rect");

@@ -13,7 +13,8 @@ import type { FabricObject } from "#fabric";
  *   (guideColor), dessinée en overlay au coin du calque.
  */
 
-export type BindingSpec = { expr?: string; scope?: string; resolved?: boolean };
+/** `hint` : la consigne d'une image à fournir (scope `user`, cf. userSlots). */
+export type BindingSpec = { expr?: string; scope?: string; resolved?: boolean; hint?: string };
 export type Bindings = Record<string, BindingSpec>;
 
 export function pendingBindings(obj: FabricObject): Bindings {
@@ -73,13 +74,14 @@ export function drawBindingBadge(
   ctx: CanvasRenderingContext2D,
   obj: FabricObject,
   color: string,
+  userSlotLabel = DEFAULT_USER_SLOT_LABEL,
 ): void {
   if (!hasPendingBindings(obj)) return;
 
   const corner = (obj as unknown as { oCoords?: Record<string, { x: number; y: number }> }).oCoords?.tl;
   if (!corner) return;
 
-  const label = bindingLabel(obj);
+  const label = bindingLabel(obj, userSlotLabel);
   ctx.save();
   // `destination-over` : le badge se glisse SOUS ce qui est déjà dessiné — il passe donc
   // derrière les poignées au lieu de les masquer.
@@ -104,9 +106,13 @@ export function drawBindingBadge(
   ctx.restore();
 }
 
-/** Ce que le badge dit : les tokens liés ($NOM) et les slots (media[i]) du calque. */
-function bindingLabel(obj: FabricObject): string {
+/** Le badge d'une image à fournir — l'hôte passe sa traduction (`EditorConfig.userSlotLabel`). */
+export const DEFAULT_USER_SLOT_LABEL = "À fournir";
+
+/** Ce que le badge dit : les tokens liés ($NOM), les slots (media[i]) et les images à fournir. */
+function bindingLabel(obj: FabricObject, userSlotLabel: string): string {
   const labels = Object.values(pendingBindings(obj)).flatMap((spec) => {
+    if (spec?.scope === "user") return [userSlotLabel];
     const expr = String(spec?.expr ?? "");
     const tokens = expr.match(/\$\w+/g) || [];
     return tokens.length ? tokens : expr.match(/^media\[/) ? [expr] : [];
