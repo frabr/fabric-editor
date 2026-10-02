@@ -17,6 +17,7 @@ import { DRAG_PREVIEW_KEY } from "./types";
 import type { EditorConfig, LayerData, FontsConfig, ShapeType } from "./types";
 import { initYoga } from "./layout/yoga-engine";
 import { isTextObject } from "./layout/geometry";
+import { rulesOf } from "./capabilities";
 
 /**
  * Éditeur d'images basé sur Fabric.js
@@ -930,12 +931,13 @@ export class FabricEditor {
    */
   findImageAtPoint(x: number, y: number): FabricImage | ImageFrame | null {
     const target = this.findDropTargetAtPoint(x, y);
-    if (!target || target.layerType === "shape") return null;
+    if (!target || rulesOf(target).onToolboxImage !== "replaceImage") return null;
     return target as FabricImage | ImageFrame;
   }
 
   /**
-   * Trouve l'objet "droppable" sous un point : ImageFrame, FabricImage, ou shape.
+   * Trouve l'objet qui réagit à une image de la toolbox sous un point (le plus haut :
+   * une forme la prend en fond, une forme-image remplace la sienne — voir rulesOf).
    * Utilisé par DropHandler pour le drop d'images sur images ET sur formes.
    */
   findDropTargetAtPoint(x: number, y: number): FabricObject | null {
@@ -945,32 +947,13 @@ export class FabricEditor {
     const objects = this.canvas.getObjects().slice().reverse();
 
     for (const obj of objects) {
-      // Ignorer l'image de fond (legacy) et tout calque INERTE (evented false — le fond
-      // promu, les fonds passthrough) : un fond réactif au drop, plein cadre, capterait
-      // tous les drops et interdirait d'en poser un seul. Le fond se change par le drop
-      // en bord ou la promotion, jamais par le drop direct.
-      if (obj.get("layerId") === "originalImage") continue;
-      if ((obj as FabricObject & { evented?: boolean }).evented === false) continue;
-
-      // Ignorer la preview de drag (elle suit le curseur, elle matcherait toujours)
+      // La preview de drag suit le curseur : elle matcherait toujours
       if (obj.get(DRAG_PREVIEW_KEY)) continue;
-
-      const layerType = (obj as { layerType?: string }).layerType;
-
-      // ImageFrame
-      if (layerType === "imageFrame" && obj.containsPoint(point)) {
-        return obj;
-      }
-
-      // Shape (rect, circle, heart, hexagon, etc.)
-      if (layerType === "shape" && obj.containsPoint(point)) {
-        return obj;
-      }
-
-      // Image legacy
-      if (obj instanceof FabricImage && obj.containsPoint(point)) {
-        return obj;
-      }
+      // Le fond (legacy, promu, passthrough) est hors-jeu : un fond réactif au drop,
+      // plein cadre, capterait tous les drops — il se change par le drop en bord ou
+      // la promotion, jamais par le drop direct.
+      if (!rulesOf(obj).onToolboxImage) continue;
+      if (obj.containsPoint(point)) return obj;
     }
 
     return null;

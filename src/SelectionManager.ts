@@ -4,7 +4,7 @@ import { isPositionLocked } from "./locking";
 import type { LayoutData } from "./layout/types";
 import { isTextObject } from "./layout/geometry";
 import type { SelectionCallbacks, ControlOption } from "./types";
-import type { Controllable } from "./shapes/controlsMixin";
+import { rulesOf } from "./capabilities";
 
 /**
  * Gère la sélection des objets sur le canvas
@@ -122,11 +122,7 @@ export class SelectionManager {
    */
   getAvailableControls(): ControlOption[] {
     const obj = this.current;
-    if (!obj) return [];
-    if (typeof (obj as unknown as Controllable).getControlOptions === "function") {
-      return (obj as unknown as Controllable).getControlOptions();
-    }
-    return [];
+    return obj ? rulesOf(obj).options : [];
   }
 
   /**

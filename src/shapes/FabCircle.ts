@@ -1,12 +1,11 @@
 import { Circle, classRegistry, controlsUtils, type TOptions, type CircleProps } from "#fabric";
 import { installLockMethods, type Lockable } from "./lockMixin";
-import { installControlOptions, type Controllable } from "./controlsMixin";
 import { isTransformCentered } from "./resizeUtils";
 import type { LockMode } from "../locking";
 
 const { changeObjectWidth, changeObjectHeight, getLocalPoint } = controlsUtils;
 
-export class FabCircle extends Circle implements Lockable, Controllable {
+export class FabCircle extends Circle implements Lockable {
   static type = "Circle";
   static customProperties = ["layerId", "layerType", "lockMode", "lockContent"];
 
@@ -18,7 +17,6 @@ export class FabCircle extends Circle implements Lockable, Controllable {
   declare isPositionLocked: () => boolean;
   declare isStyleLocked: () => boolean;
   declare isContentLocked: () => boolean;
-  declare getControlOptions: () => import("../types").ControlOption[];
 
   /** Natural diameter — stays fixed, scale absorbs sizing. */
   private _naturalSize: number;
@@ -96,5 +94,4 @@ export class FabCircle extends Circle implements Lockable, Controllable {
 }
 
 installLockMethods(FabCircle.prototype);
-installControlOptions(FabCircle.prototype, ["outline", "clip", "color"]);
 classRegistry.setClass(FabCircle, "Circle");

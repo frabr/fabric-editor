@@ -1,4 +1,4 @@
-import { FabricObject, Point, Rect } from "#fabric";
+import { FabricObject, Point } from "#fabric";
 import type { DesignCanvas } from "./DesignCanvas";
 import { CanvasGuides } from "./ui/guides";
 import { runLayout, relayoutSingle, bubbleUpLayout } from "./layout/reconcile";
@@ -12,6 +12,7 @@ import {
 } from "./layout/types";
 import { pointInObject, isTextObject } from "./layout/geometry";
 import type { CustomTextbox } from "./controls/CustomTextbox";
+import { rulesOf } from "./capabilities";
 
 /** Size presets of the UI (same vocabulary for containers and texts). */
 export type SizePreset = "hug" | "hug-y" | "fixed";
@@ -664,8 +665,7 @@ export class LayoutManager {
 
   /**
    * Among the children of `container`, find the first one under the cursor
-   * that is itself a valid drop target — a shape (not text) that could
-   * become a container.
+   * that can host (see rulesOf) — it would become a sub-container.
    */
   private findChildDropTarget(
     cursor: { x: number; y: number },
@@ -677,8 +677,7 @@ export class LayoutManager {
     const children = resolveContainerChildren(this.canvas.getObjects(), container);
     for (const { obj } of children) {
       if (obj === exclude) continue;
-      const layerType = (obj as any).layerType;
-      if (layerType !== "shape" && !(obj instanceof Rect)) continue;
+      if (!rulesOf(obj).hosts) continue;
       if (pointInObject(cursor, obj)) return obj;
     }
     return null;
@@ -795,16 +794,13 @@ export class LayoutManager {
 
     for (const obj of objects) {
       if (obj === exclude) continue;
-      if ((obj as any).excludeFromExport) continue;
+      if (!rulesOf(obj).hosts) continue;
       const layout = obj.get?.("layout") as LayoutData | undefined;
       if (layout?.child) {
         // Allow child shapes as targets when in group-edit mode
         // (enables nesting: drag into a child shape to make it a sub-container)
         if (!activeGroup || layout.child.parentId !== activeGroup) continue;
       }
-      if ((obj.get?.("layerId") as string) === "originalImage") continue;
-      const layerType = (obj as any).layerType;
-      if (layerType !== "shape" && !(obj instanceof Rect)) continue;
 
       if (pointInObject(point, obj)) return obj;
     }

@@ -1,11 +1,10 @@
 import { Rect, classRegistry, controlsUtils, type TOptions, type RectProps } from "#fabric";
 import { installLockMethods, type Lockable } from "./lockMixin";
-import { installControlOptions, type Controllable } from "./controlsMixin";
 import type { LockMode } from "../locking";
 
 const { changeObjectWidth, changeObjectHeight } = controlsUtils;
 
-export class FabRect extends Rect implements Lockable, Controllable {
+export class FabRect extends Rect implements Lockable {
   static type = "Rect";
   static customProperties = ["layerId", "layerType", "lockMode", "lockContent"];
 
@@ -17,7 +16,6 @@ export class FabRect extends Rect implements Lockable, Controllable {
   declare isPositionLocked: () => boolean;
   declare isStyleLocked: () => boolean;
   declare isContentLocked: () => boolean;
-  declare getControlOptions: () => import("../types").ControlOption[];
 
   constructor(options?: Partial<TOptions<RectProps>>) {
     super({
@@ -72,5 +70,4 @@ export class FabRect extends Rect implements Lockable, Controllable {
 }
 
 installLockMethods(FabRect.prototype);
-installControlOptions(FabRect.prototype, ["outline", "clip", "color", "corner_radius"]);
 classRegistry.setClass(FabRect, "Rect");

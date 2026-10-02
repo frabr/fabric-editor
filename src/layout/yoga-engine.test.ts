@@ -41,6 +41,11 @@ function mockObj(layerId: string, w: number, h: number): any {
         Object.assign(this, props);
       }
     },
+    /** Same contract as FabRect.setSize: visual size as width/height. */
+    setSize(w: number, h: number) {
+      this.width = w;
+      this.height = h;
+    },
     getRelativeCenterPoint() {
       return { x: this.left + this.width / 2, y: this.top + this.height / 2 };
     },

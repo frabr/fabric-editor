@@ -17,7 +17,7 @@
  */
 import type { FabricObject } from "#fabric";
 import type { ResolvedChild, ContainerData, SizingData } from "./types";
-import { scaledSize, isTextObject, type LayoutText } from "./geometry";
+import { scaledSize, setShapeSize, isTextObject, type LayoutText } from "./geometry";
 
 // ── Yoga singleton ─────────────────────────────────────────────────
 
@@ -137,14 +137,10 @@ export function yogaLayout(
   // Yoga may shrink them again if space is still tight.
   for (const { obj } of children) {
     if (isTextObject(obj)) continue;
-    const ext = obj as any;
-    if (ext._layoutIntrinsicW != null) {
-      obj.set({ width: ext._layoutIntrinsicW });
-      delete ext._layoutIntrinsicW;
-    }
-    if (ext._layoutIntrinsicH != null) {
-      obj.set({ height: ext._layoutIntrinsicH });
-      delete ext._layoutIntrinsicH;
+    const ext = obj as { _layoutIntrinsic?: { w: number; h: number } };
+    if (ext._layoutIntrinsic) {
+      setShapeSize(obj, ext._layoutIntrinsic.w, ext._layoutIntrinsic.h);
+      delete ext._layoutIntrinsic;
     }
   }
 
@@ -237,24 +233,20 @@ export function yogaLayout(
     }
 
     if (!isTextObject(obj)) {
-      const scaleX = obj.scaleX || 1;
-      const scaleY = obj.scaleY || 1;
+      const changedW = Math.abs(computedW - currentSize.w) > 0.5;
+      const changedH = Math.abs(computedH - currentSize.h) > 0.5;
 
       // Preserve intrinsic size when Yoga shrinks the child.
       // This lets the child grow back when space becomes available.
-      const ext = obj as any;
-      if (computedW < currentSize.w - 0.5 && ext._layoutIntrinsicW == null) {
-        ext._layoutIntrinsicW = obj.width;
-      }
-      if (computedH < currentSize.h - 0.5 && ext._layoutIntrinsicH == null) {
-        ext._layoutIntrinsicH = obj.height;
+      const ext = obj as { _layoutIntrinsic?: { w: number; h: number } };
+      if ((computedW < currentSize.w - 0.5 || computedH < currentSize.h - 0.5) && !ext._layoutIntrinsic) {
+        ext._layoutIntrinsic = currentSize;
       }
 
-      if (Math.abs(computedW - currentSize.w) > 0.5) {
-        obj.set({ width: computedW / scaleX });
-      }
-      if (Math.abs(computedH - currentSize.h) > 0.5) {
-        obj.set({ height: computedH / scaleY });
+      // Through the object's own sizing (a circle or a path sizes by its scale, an
+      // image frame by its frame), never a raw width/height
+      if (changedW || changedH) {
+        setShapeSize(obj, changedW ? computedW : currentSize.w, changedH ? computedH : currentSize.h);
       }
     }
 

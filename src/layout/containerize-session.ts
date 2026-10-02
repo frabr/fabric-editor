@@ -151,9 +151,7 @@ export class ContainerizeSession {
       detachChild(this.text);
 
       // Restore container to snapshot (before the drag resized it)
-      this.shape.set({
-        width: this.snapshot.shape.width, height: this.snapshot.shape.height,
-      });
+      restoreShapeSize(this.shape, this.snapshot.shape);
       this.shape.set("layout", this.snapshot.shape.layout ?? undefined);
 
       this.shape.setCoords();
@@ -162,11 +160,10 @@ export class ContainerizeSession {
       return;
     }
 
+    restoreShapeSize(this.shape, this.snapshot.shape);
     this.shape.set({
       left: this.snapshot.shape.left, top: this.snapshot.shape.top,
       originX: this.snapshot.shape.originX, originY: this.snapshot.shape.originY,
-      width: this.snapshot.shape.width, height: this.snapshot.shape.height,
-      scaleX: this.snapshot.shape.scaleX, scaleY: this.snapshot.shape.scaleY,
       stroke: this.snapshot.shape.stroke, strokeWidth: this.snapshot.shape.strokeWidth,
     });
     this.shape.set("layout", this.snapshot.shape.layout ?? undefined);
@@ -220,6 +217,14 @@ function takeSnapshot(shape: FabricObject, text: FabricObject): AttachSnapshot {
       layout: cloneLayout(text),
     },
   };
+}
+
+/**
+ * Back to the snapshot's visual size, through the shape's own sizing (a rect sets
+ * width/height, a circle or a path its scale, an image frame its frame).
+ */
+function restoreShapeSize(shape: FabricObject, snap: AttachSnapshot["shape"]): void {
+  setShapeSize(shape, snap.width * (snap.scaleX || 1), snap.height * (snap.scaleY || 1));
 }
 
 function normalizeShapeOrigin(shape: FabricObject): void {

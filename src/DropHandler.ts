@@ -3,6 +3,7 @@ import type { FabricEditor } from "./FabricEditor";
 import { DRAG_PREVIEW_KEY } from "./types";
 import type { ImageLayerOptions, ShapeType, TextLayerOptions, ShapeLayerOptions } from "./types";
 import { isContentLocked } from "./locking";
+import { rulesOf } from "./capabilities";
 import { ImageFrame } from "./ImageFrame";
 
 /** Couleur pour le feedback drag & drop via les contrôles de sélection */
@@ -183,8 +184,7 @@ export class DropHandler {
 
     try {
       if (shouldReplace && target) {
-        const isShape = (target as { layerType?: string }).layerType === "shape";
-        if (isShape) {
+        if (rulesOf(target as FabricObject).onToolboxImage === "fill") {
           // Drop sur une forme → convertir en ImageFrame avec la forme comme masque
           const frame = await this.editor.layers.replaceShapeWithImage(target, url);
           this.config.onSuccess();

@@ -6,11 +6,11 @@ import {
   type TPointerEvent,
   type Transform,
   type Canvas,
+  type Point,
   LayoutManager,
   FixedLayout,
 } from "#fabric";
 import type { ShapeType, LockMode, ControlOption } from "./types";
-import { installControlOptions, type Controllable } from "./shapes/controlsMixin";
 import {
   createCircle,
   createRect,
@@ -47,6 +47,10 @@ export interface ImageFrameOptions {
 }
 
 export interface ImageFrameData {
+  originX?: "left" | "center" | "right";
+  originY?: "top" | "center" | "bottom";
+  stroke?: string;
+  strokeWidth?: number;
   type: "ImageFrame";
   left: number;
   top: number;
@@ -85,6 +89,8 @@ interface TransformState extends Transform {
   _startPointerY?: number;
   _startLeft?: number;
   _startTop?: number;
+  /** Point du bord (ou coin) opposé, fixe pendant le resize. */
+  _anchor?: Point;
 }
 
 /**
@@ -314,6 +320,12 @@ export class ImageFrame extends Group {
     this.dirty = true;
   }
 
+  /** Taille visuelle (contrat des formes, utilisé par le layout) : le frame, image en cover. */
+  setSize(w: number, h: number): void {
+    this.set({ scaleX: 1, scaleY: 1 });
+    this.resizeFrame(w, h);
+  }
+
   /**
    * Applique une forme de clip au frame
    */
@@ -343,6 +355,28 @@ export class ImageFrame extends Group {
     this._applyClip("rect");
     this.dirty = true;
     this.canvas?.requestRenderAll();
+  }
+
+  getCornerRadius(): number {
+    return this.cornerRadius;
+  }
+
+  /**
+   * Contour (capacité de forme) : un Group ne dessine pas de trait — on trace la forme
+   * de découpe par-dessus, hors clip, trait centré sur le bord comme pour une forme.
+   */
+  render(ctx: CanvasRenderingContext2D): void {
+    super.render(ctx);
+    const outline = this.clipPath;
+    if (!this.visible || !outline || !this.stroke || !this.strokeWidth) return;
+
+    const saved = { fill: outline.fill, stroke: outline.stroke, strokeWidth: outline.strokeWidth };
+    ctx.save();
+    this.transform(ctx);
+    outline.set({ fill: "transparent", stroke: this.stroke, strokeWidth: this.strokeWidth });
+    outline.render(ctx);
+    outline.set(saved);
+    ctx.restore();
   }
 
   // ─────────────────────────────────────────────────────────────
@@ -446,13 +480,19 @@ export class ImageFrame extends Group {
 
         const pointer = canvas.getScenePoint(eventData);
 
+        // Le bord (ou coin) opposé reste fixe, quelle que soit l'origine de l'objet (une
+        // forme-image devenue container est en origine haut-gauche)
+        const anchorX = changeX === 1 ? "left" : changeX === -1 ? "right" : "center";
+        const anchorY = changeY === 1 ? "top" : changeY === -1 ? "bottom" : "center";
         if (transform._startWidth === undefined) {
+          const center = target.getCenterPoint();
           transform._startWidth = target.frameWidth;
           transform._startHeight = target.frameHeight;
           transform._startPointerX = pointer.x;
           transform._startPointerY = pointer.y;
-          transform._startLeft = target.left;
-          transform._startTop = target.top;
+          transform._startLeft = center.x;
+          transform._startTop = center.y;
+          transform._anchor = target.getPositionByOrigin(anchorX, anchorY);
         }
 
         const rotated = rotatePoint(
@@ -538,23 +578,13 @@ export class ImageFrame extends Group {
           }
         }
 
-        // Calculer le décalage pour garder le coin opposé fixe
-        // L'objet a son origin au centre, donc on doit compenser le déplacement
-        const deltaWidth = newWidth - transform._startWidth;
-        const deltaHeight = newHeight - transform._startHeight!;
-
-        // Le décalage dépend de quel coin/bord est tiré
-        // changeX: -1 = gauche, 1 = droite, 0 = pas de changement horizontal
-        // changeY: -1 = haut, 1 = bas, 0 = pas de changement vertical
-        const offsetX = (deltaWidth / 2) * changeX;
-        const offsetY = (deltaHeight / 2) * changeY;
-
-        // Appliquer la rotation au décalage
-        const rotatedOffset = rotatePoint(offsetX, offsetY, -target.angle);
-
-        target.left = transform._startLeft! + rotatedOffset.x;
-        target.top = transform._startTop! + rotatedOffset.y;
         target.resizeFrame(newWidth, newHeight);
+        target.setPositionByOrigin(transform._anchor!, anchorX, anchorY);
+        target.setCoords();
+
+        // Même événement que les poignées des formes : le layout (ResizeSession) suit
+        target.fire("resizing" as any);
+        (canvas as any).fire?.("object:resizing", { target, e: eventData, transform, pointer });
         canvas.requestRenderAll();
         return true;
       };
@@ -566,7 +596,7 @@ export class ImageFrame extends Group {
         const x = key.includes("l") ? -1 : 1;
         const y = key.includes("t") ? -1 : 1;
         this.controls[key].actionHandler = resizeHandler(x as -1 | 1, y as -1 | 1);
-        this.controls[key].actionName = "resizeFrame";
+        this.controls[key].actionName = "resizing";
       }
     });
 
@@ -579,7 +609,7 @@ export class ImageFrame extends Group {
     ].forEach(({ key, x, y }) => {
       if (this.controls[key]) {
         this.controls[key].actionHandler = resizeHandler(x as -1 | 0 | 1, y as -1 | 0 | 1);
-        this.controls[key].actionName = "resizeFrame";
+        this.controls[key].actionName = "resizing";
       }
     });
   }
@@ -607,6 +637,8 @@ export class ImageFrame extends Group {
       type: "ImageFrame",
       left: this.left,
       top: this.top,
+      originX: this.originX,
+      originY: this.originY,
       angle: this.angle,
       scaleX: this.scaleX,
       scaleY: this.scaleY,
@@ -619,6 +651,8 @@ export class ImageFrame extends Group {
       lockMode: base.lockMode,
       lockContent: base.lockContent,
       opacity: this.opacity,
+      stroke: this.stroke || undefined,
+      strokeWidth: this.stroke ? this.strokeWidth : undefined,
       image: {
         src: this.imageSrc,
         offsetX: this._imageOffsetX,
@@ -645,6 +679,11 @@ export class ImageFrame extends Group {
     // Le fromObject est manuel (contrairement aux shapes, servies par le générique de
     // fabric) : les extras sérialisés doivent être restaurés explicitement.
     if ((data as any).layout) frame.set("layout", (data as any).layout);
+
+    // left/top sont exprimés dans l'origine sauvegardée (haut-gauche pour une forme-image
+    // devenue container) ; absente (documents d'avant), c'est le centre par défaut.
+    if (data.originX) frame.set({ originX: data.originX, originY: data.originY ?? data.originX });
+    if (data.stroke) frame.set({ stroke: data.stroke, strokeWidth: data.strokeWidth ?? 4 });
 
     // Restaurer les dimensions du frame
     frame.frameWidth = data.frameWidth;
@@ -718,6 +757,5 @@ export class ImageFrame extends Group {
 }
 
 // Enregistrer la classe pour la sérialisation Fabric.js
-installControlOptions(ImageFrame.prototype, ["clip"]);
 classRegistry.setClass(ImageFrame);
 classRegistry.setClass(ImageFrame, "ImageFrame");

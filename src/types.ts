@@ -112,7 +112,8 @@ export interface ObjectControlsConfig {
   options: ControlOption[];
 }
 
-export type ControlOption = "clip" | "color" | "font" | "outline" | "corner_radius";
+/** `image` : les capacités d'image (remplacer, recadrer, promouvoir en fond). */
+export type ControlOption = "clip" | "color" | "font" | "outline" | "corner_radius" | "image";
 
 // Callbacks de sélection
 export interface SelectionCallbacks {

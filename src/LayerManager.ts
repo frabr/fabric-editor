@@ -5,6 +5,7 @@ import {
   Rect,
   Path,
   Circle,
+  util,
 } from "#fabric";
 import type { DesignCanvas } from "./DesignCanvas";
 import { CustomTextbox } from "./controls/CustomTextbox";
@@ -16,6 +17,7 @@ import { FabRect } from "./shapes/FabRect";
 import { FabCircle } from "./shapes/FabCircle";
 import { FabPath } from "./shapes/FabPath";
 import { isValidShape } from "./shapes";
+import type { ClipData } from "./shapes/registry";
 import { scaledSize } from "./layout/geometry";
 import { applyLockMode, getLockMode, type LockMode } from "./locking";
 import { ImageFrame, type ImageFrameData } from "./ImageFrame";
@@ -353,9 +355,7 @@ export class LayerManager {
     shape: FabricObject,
     imageUrl: string
   ): Promise<ImageFrame> {
-    // Déterminer le clipShape depuis l'id de la shape (les factories le positionnent)
-    const shapeId = (shape as { id?: string }).id || "";
-    const clipShape: ShapeType = isValidShape(shapeId) ? shapeId : "rect";
+    const { clipShape, clipData, cornerRadius } = clipOfShape(shape);
 
     // Récupérer les dimensions affichées (scaled)
     const { w: displayedWidth, h: displayedHeight } = scaledSize(shape);
@@ -367,10 +367,6 @@ export class LayerManager {
     // Charger l'image
     const img = await FabricImage.fromURL(imageUrl, { crossOrigin: "anonymous" });
 
-    // Récupérer le corner radius si c'est un FabRect
-    const cornerRadius =
-      shape instanceof FabRect ? shape.getCornerRadius() : 0;
-
     // Créer l'ImageFrame aux dimensions de la shape
     const frame = new ImageFrame(img, {
       left: center.x,
@@ -378,12 +374,23 @@ export class LayerManager {
       angle: shape.angle,
       layerId: (shape as { layerId?: string }).layerId || this.generateId(),
       clipShape,
+      clipData,
       frameWidth: displayedWidth,
       frameHeight: displayedHeight,
       cornerRadius,
     });
 
-    // Supprimer la shape et insérer l'ImageFrame au même z-index
+    // La forme-image reprend la place de la forme : son layout (container, enfant), son
+    // verrouillage et ses bindings — sinon ses enfants restent orphelins, ou elle sort
+    // de son container.
+    const layout = shape.get("layout") as LayoutData | undefined;
+    if (layout) frame.set("layout", JSON.parse(JSON.stringify(layout)));
+    const lockMode = getLockMode(shape);
+    if (lockMode !== "free") applyLockMode(frame, lockMode);
+    const bindings = shape.get("bindings");
+    if (bindings) frame.set("bindings", bindings);
+
+    // Supprimer la shape et insérer l'ImageFrame au même z-index (sous ses enfants)
     this.canvas.remove(shape);
     this.canvas.add(frame);
     if (zIndex >= 0 && zIndex < this.canvas.getObjects().length) {
@@ -628,3 +635,19 @@ export class LayerManager {
   }
 }
 
+/**
+ * La découpe de la forme-image, prise sur la géométrie de la forme elle-même — pas
+ * sur son id dans le catalogue, qui peut ne pas y être (paths insérés en ligne, forme
+ * de groupe absente du registre de cet éditeur) et donnait un rectangle.
+ * Un groupe de paths (plusieurs régions) n'a pas de découpe unique : rectangle.
+ */
+function clipOfShape(shape: FabricObject): { clipShape: ShapeType; clipData?: ClipData; cornerRadius: number } {
+  if (shape instanceof FabRect) return { clipShape: "rect", cornerRadius: shape.getCornerRadius() };
+  if (shape instanceof FabCircle) return { clipShape: "circle", cornerRadius: 0 };
+  if (shape instanceof FabPath) {
+    const id = (shape as { id?: string }).id;
+    const clipData: ClipData = { d: util.joinPath(shape.path), width: shape.width, height: shape.height };
+    return { clipShape: id && isValidShape(id) ? id : (id || "custom"), clipData, cornerRadius: 0 };
+  }
+  return { clipShape: "rect", cornerRadius: 0 };
+}

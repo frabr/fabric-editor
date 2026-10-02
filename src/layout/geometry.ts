@@ -15,9 +15,15 @@ export function scaledSize(obj: FabricObject): { w: number; h: number } {
   };
 }
 
-/** Set the visual size of a shape via its setSize() method. */
+/**
+ * Set the visual size of an object through its own setSize() (a rect sets its
+ * width/height, a circle or a path its scale, an image frame its frame). Without
+ * one (a group of paths), scale it.
+ */
 export function setShapeSize(obj: FabricObject, w: number, h: number): void {
-  (obj as any).setSize(w, h);
+  const sized = obj as FabricObject & { setSize?: (w: number, h: number) => void };
+  if (typeof sized.setSize === "function") sized.setSize(w, h);
+  else obj.set({ scaleX: w / (obj.width || 1), scaleY: h / (obj.height || 1) });
 }
 
 /** Top-left corner in canvas coordinates, regardless of originX/Y. */

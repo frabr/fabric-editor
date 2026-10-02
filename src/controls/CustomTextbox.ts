@@ -1,5 +1,4 @@
 import { Textbox, Point, controlsUtils } from "#fabric";
-import { installControlOptions } from "../shapes/controlsMixin";
 import { type LayoutData, type SizingData, type TextOverflow } from "../layout/types";
 import { resolveTextBox, type TextConstraint, type TextMeasure } from "../layout/text-box";
 
@@ -134,6 +133,8 @@ export class CustomTextbox extends Textbox {
   }
 
   private _applyBox(constraint: TextConstraint | "as-stored"): void {
+    // Avant la mesure : elle mute l'objet (largeur, police) le temps de résoudre la boîte
+    const before = { width: this.width, height: this.height, fontSize: this.fontSize };
     const box = resolveTextBox({
       sizing: this.sizing,
       overflow: this.textOverflow,
@@ -149,6 +150,13 @@ export class CustomTextbox extends Textbox {
     this._wrapAt(box.width);
     this.height = box.height;
     this._overflowing = box.overflowing;
+
+    // Affectations directes (pas de set()) : Fabric ne sait pas que son cache de rendu
+    // est périmé — sans ça, un texte recalculé par le layout s'affiche dans son ancienne
+    // boîte jusqu'à la prochaine interaction.
+    if (before.width !== this.width || before.height !== this.height || before.fontSize !== this.fontSize) {
+      this.dirty = true;
+    }
     // Le cache Fabric est taillé sur la boîte : un débordement visible doit s'en passer.
     this.objectCaching = !(box.overflowing && this.textOverflow === "visible");
   }
@@ -511,7 +519,5 @@ export class CustomTextbox extends Textbox {
     };
   }
 }
-
-installControlOptions(CustomTextbox.prototype, ["color", "font"]);
 
 export default CustomTextbox;

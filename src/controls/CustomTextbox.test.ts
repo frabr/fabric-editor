@@ -245,6 +245,15 @@ describe("Texte dans un container", () => {
     expect(t.textLines.length).toBe(lines);
   });
 
+  it("un texte recalculé par le layout invalide son cache de rendu", () => {
+    // 320 : pas 220, dont la place intérieure (200) est la largeur par défaut d'une Textbox
+    const c = container("c", 320, 50, { sizing: { x: "fixed", y: "hug" }, container: { padding: PAD } });
+    const t = text(LONG, { layout: { child: { parentId: "c" } } });
+    t.dirty = false;
+    runLayout([c, t]);
+    expect(t.dirty).toBe(true);
+  });
+
   it("un enfant chargé sans relayout garde sa taille effective sauvegardée", () => {
     const t = text(LONG, { fontSize: 18, fontSizeIntent: 32, layout: { child: { parentId: "c" } } });
     expect(t.fontSize).toBe(18);
