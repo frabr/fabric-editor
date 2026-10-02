@@ -710,6 +710,13 @@ declare class LayerManager {
      * drag externe (DropHandler).
      */
     createShape(options?: ShapeLayerOptions): FabricObject;
+    /** Crée un cadre à fournir (un rect lié, cf. userSlots) sans l'ajouter au canvas. */
+    createUserSlot(options?: ShapeLayerOptions & {
+        hint?: string;
+    }): FabricObject;
+    addUserSlot(options?: ShapeLayerOptions & {
+        hint?: string;
+    }): FabricObject;
     addShape(options?: ShapeLayerOptions): FabricObject;
     /**
      * Groupe plusieurs objets ensemble

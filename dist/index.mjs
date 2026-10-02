@@ -2632,6 +2632,18 @@ var LayerManager = class {
     shape.set({ layerId, layerType: "shape" });
     return shape;
   }
+  /** Crée un cadre à fournir (un rect lié, cf. userSlots) sans l'ajouter au canvas. */
+  createUserSlot(options = {}) {
+    const { hint = "", ...shapeOptions2 } = options;
+    const shape = this.createShape({ fill: "#ffffff", ...shapeOptions2, shapeType: "rect" });
+    shape.set({ bindings: { [USER_SLOT_FIELD]: { scope: USER_SCOPE, hint } } });
+    return shape;
+  }
+  addUserSlot(options = {}) {
+    const shape = this.createUserSlot(options);
+    this.add(shape);
+    return shape;
+  }
   addShape(options = {}) {
     const shape = this.createShape(options);
     this.add(shape);
@@ -6868,7 +6880,7 @@ var _FabricEditor = class _FabricEditor {
   }
   /** Les images à fournir de la page (userSlots), boîtes en coordonnées scène. */
   userSlots() {
-    return collectUserSlots(this.layers.all);
+    return collectUserSlots(this.layers.all.filter((obj) => !obj.get(DRAG_PREVIEW_KEY)));
   }
   /**
    * Prévient l'hôte quand les images à fournir changent — apparition, disparition,
@@ -7039,7 +7051,8 @@ var HIGHLIGHT_COLOR = "#3b82f6";
 var KIND_CAPABILITIES = {
   image: { layout: false, replaceTarget: true },
   text: { layout: true, replaceTarget: false },
-  shape: { layout: true, replaceTarget: false }
+  shape: { layout: true, replaceTarget: false },
+  userSlot: { layout: false, replaceTarget: true }
 };
 var DropHandler = class {
   constructor(editor, config) {
@@ -7165,6 +7178,8 @@ var DropHandler = class {
         if (this.drag === drag) drag.object = img;
       }).catch(() => {
       });
+    } else if (payload.kind === "userSlot") {
+      drag.object = this.createUserSlotPreview(payload.opts);
     } else {
       drag.object = this.createDragObject(payload);
     }
@@ -7183,6 +7198,12 @@ var DropHandler = class {
     if (e && !this.editor.layout.isAnchored && !this.intersectsCanvas(e, object)) {
       this.cancelDrag();
       return null;
+    }
+    if (payload.kind === "userSlot") {
+      if (object && this.drag.onCanvas) this.editor.canvas.remove(object);
+      this.drag = null;
+      const result = this.dropUserSlot(e, payload.opts);
+      return result?.kind === "add" ? result.object : null;
     }
     if (payload.kind === "image") {
       if (object && this.drag.onCanvas) {
@@ -7488,6 +7509,37 @@ var DropHandler = class {
       [DRAG_PREVIEW_KEY]: true
     });
     return img;
+  }
+  /**
+   * Lâcher une image à fournir, comme une image : la cible armée (forme, forme-image)
+   * devient le cadre ; sinon — ou si elle ne peut pas (image legacy) — un cadre est posé
+   * au point de drop.
+   */
+  dropUserSlot(e, opts = {}) {
+    const target = this.state.replaceMode ? this.state.hoveredTarget : null;
+    this.clearTimer();
+    this.state.pendingTarget = null;
+    this.clearHighlight();
+    const replaced = target ? this.editor.layers.requestUserImage(target, opts.hint) : null;
+    if (replaced) {
+      this.config.onSuccess();
+      return { kind: "replace", object: replaced };
+    }
+    if (e && !this.intersectsCanvas(e, null)) return null;
+    const pointer = e ? this.editor.canvas.getScenePoint(e) : null;
+    const object = this.editor.layers.createUserSlot(opts);
+    if (pointer) object.setPositionByOrigin(new Point5(pointer.x, pointer.y), "center", "center");
+    this.editor.layers.add(object);
+    this.editor.canvas.setActiveObject(object);
+    this.editor.canvas.renderAll();
+    this.config.onSuccess();
+    return { kind: "add", object };
+  }
+  /** L'aperçu d'un cadre à fournir, translucide comme celui d'une image. */
+  createUserSlotPreview(opts = {}) {
+    const preview = this.editor.layers.createUserSlot({ ...opts, left: -9999, top: -9999 });
+    preview.set({ opacity: 0.65, selectable: false, evented: false, [DRAG_PREVIEW_KEY]: true });
+    return preview;
   }
   createDragObject(payload) {
     const offscreen = { left: -9999, top: -9999 };

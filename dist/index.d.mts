@@ -1142,6 +1142,13 @@ declare class LayerManager {
      * drag externe (DropHandler).
      */
     createShape(options?: ShapeLayerOptions): FabricObject;
+    /** Crée un cadre à fournir (un rect lié, cf. userSlots) sans l'ajouter au canvas. */
+    createUserSlot(options?: ShapeLayerOptions & {
+        hint?: string;
+    }): FabricObject;
+    addUserSlot(options?: ShapeLayerOptions & {
+        hint?: string;
+    }): FabricObject;
     addShape(options?: ShapeLayerOptions): FabricObject;
     /**
      * Groupe plusieurs objets ensemble
@@ -2231,6 +2238,14 @@ type DragPayload = {
     kind: "shape";
     shapeType: ShapeType;
     opts?: Partial<ShapeLayerOptions>;
+}
+/** Une image à fournir (userSlots) : se lâche comme une image — une forme ou une image
+ *  survolée devient le cadre, sinon un cadre est posé. */
+ | {
+    kind: "userSlot";
+    opts?: Partial<ShapeLayerOptions> & {
+        hint?: string;
+    };
 };
 interface DropHandlerConfig {
     /** Délai avant d'activer le mode remplacement (ms) */
@@ -2369,6 +2384,19 @@ declare class DropHandler {
      * drop-target detection.
      */
     private createImagePreview;
+    /**
+     * Lâcher une image à fournir, comme une image : la cible armée (forme, forme-image)
+     * devient le cadre ; sinon — ou si elle ne peut pas (image legacy) — un cadre est posé
+     * au point de drop.
+     */
+    dropUserSlot(e?: DragEvent, opts?: Partial<ShapeLayerOptions> & {
+        hint?: string;
+    }): {
+        kind: "add" | "replace";
+        object: FabricObject;
+    } | null;
+    /** L'aperçu d'un cadre à fournir, translucide comme celui d'une image. */
+    private createUserSlotPreview;
     private createDragObject;
 }
 

@@ -471,6 +471,20 @@ export class LayerManager {
     return shape;
   }
 
+  /** Crée un cadre à fournir (un rect lié, cf. userSlots) sans l'ajouter au canvas. */
+  createUserSlot(options: ShapeLayerOptions & { hint?: string } = {}): FabricObject {
+    const { hint = "", ...shapeOptions } = options;
+    const shape = this.createShape({ fill: "#ffffff", ...shapeOptions, shapeType: "rect" });
+    shape.set({ bindings: { [USER_SLOT_FIELD]: { scope: USER_SCOPE, hint } } });
+    return shape;
+  }
+
+  addUserSlot(options: ShapeLayerOptions & { hint?: string } = {}): FabricObject {
+    const shape = this.createUserSlot(options);
+    this.add(shape);
+    return shape;
+  }
+
   addShape(options: ShapeLayerOptions = {}): FabricObject {
     const shape = this.createShape(options);
     this.add(shape);

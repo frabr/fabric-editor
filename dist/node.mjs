@@ -2253,6 +2253,18 @@ var LayerManager = class {
     shape.set({ layerId, layerType: "shape" });
     return shape;
   }
+  /** Crée un cadre à fournir (un rect lié, cf. userSlots) sans l'ajouter au canvas. */
+  createUserSlot(options = {}) {
+    const { hint = "", ...shapeOptions2 } = options;
+    const shape = this.createShape({ fill: "#ffffff", ...shapeOptions2, shapeType: "rect" });
+    shape.set({ bindings: { [USER_SLOT_FIELD]: { scope: USER_SCOPE, hint } } });
+    return shape;
+  }
+  addUserSlot(options = {}) {
+    const shape = this.createUserSlot(options);
+    this.add(shape);
+    return shape;
+  }
   addShape(options = {}) {
     const shape = this.createShape(options);
     this.add(shape);

@@ -12,6 +12,7 @@ import { FabRect } from "./shapes/FabRect";
 import { FabCircle } from "./shapes/FabCircle";
 import { FabPath } from "./shapes/FabPath";
 import { ImageFrame } from "./ImageFrame";
+import { DropHandler } from "./DropHandler";
 import { applyLockMode, getLockMode } from "./locking";
 
 const PIXEL = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
@@ -210,5 +211,45 @@ describe("rendu", () => {
     it("trop petit : pas de texte", () => {
       expect(rendered(120, 80)).toEqual([]);
     });
+  });
+});
+
+describe("lâcher un cadre à fournir (DropHandler) : comme une image", () => {
+  function dropping(objects: FabricObject[], target: FabricObject | null) {
+    const layers = managerWith(objects);
+    const canvas = {
+      setActiveObject: vi.fn(), discardActiveObject: vi.fn(), renderAll: vi.fn(), requestRenderAll: vi.fn(),
+      remove: vi.fn(), getScenePoint: vi.fn(),
+    };
+    const onSuccess = vi.fn();
+    const handler = new DropHandler({ layers, canvas } as any, { getImageUrl: () => "", onSuccess } as any);
+    Object.assign((handler as any).state, { replaceMode: Boolean(target), hoveredTarget: target });
+    return { layers, onSuccess, result: handler.dropUserSlot(undefined, { width: 480, height: 360 }) };
+  }
+
+  it("sur une forme : elle devient le cadre", () => {
+    const rect = new FabRect({ width: 100, height: 100 });
+    rect.set({ layerType: "shape", layerId: "r" });
+    const { result, layers, onSuccess } = dropping([rect], rect);
+    expect(result).toEqual({ kind: "replace", object: rect });
+    expect(isUserSlot(rect)).toBe(true);
+    expect(layers.all).toHaveLength(1);
+    expect(onSuccess).toHaveBeenCalled();
+  });
+
+  it("sur une image : elle redevient un cadre, à sa place", () => {
+    const frame = imageFrame() as unknown as FabricObject;
+    const { result, layers } = dropping([frame], frame);
+    expect(result?.kind).toBe("replace");
+    expect(layers.all).toEqual([result!.object]);
+    expect(isUserSlot(result!.object)).toBe(true);
+  });
+
+  it("dans le vide : un cadre est posé, aux dimensions demandées", () => {
+    const { result, layers } = dropping([], null);
+    expect(result?.kind).toBe("add");
+    expect(layers.all).toEqual([result!.object]);
+    expect(isUserSlot(result!.object)).toBe(true);
+    expect(Math.round(result!.object.getScaledWidth())).toBe(480);
   });
 });

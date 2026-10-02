@@ -26,7 +26,10 @@ type DropTarget = FabricImage | ImageFrame | FabricObject;
 export type DragPayload =
   | { kind: "image"; url: string; opts?: Partial<ImageLayerOptions> }
   | { kind: "text"; opts?: Partial<TextLayerOptions> }
-  | { kind: "shape"; shapeType: ShapeType; opts?: Partial<ShapeLayerOptions> };
+  | { kind: "shape"; shapeType: ShapeType; opts?: Partial<ShapeLayerOptions> }
+  /** Une image à fournir (userSlots) : se lâche comme une image — une forme ou une image
+   *  survolée devient le cadre, sinon un cadre est posé. */
+  | { kind: "userSlot"; opts?: Partial<ShapeLayerOptions> & { hint?: string } };
 
 interface DragCapabilities {
   /** The drag manifests a real Fabric object that drives layout sessions. */
@@ -39,6 +42,7 @@ const KIND_CAPABILITIES: Record<DragPayload["kind"], DragCapabilities> = {
   image: { layout: false, replaceTarget: true },
   text: { layout: true, replaceTarget: false },
   shape: { layout: true, replaceTarget: false },
+  userSlot: { layout: false, replaceTarget: true },
 };
 
 interface ExternalDragState {
@@ -249,6 +253,8 @@ export class DropHandler {
           if (this.drag === drag) drag.object = img;
         })
         .catch(() => {}); // preview is cosmetic — the drop still works without it
+    } else if (payload.kind === "userSlot") {
+      drag.object = this.createUserSlotPreview(payload.opts);
     } else {
       drag.object = this.createDragObject(payload);
     }
@@ -271,6 +277,13 @@ export class DropHandler {
     if (e && !this.editor.layout.isAnchored && !this.intersectsCanvas(e, object)) {
       this.cancelDrag();
       return null;
+    }
+
+    if (payload.kind === "userSlot") {
+      if (object && this.drag.onCanvas) this.editor.canvas.remove(object);
+      this.drag = null;
+      const result = this.dropUserSlot(e, payload.opts);
+      return result?.kind === "add" ? result.object : null;
     }
 
     if (payload.kind === "image") {
@@ -649,6 +662,44 @@ export class DropHandler {
       [DRAG_PREVIEW_KEY]: true,
     });
     return img;
+  }
+
+  /**
+   * Lâcher une image à fournir, comme une image : la cible armée (forme, forme-image)
+   * devient le cadre ; sinon — ou si elle ne peut pas (image legacy) — un cadre est posé
+   * au point de drop.
+   */
+  dropUserSlot(
+    e?: DragEvent,
+    opts: Partial<ShapeLayerOptions> & { hint?: string } = {},
+  ): { kind: "add" | "replace"; object: FabricObject } | null {
+    const target = this.state.replaceMode ? this.state.hoveredTarget : null;
+    this.clearTimer();
+    this.state.pendingTarget = null;
+    this.clearHighlight();
+
+    const replaced = target ? this.editor.layers.requestUserImage(target as FabricObject, opts.hint) : null;
+    if (replaced) {
+      this.config.onSuccess();
+      return { kind: "replace", object: replaced };
+    }
+
+    if (e && !this.intersectsCanvas(e, null)) return null;
+    const pointer = e ? this.editor.canvas.getScenePoint(e) : null;
+    const object = this.editor.layers.createUserSlot(opts);
+    if (pointer) object.setPositionByOrigin(new Point(pointer.x, pointer.y), "center", "center");
+    this.editor.layers.add(object);
+    this.editor.canvas.setActiveObject(object);
+    this.editor.canvas.renderAll();
+    this.config.onSuccess();
+    return { kind: "add", object };
+  }
+
+  /** L'aperçu d'un cadre à fournir, translucide comme celui d'une image. */
+  private createUserSlotPreview(opts: Partial<ShapeLayerOptions> & { hint?: string } = {}): FabricObject {
+    const preview = this.editor.layers.createUserSlot({ ...opts, left: -9999, top: -9999 });
+    preview.set({ opacity: 0.65, selectable: false, evented: false, [DRAG_PREVIEW_KEY]: true });
+    return preview;
   }
 
   private createDragObject(payload: Extract<DragPayload, { kind: "text" | "shape" }>): FabricObject {

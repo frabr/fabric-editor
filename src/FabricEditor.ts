@@ -912,7 +912,8 @@ export class FabricEditor {
 
   /** Les images à fournir de la page (userSlots), boîtes en coordonnées scène. */
   userSlots(): UserSlot[] {
-    return collectUserSlots(this.layers.all);
+    // L'aperçu d'un drag n'est pas un cadre du document
+    return collectUserSlots(this.layers.all.filter((obj) => !obj.get(DRAG_PREVIEW_KEY)));
   }
 
   /**
