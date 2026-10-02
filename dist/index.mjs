@@ -865,6 +865,41 @@ function isPositionLocked(obj) {
 // src/userSlots.ts
 import { Pattern, util } from "#fabric";
 
+// src/ui/badges.ts
+var BADGE_HEIGHT = 15;
+var BADGE_PAD = 5;
+var BADGE_FONT = "500 10px ui-sans-serif, system-ui, sans-serif";
+function drawFrameBadge(ctx, obj, label, color) {
+  const corner = obj.oCoords?.tl;
+  if (!corner) return;
+  ctx.save();
+  ctx.font = BADGE_FONT;
+  const width = ctx.measureText(label).width + BADGE_PAD * 2;
+  const left = corner.x - 1;
+  const top = corner.y - BADGE_HEIGHT;
+  ctx.fillStyle = color;
+  ctx.fillRect(left, top, width, BADGE_HEIGHT);
+  ctx.fillStyle = "#ffffff";
+  ctx.textAlign = "left";
+  ctx.textBaseline = "middle";
+  ctx.fillText(label, left + BADGE_PAD, top + BADGE_HEIGHT / 2);
+  ctx.restore();
+}
+function badgeLabel(obj, labelers) {
+  const labels = labelers.map((labeler) => labeler(obj)).filter((label) => Boolean(label));
+  return labels.length ? [...new Set(labels)].join(" ") : null;
+}
+function installBadgeLayer(fabricCanvas, color, labelers, targets) {
+  const drawControls = fabricCanvas.drawControls.bind(fabricCanvas);
+  fabricCanvas.drawControls = (ctx) => {
+    targets().forEach((obj) => {
+      const label = badgeLabel(obj, labelers);
+      if (label) drawFrameBadge(ctx, obj, label, color);
+    });
+    drawControls(ctx);
+  };
+}
+
 // src/bindings.ts
 function pendingBindings(obj) {
   const bindings = obj.get("bindings") || {};
@@ -890,28 +925,13 @@ function setTextContent(obj, text) {
   obj.setCoords();
   obj.fire("changed");
 }
-var BADGE_HEIGHT = 15;
-var BADGE_PAD = 5;
-var BADGE_FONT = "500 10px ui-sans-serif, system-ui, sans-serif";
+function bindingBadgeLabel(obj, userSlotLabel = DEFAULT_USER_SLOT_LABEL) {
+  if (!hasPendingBindings(obj)) return null;
+  return bindingLabel(obj, userSlotLabel);
+}
 function drawBindingBadge(ctx, obj, color, userSlotLabel = DEFAULT_USER_SLOT_LABEL) {
-  if (!hasPendingBindings(obj)) return;
-  const corner = obj.oCoords?.tl;
-  if (!corner) return;
-  const label = bindingLabel(obj, userSlotLabel);
-  ctx.save();
-  ctx.globalCompositeOperation = "destination-over";
-  ctx.font = BADGE_FONT;
-  const width = ctx.measureText(label).width + BADGE_PAD * 2;
-  const left = corner.x - 1;
-  const top = corner.y - BADGE_HEIGHT;
-  ctx.fillStyle = color;
-  ctx.fillRect(left, top, width, BADGE_HEIGHT);
-  ctx.globalCompositeOperation = "source-over";
-  ctx.fillStyle = "#ffffff";
-  ctx.textAlign = "left";
-  ctx.textBaseline = "middle";
-  ctx.fillText(label, left + BADGE_PAD, top + BADGE_HEIGHT / 2);
-  ctx.restore();
+  const label = bindingBadgeLabel(obj, userSlotLabel);
+  if (label) drawFrameBadge(ctx, obj, label, color);
 }
 var DEFAULT_USER_SLOT_LABEL = "\xC0 fournir";
 function bindingLabel(obj, userSlotLabel) {
@@ -975,8 +995,6 @@ function collectUserSlots(objects) {
 var CELL = 16;
 var CHECKER_LIGHT = "#f9fafb";
 var CHECKER_DARK = "#e5e7eb";
-var ICON_COLOR = "#6b7280";
-var ICON_RING = "#d1d5db";
 var checkerSource = null;
 function checkerTile() {
   if (checkerSource) return checkerSource;
@@ -996,29 +1014,55 @@ function checkerPattern(obj) {
   const sy = obj.scaleY || 1;
   return new Pattern({ source: checkerTile(), repeat: "repeat", patternTransform: [1 / sx, 0, 0, 1 / sy, 0, 0] });
 }
-function drawUploadIcon(ctx, obj) {
-  const sx = obj.scaleX || 1;
-  const sy = obj.scaleY || 1;
-  const w = obj.width * sx;
-  const h = obj.height * sy;
-  const size = Math.max(20, Math.min(120, Math.min(w, h) * 0.22));
-  if (size * 2 > Math.min(w, h)) return;
+var USER_SLOT_STYLE_KEY = "userSlotStyle";
+var DEFAULT_COLOR = "#d946ef";
+var ICON_SIZE = 20;
+var TEXT_LINE = 13;
+var TEXT_GAP = 6;
+var PAD = 8;
+function drawSlotContent(ctx, obj) {
+  const style = obj.canvas?.[USER_SLOT_STYLE_KEY];
+  const { x: zx, y: zy } = obj.getTotalObjectScaling();
+  const w = obj.width * zx;
+  const h = obj.height * zy;
+  if (Math.min(w, h) < ICON_SIZE + PAD * 2) return;
   ctx.save();
-  ctx.scale(1 / sx, 1 / sy);
-  ctx.beginPath();
-  ctx.arc(0, 0, size * 0.9, 0, Math.PI * 2);
-  ctx.fillStyle = "#ffffff";
-  ctx.fill();
-  ctx.lineWidth = Math.max(1, size * 0.03);
-  ctx.strokeStyle = ICON_RING;
-  ctx.stroke();
-  const unit = size / 24;
-  ctx.scale(unit * 0.8, unit * 0.8);
-  ctx.translate(-12, -12);
+  ctx.scale(1 / zx, 1 / zy);
+  ctx.font = BADGE_FONT;
+  const text = userSlotHint(obj) || style?.prompt || "";
+  const lines = text ? wrapLines(ctx, text, w - PAD * 2) : [];
+  const fits = lines.length > 0 && ICON_SIZE + TEXT_GAP + lines.length * TEXT_LINE + PAD * 2 <= h;
+  const shown = fits ? lines : [];
+  const blockHeight = ICON_SIZE + (shown.length ? TEXT_GAP + shown.length * TEXT_LINE : 0);
+  const color = style?.color ?? DEFAULT_COLOR;
+  drawUploadIcon(ctx, -blockHeight / 2, color);
+  ctx.fillStyle = color;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  shown.forEach((line, i) => {
+    ctx.fillText(line, 0, -blockHeight / 2 + ICON_SIZE + TEXT_GAP + TEXT_LINE * (i + 0.5));
+  });
+  ctx.restore();
+}
+function wrapLines(ctx, text, maxWidth) {
+  const lines = [];
+  for (const word of text.split(/\s+/).filter(Boolean)) {
+    if (ctx.measureText(word).width > maxWidth) return [];
+    const last = lines[lines.length - 1];
+    const joined = last ? `${last} ${word}` : word;
+    if (last && ctx.measureText(joined).width <= maxWidth) lines[lines.length - 1] = joined;
+    else lines.push(word);
+  }
+  return lines;
+}
+function drawUploadIcon(ctx, top, color) {
+  ctx.save();
+  ctx.translate(-ICON_SIZE / 2, top);
+  ctx.scale(ICON_SIZE / 24, ICON_SIZE / 24);
   ctx.lineWidth = 1.5;
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
-  ctx.strokeStyle = ICON_COLOR;
+  ctx.strokeStyle = color;
   ctx.beginPath();
   ctx.moveTo(3, 16.5);
   ctx.lineTo(3, 18.75);
@@ -1055,7 +1099,7 @@ function installUserSlotRendering(target) {
     } finally {
       this.fill = fill;
     }
-    drawUploadIcon(ctx, this);
+    drawSlotContent(ctx, this);
   };
 }
 
@@ -5873,7 +5917,7 @@ function applyControlStyle(canvas, guideColor, resolveTarget, userSlotLabel) {
 }
 var EDGE_CONTROLS = /* @__PURE__ */ new Set(["mt", "mb", "ml", "mr"]);
 var CORNER_CONTROLS = /* @__PURE__ */ new Set(["tl", "tr", "bl", "br"]);
-var DEFAULT_COLOR = "#ffffff";
+var DEFAULT_COLOR2 = "#ffffff";
 var HOVER_DELAY = 60;
 var ANIM_SPEED = 10;
 function installControlRenderer(gc, hoverProgress) {
@@ -5882,7 +5926,7 @@ function installControlRenderer(gc, hoverProgress) {
   Control2.prototype.render = function(ctx, left, top, styleOverride, fabricObject) {
     if (fabricObject.isMoving) return;
     const baseColor = styleOverride?.cornerColor ?? fabricObject.cornerColor;
-    const isDefault = baseColor === DEFAULT_COLOR;
+    const isDefault = baseColor === DEFAULT_COLOR2;
     const hoveredCtrl = isDefault && fabricObject.__corner ? fabricObject.controls[fabricObject.__corner] : void 0;
     const isHovered = hoveredCtrl === this;
     const now = performance.now();
@@ -6089,11 +6133,18 @@ function installHoverBorder(canvas, guideColor, resolveTarget, userSlotLabel) {
       if (obj === active || obj === hoveredObj) return;
       drawDynamicMediaOutline(ctx, obj, guideColor);
     });
-    if (active) drawBindingBadge(ctx, active, guideColor, userSlotLabel);
     if (!hoveredObj || hoveredObj === active) return;
     hoveredObj._renderControls(ctx, { hasControls: false, hasBorders: true });
-    drawBindingBadge(ctx, hoveredObj, guideColor, userSlotLabel);
   });
+  installBadgeLayer(
+    canvas.originalFabricCanvas,
+    guideColor,
+    [(obj) => bindingBadgeLabel(obj, userSlotLabel)],
+    () => {
+      const active = canvas.getActiveObject();
+      return [active, hoveredObj !== active ? hoveredObj : null].filter((obj) => Boolean(obj));
+    }
+  );
 }
 
 // src/types.ts
@@ -6125,6 +6176,8 @@ var _FabricEditor = class _FabricEditor {
     this.layers = new LayerManager(this.canvas);
     this.selection = new SelectionManager(this.canvas);
     applyControlStyle(this.canvas, gc, (obj) => this.selection.resolveTarget(obj), config.userSlotLabel);
+    const slotStyle = { color: gc, prompt: config.userSlotPrompt };
+    this.canvas.originalFabricCanvas[USER_SLOT_STYLE_KEY] = slotStyle;
     this.masks = new MaskManager(this.canvas);
     this.persistence = new PersistenceManager(this.canvas, this.layers);
     this.history = new HistoryManager(this.canvas, this.layers);
@@ -7976,6 +8029,8 @@ export {
   antiScale,
   applyClip,
   applyLockMode,
+  badgeLabel,
+  bindingBadgeLabel,
   clampTopLeft,
   clipDataFor,
   collectUserSlots,
@@ -7988,6 +8043,7 @@ export {
   createRect,
   createShape,
   drawBindingBadge,
+  drawFrameBadge,
   fabricToHtml,
   getAvailableShapes,
   getCatalogShape,

@@ -17,7 +17,7 @@ import type { EditorConfig, LayerData, FontsConfig, ShapeType } from "./types";
 import { initYoga } from "./layout/yoga-engine";
 import { isTextObject } from "./layout/geometry";
 import { rulesOf } from "./capabilities";
-import { collectUserSlots, type UserSlot } from "./userSlots";
+import { collectUserSlots, USER_SLOT_STYLE_KEY, type UserSlot, type UserSlotStyle } from "./userSlots";
 
 /**
  * Éditeur d'images basé sur Fabric.js
@@ -75,6 +75,8 @@ export class FabricEditor {
     this.selection = new SelectionManager(this.canvas);
 
     applyControlStyle(this.canvas, gc, (obj) => this.selection.resolveTarget(obj), config.userSlotLabel);
+    const slotStyle: UserSlotStyle = { color: gc, prompt: config.userSlotPrompt };
+    (this.canvas.originalFabricCanvas as unknown as Record<string, UserSlotStyle>)[USER_SLOT_STYLE_KEY] = slotStyle;
     this.masks = new MaskManager(this.canvas);
     this.persistence = new PersistenceManager(this.canvas, this.layers);
     this.history = new HistoryManager(this.canvas, this.layers);

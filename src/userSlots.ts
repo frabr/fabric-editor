@@ -1,5 +1,6 @@
 import { Pattern, util, type FabricObject } from "#fabric";
 import { pendingBindings, type BindingSpec, type Bindings } from "./bindings";
+import { BADGE_FONT } from "./ui/badges";
 
 /**
  * Les images à fournir (apibots, plan user-image-slots) : un cadre que l'utilisateur final
@@ -13,7 +14,7 @@ import { pendingBindings, type BindingSpec, type Bindings } from "./bindings";
  *
  * Le cadre est une FORME (rect, cercle, path) : elle prend en fond l'image qu'on lui
  * lâche, comme toute forme (règlement : `onToolboxImage: "fill"`). En attente, elle se
- * dessine en damier avec une icône d'upload — dans son propre rendu, pas en overlay, pour
+ * dessine en damier avec une icône d'upload et une invite — dans son propre rendu, pas en overlay, pour
  * que les aperçus (vignettes de pages, PreviewCanvas) montrent aussi le trou à combler.
  * Remplie, le binding passe `resolved` et reste comme provenance.
  */
@@ -70,8 +71,6 @@ export function collectUserSlots(objects: FabricObject[]): UserSlot[] {
 const CELL = 16;
 const CHECKER_LIGHT = "#f9fafb";
 const CHECKER_DARK = "#e5e7eb";
-const ICON_COLOR = "#6b7280";
-const ICON_RING = "#d1d5db";
 
 let checkerSource: HTMLCanvasElement | null = null;
 
@@ -98,36 +97,78 @@ function checkerPattern(obj: FabricObject): Pattern {
 }
 
 /**
- * L'icône d'upload (heroicons arrow-up-tray) dans une pastille, au centre du cadre.
- * Tracée à la main : pas de Path2D côté node.
+ * Ce que l'éditeur fait dire aux cadres de SON canvas : la couleur d'édition (guideColor) et
+ * la phrase d'invite, fournie par l'hôte (traduite). Posé par FabricEditor sur le canvas
+ * fabric ; sans lui (aperçus), l'icône seule, dans la couleur par défaut.
  */
-function drawUploadIcon(ctx: CanvasRenderingContext2D, obj: FabricObject): void {
-  const sx = obj.scaleX || 1;
-  const sy = obj.scaleY || 1;
-  const w = obj.width * sx;
-  const h = obj.height * sy;
-  const size = Math.max(20, Math.min(120, Math.min(w, h) * 0.22));
-  if (size * 2 > Math.min(w, h)) return;
+export interface UserSlotStyle {
+  color: string;
+  prompt?: string;
+}
+
+export const USER_SLOT_STYLE_KEY = "userSlotStyle";
+const DEFAULT_COLOR = "#d946ef";
+const ICON_SIZE = 20;
+const TEXT_LINE = 13;
+const TEXT_GAP = 6;
+const PAD = 8;
+
+/**
+ * L'icône d'upload et l'invite, au centre du cadre, dans la couleur d'édition : le cadre
+ * est « magique », il appartient à l'éditeur. Taille d'ÉCRAN, comme les badges (repère
+ * ramené au pixel CSS, zoom compris — le cache se redessine au zoom). L'invite (consigne du
+ * binding, sinon la phrase de l'hôte) n'apparaît que si elle tient ; l'icône aussi.
+ */
+function drawSlotContent(ctx: CanvasRenderingContext2D, obj: FabricObject): void {
+  const style = (obj.canvas as unknown as Record<string, UserSlotStyle | undefined> | undefined)?.[USER_SLOT_STYLE_KEY];
+  const { x: zx, y: zy } = obj.getTotalObjectScaling();
+  const w = obj.width * zx;
+  const h = obj.height * zy;
+  if (Math.min(w, h) < ICON_SIZE + PAD * 2) return;
 
   ctx.save();
-  // Le repère de _render porte le scale de l'objet : l'icône, elle, reste ronde
-  ctx.scale(1 / sx, 1 / sy);
+  ctx.scale(1 / zx, 1 / zy);
+  ctx.font = BADGE_FONT;
+  const text = userSlotHint(obj) || style?.prompt || "";
+  const lines = text ? wrapLines(ctx, text, w - PAD * 2) : [];
+  const fits = lines.length > 0 && ICON_SIZE + TEXT_GAP + lines.length * TEXT_LINE + PAD * 2 <= h;
+  const shown = fits ? lines : [];
+  const blockHeight = ICON_SIZE + (shown.length ? TEXT_GAP + shown.length * TEXT_LINE : 0);
+  const color = style?.color ?? DEFAULT_COLOR;
 
-  ctx.beginPath();
-  ctx.arc(0, 0, size * 0.9, 0, Math.PI * 2);
-  ctx.fillStyle = "#ffffff";
-  ctx.fill();
-  ctx.lineWidth = Math.max(1, size * 0.03);
-  ctx.strokeStyle = ICON_RING;
-  ctx.stroke();
+  drawUploadIcon(ctx, -blockHeight / 2, color);
+  ctx.fillStyle = color;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  shown.forEach((line, i) => {
+    ctx.fillText(line, 0, -blockHeight / 2 + ICON_SIZE + TEXT_GAP + TEXT_LINE * (i + 0.5));
+  });
+  ctx.restore();
+}
 
-  const unit = size / 24;
-  ctx.scale(unit * 0.8, unit * 0.8);
-  ctx.translate(-12, -12);
+/** Coupe aux mots pour tenir dans la largeur ; un mot trop long pour une ligne → rien. */
+function wrapLines(ctx: CanvasRenderingContext2D, text: string, maxWidth: number): string[] {
+  const lines: string[] = [];
+  for (const word of text.split(/\s+/).filter(Boolean)) {
+    if (ctx.measureText(word).width > maxWidth) return [];
+
+    const last = lines[lines.length - 1];
+    const joined = last ? `${last} ${word}` : word;
+    if (last && ctx.measureText(joined).width <= maxWidth) lines[lines.length - 1] = joined;
+    else lines.push(word);
+  }
+  return lines;
+}
+
+/** L'icône d'upload (heroicons arrow-up-tray), tracée à la main : pas de Path2D côté node. */
+function drawUploadIcon(ctx: CanvasRenderingContext2D, top: number, color: string): void {
+  ctx.save();
+  ctx.translate(-ICON_SIZE / 2, top);
+  ctx.scale(ICON_SIZE / 24, ICON_SIZE / 24);
   ctx.lineWidth = 1.5;
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
-  ctx.strokeStyle = ICON_COLOR;
+  ctx.strokeStyle = color;
   ctx.beginPath();
   ctx.moveTo(3, 16.5);
   ctx.lineTo(3, 18.75);
@@ -151,7 +192,7 @@ type SlotRenderable = {
 
 /**
  * Installe le rendu « à fournir » sur une classe de forme : en attente, son fond devient
- * le damier (le temps du rendu — la couleur stockée ne change pas) et l'icône s'y pose.
+ * le damier (le temps du rendu — la couleur stockée ne change pas), l'icône et l'invite s'y posent.
  * Une fois par classe, au chargement du module.
  *
  * Le cache de rendu suit l'état : poser ou retirer le binding ne salit pas l'objet aux
@@ -181,6 +222,6 @@ export function installUserSlotRendering(target: object): void {
     } finally {
       this.fill = fill;
     }
-    drawUploadIcon(ctx, this);
+    drawSlotContent(ctx, this);
   };
 }

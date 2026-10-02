@@ -1,4 +1,5 @@
 import type { FabricObject } from "#fabric";
+import { drawFrameBadge } from "./ui/badges";
 
 /**
  * Les bindings du dialecte template (apibots, plan media-template-generators §4) : un calque
@@ -9,8 +10,8 @@ import type { FabricObject } from "#fabric";
  * - la donnée voyage avec le calque (sérialisation/désérialisation, comme layerId) ;
  * - un texte au binding `text` en attente ne s'édite pas directement (règle : on édite le
  *   binding ou on délie — sinon sample et expression divergent en silence) → editable=false ;
- * - le lien est visible AVANT toute sélection : une pastille « $ » dans la couleur d'édition
- *   (guideColor), dessinée en overlay au coin du calque.
+ * - le lien se voit : un badge au coin du cadre (survol, sélection), dans la couleur d'édition
+ *   (guideColor), et un liseré permanent sur les médias dynamiques.
  */
 
 /** `hint` : la consigne d'une image à fournir (scope `user`, cf. userSlots). */
@@ -57,59 +58,30 @@ export function setTextContent(obj: FabricObject, text: string): void {
   (obj as unknown as { fire: (name: string) => void }).fire("changed");
 }
 
-const BADGE_HEIGHT = 15;
-const BADGE_PAD = 5;
-const BADGE_FONT = "500 10px ui-sans-serif, system-ui, sans-serif";
-
 /**
- * Le badge de liaison — brutaliste : un rectangle net, collé au contour, sans arrondi. Il
- * accompagne le CADRE, pas le calque : il ne s'affiche qu'avec lui (survol ou sélection),
- * comme une étiquette du cadre.
- *
- * Il réutilise la position que fabric a déjà calculée pour ses poignées : `oCoords` est en
- * espace écran (viewportTransform et zoom compris) — aucune transformation à recalculer,
- * c'est ce qui le fait suivre à toutes les échelles.
+ * Le badge de liaison (cf. ui/badges : sous les poignées, avec le cadre) : il nomme les
+ * tokens liés ($NOM), les slots (media[i]) et les images à fournir du calque.
  */
+export function bindingBadgeLabel(obj: FabricObject, userSlotLabel = DEFAULT_USER_SLOT_LABEL): string | null {
+  if (!hasPendingBindings(obj)) return null;
+
+  return bindingLabel(obj, userSlotLabel);
+}
+
+/** Peint le badge de liaison d'un calque (la couche des badges le fait pour l'éditeur). */
 export function drawBindingBadge(
   ctx: CanvasRenderingContext2D,
   obj: FabricObject,
   color: string,
   userSlotLabel = DEFAULT_USER_SLOT_LABEL,
 ): void {
-  if (!hasPendingBindings(obj)) return;
-
-  const corner = (obj as unknown as { oCoords?: Record<string, { x: number; y: number }> }).oCoords?.tl;
-  if (!corner) return;
-
-  const label = bindingLabel(obj, userSlotLabel);
-  ctx.save();
-  // `destination-over` : le badge se glisse SOUS ce qui est déjà dessiné — il passe donc
-  // derrière les poignées au lieu de les masquer.
-  ctx.globalCompositeOperation = "destination-over";
-  ctx.font = BADGE_FONT;
-  const width = ctx.measureText(label).width + BADGE_PAD * 2;
-  // Collé au contour : le bas du badge EST le haut du cadre, et son bord gauche déborde
-  // d'un pixel pour s'aligner sur l'extérieur de la bordure.
-  const left = corner.x - 1;
-  const top = corner.y - BADGE_HEIGHT;
-
-  ctx.fillStyle = color;
-  ctx.fillRect(left, top, width, BADGE_HEIGHT);
-
-  // Le texte doit rester AU-DESSUS de son propre fond : on repasse en composition normale
-  // (destination-over l'aurait glissé sous le rectangle qu'on vient de poser).
-  ctx.globalCompositeOperation = "source-over";
-  ctx.fillStyle = "#ffffff";
-  ctx.textAlign = "left";
-  ctx.textBaseline = "middle";
-  ctx.fillText(label, left + BADGE_PAD, top + BADGE_HEIGHT / 2);
-  ctx.restore();
+  const label = bindingBadgeLabel(obj, userSlotLabel);
+  if (label) drawFrameBadge(ctx, obj, label, color);
 }
 
 /** Le badge d'une image à fournir — l'hôte passe sa traduction (`EditorConfig.userSlotLabel`). */
 export const DEFAULT_USER_SLOT_LABEL = "À fournir";
 
-/** Ce que le badge dit : les tokens liés ($NOM), les slots (media[i]) et les images à fournir. */
 function bindingLabel(obj: FabricObject, userSlotLabel: string): string {
   const labels = Object.values(pendingBindings(obj)).flatMap((spec) => {
     if (spec?.scope === "user") return [userSlotLabel];

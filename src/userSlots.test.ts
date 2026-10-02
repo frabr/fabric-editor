@@ -4,7 +4,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { FabricImage, StaticCanvas, type Canvas, type FabricObject } from "#fabric";
 import { createCanvas } from "canvas";
-import { isUserSlot, userSlotHint, resolveUserSlot, collectUserSlots } from "./userSlots";
+import { isUserSlot, userSlotHint, resolveUserSlot, collectUserSlots, USER_SLOT_STYLE_KEY } from "./userSlots";
 import { rulesOf } from "./capabilities";
 import { LayerManager } from "./LayerManager";
 import { CustomTextbox } from "./controls/CustomTextbox";
@@ -174,5 +174,32 @@ describe("rendu", () => {
     obj.set({ bindings: resolveUserSlot(USER_SLOT) });
     canvas.renderAll();
     expect(pixel(canvas, 4, 4)).toBe("#ff0000");
+  });
+
+  describe("invite", () => {
+    const PROMPT = "Uploadez ou glissez une photo dans le cadre";
+
+    function rendered(width: number, height: number, hint?: string): string[] {
+      const canvas = new StaticCanvas(undefined, { width: 600, height: 600 });
+      (canvas as any)[USER_SLOT_STYLE_KEY] = { color: "#7c3aed", prompt: PROMPT };
+      const obj = slot(new FabRect({ width, height, left: 300, top: 300, objectCaching: false }));
+      obj.set({ bindings: { "image.src": { scope: "user", ...(hint ? { hint } : {}) } } });
+      canvas.add(obj);
+      const fillText = vi.spyOn(canvas.getContext(), "fillText");
+      canvas.renderAll();
+      return fillText.mock.calls.map(([text]) => text);
+    }
+
+    it("la phrase de l'hôte, coupée aux mots, quand elle tient", () => {
+      expect(rendered(500, 300).join(" ")).toBe(PROMPT);
+    });
+
+    it("la consigne du binding passe avant la phrase de l'hôte", () => {
+      expect(rendered(500, 300, "Le logo").join(" ")).toBe("Le logo");
+    });
+
+    it("trop petit : pas de texte", () => {
+      expect(rendered(60, 40)).toEqual([]);
+    });
   });
 });

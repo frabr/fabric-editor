@@ -122,7 +122,10 @@ export type {
 export type { HistoryState, HistoryCallbacks } from "./HistoryManager";
 export type { SnappingConfig, ResizeSnapResult } from "./SnappingManager";
 export type { LayoutManagerCallbacks, SizePreset } from "./LayoutManager";
-export { pendingBindings, hasPendingBindings, lockBoundText, setTextContent, drawBindingBadge } from "./bindings";
+export {
+  pendingBindings, hasPendingBindings, lockBoundText, setTextContent, drawBindingBadge, bindingBadgeLabel,
+} from "./bindings";
+export { drawFrameBadge, badgeLabel, type BadgeLabeler } from "./ui/badges";
 export type { Bindings, BindingSpec } from "./bindings";
 export {
   isUserSlot, userSlotHint, userSlotBinding, collectUserSlots, USER_SCOPE, USER_SLOT_FIELD,

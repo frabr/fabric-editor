@@ -16,6 +16,8 @@ export interface EditorConfig {
   guideColor?: string;
   /** Badge des images à fournir (défaut : « À fournir ») — la traduction de l'hôte. */
   userSlotLabel?: string;
+  /** Invite dans les images à fournir, sous l'icône (si elle tient) — la traduction de l'hôte. */
+  userSlotPrompt?: string;
   container?: HTMLElement;
   transparent?: boolean;
 }

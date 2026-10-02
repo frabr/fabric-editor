@@ -8,7 +8,8 @@
 import { FabricObject, Control, controlsUtils, type TPointerEvent } from "#fabric";
 import type { DesignCanvas } from "../DesignCanvas";
 import { parseHex, hexAlpha } from "./color";
-import { drawBindingBadge, drawDynamicMediaOutline } from "../bindings";
+import { bindingBadgeLabel, drawDynamicMediaOutline } from "../bindings";
+import { installBadgeLayer } from "./badges";
 
 // ── Public entry point ─────────────────────────────────────────────
 
@@ -338,10 +339,19 @@ function installHoverBorder(
 
       drawDynamicMediaOutline(ctx, obj, guideColor);
     });
-    if (active) drawBindingBadge(ctx, active, guideColor, userSlotLabel);
 
     if (!hoveredObj || hoveredObj === active) return;
     (hoveredObj as any)._renderControls(ctx, { hasControls: false, hasBorders: true });
-    drawBindingBadge(ctx, hoveredObj, guideColor, userSlotLabel);
   });
+
+  // Les badges des objets visés, sous les poignées (cf. ui/badges)
+  installBadgeLayer(
+    canvas.originalFabricCanvas as any,
+    guideColor,
+    [(obj) => bindingBadgeLabel(obj, userSlotLabel)],
+    () => {
+      const active = canvas.getActiveObject();
+      return [active, hoveredObj !== active ? hoveredObj : null].filter((obj): obj is FabricObject => Boolean(obj));
+    },
+  );
 }

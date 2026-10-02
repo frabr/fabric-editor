@@ -773,6 +773,8 @@ interface EditorConfig {
     guideColor?: string;
     /** Badge des images à fournir (défaut : « À fournir ») — la traduction de l'hôte. */
     userSlotLabel?: string;
+    /** Invite dans les images à fournir, sous l'icône (si elle tient) — la traduction de l'hôte. */
+    userSlotPrompt?: string;
     container?: HTMLElement;
     transparent?: boolean;
 }
@@ -1750,8 +1752,8 @@ declare class LayoutManager {
  * - la donnée voyage avec le calque (sérialisation/désérialisation, comme layerId) ;
  * - un texte au binding `text` en attente ne s'édite pas directement (règle : on édite le
  *   binding ou on délie — sinon sample et expression divergent en silence) → editable=false ;
- * - le lien est visible AVANT toute sélection : une pastille « $ » dans la couleur d'édition
- *   (guideColor), dessinée en overlay au coin du calque.
+ * - le lien se voit : un badge au coin du cadre (survol, sélection), dans la couleur d'édition
+ *   (guideColor), et un liseré permanent sur les médias dynamiques.
  */
 /** `hint` : la consigne d'une image à fournir (scope `user`, cf. userSlots). */
 type BindingSpec = {
@@ -1772,14 +1774,11 @@ declare function lockBoundText(obj: FabricObject): void;
  */
 declare function setTextContent(obj: FabricObject, text: string): void;
 /**
- * Le badge de liaison — brutaliste : un rectangle net, collé au contour, sans arrondi. Il
- * accompagne le CADRE, pas le calque : il ne s'affiche qu'avec lui (survol ou sélection),
- * comme une étiquette du cadre.
- *
- * Il réutilise la position que fabric a déjà calculée pour ses poignées : `oCoords` est en
- * espace écran (viewportTransform et zoom compris) — aucune transformation à recalculer,
- * c'est ce qui le fait suivre à toutes les échelles.
+ * Le badge de liaison (cf. ui/badges : sous les poignées, avec le cadre) : il nomme les
+ * tokens liés ($NOM), les slots (media[i]) et les images à fournir du calque.
  */
+declare function bindingBadgeLabel(obj: FabricObject, userSlotLabel?: string): string | null;
+/** Peint le badge de liaison d'un calque (la couche des badges le fait pour l'éditeur). */
 declare function drawBindingBadge(ctx: CanvasRenderingContext2D, obj: FabricObject, color: string, userSlotLabel?: string): void;
 
 /**
@@ -1794,7 +1793,7 @@ declare function drawBindingBadge(ctx: CanvasRenderingContext2D, obj: FabricObje
  *
  * Le cadre est une FORME (rect, cercle, path) : elle prend en fond l'image qu'on lui
  * lâche, comme toute forme (règlement : `onToolboxImage: "fill"`). En attente, elle se
- * dessine en damier avec une icône d'upload — dans son propre rendu, pas en overlay, pour
+ * dessine en damier avec une icône d'upload et une invite — dans son propre rendu, pas en overlay, pour
  * que les aperçus (vignettes de pages, PreviewCanvas) montrent aussi le trou à combler.
  * Remplie, le binding passe `resolved` et reste comme provenance.
  */
@@ -2726,4 +2725,24 @@ declare function fabricToHtml(layers: LayerData[], options: HtmlRenderOptions): 
  */
 declare function layerToHtmlStandalone(layer: LayerData, zIndex: number): HtmlLayerOutput;
 
-export { type AlignItems, type AlignSelf, type AttachSnapshot, type BindingSpec, type Bindings, CanvasGuides, type CatalogShape, type CatalogShapeInput, type ChildData, type ChildLayout, type ClipData, type ContainerData, type ContainerLayout, ContainerizeSession, type ControlOption, CustomTextbox, DesignCanvas, type DragPayload, DropHandler, type DropHandlerConfig, type EditorConfig, FabCircle, FabPath, FabRect, FabricEditor, type FlexDirection, type FontConfig, type FontsConfig, HEART_PATH, HEXAGON_PATH, type HistoryCallbacks, HistoryManager, type HistoryState, type HtmlLayerOutput, type HtmlRenderOptions, ImageFrame, type ImageLayerOptions, InsertChildSession, type JustifyContent, type LayerData, LayerManager, type LayoutData, LayoutManager, type LayoutManagerCallbacks, type LayoutSession, type LockMode$1 as LockMode, type Lockable, MIN_PAD, MaskManager, type ObjectControlsConfig, type ObjectKind, type ObjectRules, PendingUploadsManager, PersistenceManager, PreviewCanvas, ResizeSession, type ResizeSnapResult, type SaveOptions, type SaveResult, type SelectionCallbacks, SelectionManager, type ShapeCatalogEntry, type ShapeLayerOptions, type ShapePathData, type ShapeType, type SizeMode, type SizePreset, type SizingData, type SnappingConfig, SnappingManager, type TextLayerOptions, type TextOverflow, type ToolboxImageReaction, USER_SCOPE, USER_SLOT_FIELD, type UserSlot, addCircleClip, addCropControls, addHeartClip, addHexagonClip, antiScale, applyClip, applyLockMode, clampTopLeft, clipDataFor, collectUserSlots, createCircle, createHeart, createHexagon, createImage, createPathShape, createPathsShape, createRect, createShape, drawBindingBadge, fabricToHtml, getAvailableShapes, getCatalogShape, getLockMode, getNextLockMode, getShapeCatalog, hasExceededOffset, hasPendingBindings, initYoga, isChild, isChildLayout, isContainer, isContainerLayout, isContentLocked, isMonoPath, isPositionLocked, isStyleLocked, isUserSlot, isValidShape, isYogaReady, kindOf, layerToHtmlStandalone, lockBoundText, nextShape, pendingBindings, pointInObject, registerShapes, registeredShapes, removeCropControls, rulesOf, runLayout, scaledSize, setTextContent, switchClip, switchShape, topLeft, userSlotBinding, userSlotHint, wrapContainerAroundChild, yogaLayout };
+/**
+ * Les badges de cadre — brutalistes : un rectangle net, collé au contour, sans arrondi. Ils
+ * accompagnent le CADRE, pas le calque : ils ne s'affichent qu'avec lui (survol ou
+ * sélection), comme une étiquette du cadre.
+ *
+ * Ils sont peints sur le canvas PRINCIPAL, juste avant que fabric y dessine les contrôles de
+ * l'objet actif : les poignées passent par-dessus, quel que soit le badge. Un badge de plus =
+ * un `BadgeLabeler` de plus — rien à dessiner, rien à ordonner.
+ */
+/** Ce qu'un objet affiche en badge, ou null. */
+type BadgeLabeler = (obj: FabricObject) => string | null;
+/**
+ * Peint un badge au coin haut-gauche du cadre. Il réutilise la position que fabric a déjà
+ * calculée pour ses poignées : `oCoords` est en espace écran (viewportTransform et zoom
+ * compris) — c'est ce qui le fait suivre à toutes les échelles.
+ */
+declare function drawFrameBadge(ctx: CanvasRenderingContext2D, obj: FabricObject, label: string, color: string): void;
+/** Les labels d'un objet réunis en un seul badge (dédoublonnés), ou null. */
+declare function badgeLabel(obj: FabricObject, labelers: BadgeLabeler[]): string | null;
+
+export { type AlignItems, type AlignSelf, type AttachSnapshot, type BadgeLabeler, type BindingSpec, type Bindings, CanvasGuides, type CatalogShape, type CatalogShapeInput, type ChildData, type ChildLayout, type ClipData, type ContainerData, type ContainerLayout, ContainerizeSession, type ControlOption, CustomTextbox, DesignCanvas, type DragPayload, DropHandler, type DropHandlerConfig, type EditorConfig, FabCircle, FabPath, FabRect, FabricEditor, type FlexDirection, type FontConfig, type FontsConfig, HEART_PATH, HEXAGON_PATH, type HistoryCallbacks, HistoryManager, type HistoryState, type HtmlLayerOutput, type HtmlRenderOptions, ImageFrame, type ImageLayerOptions, InsertChildSession, type JustifyContent, type LayerData, LayerManager, type LayoutData, LayoutManager, type LayoutManagerCallbacks, type LayoutSession, type LockMode$1 as LockMode, type Lockable, MIN_PAD, MaskManager, type ObjectControlsConfig, type ObjectKind, type ObjectRules, PendingUploadsManager, PersistenceManager, PreviewCanvas, ResizeSession, type ResizeSnapResult, type SaveOptions, type SaveResult, type SelectionCallbacks, SelectionManager, type ShapeCatalogEntry, type ShapeLayerOptions, type ShapePathData, type ShapeType, type SizeMode, type SizePreset, type SizingData, type SnappingConfig, SnappingManager, type TextLayerOptions, type TextOverflow, type ToolboxImageReaction, USER_SCOPE, USER_SLOT_FIELD, type UserSlot, addCircleClip, addCropControls, addHeartClip, addHexagonClip, antiScale, applyClip, applyLockMode, badgeLabel, bindingBadgeLabel, clampTopLeft, clipDataFor, collectUserSlots, createCircle, createHeart, createHexagon, createImage, createPathShape, createPathsShape, createRect, createShape, drawBindingBadge, drawFrameBadge, fabricToHtml, getAvailableShapes, getCatalogShape, getLockMode, getNextLockMode, getShapeCatalog, hasExceededOffset, hasPendingBindings, initYoga, isChild, isChildLayout, isContainer, isContainerLayout, isContentLocked, isMonoPath, isPositionLocked, isStyleLocked, isUserSlot, isValidShape, isYogaReady, kindOf, layerToHtmlStandalone, lockBoundText, nextShape, pendingBindings, pointInObject, registerShapes, registeredShapes, removeCropControls, rulesOf, runLayout, scaledSize, setTextContent, switchClip, switchShape, topLeft, userSlotBinding, userSlotHint, wrapContainerAroundChild, yogaLayout };

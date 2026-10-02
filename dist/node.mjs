@@ -641,6 +641,9 @@ function applyLockMode(obj, mode) {
 // src/userSlots.ts
 import { Pattern, util } from "#fabric";
 
+// src/ui/badges.ts
+var BADGE_FONT = "500 10px ui-sans-serif, system-ui, sans-serif";
+
 // src/bindings.ts
 function pendingBindings(obj) {
   const bindings = obj.get("bindings") || {};
@@ -667,6 +670,9 @@ function userSlotBinding(obj) {
 function isUserSlot(obj) {
   return userSlotBinding(obj) !== null;
 }
+function userSlotHint(obj) {
+  return String(userSlotBinding(obj)?.hint ?? "");
+}
 function resolveUserSlot(bindings) {
   const spec = bindings?.[USER_SLOT_FIELD];
   if (spec?.scope !== USER_SCOPE) return bindings;
@@ -675,8 +681,6 @@ function resolveUserSlot(bindings) {
 var CELL = 16;
 var CHECKER_LIGHT = "#f9fafb";
 var CHECKER_DARK = "#e5e7eb";
-var ICON_COLOR = "#6b7280";
-var ICON_RING = "#d1d5db";
 var checkerSource = null;
 function checkerTile() {
   if (checkerSource) return checkerSource;
@@ -696,29 +700,55 @@ function checkerPattern(obj) {
   const sy = obj.scaleY || 1;
   return new Pattern({ source: checkerTile(), repeat: "repeat", patternTransform: [1 / sx, 0, 0, 1 / sy, 0, 0] });
 }
-function drawUploadIcon(ctx, obj) {
-  const sx = obj.scaleX || 1;
-  const sy = obj.scaleY || 1;
-  const w = obj.width * sx;
-  const h = obj.height * sy;
-  const size = Math.max(20, Math.min(120, Math.min(w, h) * 0.22));
-  if (size * 2 > Math.min(w, h)) return;
+var USER_SLOT_STYLE_KEY = "userSlotStyle";
+var DEFAULT_COLOR = "#d946ef";
+var ICON_SIZE = 20;
+var TEXT_LINE = 13;
+var TEXT_GAP = 6;
+var PAD = 8;
+function drawSlotContent(ctx, obj) {
+  const style = obj.canvas?.[USER_SLOT_STYLE_KEY];
+  const { x: zx, y: zy } = obj.getTotalObjectScaling();
+  const w = obj.width * zx;
+  const h = obj.height * zy;
+  if (Math.min(w, h) < ICON_SIZE + PAD * 2) return;
   ctx.save();
-  ctx.scale(1 / sx, 1 / sy);
-  ctx.beginPath();
-  ctx.arc(0, 0, size * 0.9, 0, Math.PI * 2);
-  ctx.fillStyle = "#ffffff";
-  ctx.fill();
-  ctx.lineWidth = Math.max(1, size * 0.03);
-  ctx.strokeStyle = ICON_RING;
-  ctx.stroke();
-  const unit = size / 24;
-  ctx.scale(unit * 0.8, unit * 0.8);
-  ctx.translate(-12, -12);
+  ctx.scale(1 / zx, 1 / zy);
+  ctx.font = BADGE_FONT;
+  const text = userSlotHint(obj) || style?.prompt || "";
+  const lines = text ? wrapLines(ctx, text, w - PAD * 2) : [];
+  const fits = lines.length > 0 && ICON_SIZE + TEXT_GAP + lines.length * TEXT_LINE + PAD * 2 <= h;
+  const shown = fits ? lines : [];
+  const blockHeight = ICON_SIZE + (shown.length ? TEXT_GAP + shown.length * TEXT_LINE : 0);
+  const color = style?.color ?? DEFAULT_COLOR;
+  drawUploadIcon(ctx, -blockHeight / 2, color);
+  ctx.fillStyle = color;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  shown.forEach((line, i) => {
+    ctx.fillText(line, 0, -blockHeight / 2 + ICON_SIZE + TEXT_GAP + TEXT_LINE * (i + 0.5));
+  });
+  ctx.restore();
+}
+function wrapLines(ctx, text, maxWidth) {
+  const lines = [];
+  for (const word of text.split(/\s+/).filter(Boolean)) {
+    if (ctx.measureText(word).width > maxWidth) return [];
+    const last = lines[lines.length - 1];
+    const joined = last ? `${last} ${word}` : word;
+    if (last && ctx.measureText(joined).width <= maxWidth) lines[lines.length - 1] = joined;
+    else lines.push(word);
+  }
+  return lines;
+}
+function drawUploadIcon(ctx, top, color) {
+  ctx.save();
+  ctx.translate(-ICON_SIZE / 2, top);
+  ctx.scale(ICON_SIZE / 24, ICON_SIZE / 24);
   ctx.lineWidth = 1.5;
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
-  ctx.strokeStyle = ICON_COLOR;
+  ctx.strokeStyle = color;
   ctx.beginPath();
   ctx.moveTo(3, 16.5);
   ctx.lineTo(3, 18.75);
@@ -755,7 +785,7 @@ function installUserSlotRendering(target) {
     } finally {
       this.fill = fill;
     }
-    drawUploadIcon(ctx, this);
+    drawSlotContent(ctx, this);
   };
 }
 
