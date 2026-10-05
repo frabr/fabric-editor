@@ -794,6 +794,50 @@ declare function yogaLayout(children: ResolvedChild[], containerLeft: number, co
 };
 
 /**
+ * L'arbre de layout, lu sur des calques SÉRIALISÉS : qui est l'enfant de qui, la racine
+ * d'un objet, la descendance d'un ensemble. Fonctions pures sur `{ layerId, layout }` —
+ * un calque exporté (`toObject`), ou un objet vivant réduit à ces deux champs.
+ *
+ * Le rattachement est porté par l'enfant (`layout.child.parentId`). Un parent absent de
+ * la liste ou un calque qui se désigne lui-même ne font pas de lien : l'objet est traité
+ * comme une racine. Les parcours se protègent des cycles.
+ *
+ * Les consommateurs : l'éditeur vidéo d'apibots (barres imbriquées, suppression d'un
+ * conteneur avec sa descendance) et le rendu de creatorstudio (reconstruction de l'arbre
+ * pour `runLayout`), qui lisaient chacun l'arbre à leur façon.
+ */
+/** Le strict nécessaire d'un calque pour lire l'arbre — un `LayoutData` complet convient. */
+interface TreeLayer {
+    layerId?: string | null;
+    layout?: {
+        child?: {
+            parentId?: string | null;
+        } | null;
+    } | null;
+}
+/** enfant → parent direct. */
+type LayoutParents = Map<string, string>;
+/** Les liens de parenté d'un ensemble de calques, limités aux parents présents dedans. */
+declare function layoutParents(layers: Iterable<TreeLayer>): LayoutParents;
+/** La racine d'un objet — lui-même s'il est libre, ou si le lien boucle. */
+declare function layoutRoot(parents: LayoutParents, id: string): string;
+/** Les enfants directs d'un objet, dans l'ordre des calques. */
+declare function layoutChildren(parents: LayoutParents, id: string): string[];
+/** Toute la descendance d'un ensemble d'objets (eux exclus), à n'importe quelle profondeur. */
+declare function layoutDescendants(parents: LayoutParents, ids: Iterable<string>): Set<string>;
+
+/**
+ * Ordre de la pile (z-order) en blocs : un container et tous ses descendants
+ * forment un bloc qui se déplace d'un seul tenant, ses enfants toujours au-dessus
+ * de lui. Un enfant ne se déplace que parmi les enfants de son container.
+ *
+ * Fonctions pures sur la liste ordonnée des objets (du fond vers le dessus).
+ */
+
+/** `root` et ses descendants, dans l'ordre de la pile. */
+declare function stackBlock(objects: FabricObject[], root: FabricObject): FabricObject[];
+
+/**
  * Un path du catalogue : géométrie normalisée 100x100, apparence d'auteur optionnelle.
  * Sans fill ni stroke = géométrie recolorable (le défaut de l'appelant s'applique) ;
  * stroke sans fill = forme en contour (fill transparent, jamais le défaut).
@@ -2870,4 +2914,4 @@ declare function drawFrameBadge(ctx: CanvasRenderingContext2D, obj: FabricObject
 /** Les labels d'un objet réunis en un seul badge (dédoublonnés), ou null. */
 declare function badgeLabel(obj: FabricObject, labelers: BadgeLabeler[]): string | null;
 
-export { type AlignItems, type AlignSelf, type AttachSnapshot, type BadgeLabeler, type BindingSpec, type Bindings, CanvasGuides, type CatalogShape, type CatalogShapeInput, type ChildData, type ChildLayout, type ClipData, type ContainerData, type ContainerLayout, ContainerizeSession, type ControlOption, CustomTextbox, DesignCanvas, type DragPayload, DropHandler, type DropHandlerConfig, type DropResult, type EditorConfig, FabCircle, FabPath, FabRect, FabricEditor, type FlexDirection, type FontConfig, type FontsConfig, type FrameRect, HEART_PATH, HEXAGON_PATH, type HistoryCallbacks, HistoryManager, type HistoryState, type HtmlLayerOutput, type HtmlRenderOptions, ImageFrame, type ImageLayerOptions, InsertChildSession, type JustifyContent, type LayerData, LayerManager, type LayoutData, LayoutManager, type LayoutManagerCallbacks, type LayoutSession, type LockMode$1 as LockMode, type Lockable, MIN_PAD, MaskManager, type ObjectControlsConfig, type ObjectKind, type ObjectRules, PendingUploadsManager, PersistenceManager, PreviewCanvas, ResizeSession, type ResizeSnapResult, type SaveOptions, type SaveResult, type SelectionCallbacks, SelectionManager, type ShapeCatalogEntry, type ShapeLayerOptions, type ShapePathData, type ShapeType, type SizeMode, type SizePreset, type SizingData, type SnappingConfig, SnappingManager, type TextLayerOptions, type TextOverflow, type ToolboxImageReaction, USER_SCOPE, USER_SLOT_FIELD, type UserSlot, type WorkspaceOptions, addCircleClip, addCropControls, addHeartClip, addHexagonClip, antiScale, applyClip, applyLockMode, badgeLabel, bindingBadgeLabel, clampTopLeft, clipDataFor, collectUserSlots, createCircle, createHeart, createHexagon, createImage, createPathShape, createPathsShape, createRect, createShape, drawBindingBadge, drawFrameBadge, fabricToHtml, getAvailableShapes, getCatalogShape, getLockMode, getNextLockMode, getShapeCatalog, hasExceededOffset, hasPendingBindings, initYoga, isChild, isChildLayout, isContainer, isContainerLayout, isContentLocked, isMonoPath, isPositionLocked, isStyleLocked, isUserSlot, isValidShape, isYogaReady, kindOf, layerToHtmlStandalone, lockBoundText, nextShape, pendingBindings, pointInObject, registerShapes, registeredShapes, removeCropControls, rulesOf, runLayout, scaledSize, setTextContent, switchClip, switchShape, topLeft, userSlotBinding, userSlotHint, wrapContainerAroundChild, yogaLayout };
+export { type AlignItems, type AlignSelf, type AttachSnapshot, type BadgeLabeler, type BindingSpec, type Bindings, CanvasGuides, type CatalogShape, type CatalogShapeInput, type ChildData, type ChildLayout, type ClipData, type ContainerData, type ContainerLayout, ContainerizeSession, type ControlOption, CustomTextbox, DesignCanvas, type DragPayload, DropHandler, type DropHandlerConfig, type DropResult, type EditorConfig, FabCircle, FabPath, FabRect, FabricEditor, type FlexDirection, type FontConfig, type FontsConfig, type FrameRect, HEART_PATH, HEXAGON_PATH, type HistoryCallbacks, HistoryManager, type HistoryState, type HtmlLayerOutput, type HtmlRenderOptions, ImageFrame, type ImageLayerOptions, InsertChildSession, type JustifyContent, type LayerData, LayerManager, type LayoutData, LayoutManager, type LayoutManagerCallbacks, type LayoutParents, type LayoutSession, type LockMode$1 as LockMode, type Lockable, MIN_PAD, MaskManager, type ObjectControlsConfig, type ObjectKind, type ObjectRules, PendingUploadsManager, PersistenceManager, PreviewCanvas, ResizeSession, type ResizeSnapResult, type SaveOptions, type SaveResult, type SelectionCallbacks, SelectionManager, type ShapeCatalogEntry, type ShapeLayerOptions, type ShapePathData, type ShapeType, type SizeMode, type SizePreset, type SizingData, type SnappingConfig, SnappingManager, type TextLayerOptions, type TextOverflow, type ToolboxImageReaction, type TreeLayer, USER_SCOPE, USER_SLOT_FIELD, type UserSlot, type WorkspaceOptions, addCircleClip, addCropControls, addHeartClip, addHexagonClip, antiScale, applyClip, applyLockMode, badgeLabel, bindingBadgeLabel, clampTopLeft, clipDataFor, collectUserSlots, createCircle, createHeart, createHexagon, createImage, createPathShape, createPathsShape, createRect, createShape, drawBindingBadge, drawFrameBadge, fabricToHtml, getAvailableShapes, getCatalogShape, getLockMode, getNextLockMode, getShapeCatalog, hasExceededOffset, hasPendingBindings, initYoga, isChild, isChildLayout, isContainer, isContainerLayout, isContentLocked, isMonoPath, isPositionLocked, isStyleLocked, isUserSlot, isValidShape, isYogaReady, kindOf, layerToHtmlStandalone, layoutChildren, layoutDescendants, layoutParents, layoutRoot, lockBoundText, nextShape, pendingBindings, pointInObject, registerShapes, registeredShapes, removeCropControls, rulesOf, runLayout, scaledSize, setTextContent, stackBlock, switchClip, switchShape, topLeft, userSlotBinding, userSlotHint, wrapContainerAroundChild, yogaLayout };

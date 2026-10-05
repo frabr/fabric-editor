@@ -9,3 +9,6 @@ export { ContainerizeSession, wrapContainerAroundChild } from "./containerize-se
 export { InsertChildSession } from "./insert-child-session";
 export { initYoga, isYogaReady, yogaLayout } from "./yoga-engine";
 export { LayoutAnimator } from "./layout-animator";
+export { layoutParents, layoutRoot, layoutChildren, layoutDescendants } from "./tree";
+export type { TreeLayer, LayoutParents } from "./tree";
+export { stackBlock } from "./stacking";

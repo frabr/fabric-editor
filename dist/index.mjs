@@ -7751,6 +7751,49 @@ var DropHandler = class {
 // src/index.ts
 init_PendingUploadsManager();
 
+// src/layout/tree.ts
+function layoutParents(layers) {
+  const all = Array.from(layers);
+  const ids = new Set(all.map((l) => l.layerId).filter(Boolean));
+  const parents = /* @__PURE__ */ new Map();
+  for (const layer of all) {
+    const parentId = layer.layout?.child?.parentId;
+    if (layer.layerId && parentId && parentId !== layer.layerId && ids.has(parentId)) {
+      parents.set(layer.layerId, parentId);
+    }
+  }
+  return parents;
+}
+function layoutRoot(parents, id) {
+  const seen = /* @__PURE__ */ new Set();
+  while (parents.has(id) && !seen.has(id)) {
+    seen.add(id);
+    id = parents.get(id);
+  }
+  return id;
+}
+function layoutChildren(parents, id) {
+  const children = [];
+  for (const [child, parent] of parents) if (parent === id && child !== id) children.push(child);
+  return children;
+}
+function layoutDescendants(parents, ids) {
+  const roots = new Set(ids);
+  const descendants = /* @__PURE__ */ new Set();
+  let grew = true;
+  while (grew) {
+    grew = false;
+    for (const [child, parent] of parents) {
+      if (descendants.has(child) || roots.has(child)) continue;
+      if (roots.has(parent) || descendants.has(parent)) {
+        descendants.add(child);
+        grew = true;
+      }
+    }
+  }
+  return descendants;
+}
+
 // src/html/cssUtils.ts
 function originXToCss(originX) {
   switch (originX) {
@@ -8326,6 +8369,10 @@ export {
   isYogaReady,
   kindOf,
   layerToHtmlStandalone,
+  layoutChildren,
+  layoutDescendants,
+  layoutParents,
+  layoutRoot,
   lockBoundText,
   nextShape,
   pendingBindings,
@@ -8337,6 +8384,7 @@ export {
   runLayout,
   scaledSize,
   setTextContent,
+  stackBlock,
   switchClip,
   switchShape,
   topLeft,

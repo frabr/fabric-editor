@@ -93,6 +93,9 @@ export { runLayout } from "./layout";
 export { ResizeSession } from "./layout";
 export type { LayoutData, SizingData, TextOverflow, ContainerData, ChildData, ContainerLayout, ChildLayout, SizeMode, AlignSelf, AlignItems, JustifyContent, FlexDirection, AttachSnapshot, LayoutSession } from "./layout";
 export { isContainer, isChild, isContainerLayout, isChildLayout, MIN_PAD } from "./layout";
+// L'arbre de layout sur calques sérialisés (apibots : tracks, suppression ; creatorstudio : rendu).
+export { layoutParents, layoutRoot, layoutChildren, layoutDescendants, stackBlock } from "./layout";
+export type { TreeLayer, LayoutParents } from "./layout";
 export { scaledSize, topLeft, pointInObject, clampTopLeft, hasExceededOffset } from "./layout";
 export { ContainerizeSession, InsertChildSession, wrapContainerAroundChild } from "./layout";
 export { initYoga, isYogaReady, yogaLayout } from "./layout";
