@@ -241,11 +241,13 @@ export class LayerManager {
    *
    * @param options.opacity - Opacité à appliquer (utile si target.opacity est temporairement modifiée)
    * @param options.imageMeta - Les clés de la nouvelle source (une forme-image seulement)
+   * @param options.select - Sélectionner l'image remplacée (défaut) — faux pour un remplacement
+   *   d'affichage (un champ lié interpolé pour ce lecteur), qui ne doit pas toucher la sélection
    */
   async replaceImageSource(
     target: ImageFrame | FabricImage,
     newUrl: string,
-    options?: { opacity?: number; imageMeta?: ImageMeta }
+    options?: { opacity?: number; imageMeta?: ImageMeta; select?: boolean }
   ): Promise<ImageFrame | FabricImage> {
     // Une forme-image : déléguer à sa méthode
     if (kindOf(target as FabricObject) === "imageShape") {
@@ -258,7 +260,7 @@ export class LayerManager {
       }
 
       // Un calque inerte (le fond) ne se sélectionne pas — même remplacé.
-      if (frame.selectable !== false) this.canvas.setActiveObject(frame);
+      if (frame.selectable !== false && options?.select !== false) this.canvas.setActiveObject(frame);
       this.canvas.renderAll();
       return frame;
     }
