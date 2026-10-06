@@ -362,7 +362,9 @@ declare class CustomTextbox extends Textbox {
     naturalWidth(): number;
     /**
      * Largeur minimale du texte : son mot le plus long (le min-content de CSS). Le
-     * découpage des mots trop longs (break-word) n'est qu'un repli, pas un minimum.
+     * découpage des mots trop longs (break-word) n'est qu'un repli, pas un minimum :
+     * la mesure se fait hors contrainte (les lignes wrappées sont déjà découpées, un
+     * morceau passerait pour un mot), puis la boîte est remise telle quelle.
      */
     minContentWidth(): number;
     /**
@@ -499,6 +501,9 @@ declare function isPositionLocked(obj: FabricObject): boolean;
  * and decides itself what to do with it (wrap, autofit, clip — see
  * CustomTextbox). The container never touches a text's font size.
  *
+ * One pass per root container: its whole subtree is one Yoga tree (see
+ * yoga-engine), so a nested container's hug axis is fit-content — constrained
+ * by the room above it, sized by the content below it — in the same pass.
  * Single pass, deterministic, no solver.
  *
  * Note: user-initiated resize is handled by ResizeSession, not here.
@@ -528,7 +533,10 @@ declare function runLayout(objects: FabricObject[]): void;
  * - dragging a left/right edge fixes the width (hug → fixed);
  * - dragging a top/bottom edge on a hug height sets the floor `minSize.h`
  *   (the mode doesn't change); on a fixed height, sets the height;
- * - a corner applies both rules.
+ * - a corner applies both rules;
+ * - the content stops the handle on the way in, the parent's room on the way
+ *   out (see room.ts): a child never grows out of its container, and its
+ *   ancestors follow on every frame (it stays in its flex slot, siblings move).
  */
 declare class ResizeSession {
     private container;
@@ -547,6 +555,8 @@ declare class ResizeSession {
     private textWidths;
     /** Smallest box the content fits in (computed at grab): the handles stop there. */
     private minContent;
+    /** Largest box the ancestors allow (computed at grab): the handles stop there too. */
+    private room;
     constructor(container: FabricObject, corner?: string);
     /**
      * Resize keeping the edge opposite to the dragged handle in place — when the
@@ -559,12 +569,16 @@ declare class ResizeSession {
      * Controls already set width/height directly (no scale involved).
      */
     handleResizing(objects: FabricObject[]): void;
-    /**
-     * Called on `object:modified`. On a hug axis the user dragged, what they
-     * dragged becomes the floor — under the content it's harmless (the box is
-     * max(content, floor)).
-     */
+    /** Called on `object:modified`: the floor is already written, nothing left to do. */
     commit(_objects: FabricObject[]): void;
+    /**
+     * On a hug axis the user drags, what they drag is the floor — under the content
+     * it's harmless (the box is max(content, floor)). Written on every frame, so the
+     * ancestors' pass sees the same box as this one.
+     */
+    private persistFloor;
+    /** A child container: its ancestors take its new size in, and it sits in its slot. */
+    private settle;
 }
 
 /**
@@ -778,6 +792,30 @@ declare class InsertChildSession implements LayoutSession {
     private captureChildPositions;
 }
 
+/**
+ * Yoga layout engine — Flexbox computation for containers.
+ *
+ * Builds a temporary Yoga node tree from the declared layout state,
+ * runs calculateLayout(), reads back computed positions, and frees
+ * the tree. Stateless: no persistent Yoga nodes are kept.
+ *
+ * Key behaviors:
+ * - flexDirection: Column or Row (from ContainerData)
+ * - alignItems: from ContainerData (default FlexStart)
+ * - justifyContent: from ContainerData (default FlexStart)
+ * - gap: from ContainerData (uniform spacing between children)
+ * - Per-child alignSelf, flexGrow, flexShrink
+ * - Text nodes use setMeasureFunc() for intrinsic sizing: the text measures
+ *   itself under the width Yoga offers, then receives the box Yoga computed
+ *   (see CustomTextbox.layoutWith) — its own sizing and overflow do the rest
+ * - A nested container is a node of its own, with its children under it
+ *   (when the caller hands over the canvas objects to find them): the whole
+ *   subtree is one Yoga tree, so a hug axis means "fit-content" — as wide as
+ *   its content, never wider than the room its parent gives (a text three
+ *   levels down wraps at the top container's width), and heights flow up
+ *   in the same pass. Without the objects, a nested container is a rigid box.
+ */
+
 declare function initYoga(): Promise<void>;
 declare function isYogaReady(): boolean;
 /**
@@ -785,10 +823,12 @@ declare function isYogaReady(): boolean;
  *
  * Children must be sorted by `order` (lower first, then insertion order).
  * Each child is positioned and its Fabric object is updated in-place.
+ * With `allObjects`, children that are containers are laid out too, as
+ * subtrees of this one (see the module doc).
  *
  * Returns the required container size (for hug mode).
  */
-declare function yogaLayout(children: ResolvedChild[], containerLeft: number, containerTop: number, containerW: number, containerH: number, cd: ContainerData, sizing: SizingData): {
+declare function yogaLayout(children: ResolvedChild[], containerLeft: number, containerTop: number, containerW: number, containerH: number, cd: ContainerData, sizing: SizingData, allObjects?: FabricObject[]): {
     w: number;
     h: number;
 };

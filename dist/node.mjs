@@ -207,11 +207,18 @@ var CustomTextbox = class extends Textbox {
   }
   /**
    * Largeur minimale du texte : son mot le plus long (le min-content de CSS). Le
-   * découpage des mots trop longs (break-word) n'est qu'un repli, pas un minimum.
+   * découpage des mots trop longs (break-word) n'est qu'un repli, pas un minimum :
+   * la mesure se fait hors contrainte (les lignes wrappées sont déjà découpées, un
+   * morceau passerait pour un mot), puis la boîte est remise telle quelle.
    */
   minContentWidth() {
-    const { lines } = this._splitTextIntoLines(this.text);
-    return Math.ceil(super.getGraphemeDataForRender(lines).largestWordWidth);
+    const { width, height } = this;
+    this.width = UNBOUNDED_WIDTH;
+    super.initDimensions();
+    const min = Math.ceil(super.getGraphemeDataForRender(this.textLines).largestWordWidth);
+    this._wrapAt(width);
+    this.height = height;
+    return min;
   }
   /**
    * Une passe de layout : calcule la boîte sous la contrainte du container et la

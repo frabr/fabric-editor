@@ -326,7 +326,9 @@ declare class CustomTextbox extends Textbox {
     naturalWidth(): number;
     /**
      * Largeur minimale du texte : son mot le plus long (le min-content de CSS). Le
-     * découpage des mots trop longs (break-word) n'est qu'un repli, pas un minimum.
+     * découpage des mots trop longs (break-word) n'est qu'un repli, pas un minimum :
+     * la mesure se fait hors contrainte (les lignes wrappées sont déjà découpées, un
+     * morceau passerait pour un mot), puis la boîte est remise telle quelle.
      */
     minContentWidth(): number;
     /**
