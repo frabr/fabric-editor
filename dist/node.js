@@ -2165,6 +2165,8 @@ var LayerManager = class {
    *
    * @param options.opacity - Opacité à appliquer (utile si target.opacity est temporairement modifiée)
    * @param options.imageMeta - Les clés de la nouvelle source (une forme-image seulement)
+   * @param options.select - Sélectionner l'image remplacée (défaut) — faux pour un remplacement
+   *   d'affichage (un champ lié interpolé pour ce lecteur), qui ne doit pas toucher la sélection
    */
   async replaceImageSource(target, newUrl, options) {
     if (kindOf(target) === "imageShape") {
@@ -2174,7 +2176,7 @@ var LayerManager = class {
       if (options?.opacity !== void 0) {
         frame.opacity = options.opacity;
       }
-      if (frame.selectable !== false) this.canvas.setActiveObject(frame);
+      if (frame.selectable !== false && options?.select !== false) this.canvas.setActiveObject(frame);
       this.canvas.renderAll();
       return frame;
     }

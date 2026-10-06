@@ -1304,10 +1304,13 @@ declare class LayerManager {
      *
      * @param options.opacity - Opacité à appliquer (utile si target.opacity est temporairement modifiée)
      * @param options.imageMeta - Les clés de la nouvelle source (une forme-image seulement)
+     * @param options.select - Sélectionner l'image remplacée (défaut) — faux pour un remplacement
+     *   d'affichage (un champ lié interpolé pour ce lecteur), qui ne doit pas toucher la sélection
      */
     replaceImageSource(target: ImageFrame | FabricImage, newUrl: string, options?: {
         opacity?: number;
         imageMeta?: ImageMeta;
+        select?: boolean;
     }): Promise<ImageFrame | FabricImage>;
     /**
      * Remplace la source d'une image legacy (FabricImage sans frame)
