@@ -18,6 +18,7 @@ import { rulesOf } from "./capabilities";
 export type SizePreset = "hug" | "hug-y" | "fixed";
 import { resolveContainerChildren, scaledSize, setShapeSize } from "./layout/geometry";
 import { availableRoom } from "./layout/room";
+import { placeBlockAbove } from "./layout/stacking";
 import { ContainerizeSession } from "./layout/containerize-session";
 import { InsertChildSession } from "./layout/insert-child-session";
 
@@ -709,11 +710,13 @@ export class LayoutManager {
       this.canvas.add(child);
     }
 
-    // Ensure the child renders above the container (z-index)
-    const containerIdx = this.canvas.getObjects().indexOf(target);
-    const childIdx = this.canvas.getObjects().indexOf(child);
+    // Ensure the child renders above the container (z-index) — with its own
+    // descendants, or a container child would pass over its own content
+    const stack = this.canvas.getObjects();
+    const containerIdx = stack.indexOf(target);
+    const childIdx = stack.indexOf(child);
     if (containerIdx >= 0 && childIdx >= 0 && childIdx < containerIdx) {
-      this.canvas.moveObjectTo(child, containerIdx);
+      placeBlockAbove(stack, child, target).forEach((obj, index) => this.canvas.moveObjectTo(obj, index));
     }
 
     const session = this.createSession(target, child, cursor);

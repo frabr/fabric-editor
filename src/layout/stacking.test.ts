@@ -4,7 +4,7 @@
  */
 import { describe, it, expect } from "vitest";
 import type { FabricObject } from "#fabric";
-import { bringBlockForward, sendBlockBackward, stackBlock } from "./stacking";
+import { bringBlockForward, placeBlockAbove, sendBlockBackward, stackBlock } from "./stacking";
 
 function obj(id: string, parentId?: string): FabricObject {
   const layout = parentId ? { child: { parentId } } : undefined;
@@ -28,6 +28,12 @@ describe("stacking", () => {
   it("le bloc d'un container contient ses descendants, imbriqués compris", () => {
     const n1 = obj("n1", "a1");
     expect(ids(stackBlock([A, a1, n1, a2, B], A))).toEqual(["A", "a1", "n1", "a2"]);
+  });
+
+  it("un container qui entre dans un container passe au-dessus de lui avec ses enfants", () => {
+    // C (et c1) sous A : C entre dans A → le bloc de C passe au-dessus du bloc de A
+    const before = [bg, C, c1, A, a1, a2, B];
+    expect(ids(placeBlockAbove(before, C, A))).toEqual(["bg", "A", "a1", "a2", "C", "c1", "B"]);
   });
 
   it("monter un container : il passe devant son voisin avec ses enfants, jamais par-dessus eux", () => {

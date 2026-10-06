@@ -33,8 +33,12 @@ function siblingsOf(objects: FabricObject[], obj: FabricObject): FabricObject[] 
   return objects.filter((o) => parentIdOf(o) === parentId);
 }
 
-/** `objects` avec le bloc de `root` placé juste au-dessus du bloc de `above`. */
-function placeAbove(objects: FabricObject[], root: FabricObject, above: FabricObject): FabricObject[] {
+/**
+ * `objects` avec le bloc de `root` placé juste au-dessus du bloc de `above` — un objet
+ * qui entre dans un container passe au-dessus de lui avec ses propres descendants,
+ * sinon un container enfant passerait par-dessus son propre contenu.
+ */
+export function placeBlockAbove(objects: FabricObject[], root: FabricObject, above: FabricObject): FabricObject[] {
   const block = stackBlock(objects, root);
   const rest = objects.filter((o) => !block.includes(o));
   const anchor = stackBlock(rest, above);
@@ -61,7 +65,7 @@ export function bringBlockForward(
 ): FabricObject[] | null {
   const siblings = siblingsOf(objects, obj);
   const next = siblings.slice(siblings.indexOf(obj) + 1).find((s) => overlaps(obj, s));
-  return next ? placeAbove(objects, obj, next) : null;
+  return next ? placeBlockAbove(objects, obj, next) : null;
 }
 
 /**
