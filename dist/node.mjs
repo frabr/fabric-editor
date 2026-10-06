@@ -586,7 +586,7 @@ function siblingsOf(objects, obj) {
   const parentId = parentIdOf(obj);
   return objects.filter((o) => parentIdOf(o) === parentId);
 }
-function placeAbove(objects, root, above) {
+function placeBlockAbove(objects, root, above) {
   const block = stackBlock(objects, root);
   const rest = objects.filter((o) => !block.includes(o));
   const anchor = stackBlock(rest, above);
@@ -602,7 +602,7 @@ function placeBelow(objects, root, below) {
 function bringBlockForward(objects, obj, overlaps) {
   const siblings = siblingsOf(objects, obj);
   const next = siblings.slice(siblings.indexOf(obj) + 1).find((s) => overlaps(obj, s));
-  return next ? placeAbove(objects, obj, next) : null;
+  return next ? placeBlockAbove(objects, obj, next) : null;
 }
 function sendBlockBackward(objects, obj) {
   const siblings = siblingsOf(objects, obj);

@@ -911,7 +911,7 @@ function siblingsOf(objects, obj) {
   const parentId = parentIdOf(obj);
   return objects.filter((o) => parentIdOf(o) === parentId);
 }
-function placeAbove(objects, root, above) {
+function placeBlockAbove(objects, root, above) {
   const block = stackBlock(objects, root);
   const rest = objects.filter((o) => !block.includes(o));
   const anchor = stackBlock(rest, above);
@@ -927,7 +927,7 @@ function placeBelow(objects, root, below) {
 function bringBlockForward(objects, obj, overlaps) {
   const siblings = siblingsOf(objects, obj);
   const next = siblings.slice(siblings.indexOf(obj) + 1).find((s) => overlaps(obj, s));
-  return next ? placeAbove(objects, obj, next) : null;
+  return next ? placeBlockAbove(objects, obj, next) : null;
 }
 function sendBlockBackward(objects, obj) {
   const siblings = siblingsOf(objects, obj);
@@ -6035,10 +6035,11 @@ var LayoutManager2 = class {
     if (!objects.includes(child)) {
       this.canvas.add(child);
     }
-    const containerIdx = this.canvas.getObjects().indexOf(target);
-    const childIdx = this.canvas.getObjects().indexOf(child);
+    const stack = this.canvas.getObjects();
+    const containerIdx = stack.indexOf(target);
+    const childIdx = stack.indexOf(child);
     if (containerIdx >= 0 && childIdx >= 0 && childIdx < containerIdx) {
-      this.canvas.moveObjectTo(child, containerIdx);
+      placeBlockAbove(stack, child, target).forEach((obj, index) => this.canvas.moveObjectTo(obj, index));
     }
     const session = this.createSession(target, child, cursor);
     this.guides.clear();
