@@ -5,7 +5,7 @@
  */
 import { describe, it, expect } from "vitest";
 import type { ResolvedChild, ChildData } from "./types";
-import { sortChildrenByOrder } from "./resize-session";
+import { sortChildrenByOrder } from "./geometry";
 
 // ── Helpers ─────────────────────────────────────────────────────────
 

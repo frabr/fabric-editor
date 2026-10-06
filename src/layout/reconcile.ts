@@ -13,6 +13,9 @@
  * and decides itself what to do with it (wrap, autofit, clip — see
  * CustomTextbox). The container never touches a text's font size.
  *
+ * One pass per root container: its whole subtree is one Yoga tree (see
+ * yoga-engine), so a nested container's hug axis is fit-content — constrained
+ * by the room above it, sized by the content below it — in the same pass.
  * Single pass, deterministic, no solver.
  *
  * Note: user-initiated resize is handled by ResizeSession, not here.
@@ -21,8 +24,14 @@
  */
 import type { FabricObject } from "#fabric";
 import { type LayoutData, type ContainerData, type ChildData, sizingOf } from "./types";
-import { scaledSize, setShapeSize, syncCoords, topLeft } from "./geometry";
-import { resolveContainerChildren, sortChildrenByOrder } from "./resize-session";
+import {
+  scaledSize,
+  setShapeSize,
+  syncCoords,
+  topLeft,
+  resolveContainerChildren,
+  sortChildrenByOrder,
+} from "./geometry";
 import { yogaLayout } from "./yoga-engine";
 
 // ── public entry point ───────────────────────────────────────────────
@@ -33,37 +42,21 @@ import { yogaLayout } from "./yoga-engine";
  * (content changes, mode/margin/anchor changes, move).
  */
 export function runLayout(objects: FabricObject[]): void {
-  // Collect all containers
-  const containers: { obj: FabricObject; cd: ContainerData }[] = [];
   for (const obj of objects) {
     const layout = obj.get("layout") as LayoutData | undefined;
-    if (layout?.container) {
-      containers.push({ obj, cd: layout.container });
-    }
-  }
+    if (!layout?.container) continue;
+    // A nested container is laid out by its root's pass
+    if (parentContainerOf(obj, objects)) continue;
 
-  // Sort bottom-up: nested containers (those with child block) go first,
-  // so their size is resolved before their parent lays them out.
-  containers.sort((a, b) => {
-    const aLayout = a.obj.get("layout") as LayoutData;
-    const bLayout = b.obj.get("layout") as LayoutData;
-    const aIsNested = aLayout.child ? 1 : 0;
-    const bIsNested = bLayout.child ? 1 : 0;
-    return bIsNested - aIsNested;
-  });
-
-  for (const { obj, cd } of containers) {
     const children = sortChildrenByOrder(resolveContainerChildren(objects, obj));
     if (children.length === 0) continue;
-
-    layoutContainer(obj, cd, children);
-    relayoutSubContainers(children, objects);
+    layoutContainer(obj, layout.container, children, objects);
   }
 }
 
 /**
- * Run layout on a single container (not the full canvas).
- * Used during drag sessions when we need to update a sub-container's
+ * Run layout on a single container and its subtree (not the full canvas).
+ * Used during drag sessions when we need to update a container's
  * children without triggering a global relayout.
  */
 export function relayoutSingle(
@@ -73,8 +66,7 @@ export function relayoutSingle(
 ): void {
   const children = sortChildrenByOrder(resolveContainerChildren(allObjects, container));
   if (children.length === 0) return;
-  layoutContainer(container, cd, children);
-  relayoutSubContainers(children, allObjects);
+  layoutContainer(container, cd, children, allObjects);
 }
 
 /**
@@ -86,44 +78,22 @@ export function relayoutSingle(
 export function bubbleUpLayout(container: FabricObject, allObjects: FabricObject[]): void {
   let current = container;
   for (;;) {
-    const layout = current.get?.("layout") as LayoutData | undefined;
-    if (!layout?.child) return;
-
-    const parent = allObjects.find(
-      (o) => o.get("layerId") === layout.child!.parentId,
-    );
+    const parent = parentContainerOf(current, allObjects);
     if (!parent) return;
-
-    const pLayout = parent.get?.("layout") as LayoutData | undefined;
-    if (!pLayout?.container) return;
-
-    relayoutSingle(parent, pLayout.container, allObjects);
+    relayoutSingle(parent, (parent.get("layout") as LayoutData).container!, allObjects);
     current = parent;
   }
 }
 
-/**
- * Recursively reposition children that are themselves containers.
- * After a parent is laid out, each sub-container's children need
- * repositioning because the sub-container's position changed.
- */
-export function relayoutSubContainers(
-  children: { obj: FabricObject; cl: ChildData }[],
-  allObjects: FabricObject[],
-): void {
-  for (const { obj } of children) {
-    const childLayout = obj.get("layout") as LayoutData | undefined;
-    if (!childLayout?.container) continue;
-    const subChildren = sortChildrenByOrder(resolveContainerChildren(allObjects, obj));
-    if (subChildren.length === 0) continue;
-
-    const tl = topLeft(obj);
-    const { w, h } = scaledSize(obj);
-    yogaLayout(subChildren, tl.x, tl.y, w, h, childLayout.container, sizingOf(obj));
-    syncCoords(obj, subChildren);
-    // Recurse deeper
-    relayoutSubContainers(subChildren, allObjects);
-  }
+/** The container `obj` is a child of — when it is in `objects` and really is a container. */
+export function parentContainerOf(obj: FabricObject, objects: FabricObject[]): FabricObject | null {
+  const layout = obj.get?.("layout") as LayoutData | undefined;
+  const parentId = layout?.child?.parentId;
+  if (!parentId) return null;
+  const parent = objects.find((o) => o.get("layerId") === parentId);
+  if (!parent || parent === obj) return null;
+  const pLayout = parent.get?.("layout") as LayoutData | undefined;
+  return pLayout?.container ? parent : null;
 }
 
 // ── orchestrator ─────────────────────────────────────────────────────
@@ -132,6 +102,7 @@ function layoutContainer(
   container: FabricObject,
   cd: ContainerData,
   children: { obj: FabricObject; cl: ChildData }[],
+  allObjects: FabricObject[],
 ): void {
   const sizing = sizingOf(container);
   const minW = sizing.minSize?.w ?? 0;
@@ -146,7 +117,7 @@ function layoutContainer(
 
   // Yoga computes positions + sizes in a single pass (text measure via setMeasureFunc)
   const { w: requiredW, h: requiredH } = yogaLayout(
-    children, tl.x, tl.y, currentW, currentH, cd, sizing,
+    children, tl.x, tl.y, currentW, currentH, cd, sizing, allObjects,
   );
 
   const finalW = sizing.x === "hug" ? Math.max(requiredW, minW) : currentW;
@@ -157,7 +128,7 @@ function layoutContainer(
   // Re-run with final dimensions if hug mode changed the size
   if (finalW !== currentW || finalH !== currentH) {
     const tl2 = topLeft(container);
-    yogaLayout(children, tl2.x, tl2.y, finalW, finalH, cd, sizing);
+    yogaLayout(children, tl2.x, tl2.y, finalW, finalH, cd, sizing, allObjects);
   }
 
   syncCoords(container, children);

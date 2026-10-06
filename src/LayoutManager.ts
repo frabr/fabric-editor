@@ -16,7 +16,8 @@ import { rulesOf } from "./capabilities";
 
 /** Size presets of the UI (same vocabulary for containers and texts). */
 export type SizePreset = "hug" | "hug-y" | "fixed";
-import { resolveContainerChildren } from "./layout/resize-session";
+import { resolveContainerChildren, scaledSize, setShapeSize } from "./layout/geometry";
+import { availableRoom } from "./layout/room";
 import { ContainerizeSession } from "./layout/containerize-session";
 import { InsertChildSession } from "./layout/insert-child-session";
 
@@ -486,13 +487,16 @@ export class LayoutManager {
     const target = e.target;
     const layout = target?.get?.("layout") as LayoutData | undefined;
 
-    // Text child resized live → its container chain follows
-    if (layout?.child && isTextObject(target)) {
+    // Text, shape or image child resized live → the room stops it (a text is
+    // pushed by the layout itself), and its container chain follows
+    if (layout?.child && !layout.container) {
+      const objects = this.canvas.getObjects();
+      if (!isTextObject(target)) clampToRoom(target, e.transform, objects);
       const parent = this.findParentContainer(target);
       const pLayout = parent?.get?.("layout") as LayoutData | undefined;
       if (parent && pLayout?.container) {
-        relayoutSingle(parent, pLayout.container, this.canvas.getObjects());
-        bubbleUpLayout(parent, this.canvas.getObjects());
+        relayoutSingle(parent, pLayout.container, objects);
+        bubbleUpLayout(parent, objects);
         this.canvas.renderAll();
       }
       return;
@@ -806,4 +810,16 @@ export class LayoutManager {
     }
     return null;
   }
+}
+
+/** A child's handles stop at the room its ancestors give (the grabbed edge moves, not the other). */
+function clampToRoom(obj: FabricObject, transform: any, objects: FabricObject[]): void {
+  const room = availableRoom(obj, objects);
+  const { w, h } = scaledSize(obj);
+  if (w <= room.w && h <= room.h) return;
+  const originX = transform?.originX ?? "left";
+  const originY = transform?.originY ?? "top";
+  const anchor = obj.getPositionByOrigin(originX, originY);
+  setShapeSize(obj, Math.min(w, room.w), Math.min(h, room.h));
+  obj.setPositionByOrigin(anchor, originX, originY);
 }

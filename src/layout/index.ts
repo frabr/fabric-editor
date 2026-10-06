@@ -1,9 +1,11 @@
-export { runLayout, relayoutSingle, relayoutSubContainers } from "./reconcile";
-export { ResizeSession, sortChildrenByOrder, resolveContainerChildren } from "./resize-session";
+export { runLayout, relayoutSingle, bubbleUpLayout } from "./reconcile";
+export { ResizeSession } from "./resize-session";
+export { availableRoom } from "./room";
+export type { Room } from "./room";
 export type { LayoutData, SizingData, TextOverflow, ContainerData, ChildData, ContainerLayout, ChildLayout, SizeMode, AlignSelf, AlignItems, JustifyContent, FlexDirection, AttachSnapshot, ResolvedChild, LayoutSession } from "./types";
 export { isContainer, isChild, isContainerLayout, isChildLayout, MIN_PAD, MIN_FONT_SIZE, sizingOf } from "./types";
 export { migrateLegacyLayout } from "./legacy";
-export { scaledSize, topLeft, pointInObject, isTextObject, clampTopLeft, hasExceededOffset, syncCoords, cornerToAxes } from "./geometry";
+export { scaledSize, topLeft, pointInObject, isTextObject, clampTopLeft, hasExceededOffset, syncCoords, cornerToAxes, sortChildrenByOrder, resolveContainerChildren } from "./geometry";
 export type { ResizeAxes } from "./geometry";
 export { ContainerizeSession, wrapContainerAroundChild } from "./containerize-session";
 export { InsertChildSession } from "./insert-child-session";

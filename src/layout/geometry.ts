@@ -7,6 +7,38 @@
 import type { FabricObject } from "#fabric";
 import type { LayoutData, ResolvedChild } from "./types";
 
+// ── Children resolution ─────────────────────────────────────────────
+
+/** Find all children of a container from the canvas objects. */
+export function resolveContainerChildren(
+  objects: FabricObject[],
+  container: FabricObject,
+): ResolvedChild[] {
+  const containerId = container.get("layerId") as string;
+  const out: ResolvedChild[] = [];
+  for (const obj of objects) {
+    const layout = obj.get("layout") as LayoutData | undefined;
+    if (!layout?.child) continue;
+    if (layout.child.parentId === containerId) {
+      out.push({ obj, cl: layout.child });
+    }
+  }
+  return out;
+}
+
+/**
+ * Sort children by their `order` property (lower first).
+ * Children without `order` keep their relative position (stable sort).
+ */
+export function sortChildrenByOrder(children: ResolvedChild[]): ResolvedChild[] {
+  if (children.length <= 1) return children;
+  return [...children].sort((a, b) => {
+    const orderA = a.cl.order ?? Infinity;
+    const orderB = b.cl.order ?? Infinity;
+    return orderA - orderB;
+  });
+}
+
 /** Scaled dimensions (width × scaleX, height × scaleY). */
 export function scaledSize(obj: FabricObject): { w: number; h: number } {
   return {

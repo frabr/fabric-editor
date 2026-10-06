@@ -24,9 +24,9 @@ import type { FabricObject } from "#fabric";
 import type { DesignCanvas } from "../DesignCanvas";
 import { type LayoutSession, type LayoutData, type ChildData, type FlexDirection, sizingOf } from "./types";
 import { scaledSize, setShapeSize, topLeft, syncCoords, pointInObject, detachChild, cloneLayout } from "./geometry";
-import { resolveContainerChildren, sortChildrenByOrder } from "./resize-session";
+import { resolveContainerChildren, sortChildrenByOrder } from "./geometry";
 import { yogaLayout } from "./yoga-engine";
-import { runLayout, relayoutSingle, relayoutSubContainers, bubbleUpLayout } from "./reconcile";
+import { runLayout, bubbleUpLayout } from "./reconcile";
 import { LayoutAnimator } from "./layout-animator";
 
 // ── Constants ────────────────────────────────────────────────────────
@@ -557,8 +557,9 @@ export class InsertChildSession implements LayoutSession {
     const measureW = modeX === "hug" ? minW : currentW;
     const measureH = modeY === "hug" ? minH : currentH;
 
+    const objects = this.canvas.getObjects();
     const { w: requiredW, h: requiredH } = yogaLayout(
-      allChildren, containerTL.x, containerTL.y, measureW, measureH, cd, sizing,
+      allChildren, containerTL.x, containerTL.y, measureW, measureH, cd, sizing, objects,
     );
 
     // Size: hug adapts to content (min = snapshot minSize), fixed stays put
@@ -568,7 +569,7 @@ export class InsertChildSession implements LayoutSession {
     if (finalW !== currentW || finalH !== currentH) {
       setShapeSize(this._container, finalW, finalH);
       const tl2 = topLeft(this._container);
-      yogaLayout(allChildren, tl2.x, tl2.y, finalW, finalH, cd, sizing);
+      yogaLayout(allChildren, tl2.x, tl2.y, finalW, finalH, cd, sizing, objects);
     }
 
     syncCoords(this._container, allChildren);
@@ -582,9 +583,6 @@ export class InsertChildSession implements LayoutSession {
         this._animator.animate(obj, before.left, before.top);
       }
     }
-
-    // Recursively reposition sub-containers (their position may have changed)
-    relayoutSubContainers(allChildren, this.canvas.getObjects());
 
     // Bubble up the entire ancestor chain so all parents accommodate the new size
     if (finalW !== currentW || finalH !== currentH) {

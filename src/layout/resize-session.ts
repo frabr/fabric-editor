@@ -22,10 +22,14 @@ import {
   topLeft,
   cornerToAxes,
   isTextObject,
+  resolveContainerChildren,
+  sortChildrenByOrder,
   type LayoutText,
   type ResizeAxes,
 } from "./geometry";
 import { yogaLayout } from "./yoga-engine";
+import { availableRoom, type Room } from "./room";
+import { parentContainerOf, relayoutSingle, bubbleUpLayout } from "./reconcile";
 
 // ── ResizeSession ───────────────────────────────────────────────────
 
@@ -34,7 +38,10 @@ import { yogaLayout } from "./yoga-engine";
  * - dragging a left/right edge fixes the width (hug → fixed);
  * - dragging a top/bottom edge on a hug height sets the floor `minSize.h`
  *   (the mode doesn't change); on a fixed height, sets the height;
- * - a corner applies both rules.
+ * - a corner applies both rules;
+ * - the content stops the handle on the way in, the parent's room on the way
+ *   out (see room.ts): a child never grows out of its container, and its
+ *   ancestors follow on every frame (it stays in its flex slot, siblings move).
  */
 export class ResizeSession {
   private container: FabricObject;
@@ -56,6 +63,9 @@ export class ResizeSession {
 
   /** Smallest box the content fits in (computed at grab): the handles stop there. */
   private minContent: { w: number; h: number } | null = null;
+
+  /** Largest box the ancestors allow (computed at grab): the handles stop there too. */
+  private room: Room | null = null;
 
   constructor(container: FabricObject, corner?: string) {
     this.container = container;
@@ -108,22 +118,27 @@ export class ResizeSession {
   handleResizing(objects: FabricObject[]): void {
     const { container, containerData: cd, sizing, axes } = this;
 
+    this.room ??= availableRoom(container, objects);
     const { w: currentW, h: currentH } = scaledSize(container);
 
-    // Update user size only on axes the user is dragging.
-    if (axes.x) this.userW = currentW;
-    if (axes.y) this.userH = currentH;
+    // Update user size only on axes the user is dragging — within the room.
+    if (axes.x) this.userW = Math.min(currentW, this.room.w);
+    if (axes.y) this.userH = Math.min(currentH, this.room.h);
 
     const children = sortChildrenByOrder(resolveContainerChildren(objects, container));
-    if (children.length === 0) return;
+    if (children.length === 0) {
+      this.setSizeKeepingAnchor(this.userW, this.userH);
+      this.settle(objects);
+      return;
+    }
     this.restoreTextWidths(children);
-    this.minContent ??= minContentSize(children, cd);
+    this.minContent ??= minContentSize(children, cd, objects);
 
     // Live, the floor is what the user drags — not the previous minSize
     const live: SizingData = { x: sizing.x, y: sizing.y };
     const tl = topLeft(container);
     const { w: requiredW, h: requiredH } = yogaLayout(
-      children, tl.x, tl.y, currentW, currentH, cd, live,
+      children, tl.x, tl.y, currentW, currentH, cd, live, objects,
     );
 
     // Hug axis: content = floor, the user can grow beyond on the dragged axis.
@@ -132,26 +147,30 @@ export class ResizeSession {
     const prevMinH = sizing.minSize?.h ?? 0;
     const finalW = sizing.x === "hug"
       ? Math.max(axes.x ? this.userW : prevMinW, requiredW)
-      : Math.max(currentW, this.minContent.w);
+      : Math.max(Math.min(currentW, this.room.w), this.minContent.w);
     const finalH = sizing.y === "hug"
       ? Math.max(axes.y ? this.userH : prevMinH, requiredH)
-      : Math.max(currentH, this.minContent.h);
+      : Math.max(Math.min(currentH, this.room.h), this.minContent.h);
 
     this.setSizeKeepingAnchor(finalW, finalH);
     // Place the children inside the box being dragged, not inside the content
     // box: the hug floor is this frame's size (alignment center / end needs it)
     const placed: SizingData = { ...live, minSize: { w: finalW, h: finalH } };
     const tl2 = topLeft(container);
-    yogaLayout(children, tl2.x, tl2.y, finalW, finalH, cd, placed);
+    yogaLayout(children, tl2.x, tl2.y, finalW, finalH, cd, placed, objects);
     syncCoords(container, children);
+    this.settle(objects);
   }
 
+  /** Called on `object:modified`: the floor is already written, nothing left to do. */
+  commit(_objects: FabricObject[]): void {}
+
   /**
-   * Called on `object:modified`. On a hug axis the user dragged, what they
-   * dragged becomes the floor — under the content it's harmless (the box is
-   * max(content, floor)).
+   * On a hug axis the user drags, what they drag is the floor — under the content
+   * it's harmless (the box is max(content, floor)). Written on every frame, so the
+   * ancestors' pass sees the same box as this one.
    */
-  commit(_objects: FabricObject[]): void {
+  private persistFloor(): void {
     const { container, sizing, axes } = this;
     const dragsHugX = sizing.x === "hug" && axes.x;
     const dragsHugY = sizing.y === "hug" && axes.y;
@@ -160,23 +179,37 @@ export class ResizeSession {
     const minSize = { w: sizing.minSize?.w ?? 0, h: sizing.minSize?.h ?? 0 };
     if (dragsHugX) minSize.w = this.userW;
     if (dragsHugY) minSize.h = this.userH;
+    this.sizing = { ...sizing, minSize };
 
     const layout = container.get("layout") as LayoutData;
-    container.set("layout", { ...layout, sizing: { ...sizing, minSize } });
+    container.set("layout", { ...layout, sizing: this.sizing });
+  }
+
+  /** A child container: its ancestors take its new size in, and it sits in its slot. */
+  private settle(objects: FabricObject[]): void {
+    this.persistFloor();
+    const parent = parentContainerOf(this.container, objects);
+    if (!parent) return;
+    relayoutSingle(parent, (parent.get("layout") as LayoutData).container!, objects);
+    bubbleUpLayout(parent, objects);
   }
 }
 
 /**
  * Smallest container box its children fit in, without squeezing anything:
  * padding, gaps, rigid children at their size, texts at their longest word
- * (they can wrap) and at no height (they can autofit or clip).
+ * (they can wrap) and at no height (they can autofit or clip), nested
+ * containers at their own minimum on a hug axis (floored by their minSize)
+ * and at their size on a fixed one.
  */
-function minContentSize(children: ResolvedChild[], cd: ContainerData): { w: number; h: number } {
+function minContentSize(
+  children: ResolvedChild[],
+  cd: ContainerData,
+  objects: FabricObject[],
+): { w: number; h: number } {
   const pad = cd.padding ?? { top: 0, right: 0, bottom: 0, left: 0 };
   const gaps = (cd.gap ?? 0) * Math.max(0, children.length - 1);
-  const sizes = children.map(({ obj }) => isTextObject(obj)
-    ? { w: (obj as unknown as LayoutText).minContentWidth(), h: 0 }
-    : scaledSize(obj));
+  const sizes = children.map(({ obj }) => minSizeOf(obj, objects));
   const sum = (key: "w" | "h") => sizes.reduce((total, s) => total + s[key], 0);
   const max = (key: "w" | "h") => Math.max(0, ...sizes.map((s) => s[key]));
 
@@ -187,36 +220,19 @@ function minContentSize(children: ResolvedChild[], cd: ContainerData): { w: numb
   };
 }
 
-// ── Shared helpers (used by sessions and reconcile) ─────────────────
+/** What an object takes at the very least: its minimum content (see minContentSize), or its size. */
+export function minSizeOf(obj: FabricObject, objects: FabricObject[]): { w: number; h: number } {
+  if (isTextObject(obj)) return { w: (obj as unknown as LayoutText).minContentWidth(), h: 0 };
+  const size = scaledSize(obj);
+  const layout = obj.get("layout") as LayoutData | undefined;
+  if (!layout?.container) return size;
+  const children = sortChildrenByOrder(resolveContainerChildren(objects, obj));
+  if (children.length === 0) return size;
 
-/**
- * Find all children of a container from the canvas objects.
- */
-export function resolveContainerChildren(
-  objects: FabricObject[],
-  container: FabricObject,
-): ResolvedChild[] {
-  const containerId = container.get("layerId") as string;
-  const out: ResolvedChild[] = [];
-  for (const obj of objects) {
-    const layout = obj.get("layout") as LayoutData | undefined;
-    if (!layout?.child) continue;
-    if (layout.child.parentId === containerId) {
-      out.push({ obj, cl: layout.child });
-    }
-  }
-  return out;
-}
-
-/**
- * Sort children by their `order` property (lower first).
- * Children without `order` keep their relative position (stable sort).
- */
-export function sortChildrenByOrder(children: ResolvedChild[]): ResolvedChild[] {
-  if (children.length <= 1) return children;
-  return [...children].sort((a, b) => {
-    const orderA = a.cl.order ?? Infinity;
-    const orderB = b.cl.order ?? Infinity;
-    return orderA - orderB;
-  });
+  const sizing = sizingOf(obj);
+  const min = minContentSize(children, layout.container, objects);
+  return {
+    w: sizing.x === "hug" ? Math.max(min.w, sizing.minSize?.w ?? 0) : size.w,
+    h: sizing.y === "hug" ? Math.max(min.h, sizing.minSize?.h ?? 0) : size.h,
+  };
 }

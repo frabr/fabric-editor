@@ -14,10 +14,23 @@
  * - Text nodes use setMeasureFunc() for intrinsic sizing: the text measures
  *   itself under the width Yoga offers, then receives the box Yoga computed
  *   (see CustomTextbox.layoutWith) — its own sizing and overflow do the rest
+ * - A nested container is a node of its own, with its children under it
+ *   (when the caller hands over the canvas objects to find them): the whole
+ *   subtree is one Yoga tree, so a hug axis means "fit-content" — as wide as
+ *   its content, never wider than the room its parent gives (a text three
+ *   levels down wraps at the top container's width), and heights flow up
+ *   in the same pass. Without the objects, a nested container is a rigid box.
  */
 import type { FabricObject } from "#fabric";
-import type { ResolvedChild, ContainerData, SizingData } from "./types";
-import { scaledSize, setShapeSize, isTextObject, type LayoutText } from "./geometry";
+import { type ResolvedChild, type ContainerData, type SizingData, type LayoutData, sizingOf } from "./types";
+import {
+  scaledSize,
+  setShapeSize,
+  isTextObject,
+  resolveContainerChildren,
+  sortChildrenByOrder,
+  type LayoutText,
+} from "./geometry";
 
 // ── Yoga singleton ─────────────────────────────────────────────────
 
@@ -53,11 +66,20 @@ function getYoga(): Yoga {
 
 // ── Core layout function ───────────────────────────────────────────
 
+/** A built node: the Fabric object, its Yoga node, and its own children when nested. */
+interface Built {
+  obj: FabricObject;
+  node: YogaNode;
+  children?: Built[];
+}
+
 /**
  * Compute layout positions for children within a container using Yoga.
  *
  * Children must be sorted by `order` (lower first, then insertion order).
  * Each child is positioned and its Fabric object is updated in-place.
+ * With `allObjects`, children that are containers are laid out too, as
+ * subtrees of this one (see the module doc).
  *
  * Returns the required container size (for hug mode).
  */
@@ -69,71 +91,101 @@ export function yogaLayout(
   containerH: number,
   cd: ContainerData,
   sizing: SizingData,
+  allObjects?: FabricObject[],
 ): { w: number; h: number } {
   if (children.length === 0) return { w: 0, h: 0 };
 
   const Y = getYoga();
   const modeX = sizing.x;
   const modeY = sizing.y;
-  const direction = cd.flexDirection ?? "column";
-  const isColumn = direction === "column";
 
   // ── Build root node (container) ──────────────────────────────
   const root = Y.Node.create(yogaConfig!);
-
-  root.setFlexDirection(
-    isColumn ? Y.FLEX_DIRECTION_COLUMN : Y.FLEX_DIRECTION_ROW,
-  );
-
-  // alignItems
-  const alignItems = cd.alignItems ?? "flex-start";
-  root.setAlignItems(mapAlignItems(alignItems, Y));
-
-  // justifyContent
-  const justify = cd.justifyContent ?? "flex-start";
-  root.setJustifyContent(mapJustifyContent(justify, Y));
-
-  // Gap (between children in main axis)
-  const gap = cd.gap ?? 0;
-  if (gap > 0) {
-    if (isColumn) {
-      root.setGap(Y.GUTTER_ROW, gap);
-    } else {
-      root.setGap(Y.GUTTER_COLUMN, gap);
-    }
-  }
-
-  // Container padding
-  const pad = cd.padding;
-  if (pad) {
-    root.setPadding(Y.EDGE_TOP, pad.top);
-    root.setPadding(Y.EDGE_RIGHT, pad.right);
-    root.setPadding(Y.EDGE_BOTTOM, pad.bottom);
-    root.setPadding(Y.EDGE_LEFT, pad.left);
-  }
+  applyContainerStyle(root, cd, Y);
 
   // Container size from mode
-  if (modeX === "fixed") {
-    root.setWidth(containerW);
-  } else {
-    root.setWidthAuto();
-  }
+  if (modeX === "fixed") root.setWidth(containerW);
+  else root.setWidthAuto();
+  if (modeY === "fixed") root.setHeight(containerH);
+  else root.setHeightAuto();
+  applyHugFloor(root, sizing);
 
-  if (modeY === "fixed") {
-    root.setHeight(containerH);
-  } else {
-    root.setHeightAuto();
-  }
+  // ── Build child nodes ────────────────────────────────────────
+  const built = buildChildren(root, children, cd, sizing, allObjects, Y);
 
-  // Hug floor (set by the resize handles): Yoga must know it, so that children
-  // align (center, flex-end) inside the real box, not inside the content box.
+  // ── Calculate layout ─────────────────────────────────────────
+  root.calculateLayout(
+    modeX === "fixed" ? containerW : undefined,
+    modeY === "fixed" ? containerH : undefined,
+  );
+
+  // ── Read back positions ──────────────────────────────────────
+  placeChildren(built, containerLeft, containerTop, 0);
+
+  // ── Read required size ───────────────────────────────────────
+  const w = root.getComputedWidth();
+  const h = root.getComputedHeight();
+
+  // ── Cleanup ──────────────────────────────────────────────────
+  root.freeRecursive();
+
+  return { w, h };
+}
+
+// ── Tree building ──────────────────────────────────────────────────
+
+/** Direction, alignment, gap and padding of a container, on its node. */
+function applyContainerStyle(node: YogaNode, cd: ContainerData, Y: Yoga): void {
+  const isColumn = (cd.flexDirection ?? "column") === "column";
+  node.setFlexDirection(isColumn ? Y.FLEX_DIRECTION_COLUMN : Y.FLEX_DIRECTION_ROW);
+  node.setAlignItems(mapAlignItems(cd.alignItems ?? "flex-start", Y));
+  node.setJustifyContent(mapJustifyContent(cd.justifyContent ?? "flex-start", Y));
+
+  const gap = cd.gap ?? 0;
+  if (gap > 0) node.setGap(isColumn ? Y.GUTTER_ROW : Y.GUTTER_COLUMN, gap);
+
+  const pad = cd.padding;
+  if (pad) {
+    node.setPadding(Y.EDGE_TOP, pad.top);
+    node.setPadding(Y.EDGE_RIGHT, pad.right);
+    node.setPadding(Y.EDGE_BOTTOM, pad.bottom);
+    node.setPadding(Y.EDGE_LEFT, pad.left);
+  }
+}
+
+/**
+ * Hug floor (set by the resize handles): Yoga must know it, so that children
+ * align (center, flex-end) inside the real box, not inside the content box.
+ */
+function applyHugFloor(node: YogaNode, sizing: SizingData): void {
   const minSize = sizing.minSize;
-  if (minSize && modeX === "hug" && minSize.w > 0) root.setMinWidth(minSize.w);
-  if (minSize && modeY === "hug" && minSize.h > 0) root.setMinHeight(minSize.h);
+  if (!minSize) return;
+  if (sizing.x === "hug" && minSize.w > 0) node.setMinWidth(minSize.w);
+  if (sizing.y === "hug" && minSize.h > 0) node.setMinHeight(minSize.h);
+}
 
-  // ── Restore intrinsic sizes ──────────────────────────────────
-  // Children that were shrunk in a previous pass need their original
-  // size restored so Yoga can measure the true space requirement.
+/** The children of a nested container, when the caller lets us look them up. */
+function nestedChildren(obj: FabricObject, allObjects?: FabricObject[]): ResolvedChild[] | null {
+  if (!allObjects || isTextObject(obj)) return null;
+  const layout = obj.get("layout") as LayoutData | undefined;
+  if (!layout?.container) return null;
+  const children = sortChildrenByOrder(resolveContainerChildren(allObjects, obj));
+  return children.length > 0 ? children : null;
+}
+
+function buildChildren(
+  parent: YogaNode,
+  children: ResolvedChild[],
+  cd: ContainerData,
+  sizing: SizingData,
+  allObjects: FabricObject[] | undefined,
+  Y: Yoga,
+): Built[] {
+  const isColumn = (cd.flexDirection ?? "column") === "column";
+  const alignItems = cd.alignItems ?? "flex-start";
+
+  // Restore intrinsic sizes: children that were shrunk in a previous pass need
+  // their original size back so Yoga can measure the true space requirement.
   // Yoga may shrink them again if space is still tight.
   for (const { obj } of children) {
     if (isTextObject(obj)) continue;
@@ -144,102 +196,124 @@ export function yogaLayout(
     }
   }
 
-  // ── Build child nodes ────────────────────────────────────────
-  const yogaNodes: YogaNode[] = [];
-
+  const built: Built[] = [];
   for (let i = 0; i < children.length; i++) {
     const { obj, cl } = children[i];
     const node = Y.Node.create(yogaConfig!);
 
-    // alignSelf
     const alignSelf = cl.alignSelf ?? "auto";
-    if (alignSelf !== "auto") {
-      node.setAlignSelf(mapAlignSelf(alignSelf, Y));
-    }
+    if (alignSelf !== "auto") node.setAlignSelf(mapAlignSelf(alignSelf, Y));
 
-    // flexGrow
     const flexGrow = cl.flexGrow ?? 0;
-    if (flexGrow > 0) {
-      node.setFlexGrow(flexGrow);
-    }
+    if (flexGrow > 0) node.setFlexGrow(flexGrow);
 
-    // flexShrink: only a text absorbs a lack of room (it wraps, or autofits);
-    // shapes, images and nested containers keep their size and overflow
-    node.setFlexShrink(isTextObject(obj) ? 1 : 0);
+    // Stretch happens when: alignSelf is "stretch" or ("auto" and alignItems is "stretch")
+    const effectiveAlign = alignSelf !== "auto" ? alignSelf : alignItems;
+    const willStretch = effectiveAlign === "stretch";
 
-    // Size: text uses measure func, others use explicit size
+    const entry: Built = { obj, node };
+    const nested = nestedChildren(obj, allObjects);
+
+    // flexShrink: only what has content to fold absorbs a lack of room — a text
+    // (it wraps, or autofits), a nested container hugging its main axis (its
+    // content folds inside, down to its floor); shapes, images and fixed
+    // containers keep their size and overflow
+    const mainHug = nested && (isColumn ? sizingOf(obj).y : sizingOf(obj).x) === "hug";
+    node.setFlexShrink(isTextObject(obj) || mainHug ? 1 : 0);
+
     if (isTextObject(obj)) {
       setupTextMeasure(node, obj, Y);
+    } else if (nested) {
+      const childCd = (obj.get("layout") as LayoutData).container!;
+      const childSizing = sizingOf(obj);
+      applyContainerStyle(node, childCd, Y);
+      setNestedSize(node, obj, childSizing, { isColumn, willStretch, parentSizing: sizing, flexGrow });
+      entry.children = buildChildren(node, nested, childCd, childSizing, allObjects, Y);
     } else {
-      const { w, h } = scaledSize(obj);
-
-      // Determine if this child will be stretched in the cross axis.
-      // Stretch happens when: alignSelf is "stretch" or ("auto" and alignItems is "stretch")
-      const effectiveAlign = alignSelf !== "auto" ? alignSelf : alignItems;
-      const willStretch = effectiveAlign === "stretch";
-
-      if (isColumn) {
-        node.setHeight(h);
-        // Cross axis (width): set explicit if not stretching or hug mode
-        if (!willStretch || modeX === "hug") {
-          node.setWidth(w);
-        }
-      } else {
-        node.setWidth(w);
-        // Cross axis (height): set explicit if not stretching or hug mode
-        if (!willStretch || modeY === "hug") {
-          node.setHeight(h);
-        }
-      }
-
-      // flexGrow children: don't set size in main axis (let Yoga compute it)
-      if (flexGrow > 0) {
-        if (isColumn) {
-          node.setHeightAuto();
-        } else {
-          node.setWidthAuto();
-        }
-      }
+      setRigidSize(node, obj, { isColumn, willStretch, parentSizing: sizing, flexGrow });
     }
 
-    root.insertChild(node, i);
-    yogaNodes.push(node);
+    parent.insertChild(node, i);
+    built.push(entry);
+  }
+  return built;
+}
+
+interface SlotInfo {
+  isColumn: boolean;
+  willStretch: boolean;
+  parentSizing: SizingData;
+  flexGrow: number;
+}
+
+/** A shape, image or (without the objects) a container: its current size, as is. */
+function setRigidSize(node: YogaNode, obj: FabricObject, slot: SlotInfo): void {
+  const { isColumn, willStretch, parentSizing, flexGrow } = slot;
+  const { w, h } = scaledSize(obj);
+
+  if (isColumn) {
+    node.setHeight(h);
+    // Cross axis (width): explicit unless it stretches (in a hug parent, stretch has nothing to fill)
+    if (!willStretch || parentSizing.x === "hug") node.setWidth(w);
+  } else {
+    node.setWidth(w);
+    if (!willStretch || parentSizing.y === "hug") node.setHeight(h);
   }
 
-  // ── Calculate layout ─────────────────────────────────────────
-  root.calculateLayout(
-    modeX === "fixed" ? containerW : undefined,
-    modeY === "fixed" ? containerH : undefined,
-  );
+  // flexGrow children: don't set size in main axis (let Yoga compute it)
+  if (flexGrow > 0) {
+    if (isColumn) node.setHeightAuto();
+    else node.setWidthAuto();
+  }
+}
 
-  // ── Read back positions ──────────────────────────────────────
-  for (let i = 0; i < children.length; i++) {
-    const { obj } = children[i];
-    const node = yogaNodes[i];
+/**
+ * A nested container: a fixed axis is its size (and stretches like a shape);
+ * a hug axis is left to Yoga, floored by its minSize — fit-content.
+ */
+function setNestedSize(node: YogaNode, obj: FabricObject, sizing: SizingData, slot: SlotInfo): void {
+  const { isColumn, willStretch, parentSizing, flexGrow } = slot;
+  const { w, h } = scaledSize(obj);
+  const parentCrossIsHug = isColumn ? parentSizing.x === "hug" : parentSizing.y === "hug";
 
-    const left = containerLeft + node.getComputedLeft();
-    const top = containerTop + node.getComputedTop();
+  const main = isColumn ? sizing.y : sizing.x;
+  const cross = isColumn ? sizing.x : sizing.y;
+  const setMain = (v: number) => (isColumn ? node.setHeight(v) : node.setWidth(v));
+  const setCross = (v: number) => (isColumn ? node.setWidth(v) : node.setHeight(v));
 
-    // Update the child's width/height if Yoga stretched or shrunk it
+  if (main === "fixed" && flexGrow === 0) setMain(isColumn ? h : w);
+  if (cross === "fixed" && (!willStretch || parentCrossIsHug)) setCross(isColumn ? w : h);
+  applyHugFloor(node, sizing);
+}
+
+// ── Read back ──────────────────────────────────────────────────────
+
+/**
+ * Apply Yoga's result: sizes (through each object's own sizing) and positions,
+ * Yoga's being relative to the parent's top-left. Nested children follow,
+ * from their container's new top-left.
+ */
+function placeChildren(built: Built[], parentLeft: number, parentTop: number, depth: number): void {
+  for (const { obj, node, children } of built) {
+    const left = parentLeft + node.getComputedLeft();
+    const top = parentTop + node.getComputedTop();
+
     const computedW = node.getComputedWidth();
     const computedH = node.getComputedHeight();
     const currentSize = scaledSize(obj);
+    const changedW = Math.abs(computedW - currentSize.w) > 0.5;
+    const changedH = Math.abs(computedH - currentSize.h) > 0.5;
 
-    // Text: Yoga may have stretched, grown or shrunk the measured box — the text
-    // takes it (wrap, min height, autofit happen inside the text).
-    if (isTextObject(obj) &&
-        (Math.abs(computedW - currentSize.w) > 0.5 || Math.abs(computedH - currentSize.h) > 0.5)) {
-      (obj as unknown as LayoutText).layoutWith({ w: computedW, h: computedH });
-    }
-
-    if (!isTextObject(obj)) {
-      const changedW = Math.abs(computedW - currentSize.w) > 0.5;
-      const changedH = Math.abs(computedH - currentSize.h) > 0.5;
-
-      // Preserve intrinsic size when Yoga shrinks the child.
-      // This lets the child grow back when space becomes available.
+    if (isTextObject(obj)) {
+      // Yoga may have stretched, grown or shrunk the measured box — the text
+      // takes it (wrap, min height, autofit happen inside the text).
+      if (changedW || changedH) (obj as unknown as LayoutText).layoutWith({ w: computedW, h: computedH });
+    } else {
+      // Preserve intrinsic size when Yoga shrinks a rigid child, so it can grow
+      // back when space becomes available. A nested container is sized by its
+      // content, it has no intrinsic size to keep.
       const ext = obj as { _layoutIntrinsic?: { w: number; h: number } };
-      if ((computedW < currentSize.w - 0.5 || computedH < currentSize.h - 0.5) && !ext._layoutIntrinsic) {
+      if (!children && (computedW < currentSize.w - 0.5 || computedH < currentSize.h - 0.5) && !ext._layoutIntrinsic) {
         ext._layoutIntrinsic = currentSize;
       }
 
@@ -257,16 +331,11 @@ export function yogaLayout(
     const objTop = obj.originY === "center" ? top + childH / 2
       : obj.originY === "bottom" ? top + childH : top;
     obj.set({ left: objLeft, top: objTop });
+
+    // Direct children are synced by the caller (syncCoords); deeper ones here
+    if (depth > 0) obj.setCoords();
+    if (children) placeChildren(children, left, top, depth + 1);
   }
-
-  // ── Read required size ───────────────────────────────────────
-  const w = root.getComputedWidth();
-  const h = root.getComputedHeight();
-
-  // ── Cleanup ──────────────────────────────────────────────────
-  root.freeRecursive();
-
-  return { w, h };
 }
 
 // ── Yoga enum mapping helpers ──────────────────────────────────────

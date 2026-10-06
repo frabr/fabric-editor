@@ -67,6 +67,23 @@ describe("CustomTextbox — modes de taille", () => {
   });
 });
 
+describe("CustomTextbox — largeur minimale", () => {
+  it("le mot le plus long, même quand la boîte l'a découpé, et la boîte ne bouge pas", () => {
+    const t = text("court motextrêmementlong");
+    const word = t.naturalWidth() - t.set({ text: "court " }).naturalWidth();
+    t.set({ text: "court motextrêmementlong" });
+    t.setSizing({ x: "fixed", y: "hug" });
+    t.set({ width: 180 });
+    const lines = [...t.textLines];
+    expect(lines.length).toBeGreaterThan(2);
+
+    expect(t.minContentWidth()).toBeCloseTo(word, -1);
+    expect(t.minContentWidth()).toBeGreaterThan(180);
+    expect(t.width).toBe(180);
+    expect(t.textLines).toEqual(lines);
+  });
+});
+
 describe("CustomTextbox — débordement", () => {
   function fixedBox(overflow?: "shrink" | "clip" | "visible"): CustomTextbox {
     const t = text(LONG, { width: 200 });
