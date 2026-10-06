@@ -162,14 +162,15 @@ export class LayoutManager {
    * - "hug": width and height follow the content
    * - "hug-y": fixed width (texts wrap), height follows the content
    * - "fixed": fixed width and height (texts apply their overflow)
-   * The floor set by the handles (`minSize`) is kept.
+   * Choosing a mode drops the floor set by the handles (`minSize`): the box fits its
+   * content again, as the mode says.
    */
   setMode(obj: FabricObject, mode: SizePreset): void {
     const layout = obj.get("layout") as LayoutData | undefined;
     const isText = isTextObject(obj);
     if (!layout?.container && !isText) return;
 
-    const current = sizingOf(obj);
+    const { minSize: _floor, ...current } = sizingOf(obj);
     const axes: Record<SizePreset, Pick<SizingData, "x" | "y">> = {
       "hug": { x: "hug", y: "hug" },
       "hug-y": { x: "fixed", y: "hug" },
