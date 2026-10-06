@@ -19,6 +19,7 @@ import {
 import { FabPath } from "./shapes/FabPath";
 import { clipDataFor, type ClipData } from "./shapes/registry";
 import type { SnappingManager } from "./SnappingManager";
+import { checkerCanvas } from "./userSlots";
 
 /** Interface pour accéder au SnappingManager depuis le canvas */
 interface CanvasWithSnapping extends Canvas {
@@ -44,7 +45,12 @@ export interface ImageFrameOptions {
   /** Dimensions explicites du frame (prioritaires sur frameScale) */
   frameWidth?: number;
   frameHeight?: number;
+  /** Les clés de `image` que l'hôte pose à côté de `src` (apibots : `content_medium_id`).
+   *  Elles suivent la SOURCE : une image remplacée arrive avec les siennes, ou sans. */
+  imageMeta?: ImageMeta;
 }
+
+export type ImageMeta = Record<string, unknown>;
 
 export interface ImageFrameData {
   originX?: "left" | "center" | "right";
@@ -73,12 +79,26 @@ export interface ImageFrameData {
   lockMode?: LockMode;
   lockContent?: boolean;
   opacity?: number;
+  /**
+   * `src` absent = cadre EN ATTENTE : le fichier n'existe pas encore (média en cours de
+   * production côté hôte). Il se dessine en damier et se sauve tel quel, sans `src` — ses
+   * autres clés (l'identité du média) survivent au tour éditeur.
+   */
   image: {
-    src: string;
-    offsetX: number;
-    offsetY: number;
-    scale: number;
+    src?: string;
+    offsetX?: number;
+    offsetY?: number;
+    scale?: number;
+    [key: string]: unknown;
   };
+}
+
+const IMAGE_KEYS = ["src", "offsetX", "offsetY", "scale"] as const;
+
+function imageMetaOf(image: ImageFrameData["image"]): ImageMeta {
+  const meta: ImageMeta = { ...image };
+  IMAGE_KEYS.forEach((key) => delete meta[key]);
+  return meta;
 }
 
 /** Interface pour stocker l'état des transformations de resize */
@@ -124,6 +144,8 @@ export class ImageFrame extends Group {
   private _imageOffsetY: number = 0;
   private _imageScale: number = 1;
   private _image: FabricImage;
+  private _imageMeta: ImageMeta = {};
+  private _pending = false;
 
   constructor(image: FabricImage, options: ImageFrameOptions = {}) {
     // Dimensions du frame : explicites > calculées via frameScale
@@ -167,6 +189,7 @@ export class ImageFrame extends Group {
     this._imageOffsetX = options.imageOffsetX ?? 0;
     this._imageOffsetY = options.imageOffsetY ?? 0;
     this._imageScale = options.imageScale ?? 1;
+    this._imageMeta = { ...(options.imageMeta ?? {}) };
 
     if (options.layerId) {
       this.set("layerId", options.layerId);
@@ -188,7 +211,32 @@ export class ImageFrame extends Group {
   }
 
   get imageSrc(): string {
-    return this._image.getSrc() || "";
+    return this._pending ? "" : this._image.getSrc() || "";
+  }
+
+  /** Les clés de `image` qui ne sont pas à la lib (cf. ImageFrameOptions.imageMeta). */
+  get imageMeta(): ImageMeta {
+    return this._imageMeta;
+  }
+
+  /** Cadre en attente de son fichier : pas de `src` au save (damier, ou l'aperçu de session
+   *  d'un upload en cours). `replaceImage` le sort de l'attente. */
+  get pending(): boolean {
+    return this._pending;
+  }
+
+  /** Un cadre en attente : l'image est le damier, aux dimensions du cadre. */
+  static pending(options: ImageFrameOptions & { frameWidth: number; frameHeight: number }): ImageFrame {
+    const img = new FabricImage(checkerCanvas(options.frameWidth, options.frameHeight));
+    const frame = new ImageFrame(img, options);
+    frame._pending = true;
+    return frame;
+  }
+
+  /** L'image affichée n'est pas celle du document (une url de session, le temps d'un
+   *  upload) : le cadre se sauve sans `src` jusqu'à ce que la vraie source la remplace. */
+  markSourcePending(): void {
+    this._pending = true;
   }
 
   get imageOffsetX(): number {
@@ -251,10 +299,14 @@ export class ImageFrame extends Group {
   }
 
   /**
-   * Remplace l'image du frame en mode cover
+   * Remplace l'image du frame en mode cover. Les clés `imageMeta` sont celles de la NOUVELLE
+   * source — jamais héritées : une image remplacée qui garderait l'identité de l'ancienne
+   * est exactement le bug qu'elles servent à éviter.
    */
-  replaceImage(newImage: FabricImage): void {
+  replaceImage(newImage: FabricImage, imageMeta: ImageMeta = {}): void {
     const savedClipShape = this.clipShape || "rect";
+    this._imageMeta = { ...imageMeta };
+    this._pending = false;
     const coverScale = Math.max(this.frameWidth / newImage.width, this.frameHeight / newImage.height);
 
     newImage.set({
@@ -654,7 +706,8 @@ export class ImageFrame extends Group {
       stroke: this.stroke || undefined,
       strokeWidth: this.stroke ? this.strokeWidth : undefined,
       image: {
-        src: this.imageSrc,
+        ...this._imageMeta,
+        ...(this._pending ? {} : { src: this.imageSrc }),
         offsetX: this._imageOffsetX,
         offsetY: this._imageOffsetY,
         scale: this._imageScale,
@@ -663,18 +716,23 @@ export class ImageFrame extends Group {
   }
 
   static async fromObject(data: ImageFrameData): Promise<ImageFrame> {
-    const img = await FabricImage.fromURL(data.image.src, { crossOrigin: "anonymous" });
-
-    const frame = new ImageFrame(img, {
+    const { src, offsetX = 0, offsetY = 0, scale = 1 } = data.image;
+    const options: ImageFrameOptions = {
       left: data.left,
       top: data.top,
       angle: data.angle,
       layerId: data.layerId,
       lockMode: data.lockMode,
-      imageOffsetX: data.image.offsetX,
-      imageOffsetY: data.image.offsetY,
-      imageScale: data.image.scale,
-    });
+      imageOffsetX: offsetX,
+      imageOffsetY: offsetY,
+      imageScale: scale,
+      imageMeta: imageMetaOf(data.image),
+    };
+
+    const frame = src
+      ? new ImageFrame(await FabricImage.fromURL(src, { crossOrigin: "anonymous" }), options)
+      : ImageFrame.pending({ ...options, frameWidth: data.frameWidth, frameHeight: data.frameHeight });
+    const img = frame._image;
 
     // Le fromObject est manuel (contrairement aux shapes, servies par le générique de
     // fabric) : les extras sérialisés doivent être restaurés explicitement.
@@ -694,10 +752,10 @@ export class ImageFrame extends Group {
     // Recalculer le coverScale
     const coverScale = Math.max(data.frameWidth / img.width, data.frameHeight / img.height);
     frame._image.set({
-      scaleX: coverScale * data.image.scale,
-      scaleY: coverScale * data.image.scale,
-      left: data.image.offsetX,
-      top: data.image.offsetY,
+      scaleX: coverScale * scale,
+      scaleY: coverScale * scale,
+      left: offsetX,
+      top: offsetY,
     });
 
     // Le clip inliné se restaure AVANT applyClipShape : un id absent du registre

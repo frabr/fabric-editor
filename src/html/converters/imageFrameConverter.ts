@@ -113,9 +113,11 @@ export function imageFrameToHtml(
     imageStyles.top = `calc(${offsetFromScale}% + ${offsetY}px)`;
   }
 
+  // Un cadre en attente (pas de src) : le clip seul, pas d'image cassée.
+  const img = image.src ? `<img src="${image.src}" style="${stylesToString(imageStyles)}" alt="" />` : "";
   const html = `<div style="${stylesToString(containerStyles)}">
   ${inlineSvgClip}
-  <img src="${image.src}" style="${stylesToString(imageStyles)}" alt="" />
+  ${img}
 </div>`;
 
   return {

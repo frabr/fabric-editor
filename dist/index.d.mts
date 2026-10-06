@@ -960,6 +960,8 @@ interface ImageLayerOptions {
     originX?: "left" | "center" | "right";
     originY?: "top" | "center" | "bottom";
     layerId?: string;
+    /** Les clés de `image` posées par l'hôte à côté de `src` (cf. ImageFrameOptions.imageMeta). */
+    imageMeta?: Record<string, unknown>;
 }
 interface ShapeLayerOptions {
     left?: number;
@@ -1030,7 +1032,11 @@ interface ImageFrameOptions {
     /** Dimensions explicites du frame (prioritaires sur frameScale) */
     frameWidth?: number;
     frameHeight?: number;
+    /** Les clés de `image` que l'hôte pose à côté de `src` (apibots : `content_medium_id`).
+     *  Elles suivent la SOURCE : une image remplacée arrive avec les siennes, ou sans. */
+    imageMeta?: ImageMeta;
 }
+type ImageMeta = Record<string, unknown>;
 interface ImageFrameData {
     originX?: "left" | "center" | "right";
     originY?: "top" | "center" | "bottom";
@@ -1058,11 +1064,17 @@ interface ImageFrameData {
     lockMode?: LockMode$1;
     lockContent?: boolean;
     opacity?: number;
+    /**
+     * `src` absent = cadre EN ATTENTE : le fichier n'existe pas encore (média en cours de
+     * production côté hôte). Il se dessine en damier et se sauve tel quel, sans `src` — ses
+     * autres clés (l'identité du média) survivent au tour éditeur.
+     */
     image: {
-        src: string;
-        offsetX: number;
-        offsetY: number;
-        scale: number;
+        src?: string;
+        offsetX?: number;
+        offsetY?: number;
+        scale?: number;
+        [key: string]: unknown;
     };
 }
 /**
@@ -1083,9 +1095,24 @@ declare class ImageFrame extends Group {
     private _imageOffsetY;
     private _imageScale;
     private _image;
+    private _imageMeta;
+    private _pending;
     constructor(image: FabricImage, options?: ImageFrameOptions);
     get image(): FabricImage;
     get imageSrc(): string;
+    /** Les clés de `image` qui ne sont pas à la lib (cf. ImageFrameOptions.imageMeta). */
+    get imageMeta(): ImageMeta;
+    /** Cadre en attente de son fichier : pas de `src` au save (damier, ou l'aperçu de session
+     *  d'un upload en cours). `replaceImage` le sort de l'attente. */
+    get pending(): boolean;
+    /** Un cadre en attente : l'image est le damier, aux dimensions du cadre. */
+    static pending(options: ImageFrameOptions & {
+        frameWidth: number;
+        frameHeight: number;
+    }): ImageFrame;
+    /** L'image affichée n'est pas celle du document (une url de session, le temps d'un
+     *  upload) : le cadre se sauve sans `src` jusqu'à ce que la vraie source la remplace. */
+    markSourcePending(): void;
     get imageOffsetX(): number;
     get imageOffsetY(): number;
     /**
@@ -1103,9 +1130,11 @@ declare class ImageFrame extends Group {
      */
     setImageScale(scale: number): void;
     /**
-     * Remplace l'image du frame en mode cover
+     * Remplace l'image du frame en mode cover. Les clés `imageMeta` sont celles de la NOUVELLE
+     * source — jamais héritées : une image remplacée qui garderait l'identité de l'ancienne
+     * est exactement le bug qu'elles servent à éviter.
      */
-    replaceImage(newImage: FabricImage): void;
+    replaceImage(newImage: FabricImage, imageMeta?: ImageMeta): void;
     /**
      * Redimensionne le frame (l'image s'adapte en cover)
      */
@@ -1234,9 +1263,11 @@ declare class LayerManager {
      * Supporte à la fois ImageFrame et FabricImage legacy
      *
      * @param options.opacity - Opacité à appliquer (utile si target.opacity est temporairement modifiée)
+     * @param options.imageMeta - Les clés de la nouvelle source (une forme-image seulement)
      */
     replaceImageSource(target: ImageFrame | FabricImage, newUrl: string, options?: {
         opacity?: number;
+        imageMeta?: ImageMeta;
     }): Promise<ImageFrame | FabricImage>;
     /**
      * Remplace la source d'une image legacy (FabricImage sans frame)
@@ -1248,7 +1279,7 @@ declare class LayerManager {
      * La forme sert de masque : l'image épouse ses dimensions et son clipShape.
      * L'ImageFrame est inséré au même z-index que la forme d'origine.
      */
-    replaceShapeWithImage(shape: FabricObject, imageUrl: string): Promise<ImageFrame>;
+    replaceShapeWithImage(shape: FabricObject, imageUrl: string, imageMeta?: ImageMeta): Promise<ImageFrame>;
     /**
      * Demande l'image à l'utilisateur final (userSlots) : le calque devient une forme liée à
      * une image à fournir, avec sa consigne. Une forme le reste ; une forme-image redevient la
@@ -2403,6 +2434,20 @@ interface DropHandlerConfig {
     hoverDelay?: number;
     /** Fonction pour obtenir une URL à partir d'un fichier (blob URL ou upload) */
     getImageUrl: (file: File) => string;
+    /**
+     * Un fichier lâché depuis le bureau, résolu par l'hôte : l'upload, et l'identité qui en
+     * résulte (imageMeta). L'aperçu (getImageUrl) s'affiche sans attendre ; le cadre se sauve
+     * sans source jusqu'à ce que celle-ci le remplace en place.
+     */
+    resolveFile?: (file: File) => Promise<{
+        url: string;
+        imageMeta?: ImageMeta;
+    }>;
+    /**
+     * Un fichier du bureau lâché : l'hôte peut le prendre (true) avant que le DropHandler le
+     * pose — le fond au bord de l'artboard, par exemple (resolveFileInto reste à sa disposition).
+     */
+    onFile?: (file: File, e: DragEvent) => boolean;
     /** Élément HTML à afficher comme overlay (sera cloné). Prioritaire sur overlayContent. */
     overlayElement?: HTMLElement | undefined;
     /** Contenu HTML de l'overlay de remplacement (défaut: "Remplacer"). Ignoré si overlayElement est fourni. */
@@ -2491,6 +2536,13 @@ declare class DropHandler {
     private handleDragOver;
     private handleDragLeave;
     private handleDrop;
+    /**
+     * La vraie source d'un fichier déjà affiché (url de session) : l'upload de l'hôte
+     * (resolveFile), puis remplacement EN PLACE — le cadre garde sa géométrie, et ne se sauve
+     * pas sans elle (source en attente). Public : l'hôte s'en sert pour les cadres qu'il pose
+     * lui-même à partir d'un fichier (le fond).
+     */
+    resolveFileInto(object: FabricObject, file: File): Promise<void>;
     private extractImageFile;
     private activateReplaceMode;
     private clearTimer;

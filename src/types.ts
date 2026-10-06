@@ -93,6 +93,8 @@ export interface ImageLayerOptions {
   originX?: "left" | "center" | "right";
   originY?: "top" | "center" | "bottom";
   layerId?: string;
+  /** Les clés de `image` posées par l'hôte à côté de `src` (cf. ImageFrameOptions.imageMeta). */
+  imageMeta?: Record<string, unknown>;
 }
 
 // Options pour créer un calque forme
@@ -160,4 +162,4 @@ declare module "fabric" {
 }
 
 // Re-export ImageFrame types
-export type { ImageFrameData, ImageFrameOptions } from "./ImageFrame";
+export type { ImageFrameData, ImageFrameOptions, ImageMeta } from "./ImageFrame";

@@ -1179,6 +1179,15 @@ function checkerTile() {
   checkerSource = tile;
   return tile;
 }
+function checkerCanvas(width, height) {
+  const el = util.createCanvasElement();
+  el.width = Math.max(1, Math.round(width));
+  el.height = Math.max(1, Math.round(height));
+  const ctx = el.getContext("2d");
+  ctx.fillStyle = ctx.createPattern(checkerTile(), "repeat") ?? CHECKER_LIGHT;
+  ctx.fillRect(0, 0, el.width, el.height);
+  return el;
+}
 function checkerPattern(obj) {
   const sx = obj.scaleX || 1;
   const sy = obj.scaleY || 1;
@@ -1946,6 +1955,12 @@ import {
   LayoutManager,
   FixedLayout
 } from "#fabric";
+var IMAGE_KEYS = ["src", "offsetX", "offsetY", "scale"];
+function imageMetaOf(image) {
+  const meta = { ...image };
+  IMAGE_KEYS.forEach((key) => delete meta[key]);
+  return meta;
+}
 function rotatePoint(dx, dy, angleDeg) {
   const angle = -angleDeg * Math.PI / 180;
   return {
@@ -1990,12 +2005,15 @@ var ImageFrame = class _ImageFrame extends Group3 {
     this._imageOffsetX = 0;
     this._imageOffsetY = 0;
     this._imageScale = 1;
+    this._imageMeta = {};
+    this._pending = false;
     this._image = image;
     this.frameWidth = frameWidth;
     this.frameHeight = frameHeight;
     this._imageOffsetX = options.imageOffsetX ?? 0;
     this._imageOffsetY = options.imageOffsetY ?? 0;
     this._imageScale = options.imageScale ?? 1;
+    this._imageMeta = { ...options.imageMeta ?? {} };
     if (options.layerId) {
       this.set("layerId", options.layerId);
     }
@@ -2011,7 +2029,28 @@ var ImageFrame = class _ImageFrame extends Group3 {
     return this._image;
   }
   get imageSrc() {
-    return this._image.getSrc() || "";
+    return this._pending ? "" : this._image.getSrc() || "";
+  }
+  /** Les clés de `image` qui ne sont pas à la lib (cf. ImageFrameOptions.imageMeta). */
+  get imageMeta() {
+    return this._imageMeta;
+  }
+  /** Cadre en attente de son fichier : pas de `src` au save (damier, ou l'aperçu de session
+   *  d'un upload en cours). `replaceImage` le sort de l'attente. */
+  get pending() {
+    return this._pending;
+  }
+  /** Un cadre en attente : l'image est le damier, aux dimensions du cadre. */
+  static pending(options) {
+    const img = new FabricImage4(checkerCanvas(options.frameWidth, options.frameHeight));
+    const frame = new _ImageFrame(img, options);
+    frame._pending = true;
+    return frame;
+  }
+  /** L'image affichée n'est pas celle du document (une url de session, le temps d'un
+   *  upload) : le cadre se sauve sans `src` jusqu'à ce que la vraie source la remplace. */
+  markSourcePending() {
+    this._pending = true;
   }
   get imageOffsetX() {
     return this._imageOffsetX;
@@ -2060,10 +2099,14 @@ var ImageFrame = class _ImageFrame extends Group3 {
     this.dirty = true;
   }
   /**
-   * Remplace l'image du frame en mode cover
+   * Remplace l'image du frame en mode cover. Les clés `imageMeta` sont celles de la NOUVELLE
+   * source — jamais héritées : une image remplacée qui garderait l'identité de l'ancienne
+   * est exactement le bug qu'elles servent à éviter.
    */
-  replaceImage(newImage) {
+  replaceImage(newImage, imageMeta = {}) {
     const savedClipShape = this.clipShape || "rect";
+    this._imageMeta = { ...imageMeta };
+    this._pending = false;
     const coverScale = Math.max(this.frameWidth / newImage.width, this.frameHeight / newImage.height);
     newImage.set({
       scaleX: coverScale,
@@ -2389,7 +2432,8 @@ var ImageFrame = class _ImageFrame extends Group3 {
       stroke: this.stroke || void 0,
       strokeWidth: this.stroke ? this.strokeWidth : void 0,
       image: {
-        src: this.imageSrc,
+        ...this._imageMeta,
+        ...this._pending ? {} : { src: this.imageSrc },
         offsetX: this._imageOffsetX,
         offsetY: this._imageOffsetY,
         scale: this._imageScale
@@ -2397,17 +2441,20 @@ var ImageFrame = class _ImageFrame extends Group3 {
     };
   }
   static async fromObject(data) {
-    const img = await FabricImage4.fromURL(data.image.src, { crossOrigin: "anonymous" });
-    const frame = new _ImageFrame(img, {
+    const { src, offsetX = 0, offsetY = 0, scale = 1 } = data.image;
+    const options = {
       left: data.left,
       top: data.top,
       angle: data.angle,
       layerId: data.layerId,
       lockMode: data.lockMode,
-      imageOffsetX: data.image.offsetX,
-      imageOffsetY: data.image.offsetY,
-      imageScale: data.image.scale
-    });
+      imageOffsetX: offsetX,
+      imageOffsetY: offsetY,
+      imageScale: scale,
+      imageMeta: imageMetaOf(data.image)
+    };
+    const frame = src ? new _ImageFrame(await FabricImage4.fromURL(src, { crossOrigin: "anonymous" }), options) : _ImageFrame.pending({ ...options, frameWidth: data.frameWidth, frameHeight: data.frameHeight });
+    const img = frame._image;
     if (data.layout) frame.set("layout", data.layout);
     if (data.originX) frame.set({ originX: data.originX, originY: data.originY ?? data.originX });
     if (data.stroke) frame.set({ stroke: data.stroke, strokeWidth: data.strokeWidth ?? 4 });
@@ -2417,10 +2464,10 @@ var ImageFrame = class _ImageFrame extends Group3 {
     frame.height = data.frameHeight;
     const coverScale = Math.max(data.frameWidth / img.width, data.frameHeight / img.height);
     frame._image.set({
-      scaleX: coverScale * data.image.scale,
-      scaleY: coverScale * data.image.scale,
-      left: data.image.offsetX,
-      top: data.image.offsetY
+      scaleX: coverScale * scale,
+      scaleY: coverScale * scale,
+      left: offsetX,
+      top: offsetY
     });
     if (data.clipData) frame.clipData = data.clipData;
     let clipShape = data.clipShape;
@@ -2616,13 +2663,13 @@ var LayerManager = class {
    * Crée et ajoute un calque image dans un ImageFrame
    */
   async addImage(url, options = {}) {
-    const { left = 100, top = 100, layerId = this.generateId() } = options;
+    const { left = 100, top = 100, layerId = this.generateId(), imageMeta } = options;
     const img = await FabricImage5.fromURL(url, { crossOrigin: "anonymous" });
     let frameScale = 1;
     if (img.width > 300 || img.height > 300) {
       frameScale = Math.min(300 / img.width, 300 / img.height);
     }
-    const frame = new ImageFrame(img, { left, top, layerId, frameScale });
+    const frame = new ImageFrame(img, { left, top, layerId, frameScale, imageMeta });
     this.add(frame);
     return frame;
   }
@@ -2641,16 +2688,17 @@ var LayerManager = class {
    * Supporte à la fois ImageFrame et FabricImage legacy
    *
    * @param options.opacity - Opacité à appliquer (utile si target.opacity est temporairement modifiée)
+   * @param options.imageMeta - Les clés de la nouvelle source (une forme-image seulement)
    */
   async replaceImageSource(target, newUrl, options) {
     if (kindOf(target) === "imageShape") {
       const frame = target;
       const newImg = await FabricImage5.fromURL(newUrl, { crossOrigin: "anonymous" });
-      await frame.replaceImage(newImg);
+      frame.replaceImage(newImg, options?.imageMeta);
       if (options?.opacity !== void 0) {
         frame.opacity = options.opacity;
       }
-      this.canvas.setActiveObject(frame);
+      if (frame.selectable !== false) this.canvas.setActiveObject(frame);
       this.canvas.renderAll();
       return frame;
     }
@@ -2710,7 +2758,7 @@ var LayerManager = class {
    * La forme sert de masque : l'image épouse ses dimensions et son clipShape.
    * L'ImageFrame est inséré au même z-index que la forme d'origine.
    */
-  async replaceShapeWithImage(shape, imageUrl) {
+  async replaceShapeWithImage(shape, imageUrl, imageMeta) {
     const { clipShape, clipData, cornerRadius } = clipOfShape(shape);
     const { w: displayedWidth, h: displayedHeight } = scaledSize(shape);
     const center = shape.getRelativeCenterPoint();
@@ -2722,6 +2770,7 @@ var LayerManager = class {
       layerId: shape.layerId || this.generateId(),
       clipShape,
       clipData,
+      imageMeta,
       frameWidth: displayedWidth,
       frameHeight: displayedHeight,
       cornerRadius
@@ -7327,11 +7376,13 @@ var DropHandler = class {
     try {
       if (shouldReplace && target) {
         if (rulesOf(target).onToolboxImage === "fill") {
-          const frame = await this.editor.layers.replaceShapeWithImage(target, url);
+          const frame = await this.editor.layers.replaceShapeWithImage(target, url, opts?.imageMeta);
           this.config.onSuccess();
           return { kind: "replace", object: frame };
         }
-        const replaced = await this.editor.layers.replaceImageSource(target, url);
+        const replaced = await this.editor.layers.replaceImageSource(target, url, {
+          imageMeta: opts?.imageMeta
+        });
         this.config.onSuccess();
         return { kind: "replace", object: replaced };
       }
@@ -7533,7 +7584,30 @@ var DropHandler = class {
       this.reset();
       return;
     }
-    await this.dropImage(this.config.getImageUrl(file), e);
+    if (this.config.onFile?.(file, e)) {
+      this.reset();
+      return;
+    }
+    const result = await this.dropImage(this.config.getImageUrl(file), e);
+    if (result) await this.resolveFileInto(result.object, file);
+  }
+  /**
+   * La vraie source d'un fichier déjà affiché (url de session) : l'upload de l'hôte
+   * (resolveFile), puis remplacement EN PLACE — le cadre garde sa géométrie, et ne se sauve
+   * pas sans elle (source en attente). Public : l'hôte s'en sert pour les cadres qu'il pose
+   * lui-même à partir d'un fichier (le fond).
+   */
+  async resolveFileInto(object, file) {
+    if (!this.config.resolveFile) return;
+    if (object instanceof ImageFrame) object.markSourcePending();
+    try {
+      const { url, imageMeta } = await this.config.resolveFile(file);
+      if (!this.editor.canvas.getObjects().includes(object)) return;
+      await this.editor.layers.replaceImageSource(object, url, { imageMeta });
+      this.config.onSuccess();
+    } catch (error) {
+      this.config.onError(error);
+    }
   }
   extractImageFile(e) {
     const files = e.dataTransfer?.files;
@@ -8216,9 +8290,10 @@ function imageFrameToHtml(layer, zIndex) {
     imageStyles.left = `calc(${offsetFromScale}% + ${offsetX}px)`;
     imageStyles.top = `calc(${offsetFromScale}% + ${offsetY}px)`;
   }
+  const img = image.src ? `<img src="${image.src}" style="${stylesToString(imageStyles)}" alt="" />` : "";
   const html = `<div style="${stylesToString(containerStyles)}">
   ${inlineSvgClip}
-  <img src="${image.src}" style="${stylesToString(imageStyles)}" alt="" />
+  ${img}
 </div>`;
   return {
     html

@@ -21,7 +21,7 @@ import { isValidShape } from "./shapes";
 import { clipDataFor, type ClipData } from "./shapes/registry";
 import { scaledSize } from "./layout/geometry";
 import { applyLockMode, getLockMode, type LockMode } from "./locking";
-import { ImageFrame, type ImageFrameData } from "./ImageFrame";
+import { ImageFrame, type ImageFrameData, type ImageMeta } from "./ImageFrame";
 import type { LayerData, TextLayerOptions, ImageLayerOptions, ShapeLayerOptions, ShapeType } from "./types";
 import { restoreBindings, type Bindings } from "./bindings";
 import { resolveUserSlot, USER_SCOPE, USER_SLOT_FIELD } from "./userSlots";
@@ -207,7 +207,7 @@ export class LayerManager {
    * Crée et ajoute un calque image dans un ImageFrame
    */
   async addImage(url: string, options: ImageLayerOptions = {}): Promise<ImageFrame> {
-    const { left = 100, top = 100, layerId = this.generateId() } = options;
+    const { left = 100, top = 100, layerId = this.generateId(), imageMeta } = options;
 
     const img = await FabricImage.fromURL(url, { crossOrigin: "anonymous" });
 
@@ -218,7 +218,7 @@ export class LayerManager {
       frameScale = Math.min(300 / img.width, 300 / img.height);
     }
 
-    const frame = new ImageFrame(img, { left, top, layerId, frameScale });
+    const frame = new ImageFrame(img, { left, top, layerId, frameScale, imageMeta });
     this.add(frame);
     return frame;
   }
@@ -240,23 +240,25 @@ export class LayerManager {
    * Supporte à la fois ImageFrame et FabricImage legacy
    *
    * @param options.opacity - Opacité à appliquer (utile si target.opacity est temporairement modifiée)
+   * @param options.imageMeta - Les clés de la nouvelle source (une forme-image seulement)
    */
   async replaceImageSource(
     target: ImageFrame | FabricImage,
     newUrl: string,
-    options?: { opacity?: number }
+    options?: { opacity?: number; imageMeta?: ImageMeta }
   ): Promise<ImageFrame | FabricImage> {
     // Une forme-image : déléguer à sa méthode
     if (kindOf(target as FabricObject) === "imageShape") {
       const frame = target as ImageFrame;
       const newImg = await FabricImage.fromURL(newUrl, { crossOrigin: "anonymous" });
-      await frame.replaceImage(newImg);
+      frame.replaceImage(newImg, options?.imageMeta);
 
       if (options?.opacity !== undefined) {
         frame.opacity = options.opacity;
       }
 
-      this.canvas.setActiveObject(frame);
+      // Un calque inerte (le fond) ne se sélectionne pas — même remplacé.
+      if (frame.selectable !== false) this.canvas.setActiveObject(frame);
       this.canvas.renderAll();
       return frame;
     }
@@ -354,7 +356,8 @@ export class LayerManager {
    */
   async replaceShapeWithImage(
     shape: FabricObject,
-    imageUrl: string
+    imageUrl: string,
+    imageMeta?: ImageMeta
   ): Promise<ImageFrame> {
     const { clipShape, clipData, cornerRadius } = clipOfShape(shape);
 
@@ -373,6 +376,7 @@ export class LayerManager {
       layerId: (shape as { layerId?: string }).layerId || this.generateId(),
       clipShape,
       clipData,
+      imageMeta,
       frameWidth: displayedWidth,
       frameHeight: displayedHeight,
       cornerRadius,

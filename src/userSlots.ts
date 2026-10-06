@@ -88,6 +88,18 @@ function checkerTile(): HTMLCanvasElement {
   return tile;
 }
 
+/** Un canvas aux dimensions données, rempli du damier — l'image d'un cadre dont le fichier
+ *  n'existe pas encore (ImageFrame en attente). */
+export function checkerCanvas(width: number, height: number): HTMLCanvasElement {
+  const el = util.createCanvasElement();
+  el.width = Math.max(1, Math.round(width));
+  el.height = Math.max(1, Math.round(height));
+  const ctx = el.getContext("2d")!;
+  ctx.fillStyle = ctx.createPattern(checkerTile(), "repeat") ?? CHECKER_LIGHT;
+  ctx.fillRect(0, 0, el.width, el.height);
+  return el;
+}
+
 /** Le motif contre-scalé : un cercle ou un path se dimensionnent par leur scale, les cases restent carrées. */
 function checkerPattern(obj: FabricObject): Pattern {
   const sx = obj.scaleX || 1;

@@ -3,7 +3,7 @@ import type { FabricEditor } from "./FabricEditor";
 import { DRAG_PREVIEW_KEY } from "./types";
 import type { ImageLayerOptions, ShapeType, TextLayerOptions, ShapeLayerOptions } from "./types";
 import { rulesOf } from "./capabilities";
-import { ImageFrame } from "./ImageFrame";
+import { ImageFrame, type ImageMeta } from "./ImageFrame";
 
 /** Couleur pour le feedback drag & drop via les contrôles de sélection */
 const HIGHLIGHT_COLOR = "#3b82f6";
@@ -79,6 +79,17 @@ export interface DropHandlerConfig {
   hoverDelay?: number;
   /** Fonction pour obtenir une URL à partir d'un fichier (blob URL ou upload) */
   getImageUrl: (file: File) => string;
+  /**
+   * Un fichier lâché depuis le bureau, résolu par l'hôte : l'upload, et l'identité qui en
+   * résulte (imageMeta). L'aperçu (getImageUrl) s'affiche sans attendre ; le cadre se sauve
+   * sans source jusqu'à ce que celle-ci le remplace en place.
+   */
+  resolveFile?: (file: File) => Promise<{ url: string; imageMeta?: ImageMeta }>;
+  /**
+   * Un fichier du bureau lâché : l'hôte peut le prendre (true) avant que le DropHandler le
+   * pose — le fond au bord de l'artboard, par exemple (resolveFileInto reste à sa disposition).
+   */
+  onFile?: (file: File, e: DragEvent) => boolean;
   /** Élément HTML à afficher comme overlay (sera cloné). Prioritaire sur overlayContent. */
   overlayElement?: HTMLElement | undefined;
   /** Contenu HTML de l'overlay de remplacement (défaut: "Remplacer"). Ignoré si overlayElement est fourni. */
@@ -90,8 +101,10 @@ export interface DropHandlerConfig {
 }
 
 /** Config avec valeurs par défaut appliquées (overlayElement reste optionnel) */
-type ResolvedConfig = Required<Omit<DropHandlerConfig, "overlayElement">> & {
+type ResolvedConfig = Required<Omit<DropHandlerConfig, "overlayElement" | "resolveFile" | "onFile">> & {
   overlayElement: HTMLElement | undefined;
+  resolveFile?: DropHandlerConfig["resolveFile"];
+  onFile?: DropHandlerConfig["onFile"];
 };
 
 /**
@@ -196,12 +209,14 @@ export class DropHandler {
       if (shouldReplace && target) {
         if (rulesOf(target as FabricObject).onToolboxImage === "fill") {
           // Drop sur une forme → convertir en ImageFrame avec la forme comme masque
-          const frame = await this.editor.layers.replaceShapeWithImage(target, url);
+          const frame = await this.editor.layers.replaceShapeWithImage(target, url, opts?.imageMeta);
           this.config.onSuccess();
           return { kind: "replace", object: frame };
         }
         // Drop sur une image/ImageFrame → remplacement classique
-        const replaced = await this.editor.layers.replaceImageSource(target as ImageFrame | FabricImage, url);
+        const replaced = await this.editor.layers.replaceImageSource(target as ImageFrame | FabricImage, url, {
+          imageMeta: opts?.imageMeta,
+        });
         this.config.onSuccess();
         return { kind: "replace", object: replaced };
       }
@@ -445,7 +460,37 @@ export class DropHandler {
       return;
     }
 
-    await this.dropImage(this.config.getImageUrl(file), e);
+    // L'hôte peut prendre le fichier pour lui (le fond, au bord de l'artboard).
+    if (this.config.onFile?.(file, e)) {
+      this.reset();
+      return;
+    }
+
+    // L'aperçu tout de suite (url de session), la vraie source quand l'upload atterrit.
+    const result = await this.dropImage(this.config.getImageUrl(file), e);
+    if (result) await this.resolveFileInto(result.object, file);
+  }
+
+  /**
+   * La vraie source d'un fichier déjà affiché (url de session) : l'upload de l'hôte
+   * (resolveFile), puis remplacement EN PLACE — le cadre garde sa géométrie, et ne se sauve
+   * pas sans elle (source en attente). Public : l'hôte s'en sert pour les cadres qu'il pose
+   * lui-même à partir d'un fichier (le fond).
+   */
+  async resolveFileInto(object: FabricObject, file: File): Promise<void> {
+    if (!this.config.resolveFile) return;
+
+    if (object instanceof ImageFrame) object.markSourcePending();
+    try {
+      const { url, imageMeta } = await this.config.resolveFile(file);
+      // Le cadre a pu être supprimé pendant l'upload : rien à remplacer.
+      if (!this.editor.canvas.getObjects().includes(object)) return;
+
+      await this.editor.layers.replaceImageSource(object as ImageFrame | FabricImage, url, { imageMeta });
+      this.config.onSuccess();
+    } catch (error) {
+      this.config.onError(error);
+    }
   }
 
   private extractImageFile(e: DragEvent): File | null {
