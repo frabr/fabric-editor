@@ -29,6 +29,7 @@ export { ImageFrame } from "./ImageFrame";
 // OOP shape classes
 export { FabRect, FabCircle, FabPath, type Lockable } from "./shapes";
 export { rulesOf, kindOf, type ObjectRules, type ObjectKind, type ToolboxImageReaction } from "./capabilities";
+export { toolsFor, selectionKindOf, type ToolId, type SelectionKind } from "./tools";
 
 // Shape factories (return Fab* instances)
 export {
