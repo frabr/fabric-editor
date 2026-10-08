@@ -3,7 +3,7 @@ import type { DesignCanvas } from "./DesignCanvas";
 import { CanvasGuides } from "./ui/guides";
 import { runLayout, layoutSubtree, relayoutAncestors } from "./layout/run";
 import { StackResizeSession } from "./layout/stack/resize-session";
-import { type LayoutSession, type SizingData, type TextOverflow, type Arrangement } from "./layout/types";
+import type { AlignItems, AlignSelf, Arrangement, ChildData, ContainerData, JustifyContent, LayoutSession, SizingData, TextOverflow } from "./layout/types";
 import { arrangeAsStack, arrangeFree } from "./layout/arrangement";
 import { syncGroupControls } from "./ui/controls";
 import { pointInObject } from "./layout/geometry";
@@ -12,6 +12,12 @@ import { rulesOf } from "./capabilities";
 
 /** Size presets of the UI (same vocabulary for containers and texts). */
 export type SizePreset = "hug" | "hug-y" | "fixed";
+
+const SIZE_PRESETS: Record<SizePreset, Pick<SizingData, "x" | "y">> = {
+  "hug": { x: "hug", y: "hug" },
+  "hug-y": { x: "fixed", y: "hug" },
+  "fixed": { x: "fixed", y: "fixed" },
+};
 import { scaledSize, setShapeSize } from "./layout/geometry";
 import { availableRoom } from "./layout/stack/room";
 import { placeBlockAbove } from "./layout/z-order";
@@ -19,7 +25,7 @@ import { fitFreeContainer } from "./layout/free/fit";
 import { FreeResizeSession } from "./layout/free/resize-session";
 import { ContainerizeSession } from "./layout/stack/sessions/containerize";
 import { InsertChildSession } from "./layout/stack/sessions/insert-child";
-import { layoutOf, containerDataOf, isFreeContainer, sizingOf, ZERO_PADDING, isStackContainer, directionOf } from "./layout/model";
+import { layoutOf, containerDataOf, childDataOf, isContainerObject, isFreeContainer, sizingOf, paddingOf, isStackContainer, directionOf, updateContainer, updateChild, updateLayout } from "./layout/model";
 import { childrenOf, parentContainerOf, descendantsOf, findById } from "./layout/hierarchy";
 import { isTextObject } from "./layout/text";
 
@@ -162,6 +168,26 @@ export class LayoutManager {
     this.canvas.renderAll();
   }
 
+  /** A layout change: everything settles, then the host hears about it. */
+  private changed(): void {
+    this.relayout();
+    this.callbacks.onLayoutChanged?.();
+  }
+
+  /** A panel edit on a container's own block (ignored on anything else). */
+  private editContainer(obj: FabricObject, patch: Partial<ContainerData>): void {
+    if (!isContainerObject(obj)) return;
+    updateContainer(obj, patch);
+    this.changed();
+  }
+
+  /** A panel edit on a child's block (ignored outside a container). */
+  private editChild(obj: FabricObject, patch: Partial<ChildData>): void {
+    if (!childDataOf(obj)) return;
+    updateChild(obj, patch);
+    this.changed();
+  }
+
   /**
    * Set the size mode of a container or a text:
    * - "hug": width and height follow the content
@@ -171,51 +197,33 @@ export class LayoutManager {
    * content again, as the mode says.
    */
   setMode(obj: FabricObject, mode: SizePreset): void {
-    const layout = layoutOf(obj);
     const isText = isTextObject(obj);
-    if (!layout?.container && !isText) return;
+    if (!isContainerObject(obj) && !isText) return;
 
     const { minSize: _floor, ...current } = sizingOf(obj);
-    const axes: Record<SizePreset, Pick<SizingData, "x" | "y">> = {
-      "hug": { x: "hug", y: "hug" },
-      "hug-y": { x: "fixed", y: "hug" },
-      "fixed": { x: "fixed", y: "fixed" },
-    };
-    const sizing: SizingData = { ...current, ...axes[mode] };
+    const sizing: SizingData = { ...current, ...SIZE_PRESETS[mode] };
 
     if (isText) (obj as unknown as CustomTextbox).setSizing(sizing);
-    else obj.set("layout", { ...layout, sizing });
-
-    this.relayout();
-    this.callbacks.onLayoutChanged?.();
+    else updateLayout(obj, { sizing });
+    this.changed();
   }
 
   /** What a text does when its box is smaller than its content. */
   setOverflow(obj: FabricObject, overflow: TextOverflow): void {
     if (!isTextObject(obj)) return;
     (obj as unknown as CustomTextbox).setTextOverflow(overflow);
-
-    this.relayout();
-    this.callbacks.onLayoutChanged?.();
+    this.changed();
   }
 
-  /** Update padding on a container — one side, or "all" four. */
+  /** Padding of a container — one side, or "all" four. */
   setPadding(obj: FabricObject, side: string, value: number): void {
-    const layout = layoutOf(obj);
-    if (!layout?.container) return;
-
-    if (!layout.container.padding) layout.container.padding = { ...ZERO_PADDING };
     const sides = side === "all" ? ["top", "right", "bottom", "left"] : [side];
-    for (const s of sides) (layout.container.padding as Record<string, number>)[s] = value;
-    obj.set("layout", { ...layout });
-
-    this.relayout();
-    this.callbacks.onLayoutChanged?.();
+    const padding = { ...paddingOf(containerDataOf(obj)) };
+    for (const s of sides) (padding as Record<string, number>)[s] = value;
+    this.editContainer(obj, { padding });
   }
 
-  /**
-   * Un groupe libre ou rangé (une pile) — la bascule ne fait rien sauter (cf. grouping).
-   */
+  /** Un groupe libre ou rangé (une pile) — la bascule ne fait rien sauter (cf. arrangement). */
   setArrangement(obj: FabricObject, arrangement: Arrangement): void {
     const cd = containerDataOf(obj);
     if (!cd || (cd.arrangement ?? "stack") === arrangement) return;
@@ -224,69 +232,32 @@ export class LayoutManager {
     if (arrangement === "stack") arrangeAsStack(obj, objects);
     else arrangeFree(obj, objects);
     syncGroupControls(obj);
-
-    this.relayout();
-    this.callbacks.onLayoutChanged?.();
+    this.changed();
   }
 
-  /** Update alignSelf on a child layout object. */
+  /** Cross-axis alignment of one child in its stack. */
   setAlignSelf(obj: FabricObject, value: string): void {
-    const layout = layoutOf(obj);
-    if (!layout?.child) return;
-
-    layout.child.alignSelf = value as any;
-    obj.set("layout", { ...layout });
-
-    this.relayout();
-    this.callbacks.onLayoutChanged?.();
+    this.editChild(obj, { alignSelf: value as AlignSelf });
   }
 
-  /** Update gap on a container. */
+  /** Space between the children of a stack. */
   setGap(obj: FabricObject, value: number): void {
-    const layout = layoutOf(obj);
-    if (!layout?.container) return;
-
-    layout.container.gap = Math.max(0, value);
-    obj.set("layout", { ...layout });
-
-    this.relayout();
-    this.callbacks.onLayoutChanged?.();
+    this.editContainer(obj, { gap: Math.max(0, value) });
   }
 
-  /** Update flex direction on a container. */
+  /** Direction of a stack. */
   setFlexDirection(obj: FabricObject, direction: "column" | "row"): void {
-    const layout = layoutOf(obj);
-    if (!layout?.container) return;
-
-    layout.container.flexDirection = direction;
-    obj.set("layout", { ...layout });
-
-    this.relayout();
-    this.callbacks.onLayoutChanged?.();
+    this.editContainer(obj, { flexDirection: direction });
   }
 
-  /** Update alignItems on a container. */
+  /** Cross-axis alignment of a stack's children. */
   setAlignItems(obj: FabricObject, value: string): void {
-    const layout = layoutOf(obj);
-    if (!layout?.container) return;
-
-    layout.container.alignItems = value as any;
-    obj.set("layout", { ...layout });
-
-    this.relayout();
-    this.callbacks.onLayoutChanged?.();
+    this.editContainer(obj, { alignItems: value as AlignItems });
   }
 
-  /** Update justifyContent on a container. */
+  /** Main-axis distribution of a stack's children. */
   setJustifyContent(obj: FabricObject, value: string): void {
-    const layout = layoutOf(obj);
-    if (!layout?.container) return;
-
-    layout.container.justifyContent = value as any;
-    obj.set("layout", { ...layout });
-
-    this.relayout();
-    this.callbacks.onLayoutChanged?.();
+    this.editContainer(obj, { justifyContent: value as JustifyContent });
   }
 
   // ── External drag API ──────────────────────────────────────────────
@@ -527,8 +498,7 @@ export class LayoutManager {
   private onTextChanged(e: any): void {
     const layout = layoutOf(e.target);
     if (!layout?.child) return;
-    this.relayout();
-    this.callbacks.onLayoutChanged?.();
+    this.changed();
   }
 
   private onModified(e: any): void {
@@ -551,8 +521,7 @@ export class LayoutManager {
     const resizedGroup = this.freeResize;
     this.freeResize = null;
     if (this.dtl.phase === "idle" && (resizedGroup || (parent && isFreeContainer(parent)))) {
-      this.relayout();
-      this.callbacks.onLayoutChanged?.();
+      this.changed();
       return;
     }
 
@@ -560,8 +529,7 @@ export class LayoutManager {
     const childLayout = layoutOf(obj);
     if (childLayout?.child && isTextObject(obj) && this.dtl.phase === "idle" &&
         e.transform?.action === "resizing") {
-      this.relayout();
-      this.callbacks.onLayoutChanged?.();
+      this.changed();
       return;
     }
 
@@ -569,8 +537,7 @@ export class LayoutManager {
     const layout = layoutOf(obj);
     if (layout?.container) {
       this.resizeSession = null;
-      this.relayout();
-      this.callbacks.onLayoutChanged?.();
+      this.changed();
       // Don't return if we have an active dtl session — fall through to commit it
       if (this.dtl.phase !== "anchored" && this.dtl.phase !== "pending") return;
     }
