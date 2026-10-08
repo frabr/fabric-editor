@@ -209,8 +209,22 @@ type JustifyContent = "flex-start" | "flex-end" | "center" | "space-between" | "
 type AlignItems = "stretch" | "flex-start" | "flex-end" | "center";
 /** Flex direction (maps to Yoga flexDirection). */
 type FlexDirection = "column" | "row";
+/**
+ * How a container places its children:
+ * - "stack": Flexbox (Yoga) — direction, gap, alignment (default)
+ * - "free": children keep the place they were put at; the container's box
+ *   follows them (their union, plus the padding) — a group
+ */
+type Arrangement = "stack" | "free";
 /** "I am a parent" — present when the object has children. */
 interface ContainerData {
+    /** How the children are placed (default: "stack"). */
+    arrangement?: Arrangement;
+    /**
+     * "group": the container was created by grouping (⌘G) — a carrier with nothing of
+     * its own, removed when its children are ungrouped.
+     */
+    origin?: "group";
     /** Flex direction: column (vertical, default) or row (horizontal). */
     flexDirection?: FlexDirection;
     /** Gap between children in the main axis direction (pixels). */
@@ -252,6 +266,10 @@ interface ResolvedChild {
 }
 declare function isContainer(l: LayoutData): boolean;
 declare function isChild(l: LayoutData): boolean;
+/** Is this object a free container (a group: children placed by hand)? */
+declare function isFreeContainer(obj: {
+    get(key: string): unknown;
+} | null | undefined): boolean;
 /** @deprecated Use `layout.container != null` instead. */
 type ContainerLayout = LayoutData & {
     container: ContainerData;
@@ -394,6 +412,7 @@ declare class CustomTextbox extends Textbox {
     handleEdgeResize(transform: any, x: number, y: number): boolean;
     /** Coin : les deux règles des bords à la fois. */
     handleCornerResize(transform: any, x: number, y: number): boolean;
+    /** Placé par une pile — un groupe (container libre) laisse ses enfants à leur propre taille. */
     private _isChild;
     private _withAnchor;
     private _resizeWidth;
@@ -506,6 +525,10 @@ declare function isPositionLocked(obj: FabricObject): boolean;
  * by the room above it, sized by the content below it — in the same pass.
  * Single pass, deterministic, no solver.
  *
+ * A free container (a group, `arrangement: "free"`) has no Yoga pass: its children
+ * keep their place and its box follows them (see free.ts). Its child containers are
+ * laid out as roots; inside a stack, a group is a rigid block (see yoga-engine).
+ *
  * Note: user-initiated resize is handled by ResizeSession, not here.
  * This module only handles programmatic relayout (content changes, mode
  * changes, move, etc.).
@@ -580,6 +603,28 @@ declare class ResizeSession {
     /** A child container: its ancestors take its new size in, and it sits in its slot. */
     private settle;
 }
+
+/**
+ * Le container libre (un groupe) : ses enfants restent où on les a posés, sa boîte les
+ * suit — leur union, plus la marge (`padding`). Rien n'est calculé par Yoga dedans ; dans
+ * une pile, un groupe est un bloc rigide (cf. yoga-engine), que ses enfants suivent quand
+ * la pile le déplace.
+ *
+ * Le redimensionner ne pose jamais de `scale` : chaque descendant absorbe l'agrandissement
+ * dans ses propres dimensions (une forme sa taille, un texte sa largeur et sa police, une
+ * pile ses marges et son espacement), au prorata, autour du coin qui ne bouge pas.
+ */
+
+/**
+ * La boîte d'un groupe se recale sur ses enfants : leur union, plus la marge. Sans
+ * enfant, rien ne bouge. Les groupes imbriqués d'abord (leur boîte compte dans la sienne).
+ */
+declare function fitFreeContainer(container: FabricObject, objects: FabricObject[]): void;
+/**
+ * La pile qui place `obj`, s'il est dans une pile (pas dans un groupe) : sa place est
+ * celle que la pile lui donne — il ne se déplace, ne s'aligne ni ne change de plan seul.
+ */
+declare function stackParentOf(obj: FabricObject): FabricObject | undefined;
 
 /**
  * Shared geometry helpers for layout computations.
@@ -814,6 +859,8 @@ declare class InsertChildSession implements LayoutSession {
  *   its content, never wider than the room its parent gives (a text three
  *   levels down wraps at the top container's width), and heights flow up
  *   in the same pass. Without the objects, a nested container is a rigid box.
+ * - A group (free container) is always a rigid box — its size is its content's, fitted
+ *   before the pass (see reconcile) — and its descendants follow when Yoga moves it.
  */
 
 declare function initYoga(): Promise<void>;
@@ -1028,6 +1075,11 @@ interface ObjectControlsConfig {
 type ControlOption = "clip" | "color" | "font" | "outline" | "corner_radius" | "image";
 interface SelectionCallbacks {
     onSelect?: (object: FabricObject) => void;
+    /**
+     * Sélection de plusieurs objets (déjà normalisée : jamais un objet avec son ancêtre,
+     * jamais un verrouillé). Absent, la lib retombe sur onSelect(premier objet).
+     */
+    onSelectMany?: (objects: FabricObject[]) => void;
     onDeselect?: () => void;
     /** Appelé quand une transformation commence (déplacement, rotation, redimensionnement) */
     onTransformStart?: () => void;
@@ -1268,16 +1320,16 @@ declare class LayerManager {
      */
     removeMany(objects: FabricObject[]): void;
     /**
-     * Monte l'objet devant le premier objet de même niveau qui le chevauche. Un
-     * container emmène ses descendants (toujours au-dessus de lui) ; un enfant reste
-     * parmi les enfants de son container.
+     * Monte l'objet (ou les objets) devant le premier objet de même niveau qui le
+     * chevauche. Un container emmène ses descendants (toujours au-dessus de lui) ; un enfant
+     * reste parmi les enfants de son container ; des objets montés ensemble ne se doublent pas.
      */
-    bringForward(obj: FabricObject): void;
+    bringForward(obj: FabricObject | FabricObject[]): void;
     /**
-     * Descend l'objet d'un niveau, mêmes règles de blocs que bringForward. Ne peut pas
-     * descendre en dessous de l'image de fond.
+     * Descend l'objet (ou les objets) d'un niveau, mêmes règles de blocs que bringForward.
+     * Ne peut pas descendre en dessous de l'image de fond.
      */
-    sendBackward(obj: FabricObject): void;
+    sendBackward(obj: FabricObject | FabricObject[]): void;
     private applyStackOrder;
     /**
      * Crée et ajoute un calque texte
@@ -1427,6 +1479,10 @@ declare class SelectionManager {
      */
     set onSelect(callback: ((obj: FabricObject) => void) | undefined);
     /**
+     * Définit le callback onSelectMany
+     */
+    set onSelectMany(callback: ((objects: FabricObject[]) => void) | undefined);
+    /**
      * Définit le callback onDeselect
      */
     set onDeselect(callback: (() => void) | undefined);
@@ -1478,6 +1534,17 @@ declare class SelectionManager {
      */
     selectByLayerId(layerId: string): boolean;
     /**
+     * Sélectionne plusieurs objets (normalisés comme une sélection à la souris). Un seul
+     * objet retenu : sélection simple ; aucun : rien n'est sélectionné.
+     */
+    selectMany(objects: FabricObject[]): void;
+    /**
+     * Travaille sur les objets sélectionnés hors de la sélection de Fabric — dedans, leurs
+     * positions sont relatives à elle — puis les resélectionne, dans le même groupe. L'hôte
+     * n'entend que la resélection : la barre se replace sur la nouvelle boîte.
+     */
+    withSelectionReleased(fn: (objects: FabricObject[]) => void): void;
+    /**
      * Configure les écouteurs d'événements du canvas
      */
     private setupListeners;
@@ -1516,6 +1583,23 @@ declare class SelectionManager {
      * Les objets verrouillés sont exclus des sélections multiples
      */
     private handleSelection;
+    /**
+     * Une sélection multiple ne garde que des objets du niveau visé : chacun remonte à son
+     * container comme un clic (resolveTarget), un objet dont l'ancêtre est pris suit cet
+     * ancêtre, les verrouillés restent dehors. Si la sélection de Fabric n'est pas déjà
+     * celle-là, on la remplace — l'événement qui suit repasse ici, sélection conforme.
+     * Pas de poignées de taille ni de rotation : un redimensionnement ne s'empile jamais
+     * en `scale`, et la sélection n'a pas encore le sien (cf. groupes libres). Des enfants
+     * d'une pile ne se déplacent pas à plusieurs : leur place est celle que la pile leur
+     * donne (ceux d'un groupe, si).
+     */
+    private handleMultipleSelection;
+    /**
+     * Les objets d'une sélection multiple ramenés au niveau visé, dans l'ordre de la pile.
+     * Le container dans lequel on est entré n'en fait pas partie : c'est le cadre de la
+     * sélection, pas un de ses éléments.
+     */
+    normalizeMany(objects: FabricObject[]): FabricObject[];
     /**
      * Gère la désélection
      */
@@ -1856,6 +1940,10 @@ declare class LayoutManager {
     private guides;
     private dtl;
     private resizeSession;
+    /** Le redimensionnement d'un groupe en cours (ouvert à before:transform). */
+    private freeResize;
+    /** Les descendants d'une sélection multiple en cours de déplacement, et leur départ. */
+    private followers;
     constructor(canvas: DesignCanvas, callbacks?: LayoutManagerCallbacks, guideColor?: string);
     /** Set or update callbacks after construction (merges with existing). */
     setCallbacks(callbacks: LayoutManagerCallbacks): void;
@@ -1872,8 +1960,12 @@ declare class LayoutManager {
     setMode(obj: FabricObject, mode: SizePreset): void;
     /** What a text does when its box is smaller than its content. */
     setOverflow(obj: FabricObject, overflow: TextOverflow): void;
-    /** Update padding on a container. */
+    /** Update padding on a container — one side, or "all" four. */
     setPadding(obj: FabricObject, side: string, value: number): void;
+    /**
+     * Un groupe libre ou rangé (une pile) — la bascule ne fait rien sauter (cf. grouping).
+     */
+    setArrangement(obj: FabricObject, arrangement: Arrangement): void;
     /** Update alignSelf on a child layout object. */
     setAlignSelf(obj: FabricObject, value: string): void;
     /** Update gap on a container. */
@@ -1918,8 +2010,24 @@ declare class LayoutManager {
     private onModifiedBound;
     private onResizingBound;
     private onTextChangedBound;
+    private onBeforeTransformBound;
     private setupEventListeners;
     private onMoving;
+    /**
+     * Les descendants des objets déplacés (un groupe, ou les objets d'une sélection multiple
+     * — jamais dans la sélection, cf. SelectionManager) suivent la translation de `target`
+     * depuis le début du geste. Sans relayout : dans une sélection, les positions des
+     * containers sont relatives à elle.
+     */
+    private moveFollowers;
+    /**
+     * La boîte d'un groupe suit ses enfants, et celle des groupes qui le contiennent — pas
+     * au-delà d'une pile pendant le geste (elle déplacerait le groupe, donc l'objet tenu) :
+     * la pile se recale à la fin (relayout).
+     */
+    private fitGroupChain;
+    /** Le début d'une transformation : un groupe qu'on redimensionne garde son état de départ. */
+    private onBeforeTransform;
     /** A text inside a container was edited → its ancestors adapt. */
     private onTextChanged;
     private onModified;
@@ -1948,6 +2056,11 @@ declare class LayoutManager {
     private findParentContainer;
     /** Transition to ANCHORED: create a session on the target and go live. */
     private anchorOn;
+    /**
+     * Un pas du redimensionnement d'un groupe : le facteur est la moyenne des deux axes
+     * (uniforme, un texte ne se déforme pas), le coin opposé à la poignée reste en place.
+     */
+    private resizeGroup;
     /** Create the appropriate session type for a target container. */
     private createSession;
     private doCommit;
@@ -1955,6 +2068,36 @@ declare class LayoutManager {
     private showSessionGuides;
     private findShapeUnderPoint;
 }
+
+/**
+ * Aligner et répartir : la géométrie, en fonctions pures sur des boîtes (coordonnées scène,
+ * alignées sur les axes). L'éditeur décide de la référence (la sélection, le container,
+ * l'artboard) et de ce qui bouge ; ici, seulement de combien.
+ */
+type AlignEdge = "left" | "center" | "right" | "top" | "middle" | "bottom";
+type DistributeAxis = "horizontal" | "vertical";
+interface Box {
+    left: number;
+    top: number;
+    width: number;
+    height: number;
+}
+interface Delta {
+    dx: number;
+    dy: number;
+}
+/** L'axe d'un alignement : gauche, centre, droite sont horizontaux. */
+declare function alignAxis(edge: AlignEdge): "x" | "y";
+/** La boîte qui englobe toutes les autres. */
+declare function unionBox(boxes: Box[]): Box;
+/** Le déplacement qui aligne `box` sur le bord (ou le centre) `edge` de `ref`. */
+declare function alignDelta(box: Box, ref: Box, edge: AlignEdge): Delta;
+/**
+ * Les déplacements qui répartissent les boîtes à espace égal sur un axe : les deux
+ * extrêmes restent en place, les autres se rangent entre elles dans leur ordre actuel.
+ * Rendus dans l'ordre des boîtes reçues ; moins de trois boîtes : rien ne bouge.
+ */
+declare function distributeDeltas(boxes: Box[], axis: DistributeAxis): Delta[];
 
 /**
  * Les bindings du dialecte template (apibots, plan media-template-generators §4) : un calque
@@ -2257,8 +2400,8 @@ declare class FabricEditor {
     removeShadow(): void;
     private _clipboard;
     /**
-     * Copy the current selection to an internal clipboard.
-     * If the selected object is a layout container, its children are copied too.
+     * Copy the current selection to an internal clipboard, with every descendant of the
+     * selected containers, in stack order.
      */
     copySelection(): void;
     /**
@@ -2277,8 +2420,39 @@ declare class FabricEditor {
      */
     onUserSlotsChange(callback: (slots: UserSlot[]) => void): () => void;
     /**
+     * Groupe la sélection (au moins deux objets) dans un groupe libre — rien ne bouge. La
+     * resélection de ses membres remonte au groupe : c'est lui qui est sélectionné. Rend le
+     * groupe, ou null.
+     */
+    groupSelection(): FabricObject | null;
+    /**
+     * Dégroupe le container sélectionné : ses enfants restent à leur place, sélectionnés.
+     * Rend les enfants (vide : rien à dégrouper).
+     */
+    ungroupSelection(): FabricObject[];
+    /**
+     * Aligne la sélection. Plusieurs objets s'alignent sur leur boîte commune ; un objet
+     * seul, sur l'intérieur de son container, ou sur l'artboard. Un objet bouge avec sa
+     * descendance. Un enfant de pile ne bouge pas : il s'aligne dans la pile (alignSelf),
+     * sur l'axe qu'elle laisse libre — l'autre est le sien.
+     */
+    alignSelection(edge: AlignEdge): void;
+    /**
+     * Répartit la sélection à espace égal sur un axe : les deux extrêmes restent en place.
+     * Seulement les objets libres (un enfant de pile a la place que la pile lui donne), et
+     * à partir de trois.
+     */
+    distributeSelection(axis: DistributeAxis): void;
+    /** Aligne un enfant dans sa pile, sur l'axe qu'elle laisse libre. Vrai s'il a changé. */
+    private alignInStack;
+    /** La référence d'un objet seul : l'intérieur de son container, sinon l'artboard. */
+    private alignReference;
+    /** Déplace un objet et toute sa descendance (positions absolues). */
+    private moveWithDescendants;
+    /**
      * Supprime l'objet ou les objets sélectionnés
-     * Les objets verrouillés (position ou full) ne peuvent pas être supprimés
+     * Les objets verrouillés (position ou full) ne peuvent pas être supprimés ; un container
+     * emporte sa descendance.
      */
     deleteSelection(): void;
     /**
@@ -3010,4 +3184,4 @@ declare function drawFrameBadge(ctx: CanvasRenderingContext2D, obj: FabricObject
 /** Les labels d'un objet réunis en un seul badge (dédoublonnés), ou null. */
 declare function badgeLabel(obj: FabricObject, labelers: BadgeLabeler[]): string | null;
 
-export { type AlignItems, type AlignSelf, type AttachSnapshot, type BadgeLabeler, type BindingSpec, type Bindings, CanvasGuides, type CatalogShape, type CatalogShapeInput, type ChildData, type ChildLayout, type ClipData, type ContainerData, type ContainerLayout, ContainerizeSession, type ControlOption, CustomTextbox, DesignCanvas, type DragPayload, DropHandler, type DropHandlerConfig, type DropResult, type EditorConfig, FabCircle, FabPath, FabRect, FabricEditor, type FlexDirection, type FontConfig, type FontsConfig, type FrameRect, HEART_PATH, HEXAGON_PATH, type HistoryCallbacks, HistoryManager, type HistoryState, type HtmlLayerOutput, type HtmlRenderOptions, ImageFrame, type ImageLayerOptions, InsertChildSession, type JustifyContent, type LayerData, LayerManager, type LayoutData, LayoutManager, type LayoutManagerCallbacks, type LayoutParents, type LayoutSession, type LockMode$1 as LockMode, type Lockable, MIN_PAD, MaskManager, type ObjectControlsConfig, type ObjectKind, type ObjectRules, PendingUploadsManager, PersistenceManager, PreviewCanvas, ResizeSession, type ResizeSnapResult, type SaveOptions, type SaveResult, type SelectionCallbacks, SelectionManager, type ShapeCatalogEntry, type ShapeLayerOptions, type ShapePathData, type ShapeType, type SizeMode, type SizePreset, type SizingData, type SnappingConfig, SnappingManager, type TextLayerOptions, type TextOverflow, type ToolboxImageReaction, type TreeLayer, USER_SCOPE, USER_SLOT_FIELD, type UserSlot, type WorkspaceOptions, addCircleClip, addCropControls, addHeartClip, addHexagonClip, antiScale, applyClip, applyLockMode, badgeLabel, bindingBadgeLabel, clampTopLeft, clipDataFor, collectUserSlots, createCircle, createHeart, createHexagon, createImage, createPathShape, createPathsShape, createRect, createShape, drawBindingBadge, drawFrameBadge, fabricToHtml, getAvailableShapes, getCatalogShape, getLockMode, getNextLockMode, getShapeCatalog, hasExceededOffset, hasPendingBindings, initYoga, isChild, isChildLayout, isContainer, isContainerLayout, isContentLocked, isMonoPath, isPositionLocked, isStyleLocked, isUserSlot, isValidShape, isYogaReady, kindOf, layerToHtmlStandalone, layoutChildren, layoutDescendants, layoutParents, layoutRoot, lockBoundText, nextShape, pendingBindings, pointInObject, registerShapes, registeredShapes, removeCropControls, rulesOf, runLayout, scaledSize, setTextContent, stackBlock, switchClip, switchShape, topLeft, userSlotBinding, userSlotHint, wrapContainerAroundChild, yogaLayout };
+export { type AlignEdge, type AlignItems, type AlignSelf, type Arrangement, type AttachSnapshot, type BadgeLabeler, type BindingSpec, type Bindings, type Box, CanvasGuides, type CatalogShape, type CatalogShapeInput, type ChildData, type ChildLayout, type ClipData, type ContainerData, type ContainerLayout, ContainerizeSession, type ControlOption, CustomTextbox, type Delta, DesignCanvas, type DistributeAxis, type DragPayload, DropHandler, type DropHandlerConfig, type DropResult, type EditorConfig, FabCircle, FabPath, FabRect, FabricEditor, type FlexDirection, type FontConfig, type FontsConfig, type FrameRect, HEART_PATH, HEXAGON_PATH, type HistoryCallbacks, HistoryManager, type HistoryState, type HtmlLayerOutput, type HtmlRenderOptions, ImageFrame, type ImageLayerOptions, InsertChildSession, type JustifyContent, type LayerData, LayerManager, type LayoutData, LayoutManager, type LayoutManagerCallbacks, type LayoutParents, type LayoutSession, type LockMode$1 as LockMode, type Lockable, MIN_PAD, MaskManager, type ObjectControlsConfig, type ObjectKind, type ObjectRules, PendingUploadsManager, PersistenceManager, PreviewCanvas, ResizeSession, type ResizeSnapResult, type SaveOptions, type SaveResult, type SelectionCallbacks, SelectionManager, type ShapeCatalogEntry, type ShapeLayerOptions, type ShapePathData, type ShapeType, type SizeMode, type SizePreset, type SizingData, type SnappingConfig, SnappingManager, type TextLayerOptions, type TextOverflow, type ToolboxImageReaction, type TreeLayer, USER_SCOPE, USER_SLOT_FIELD, type UserSlot, type WorkspaceOptions, addCircleClip, addCropControls, addHeartClip, addHexagonClip, alignAxis, alignDelta, antiScale, applyClip, applyLockMode, badgeLabel, bindingBadgeLabel, clampTopLeft, clipDataFor, collectUserSlots, createCircle, createHeart, createHexagon, createImage, createPathShape, createPathsShape, createRect, createShape, distributeDeltas, drawBindingBadge, drawFrameBadge, fabricToHtml, fitFreeContainer, getAvailableShapes, getCatalogShape, getLockMode, getNextLockMode, getShapeCatalog, hasExceededOffset, hasPendingBindings, initYoga, isChild, isChildLayout, isContainer, isContainerLayout, isContentLocked, isFreeContainer, isMonoPath, isPositionLocked, isStyleLocked, isUserSlot, isValidShape, isYogaReady, kindOf, layerToHtmlStandalone, layoutChildren, layoutDescendants, layoutParents, layoutRoot, lockBoundText, nextShape, pendingBindings, pointInObject, registerShapes, registeredShapes, removeCropControls, rulesOf, runLayout, scaledSize, setTextContent, stackBlock, stackParentOf, switchClip, switchShape, topLeft, unionBox, userSlotBinding, userSlotHint, wrapContainerAroundChild, yogaLayout };

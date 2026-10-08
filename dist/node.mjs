@@ -129,6 +129,9 @@ import {
 import { Textbox, Point, controlsUtils } from "#fabric";
 
 // src/layout/types.ts
+function isFreeContainer(obj) {
+  return obj?.get("layout")?.container?.arrangement === "free";
+}
 var MIN_FONT_SIZE = 8;
 
 // src/layout/text-box.ts
@@ -316,8 +319,12 @@ var CustomTextbox = class extends Textbox {
       return changedW || changedH;
     });
   }
+  /** Placé par une pile — un groupe (container libre) laisse ses enfants à leur propre taille. */
   _isChild() {
-    return this.get("layout")?.child != null;
+    const parentId = this.get("layout")?.child?.parentId;
+    if (parentId == null) return false;
+    const parent = this.canvas?.getObjects().find((o) => o.get("layerId") === parentId);
+    return !isFreeContainer(parent);
   }
   _withAnchor(transform, resize) {
     const { originX, originY } = transform;
@@ -599,16 +606,29 @@ function placeBelow(objects, root, below) {
   const at = rest.indexOf(below);
   return [...rest.slice(0, at), ...block, ...rest.slice(at)];
 }
-function bringBlockForward(objects, obj, overlaps) {
-  const siblings = siblingsOf(objects, obj);
-  const next = siblings.slice(siblings.indexOf(obj) + 1).find((s) => overlaps(obj, s));
-  return next ? placeBlockAbove(objects, obj, next) : null;
+function bringBlocksForward(objects, moved, overlaps) {
+  let order = objects;
+  let changed = false;
+  for (const obj of [...moved].sort((a, b) => objects.indexOf(b) - objects.indexOf(a))) {
+    const siblings = siblingsOf(order, obj);
+    const next = siblings.slice(siblings.indexOf(obj) + 1).find((s) => !moved.includes(s) && overlaps(obj, s));
+    if (!next) continue;
+    order = placeBlockAbove(order, obj, next);
+    changed = true;
+  }
+  return changed ? order : null;
 }
-function sendBlockBackward(objects, obj) {
-  const siblings = siblingsOf(objects, obj);
-  const prev = siblings[siblings.indexOf(obj) - 1];
-  if (!prev || prev === objects[0]) return null;
-  return placeBelow(objects, obj, prev);
+function sendBlocksBackward(objects, moved) {
+  let order = objects;
+  let changed = false;
+  for (const obj of [...moved].sort((a, b) => objects.indexOf(a) - objects.indexOf(b))) {
+    const siblings = siblingsOf(order, obj);
+    const prev = siblings.slice(0, siblings.indexOf(obj)).reverse().find((s) => !moved.includes(s));
+    if (!prev || prev === order[0]) continue;
+    order = placeBelow(order, obj, prev);
+    changed = true;
+  }
+  return changed ? order : null;
 }
 
 // src/capabilities.ts
@@ -1102,6 +1122,16 @@ installLockMethods(FabPath.prototype);
 installUserSlotRendering(FabPath.prototype);
 classRegistry3.setClass(FabPath, "Path");
 
+// src/layout/free.ts
+import { Point as Point2 } from "#fabric";
+function stackParentOf(obj) {
+  const parentId = obj.get("layout")?.child?.parentId;
+  if (!parentId) return void 0;
+  const parent = obj.canvas?.getObjects().find((o) => o.get("layerId") === parentId);
+  const cd = parent?.get("layout")?.container;
+  return cd && cd.arrangement !== "free" ? parent : void 0;
+}
+
 // src/capabilities.ts
 function kindOf(obj) {
   const layerType = obj.layerType;
@@ -1114,6 +1144,8 @@ function kindOf(obj) {
 function rulesOf(obj, { ignoreLock = false } = {}) {
   const rules = kindRules(obj, kindOf(obj));
   if (isOutOfPlay(obj)) Object.assign(rules, { onToolboxImage: null, hosts: false });
+  if (isFreeContainer(obj)) Object.assign(rules, { onToolboxImage: null, hosts: false });
+  if (stackParentOf(obj)) rules.restacks = false;
   const locked = lockedRules(rules, ignoreLock ? "free" : getLockMode(obj));
   if (rules.onToolboxImage !== "fill" || !isUserSlot(obj)) return locked;
   return { ...locked, onToolboxImage: "fill", options: [...locked.options, "image"] };
@@ -2062,20 +2094,22 @@ var LayerManager = class {
     objects.forEach((obj) => this.canvas.remove(obj));
   }
   /**
-   * Monte l'objet devant le premier objet de même niveau qui le chevauche. Un
-   * container emmène ses descendants (toujours au-dessus de lui) ; un enfant reste
-   * parmi les enfants de son container.
+   * Monte l'objet (ou les objets) devant le premier objet de même niveau qui le
+   * chevauche. Un container emmène ses descendants (toujours au-dessus de lui) ; un enfant
+   * reste parmi les enfants de son container ; des objets montés ensemble ne se doublent pas.
    */
   bringForward(obj) {
-    const order = bringBlockForward(this.canvas.getObjects(), obj, (a, b) => a.isOverlapping(b));
+    const moved = Array.isArray(obj) ? obj : [obj];
+    const order = bringBlocksForward(this.canvas.getObjects(), moved, (a, b) => a.isOverlapping(b));
     if (order) this.applyStackOrder(order);
   }
   /**
-   * Descend l'objet d'un niveau, mêmes règles de blocs que bringForward. Ne peut pas
-   * descendre en dessous de l'image de fond.
+   * Descend l'objet (ou les objets) d'un niveau, mêmes règles de blocs que bringForward.
+   * Ne peut pas descendre en dessous de l'image de fond.
    */
   sendBackward(obj) {
-    const order = sendBlockBackward(this.canvas.getObjects(), obj);
+    const moved = Array.isArray(obj) ? obj : [obj];
+    const order = sendBlocksBackward(this.canvas.getObjects(), moved);
     if (order) this.applyStackOrder(order);
   }
   applyStackOrder(order) {

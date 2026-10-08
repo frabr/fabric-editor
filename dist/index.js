@@ -169,6 +169,8 @@ __export(index_exports, {
   addCropControls: () => addCropControls,
   addHeartClip: () => addHeartClip,
   addHexagonClip: () => addHexagonClip,
+  alignAxis: () => alignAxis,
+  alignDelta: () => alignDelta,
   antiScale: () => antiScale,
   applyClip: () => applyClip,
   applyLockMode: () => applyLockMode,
@@ -185,9 +187,11 @@ __export(index_exports, {
   createPathsShape: () => createPathsShape,
   createRect: () => createRect,
   createShape: () => createShape,
+  distributeDeltas: () => distributeDeltas,
   drawBindingBadge: () => drawBindingBadge,
   drawFrameBadge: () => drawFrameBadge,
   fabricToHtml: () => fabricToHtml,
+  fitFreeContainer: () => fitFreeContainer,
   getAvailableShapes: () => getAvailableShapes,
   getCatalogShape: () => getCatalogShape,
   getLockMode: () => getLockMode,
@@ -201,6 +205,7 @@ __export(index_exports, {
   isContainer: () => isContainer,
   isContainerLayout: () => isContainerLayout,
   isContentLocked: () => isContentLocked,
+  isFreeContainer: () => isFreeContainer,
   isMonoPath: () => isMonoPath,
   isPositionLocked: () => isPositionLocked,
   isStyleLocked: () => isStyleLocked,
@@ -225,9 +230,11 @@ __export(index_exports, {
   scaledSize: () => scaledSize,
   setTextContent: () => setTextContent,
   stackBlock: () => stackBlock,
+  stackParentOf: () => stackParentOf,
   switchClip: () => switchClip,
   switchShape: () => switchShape,
   topLeft: () => topLeft,
+  unionBox: () => unionBox,
   userSlotBinding: () => userSlotBinding,
   userSlotHint: () => userSlotHint,
   wrapContainerAroundChild: () => wrapContainerAroundChild,
@@ -236,7 +243,7 @@ __export(index_exports, {
 module.exports = __toCommonJS(index_exports);
 
 // src/FabricEditor.ts
-var import_fabric17 = require("#fabric");
+var import_fabric18 = require("#fabric");
 
 // src/DesignCanvas.ts
 var import_fabric = require("#fabric");
@@ -548,7 +555,7 @@ var DesignCanvas = class {
 };
 
 // src/LayerManager.ts
-var import_fabric11 = require("#fabric");
+var import_fabric12 = require("#fabric");
 
 // src/controls/CustomTextbox.ts
 var import_fabric2 = require("#fabric");
@@ -559,6 +566,9 @@ function isContainer(l) {
 }
 function isChild(l) {
   return l.child != null;
+}
+function isFreeContainer(obj) {
+  return obj?.get("layout")?.container?.arrangement === "free";
 }
 function isContainerLayout(l) {
   return isContainer(l);
@@ -758,8 +768,12 @@ var CustomTextbox = class extends import_fabric2.Textbox {
       return changedW || changedH;
     });
   }
+  /** Placé par une pile — un groupe (container libre) laisse ses enfants à leur propre taille. */
   _isChild() {
-    return this.get("layout")?.child != null;
+    const parentId = this.get("layout")?.child?.parentId;
+    if (parentId == null) return false;
+    const parent = this.canvas?.getObjects().find((o) => o.get("layerId") === parentId);
+    return !isFreeContainer(parent);
   }
   _withAnchor(transform, resize) {
     const { originX, originY } = transform;
@@ -1041,20 +1055,33 @@ function placeBelow(objects, root, below) {
   const at = rest.indexOf(below);
   return [...rest.slice(0, at), ...block, ...rest.slice(at)];
 }
-function bringBlockForward(objects, obj, overlaps) {
-  const siblings = siblingsOf(objects, obj);
-  const next = siblings.slice(siblings.indexOf(obj) + 1).find((s) => overlaps(obj, s));
-  return next ? placeBlockAbove(objects, obj, next) : null;
+function bringBlocksForward(objects, moved, overlaps) {
+  let order = objects;
+  let changed = false;
+  for (const obj of [...moved].sort((a, b) => objects.indexOf(b) - objects.indexOf(a))) {
+    const siblings = siblingsOf(order, obj);
+    const next = siblings.slice(siblings.indexOf(obj) + 1).find((s) => !moved.includes(s) && overlaps(obj, s));
+    if (!next) continue;
+    order = placeBlockAbove(order, obj, next);
+    changed = true;
+  }
+  return changed ? order : null;
 }
-function sendBlockBackward(objects, obj) {
-  const siblings = siblingsOf(objects, obj);
-  const prev = siblings[siblings.indexOf(obj) - 1];
-  if (!prev || prev === objects[0]) return null;
-  return placeBelow(objects, obj, prev);
+function sendBlocksBackward(objects, moved) {
+  let order = objects;
+  let changed = false;
+  for (const obj of [...moved].sort((a, b) => objects.indexOf(a) - objects.indexOf(b))) {
+    const siblings = siblingsOf(order, obj);
+    const prev = siblings.slice(0, siblings.indexOf(obj)).reverse().find((s) => !moved.includes(s));
+    if (!prev || prev === order[0]) continue;
+    order = placeBelow(order, obj, prev);
+    changed = true;
+  }
+  return changed ? order : null;
 }
 
 // src/capabilities.ts
-var import_fabric7 = require("#fabric");
+var import_fabric8 = require("#fabric");
 
 // src/layout/geometry.ts
 function resolveContainerChildren(objects, container) {
@@ -1736,18 +1763,179 @@ installLockMethods(FabPath.prototype);
 installUserSlotRendering(FabPath.prototype);
 import_fabric6.classRegistry.setClass(FabPath, "Path");
 
+// src/layout/free.ts
+var import_fabric7 = require("#fabric");
+
+// src/layout/tree.ts
+function layoutParents(layers) {
+  const all = Array.from(layers);
+  const ids = new Set(all.map((l) => l.layerId).filter(Boolean));
+  const parents = /* @__PURE__ */ new Map();
+  for (const layer of all) {
+    const parentId = layer.layout?.child?.parentId;
+    if (layer.layerId && parentId && parentId !== layer.layerId && ids.has(parentId)) {
+      parents.set(layer.layerId, parentId);
+    }
+  }
+  return parents;
+}
+function layoutRoot(parents, id) {
+  const seen = /* @__PURE__ */ new Set();
+  while (parents.has(id) && !seen.has(id)) {
+    seen.add(id);
+    id = parents.get(id);
+  }
+  return id;
+}
+function layoutChildren(parents, id) {
+  const children = [];
+  for (const [child, parent] of parents) if (parent === id && child !== id) children.push(child);
+  return children;
+}
+function layoutDescendants(parents, ids) {
+  const roots = new Set(ids);
+  const descendants = /* @__PURE__ */ new Set();
+  let grew = true;
+  while (grew) {
+    grew = false;
+    for (const [child, parent] of parents) {
+      if (descendants.has(child) || roots.has(child)) continue;
+      if (roots.has(parent) || descendants.has(parent)) {
+        descendants.add(child);
+        grew = true;
+      }
+    }
+  }
+  return descendants;
+}
+
+// src/layout/free.ts
+function boxOf(obj) {
+  obj.setCoords();
+  return obj.getBoundingRect();
+}
+function descendantsOf(objects, roots) {
+  const ids = layoutDescendants(layoutParents(objects), roots.map((o) => o.get("layerId")));
+  return objects.filter((o) => ids.has(o.get("layerId")));
+}
+function translateObjects(objects, dx, dy) {
+  if (!dx && !dy) return;
+  for (const obj of objects) {
+    obj.set({ left: obj.left + dx, top: obj.top + dy });
+    obj.setCoords();
+  }
+}
+function placeTopLeft(obj, x, y) {
+  obj.setPositionByOrigin(new import_fabric7.Point(x, y), "left", "top");
+  obj.setCoords();
+}
+function fitFreeContainer(container, objects) {
+  const children = resolveContainerChildren(objects, container).map((c) => c.obj);
+  if (children.length === 0) return;
+  for (const child of children) if (isFreeContainer(child)) fitFreeContainer(child, objects);
+  const boxes = children.map(boxOf);
+  const left = Math.min(...boxes.map((b) => b.left));
+  const top = Math.min(...boxes.map((b) => b.top));
+  const right = Math.max(...boxes.map((b) => b.left + b.width));
+  const bottom = Math.max(...boxes.map((b) => b.top + b.height));
+  const pad = container.get("layout").container?.padding ?? { top: 0, right: 0, bottom: 0, left: 0 };
+  setShapeSize(container, right - left + pad.left + pad.right, bottom - top + pad.top + pad.bottom);
+  placeTopLeft(container, left - pad.left, top - pad.top);
+}
+var scaleMin = (minSize, k) => minSize && { w: minSize.w * k, h: minSize.h * k };
+var FreeResizeSession = class {
+  constructor(container, objects, start) {
+    this.container = container;
+    this.objects = objects;
+    this.start = start;
+    this.states = descendantsOf(objects, [container]).map((obj) => this.snapshot(obj));
+  }
+  /** Le groupe à l'échelle `k` de son état de départ, `anchor` (scène) immobile. */
+  apply(k, anchor) {
+    for (const state of this.states) this.scale(state, k, anchor);
+    fitFreeContainer(this.container, this.objects);
+  }
+  snapshot(obj) {
+    const { w, h } = scaledSize(obj);
+    const tl = obj.getPositionByOrigin("left", "top");
+    const state = { obj, box: { left: tl.x, top: tl.y, width: w, height: h } };
+    const layout = obj.get("layout");
+    if (isTextObject(obj)) {
+      const t = obj;
+      state.text = {
+        width: obj.width,
+        fontSize: t.fontSize,
+        fontSizeIntent: t.fontSizeIntent ?? t.fontSize,
+        styles: JSON.stringify(t.styles ?? {}),
+        minSize: layout?.sizing?.minSize
+      };
+    } else if (layout?.container) {
+      state.container = {
+        padding: layout.container.padding,
+        gap: layout.container.gap,
+        minSize: layout.sizing?.minSize
+      };
+    }
+    return state;
+  }
+  scale(state, k, anchor) {
+    const { obj, box } = state;
+    const layout = obj.get("layout");
+    if (state.text) {
+      const t = obj;
+      const styles = JSON.parse(state.text.styles);
+      for (const line of Object.values(styles)) {
+        for (const style of Object.values(line)) if (style.fontSize) style.fontSize *= k;
+      }
+      t.styles = styles;
+      t.fontSizeIntent = state.text.fontSizeIntent * k;
+      t.fontSize = state.text.fontSize * k;
+      t.width = state.text.width * k;
+      if (layout?.sizing) {
+        obj.set("layout", { ...layout, sizing: { ...layout.sizing, minSize: scaleMin(state.text.minSize, k) } });
+      }
+      t.initDimensions();
+      obj.dirty = true;
+    } else if (state.container && layout?.container) {
+      const p = state.container.padding;
+      obj.set("layout", {
+        ...layout,
+        container: {
+          ...layout.container,
+          padding: p && { top: p.top * k, right: p.right * k, bottom: p.bottom * k, left: p.left * k },
+          gap: state.container.gap === void 0 ? void 0 : state.container.gap * k
+        },
+        sizing: layout.sizing && { ...layout.sizing, minSize: scaleMin(state.container.minSize, k) }
+      });
+      setShapeSize(obj, box.width * k, box.height * k);
+    } else {
+      setShapeSize(obj, box.width * k, box.height * k);
+    }
+    placeTopLeft(obj, anchor.x + (box.left - anchor.x) * k, anchor.y + (box.top - anchor.y) * k);
+  }
+};
+function stackParentOf(obj) {
+  const parentId = obj.get("layout")?.child?.parentId;
+  if (!parentId) return void 0;
+  const parent = obj.canvas?.getObjects().find((o) => o.get("layerId") === parentId);
+  const cd = parent?.get("layout")?.container;
+  return cd && cd.arrangement !== "free" ? parent : void 0;
+}
+
 // src/capabilities.ts
 function kindOf(obj) {
   const layerType = obj.layerType;
   if (isTextObject(obj)) return "text";
   if (layerType === "imageFrame") return "imageShape";
-  if (obj instanceof import_fabric7.FabricImage) return "legacyImage";
-  if (layerType === "shape" || obj instanceof import_fabric7.Rect) return "shape";
+  if (obj instanceof import_fabric8.FabricImage) return "legacyImage";
+  if (layerType === "shape" || obj instanceof import_fabric8.Rect) return "shape";
   return "other";
 }
 function rulesOf(obj, { ignoreLock = false } = {}) {
   const rules = kindRules(obj, kindOf(obj));
   if (isOutOfPlay(obj)) Object.assign(rules, { onToolboxImage: null, hosts: false });
+  if (isFreeContainer(obj)) Object.assign(rules, { onToolboxImage: null, hosts: false });
+  if (stackParentOf(obj)) rules.restacks = false;
   const locked = lockedRules(rules, ignoreLock ? "free" : getLockMode(obj));
   if (rules.onToolboxImage !== "fill" || !isUserSlot(obj)) return locked;
   return { ...locked, onToolboxImage: "fill", options: [...locked.options, "image"] };
@@ -1784,7 +1972,7 @@ function kindRules(obj, kind) {
     case "shape":
       return {
         kind,
-        onToolboxImage: obj instanceof import_fabric7.Group ? null : "fill",
+        onToolboxImage: obj instanceof import_fabric8.Group ? null : "fill",
         hosts: true,
         options: shapeOptions(obj),
         ...free
@@ -1813,10 +2001,10 @@ function isOutOfPlay(obj) {
 }
 
 // src/shapes/factories.ts
-var import_fabric9 = require("#fabric");
+var import_fabric10 = require("#fabric");
 
 // src/controls/cropControls.ts
-var import_fabric8 = require("#fabric");
+var import_fabric9 = require("#fabric");
 var CROP_CONFIGS = {
   left: {
     dimension: "width",
@@ -1910,7 +2098,7 @@ function addCropControls(obj) {
   sides.forEach((side) => {
     const position = CONTROL_POSITIONS[side];
     const controlName = CONTROL_NAMES[side];
-    obj.controls[controlName] = new import_fabric8.Control({
+    obj.controls[controlName] = new import_fabric9.Control({
       x: position.x,
       y: position.y,
       actionHandler: createCropActionHandler(side),
@@ -1944,7 +2132,7 @@ function createPathShape(shapeId, options) {
   return FabPath.createFromCatalog(shapeId, options);
 }
 async function createImage(url, options) {
-  const img = await import_fabric9.FabricImage.fromURL(url, { crossOrigin: "anonymous" });
+  const img = await import_fabric10.FabricImage.fromURL(url, { crossOrigin: "anonymous" });
   let scale = 1;
   if (img.width > 300 || img.height > 300) {
     scale = Math.min(300 / img.width, 300 / img.height);
@@ -1986,7 +2174,7 @@ function createPathsShape(paths, options = {}) {
     child.setCoords();
     return child;
   });
-  const group = new import_fabric9.Group(children, { originX: "center", originY: "center", ...withoutUndefined({ left, top }) });
+  const group = new import_fabric10.Group(children, { originX: "center", originY: "center", ...withoutUndefined({ left, top }) });
   if (id) group.set({ id });
   const target = targetDims(group.width, group.height, options.width, options.height);
   group.set({ scaleX: target.width / group.width, scaleY: target.height / group.height });
@@ -2087,7 +2275,7 @@ function getAvailableShapes() {
 }
 
 // src/ImageFrame.ts
-var import_fabric10 = require("#fabric");
+var import_fabric11 = require("#fabric");
 var IMAGE_KEYS = ["src", "offsetX", "offsetY", "scale"];
 function imageMetaOf(image) {
   const meta = { ...image };
@@ -2101,7 +2289,7 @@ function rotatePoint(dx, dy, angleDeg) {
     y: dx * Math.sin(angle) + dy * Math.cos(angle)
   };
 }
-var ImageFrame = class _ImageFrame extends import_fabric10.Group {
+var ImageFrame = class _ImageFrame extends import_fabric11.Group {
   constructor(image, options = {}) {
     const frameScale = options.frameScale ?? 1;
     const frameWidth = options.frameWidth ?? image.width * frameScale;
@@ -2129,7 +2317,7 @@ var ImageFrame = class _ImageFrame extends import_fabric10.Group {
       height: frameHeight,
       subTargetCheck: false,
       interactive: false,
-      layoutManager: new import_fabric10.LayoutManager(new import_fabric10.FixedLayout()),
+      layoutManager: new import_fabric11.LayoutManager(new import_fabric11.FixedLayout()),
       // Désactiver le cache pour que le clipPath soit redessiné à chaque frame
       objectCaching: false
     });
@@ -2175,7 +2363,7 @@ var ImageFrame = class _ImageFrame extends import_fabric10.Group {
   }
   /** Un cadre en attente : l'image est le damier, aux dimensions du cadre. */
   static pending(options) {
-    const img = new import_fabric10.FabricImage(checkerCanvas(options.frameWidth, options.frameHeight));
+    const img = new import_fabric11.FabricImage(checkerCanvas(options.frameWidth, options.frameHeight));
     const frame = new _ImageFrame(img, options);
     frame._pending = true;
     return frame;
@@ -2586,7 +2774,7 @@ var ImageFrame = class _ImageFrame extends import_fabric10.Group {
       imageScale: scale,
       imageMeta: imageMetaOf(data.image)
     };
-    const frame = src ? new _ImageFrame(await import_fabric10.FabricImage.fromURL(src, { crossOrigin: "anonymous" }), options) : _ImageFrame.pending({ ...options, frameWidth: data.frameWidth, frameHeight: data.frameHeight });
+    const frame = src ? new _ImageFrame(await import_fabric11.FabricImage.fromURL(src, { crossOrigin: "anonymous" }), options) : _ImageFrame.pending({ ...options, frameWidth: data.frameWidth, frameHeight: data.frameHeight });
     const img = frame._image;
     if (data.layout) frame.set("layout", data.layout);
     if (data.originX) frame.set({ originX: data.originX, originY: data.originY ?? data.originX });
@@ -2640,8 +2828,8 @@ var ImageFrame = class _ImageFrame extends import_fabric10.Group {
     });
   }
 };
-import_fabric10.classRegistry.setClass(ImageFrame);
-import_fabric10.classRegistry.setClass(ImageFrame, "ImageFrame");
+import_fabric11.classRegistry.setClass(ImageFrame);
+import_fabric11.classRegistry.setClass(ImageFrame, "ImageFrame");
 
 // src/LayerManager.ts
 var BACKGROUND_LAYER_ID = "originalImage";
@@ -2671,7 +2859,7 @@ var LayerManager = class {
    * Charge l'image de fond
    */
   async loadBackgroundImage(url) {
-    const img = await import_fabric11.FabricImage.fromURL(url, { crossOrigin: "anonymous" });
+    const img = await import_fabric12.FabricImage.fromURL(url, { crossOrigin: "anonymous" });
     const scaleX = this.canvas.width / img.width;
     const scaleY = this.canvas.height / img.height;
     const scale = Math.max(scaleX, scaleY);
@@ -2737,20 +2925,22 @@ var LayerManager = class {
     objects.forEach((obj) => this.canvas.remove(obj));
   }
   /**
-   * Monte l'objet devant le premier objet de même niveau qui le chevauche. Un
-   * container emmène ses descendants (toujours au-dessus de lui) ; un enfant reste
-   * parmi les enfants de son container.
+   * Monte l'objet (ou les objets) devant le premier objet de même niveau qui le
+   * chevauche. Un container emmène ses descendants (toujours au-dessus de lui) ; un enfant
+   * reste parmi les enfants de son container ; des objets montés ensemble ne se doublent pas.
    */
   bringForward(obj) {
-    const order = bringBlockForward(this.canvas.getObjects(), obj, (a, b) => a.isOverlapping(b));
+    const moved = Array.isArray(obj) ? obj : [obj];
+    const order = bringBlocksForward(this.canvas.getObjects(), moved, (a, b) => a.isOverlapping(b));
     if (order) this.applyStackOrder(order);
   }
   /**
-   * Descend l'objet d'un niveau, mêmes règles de blocs que bringForward. Ne peut pas
-   * descendre en dessous de l'image de fond.
+   * Descend l'objet (ou les objets) d'un niveau, mêmes règles de blocs que bringForward.
+   * Ne peut pas descendre en dessous de l'image de fond.
    */
   sendBackward(obj) {
-    const order = sendBlockBackward(this.canvas.getObjects(), obj);
+    const moved = Array.isArray(obj) ? obj : [obj];
+    const order = sendBlocksBackward(this.canvas.getObjects(), moved);
     if (order) this.applyStackOrder(order);
   }
   applyStackOrder(order) {
@@ -2797,7 +2987,7 @@ var LayerManager = class {
    */
   async addImage(url, options = {}) {
     const { left = 100, top = 100, layerId = this.generateId(), imageMeta } = options;
-    const img = await import_fabric11.FabricImage.fromURL(url, { crossOrigin: "anonymous" });
+    const img = await import_fabric12.FabricImage.fromURL(url, { crossOrigin: "anonymous" });
     let frameScale = 1;
     if (img.width > 300 || img.height > 300) {
       frameScale = Math.min(300 / img.width, 300 / img.height);
@@ -2828,7 +3018,7 @@ var LayerManager = class {
   async replaceImageSource(target, newUrl, options) {
     if (kindOf(target) === "imageShape") {
       const frame = target;
-      const newImg = await import_fabric11.FabricImage.fromURL(newUrl, { crossOrigin: "anonymous" });
+      const newImg = await import_fabric12.FabricImage.fromURL(newUrl, { crossOrigin: "anonymous" });
       frame.replaceImage(newImg, options?.imageMeta);
       if (options?.opacity !== void 0) {
         frame.opacity = options.opacity;
@@ -2854,7 +3044,7 @@ var LayerManager = class {
       layerType: target.get("layerType")
     };
     const lockMode = getLockMode(target);
-    const newImg = await import_fabric11.FabricImage.fromURL(newUrl, { crossOrigin: "anonymous" });
+    const newImg = await import_fabric12.FabricImage.fromURL(newUrl, { crossOrigin: "anonymous" });
     const oldWidth = target.width * target.scaleX;
     const oldHeight = target.height * target.scaleY;
     const coverScale = Math.max(oldWidth / newImg.width, oldHeight / newImg.height);
@@ -2897,7 +3087,7 @@ var LayerManager = class {
     const { clipShape, clipData, cornerRadius } = clipOfShape(shape);
     const { w: displayedWidth, h: displayedHeight } = scaledSize(shape);
     const center = shape.getRelativeCenterPoint();
-    const img = await import_fabric11.FabricImage.fromURL(imageUrl, { crossOrigin: "anonymous" });
+    const img = await import_fabric12.FabricImage.fromURL(imageUrl, { crossOrigin: "anonymous" });
     const frame = new ImageFrame(img, {
       left: center.x,
       top: center.y,
@@ -3007,7 +3197,7 @@ var LayerManager = class {
    * Groupe plusieurs objets ensemble
    */
   groupObjects(objects) {
-    const group = new import_fabric11.Group(objects);
+    const group = new import_fabric12.Group(objects);
     objects.forEach((obj) => this.canvas.remove(obj));
     this.canvas.add(group);
     this.canvas.setActiveObject(group);
@@ -3044,7 +3234,7 @@ var LayerManager = class {
       }
       case "Image":
       case "image": {
-        const img = await import_fabric11.FabricImage.fromObject({
+        const img = await import_fabric12.FabricImage.fromObject({
           ...layer,
           crossOrigin: "anonymous"
         });
@@ -3058,7 +3248,7 @@ var LayerManager = class {
       }
       case "Group":
       case "group":
-        obj = await import_fabric11.Group.fromObject(layer);
+        obj = await import_fabric12.Group.fromObject(layer);
         break;
       case "Rect":
       case "rect":
@@ -3169,14 +3359,14 @@ function clipOfShape(shape) {
   if (shape instanceof FabCircle) return { clipShape: "circle", cornerRadius: 0 };
   if (shape instanceof FabPath) {
     const id = shape.id;
-    const clipData = { d: import_fabric11.util.joinPath(shape.path), width: shape.width, height: shape.height };
+    const clipData = { d: import_fabric12.util.joinPath(shape.path), width: shape.width, height: shape.height };
     return { clipShape: id && isValidShape(id) ? id : id || "custom", clipData, cornerRadius: 0 };
   }
   return { clipShape: "rect", cornerRadius: 0 };
 }
 
 // src/SelectionManager.ts
-var import_fabric12 = require("#fabric");
+var import_fabric13 = require("#fabric");
 var SelectionManager = class {
   constructor(canvas) {
     this.canvas = canvas;
@@ -3237,6 +3427,12 @@ var SelectionManager = class {
    */
   set onSelect(callback) {
     this.callbacks.onSelect = callback;
+  }
+  /**
+   * Définit le callback onSelectMany
+   */
+  set onSelectMany(callback) {
+    this.callbacks.onSelectMany = callback;
   }
   /**
    * Définit le callback onDeselect
@@ -3329,6 +3525,35 @@ var SelectionManager = class {
     return true;
   }
   /**
+   * Sélectionne plusieurs objets (normalisés comme une sélection à la souris). Un seul
+   * objet retenu : sélection simple ; aucun : rien n'est sélectionné.
+   */
+  selectMany(objects) {
+    const kept = this.normalizeMany(objects);
+    if (kept.length === 0) this.clear();
+    else if (kept.length === 1) this.select(kept[0]);
+    else {
+      this.canvas.setActiveObject(new import_fabric13.ActiveSelection(kept, { canvas: this.canvas.originalFabricCanvas }));
+      this.canvas.renderAll();
+    }
+  }
+  /**
+   * Travaille sur les objets sélectionnés hors de la sélection de Fabric — dedans, leurs
+   * positions sont relatives à elle — puis les resélectionne, dans le même groupe. L'hôte
+   * n'entend que la resélection : la barre se replace sur la nouvelle boîte.
+   */
+  withSelectionReleased(fn) {
+    const objects = this.selected;
+    const groupId = this._activeGroupId;
+    const silenced = this._silenced;
+    this._silenced = true;
+    this.canvas.discardActiveObject();
+    this._silenced = silenced;
+    this._activeGroupId = groupId;
+    fn(objects);
+    this.selectMany(objects);
+  }
+  /**
    * Configure les écouteurs d'événements du canvas
    */
   setupListeners() {
@@ -3397,7 +3622,7 @@ var SelectionManager = class {
     const id = container.get("layerId");
     this._activeGroupId = id;
     const child = this.canvas.getObjects().slice().reverse().find(
-      (o) => o.get("layout")?.child?.parentId === id && o.containsPoint(new import_fabric12.Point(point.x, point.y))
+      (o) => o.get("layout")?.child?.parentId === id && o.containsPoint(new import_fabric13.Point(point.x, point.y))
     );
     if (child) this.canvas.setActiveObject(child);
     this.canvas.requestRenderAll();
@@ -3420,43 +3645,12 @@ var SelectionManager = class {
    * Gère la création/mise à jour de sélection
    * Les objets verrouillés sont exclus des sélections multiples
    */
-  handleSelection(e) {
+  handleSelection() {
     if (this._silenced) return;
     const activeObject = this.canvas.getActiveObject();
     if (!activeObject) return;
-    if (activeObject.type === "activeselection" && e.selected) {
-      const unlocked = e.selected.filter((obj) => !isPositionLocked(obj));
-      if (unlocked.length === 0) {
-        this.canvas.discardActiveObject();
-        this._current = null;
-        if (this.callbacks.onDeselect) {
-          this.callbacks.onDeselect();
-        }
-        return;
-      }
-      if (unlocked.length === 1) {
-        this.canvas.discardActiveObject();
-        this.canvas.setActiveObject(unlocked[0]);
-        this._current = unlocked[0];
-        if (this.callbacks.onSelect) {
-          this.callbacks.onSelect(unlocked[0]);
-        }
-        return;
-      }
-      if (unlocked.length < e.selected.length) {
-        this.canvas.discardActiveObject();
-        const newSelection = new import_fabric12.ActiveSelection(unlocked, { canvas: this.canvas.originalFabricCanvas });
-        this.canvas.setActiveObject(newSelection);
-        this._current = unlocked;
-        if (this.callbacks.onSelect && unlocked[0]) {
-          this.callbacks.onSelect(unlocked[0]);
-        }
-        return;
-      }
-      this._current = e.selected;
-      if (this.callbacks.onSelect && e.selected[0]) {
-        this.callbacks.onSelect(e.selected[0]);
-      }
+    if (activeObject instanceof import_fabric13.ActiveSelection) {
+      this.handleMultipleSelection(activeObject);
       return;
     }
     const resolved = this.resolveTarget(activeObject);
@@ -3473,6 +3667,69 @@ var SelectionManager = class {
     if (this.callbacks.onSelect) {
       this.callbacks.onSelect(activeObject);
     }
+  }
+  /**
+   * Une sélection multiple ne garde que des objets du niveau visé : chacun remonte à son
+   * container comme un clic (resolveTarget), un objet dont l'ancêtre est pris suit cet
+   * ancêtre, les verrouillés restent dehors. Si la sélection de Fabric n'est pas déjà
+   * celle-là, on la remplace — l'événement qui suit repasse ici, sélection conforme.
+   * Pas de poignées de taille ni de rotation : un redimensionnement ne s'empile jamais
+   * en `scale`, et la sélection n'a pas encore le sien (cf. groupes libres). Des enfants
+   * d'une pile ne se déplacent pas à plusieurs : leur place est celle que la pile leur
+   * donne (ceux d'un groupe, si).
+   */
+  handleMultipleSelection(selection) {
+    const members = selection.getObjects();
+    const kept = this.normalizeMany(members);
+    if (kept.length === 0) {
+      this.canvas.discardActiveObject();
+      this.canvas.requestRenderAll();
+      return;
+    }
+    if (kept.length === 1) {
+      this.canvas.setActiveObject(kept[0]);
+      this.canvas.requestRenderAll();
+      return;
+    }
+    if (kept.length !== members.length || kept.some((obj) => !members.includes(obj))) {
+      this.canvas.setActiveObject(new import_fabric13.ActiveSelection(kept, { canvas: this.canvas.originalFabricCanvas }));
+      this.canvas.requestRenderAll();
+      return;
+    }
+    const pinned = kept.some((obj) => stackParentOf(obj));
+    selection.set({ hasControls: false, lockMovementX: pinned, lockMovementY: pinned });
+    this._current = kept;
+    if (this.callbacks.onSelectMany) this.callbacks.onSelectMany(kept);
+    else this.callbacks.onSelect?.(kept[0]);
+  }
+  /**
+   * Les objets d'une sélection multiple ramenés au niveau visé, dans l'ordre de la pile.
+   * Le container dans lequel on est entré n'en fait pas partie : c'est le cadre de la
+   * sélection, pas un de ses éléments.
+   */
+  normalizeMany(objects) {
+    const picked = /* @__PURE__ */ new Set();
+    for (const obj of objects) {
+      const resolved = this.resolveTarget(obj);
+      if (this._activeGroupId && resolved.get("layerId") === this._activeGroupId) continue;
+      if (isPositionLocked(resolved)) continue;
+      picked.add(resolved);
+    }
+    const all = this.canvas.getObjects();
+    const byId = new Map(all.map((o) => [o.get("layerId"), o]));
+    const hasPickedAncestor = (obj) => {
+      const seen = /* @__PURE__ */ new Set();
+      let parentId = obj.get("layout")?.child?.parentId;
+      while (parentId) {
+        const parent = byId.get(parentId);
+        if (!parent || seen.has(parent)) return false;
+        if (picked.has(parent)) return true;
+        seen.add(parent);
+        parentId = parent.get("layout")?.child?.parentId;
+      }
+      return false;
+    };
+    return all.filter((obj) => picked.has(obj) && !hasPickedAncestor(obj));
   }
   /**
    * Gère la désélection
@@ -3520,7 +3777,7 @@ var SelectionManager = class {
 };
 
 // src/MaskManager.ts
-var import_fabric13 = require("#fabric");
+var import_fabric14 = require("#fabric");
 var MASK_LAYER_ID = "mask";
 var BACKGROUND_LAYER_ID2 = "originalImage";
 var MaskManager = class {
@@ -3565,7 +3822,7 @@ var MaskManager = class {
     if (!bgImage) {
       throw new Error("Pas d'image de fond pour appliquer le masque");
     }
-    const maskImage = await import_fabric13.FabricImage.fromURL(maskUrl, {
+    const maskImage = await import_fabric14.FabricImage.fromURL(maskUrl, {
       crossOrigin: "anonymous"
     });
     this.cropCanvasToMask(maskImage, bgImage.height);
@@ -3871,7 +4128,7 @@ var HistoryManager = class {
 };
 
 // src/ui/guides.ts
-var import_fabric14 = require("#fabric");
+var import_fabric15 = require("#fabric");
 
 // src/ui/color.ts
 function parseHex(hex) {
@@ -3907,7 +4164,7 @@ var CanvasGuides = class {
   // ── Low-level primitives ──────────────────────────────────────────
   /** Add a line guide. */
   addLine(coords, opts = {}) {
-    const line = new import_fabric14.Line(coords, {
+    const line = new import_fabric15.Line(coords, {
       stroke: opts.stroke ?? this.color,
       strokeWidth: opts.strokeWidth ?? 1,
       strokeDashArray: opts.strokeDashArray ?? [5, 5],
@@ -3920,7 +4177,7 @@ var CanvasGuides = class {
   }
   /** Add a rectangle guide (highlight zone, margin indicator, etc.). */
   addRect(opts, insertAbove) {
-    const rect = new import_fabric14.Rect({
+    const rect = new import_fabric15.Rect({
       left: opts.left,
       top: opts.top,
       originX: "left",
@@ -4163,7 +4420,7 @@ function createHatchPattern(hex) {
   ctx.moveTo(size / 2, size + size / 2);
   ctx.lineTo(size + size / 2, size / 2);
   ctx.stroke();
-  return new import_fabric14.Pattern({ source: canvas, repeat: "repeat" });
+  return new import_fabric15.Pattern({ source: canvas, repeat: "repeat" });
 }
 
 // src/SnappingManager.ts
@@ -4519,7 +4776,7 @@ var SnappingManager = class {
 };
 
 // src/LayoutManager.ts
-var import_fabric15 = require("#fabric");
+var import_fabric17 = require("#fabric");
 
 // src/layout/yoga-engine.ts
 var yoga = null;
@@ -4583,7 +4840,7 @@ function applyHugFloor(node, sizing) {
   if (sizing.y === "hug" && minSize.h > 0) node.setMinHeight(minSize.h);
 }
 function nestedChildren(obj, allObjects) {
-  if (!allObjects || isTextObject(obj)) return null;
+  if (!allObjects || isTextObject(obj) || isFreeContainer(obj)) return null;
   const layout = obj.get("layout");
   if (!layout?.container) return null;
   const children = sortChildrenByOrder(resolveContainerChildren(allObjects, obj));
@@ -4607,7 +4864,7 @@ function buildChildren(parent, children, cd, sizing, allObjects, Y) {
     const alignSelf = cl.alignSelf ?? "auto";
     if (alignSelf !== "auto") node.setAlignSelf(mapAlignSelf(alignSelf, Y));
     const flexGrow = cl.flexGrow ?? 0;
-    if (flexGrow > 0) node.setFlexGrow(flexGrow);
+    if (flexGrow > 0 && !isFreeContainer(obj)) node.setFlexGrow(flexGrow);
     const effectiveAlign = alignSelf !== "auto" ? alignSelf : alignItems;
     const willStretch = effectiveAlign === "stretch";
     const entry = { obj, node };
@@ -4616,6 +4873,9 @@ function buildChildren(parent, children, cd, sizing, allObjects, Y) {
     node.setFlexShrink(isTextObject(obj) || mainHug ? 1 : 0);
     if (isTextObject(obj)) {
       setupTextMeasure(node, obj, Y);
+    } else if (isFreeContainer(obj)) {
+      setRigidSize(node, obj, { isColumn, willStretch: false, parentSizing: sizing, flexGrow: 0 });
+      if (allObjects) entry.followers = descendantsOf(allObjects, [obj]);
     } else if (nested) {
       const childCd = obj.get("layout").container;
       const childSizing = sizingOf(obj);
@@ -4658,7 +4918,8 @@ function setNestedSize(node, obj, sizing, slot) {
   applyHugFloor(node, sizing);
 }
 function placeChildren(built, parentLeft, parentTop, depth) {
-  for (const { obj, node, children } of built) {
+  for (const { obj, node, children, followers } of built) {
+    const before = followers && topLeft(obj);
     const left = parentLeft + node.getComputedLeft();
     const top = parentTop + node.getComputedTop();
     const computedW = node.getComputedWidth();
@@ -4681,6 +4942,10 @@ function placeChildren(built, parentLeft, parentTop, depth) {
     const objLeft = obj.originX === "center" ? left + childW / 2 : obj.originX === "right" ? left + childW : left;
     const objTop = obj.originY === "center" ? top + childH / 2 : obj.originY === "bottom" ? top + childH : top;
     obj.set({ left: objLeft, top: objTop });
+    if (before) {
+      const after = topLeft(obj);
+      translateObjects(followers, after.x - before.x, after.y - before.y);
+    }
     if (depth > 0) obj.setCoords();
     if (children) placeChildren(children, left, top, depth + 1);
   }
@@ -4746,15 +5011,32 @@ function runLayout(objects) {
     const layout = obj.get("layout");
     if (!layout?.container) continue;
     if (parentContainerOf(obj, objects)) continue;
-    const children = sortChildrenByOrder(resolveContainerChildren(objects, obj));
-    if (children.length === 0) continue;
-    layoutContainer(obj, layout.container, children, objects);
+    layoutTree(obj, objects);
   }
 }
-function relayoutSingle(container, cd, allObjects) {
-  const children = sortChildrenByOrder(resolveContainerChildren(allObjects, container));
+function layoutTree(container, objects) {
+  const cd = container.get("layout").container;
+  const children = sortChildrenByOrder(resolveContainerChildren(objects, container));
   if (children.length === 0) return;
-  layoutContainer(container, cd, children, allObjects);
+  if (cd.arrangement === "free") {
+    for (const { obj } of children) {
+      if (obj.get("layout")?.container) layoutTree(obj, objects);
+    }
+    fitFreeContainer(container, objects);
+    return;
+  }
+  fitGroupsUnder(container, objects);
+  layoutContainer(container, cd, children, objects);
+}
+function fitGroupsUnder(container, objects) {
+  for (const { obj } of resolveContainerChildren(objects, container)) {
+    if (!obj.get("layout")?.container) continue;
+    if (isFreeContainer(obj)) layoutTree(obj, objects);
+    else fitGroupsUnder(obj, objects);
+  }
+}
+function relayoutSingle(container, _cd, allObjects) {
+  layoutTree(container, allObjects);
 }
 function bubbleUpLayout(container, allObjects) {
   let current = container;
@@ -4965,6 +5247,399 @@ function minSizeOf(obj, objects) {
     w: sizing.x === "hug" ? Math.max(min.w, sizing.minSize?.w ?? 0) : size.w,
     h: sizing.y === "hug" ? Math.max(min.h, sizing.minSize?.h ?? 0) : size.h
   };
+}
+
+// src/grouping.ts
+var parentIdOf2 = (obj) => obj.get("layout")?.child?.parentId;
+var idOf = (obj) => obj.get("layerId");
+function groupMembers(objects, selected) {
+  const parentIds = new Set(selected.map(parentIdOf2));
+  if (parentIds.size <= 1) return objects.filter((o) => selected.includes(o));
+  const parents = layoutParents(objects);
+  const rootIds = new Set(selected.map((o) => layoutRoot(parents, idOf(o))));
+  return objects.filter((o) => rootIds.has(idOf(o)));
+}
+function groupObjects(canvas, selected, layerId) {
+  const objects = canvas.getObjects();
+  const members = groupMembers(objects, selected);
+  if (members.length < 2) return null;
+  const parentId = parentIdOf2(members[0]);
+  const orders = members.map((m) => m.get("layout")?.child?.order).filter((o) => o != null);
+  const carrier = new FabRect({
+    layerId,
+    layerType: "shape",
+    originX: "left",
+    originY: "top",
+    left: 0,
+    top: 0,
+    width: 1,
+    height: 1,
+    fill: "transparent",
+    strokeWidth: 0,
+    layout: {
+      container: { arrangement: "free", origin: "group", padding: { top: 0, right: 0, bottom: 0, left: 0 } },
+      ...parentId ? { child: { parentId, ...orders.length ? { order: Math.min(...orders) } : {} } } : {}
+    }
+  });
+  for (const member of members) {
+    const layout = member.get("layout");
+    member.set("layout", { ...layout, child: { parentId: layerId } });
+    if (layout?.child && isTextObject(member)) member.layoutWith(null);
+  }
+  const blocks = members.flatMap((m) => stackBlock(objects, m));
+  const rest = objects.filter((o) => !blocks.includes(o));
+  const topBlock = stackBlock(objects, members[members.length - 1]);
+  const below = rest.filter((o) => objects.indexOf(o) < objects.indexOf(topBlock[0])).length;
+  const order = [...rest.slice(0, below), carrier, ...blocks, ...rest.slice(below)];
+  canvas.add(carrier);
+  order.forEach((obj, index) => canvas.moveObjectTo(obj, index));
+  fitFreeContainer(carrier, canvas.getObjects());
+  return carrier;
+}
+function ungroupObject(canvas, container) {
+  const layout = container.get("layout");
+  if (!layout?.container) return [];
+  const objects = canvas.getObjects();
+  const children = sortChildrenByOrder(resolveContainerChildren(objects, container)).map((c) => c.obj);
+  const parentChild = layout.child;
+  children.forEach((child, i) => {
+    if (parentChild) {
+      const childLayout = child.get("layout");
+      const order = parentChild.order != null ? parentChild.order + i / children.length : void 0;
+      child.set("layout", { ...childLayout, child: { parentId: parentChild.parentId, ...order != null ? { order } : {} } });
+    } else {
+      detachChild(child);
+    }
+  });
+  if (layout.container.origin === "group") {
+    canvas.remove(container);
+  } else {
+    const { container: _container, ...rest } = layout;
+    container.set("layout", Object.keys(rest).length ? rest : void 0);
+  }
+  return children;
+}
+var spread = (values) => Math.max(...values) - Math.min(...values);
+function arrangeAsStack(container, objects) {
+  const layout = container.get("layout");
+  const children = resolveContainerChildren(objects, container).map((c) => {
+    c.obj.setCoords();
+    return { obj: c.obj, box: c.obj.getBoundingRect() };
+  });
+  if (children.length === 0) return;
+  const row = spread(children.map((c) => c.box.left + c.box.width / 2)) > spread(children.map((c) => c.box.top + c.box.height / 2));
+  const [start, size, crossStart, crossSize] = row ? ["left", "width", "top", "height"] : ["top", "height", "left", "width"];
+  children.sort((a, b) => a.box[start] - b.box[start]);
+  const gaps = children.slice(1).map((c, i) => c.box[start] - (children[i].box[start] + children[i].box[size]));
+  const gap = gaps.length ? Math.round(Math.min(160, Math.max(0, gaps.reduce((a, b) => a + b, 0) / gaps.length))) : 0;
+  const crossSpreads = {
+    "flex-start": spread(children.map((c) => c.box[crossStart])),
+    center: spread(children.map((c) => c.box[crossStart] + c.box[crossSize] / 2)),
+    "flex-end": spread(children.map((c) => c.box[crossStart] + c.box[crossSize]))
+  };
+  const alignItems = Object.keys(crossSpreads).reduce((best, key) => crossSpreads[key] < crossSpreads[best] - 0.5 ? key : best, "flex-start");
+  const { justifyContent: _justify, ...cd } = layout.container;
+  container.set("layout", {
+    ...layout,
+    sizing: { x: "hug", y: "hug" },
+    container: { ...cd, arrangement: "stack", flexDirection: row ? "row" : "column", gap, alignItems }
+  });
+  children.forEach(({ obj }, order) => {
+    obj.set("layout", { ...obj.get("layout"), child: { parentId: idOf(container), order } });
+  });
+}
+function arrangeFree(container, objects) {
+  const layout = container.get("layout");
+  const children = resolveContainerChildren(objects, container).map((c) => c.obj);
+  const widths = new Map(children.map((c) => [c, c.width]));
+  const { flexDirection: _d, gap: _g, alignItems: _a, justifyContent: _j, ...cd } = layout.container;
+  container.set("layout", { ...layout, container: { ...cd, arrangement: "free" } });
+  for (const child of children) {
+    child.set("layout", { ...child.get("layout"), child: { parentId: idOf(container) } });
+    if (!isTextObject(child)) continue;
+    const text = child;
+    text.initDimensions();
+    const before = widths.get(child);
+    if (Math.abs(text.width - before) > 0.5) {
+      text.setSizing({ ...text.sizing, x: "fixed" });
+      text.width = before;
+      text.initDimensions();
+    }
+  }
+}
+var GROUP_FILL_PADDING = 24;
+function padGroupOnFirstFill(container, previousFill) {
+  const cd = container.get("layout")?.container;
+  if (cd?.origin !== "group") return false;
+  const wasBare = !previousFill || previousFill === "transparent";
+  const fill = container.fill;
+  const isBare = !fill || fill === "transparent";
+  const p = cd.padding;
+  if (!wasBare || isBare || p && (p.top || p.right || p.bottom || p.left)) return false;
+  const pad = GROUP_FILL_PADDING;
+  container.set("layout", {
+    ...container.get("layout"),
+    container: { ...cd, padding: { top: pad, right: pad, bottom: pad, left: pad } }
+  });
+  return true;
+}
+
+// src/ui/controls.ts
+var import_fabric16 = require("#fabric");
+function applyControlStyle(canvas, guideColor, resolveTarget, userSlotLabel) {
+  const gc = guideColor;
+  import_fabric16.FabricObject.ownDefaults.borderColor = gc;
+  import_fabric16.FabricObject.ownDefaults.borderScaleFactor = 2;
+  import_fabric16.FabricObject.ownDefaults.borderOpacityWhenMoving = 1;
+  import_fabric16.FabricObject.ownDefaults.cornerColor = "#ffffff";
+  import_fabric16.FabricObject.ownDefaults.cornerStrokeColor = "#000000";
+  import_fabric16.FabricObject.ownDefaults.transparentCorners = false;
+  import_fabric16.FabricObject.ownDefaults.cornerSize = 16;
+  const hoverProgress = /* @__PURE__ */ new WeakMap();
+  installControlRenderer(gc, hoverProgress);
+  installControlHitAreas(canvas);
+  installHoverAnimation(canvas, hoverProgress);
+  installHoverBorder(canvas, gc, resolveTarget, userSlotLabel);
+}
+var EDGE_CONTROLS = /* @__PURE__ */ new Set(["mt", "mb", "ml", "mr"]);
+var CORNER_CONTROLS = /* @__PURE__ */ new Set(["tl", "tr", "bl", "br"]);
+var DEFAULT_COLOR2 = "#ffffff";
+var HOVER_DELAY = 60;
+var ANIM_SPEED = 10;
+function installControlRenderer(gc, hoverProgress) {
+  const [activeR, activeG, activeB] = parseHex(gc);
+  const hoverStart = /* @__PURE__ */ new WeakMap();
+  import_fabric16.Control.prototype.render = function(ctx, left, top, styleOverride, fabricObject) {
+    if (fabricObject.isMoving) return;
+    const baseColor = styleOverride?.cornerColor ?? fabricObject.cornerColor;
+    const isDefault = baseColor === DEFAULT_COLOR2;
+    const hoveredCtrl = isDefault && fabricObject.__corner ? fabricObject.controls[fabricObject.__corner] : void 0;
+    const isHovered = hoveredCtrl === this;
+    const now = performance.now();
+    const cvs = fabricObject.canvas;
+    const transform = cvs?._currentTransform;
+    const isGrabbed = transform && transform.target === fabricObject && transform.corner && fabricObject.controls[transform.corner] === this;
+    if (isHovered && !hoverStart.has(this)) {
+      hoverStart.set(this, now);
+    } else if (!isHovered && !isGrabbed) {
+      hoverStart.delete(this);
+    }
+    const elapsed = isHovered ? now - (hoverStart.get(this) ?? now) : 0;
+    const target = isGrabbed ? 1 : isHovered && elapsed >= HOVER_DELAY ? 1 : 0;
+    const prev = hoverProgress.get(this) ?? 0;
+    const dt = 1 / 60;
+    const t = Math.min(1, ANIM_SPEED * dt);
+    const progress = prev + (target - prev) * t;
+    hoverProgress.set(this, progress);
+    const p = progress;
+    const r = Math.round(255 + (activeR - 255) * p);
+    const g = Math.round(255 + (activeG - 255) * p);
+    const b = Math.round(255 + (activeB - 255) * p);
+    const fill = isDefault ? `rgb(${r}, ${g}, ${b})` : baseColor;
+    let key = "";
+    for (const [k, c] of Object.entries(fabricObject.controls)) {
+      if (c === this) {
+        key = k;
+        break;
+      }
+    }
+    ctx.save();
+    ctx.translate(left, top);
+    ctx.rotate(fabricObject.getTotalAngle() * Math.PI / 180);
+    let w, h, cr;
+    if (EDGE_CONTROLS.has(key)) {
+      const long = 20, short = 8;
+      const horizontal = key === "mt" || key === "mb";
+      w = horizontal ? long : short;
+      h = horizontal ? short : long;
+      cr = short / 2;
+    } else if (CORNER_CONTROLS.has(key)) {
+      w = 12;
+      h = 12;
+      cr = 3;
+    } else {
+      w = 10;
+      h = 10;
+      cr = 3;
+    }
+    const x = -w / 2, y = -h / 2;
+    ctx.beginPath();
+    ctx.roundRect(x, y, w, h, cr);
+    ctx.fillStyle = fill;
+    ctx.fill();
+    ctx.strokeStyle = "rgba(0, 0, 0, 0.5)";
+    ctx.lineWidth = 0.5;
+    ctx.stroke();
+    ctx.restore();
+  };
+}
+function syncGroupControls(obj) {
+  const group = isFreeContainer(obj);
+  obj.setControlsVisibility({ ml: !group, mr: !group, mt: !group, mb: !group, mtr: !group });
+  if (group) obj.lockRotation = true;
+  else if (getLockMode(obj) === "free") obj.lockRotation = false;
+}
+var HIT_DEPTH = 14;
+var CORNER_INSET = 20;
+var RESIZING = "resizing";
+function fireResizing(target, e, transform, x, y) {
+  target.fire("resizing");
+  target.canvas?.fire("object:resizing", { target, e, transform, pointer: { x, y } });
+}
+var resizeBoth = (eventData, transform, x, y) => {
+  const { target } = transform;
+  const changed = target.handleCornerResize(transform, x, y);
+  if (changed) fireResizing(target, eventData, transform, x, y);
+  return changed;
+};
+var resizeEdge = (eventData, transform, x, y) => {
+  const { target } = transform;
+  const changed = target.handleEdgeResize(transform, x, y);
+  if (changed) fireResizing(target, eventData, transform, x, y);
+  return changed;
+};
+function installControlHitAreas(canvas) {
+  const createSideRotationControl = () => new import_fabric16.Control({
+    x: 0.5,
+    y: 0,
+    offsetX: 30,
+    offsetY: 0,
+    actionHandler: import_fabric16.controlsUtils.rotationWithSnapping,
+    cursorStyleHandler: import_fabric16.controlsUtils.rotationStyleHandler,
+    withConnection: true,
+    actionName: "rotate"
+  });
+  canvas.on("object:added", (e) => {
+    const obj = e.target;
+    if (!obj?.controls) return;
+    if (isFreeContainer(obj)) syncGroupControls(obj);
+    if (obj.controls.mtr) {
+      obj.controls.mtr = createSideRotationControl();
+    }
+    const resizingActionName = () => RESIZING;
+    if (typeof obj.handleEdgeResize === "function") {
+      for (const key of ["ml", "mr", "mt", "mb"]) {
+        const ctrl = obj.controls[key];
+        if (!ctrl) continue;
+        ctrl.actionHandler = resizeEdge;
+        ctrl.actionName = RESIZING;
+        ctrl.getActionName = resizingActionName;
+      }
+    }
+    if (typeof obj.handleCornerResize === "function") {
+      for (const key of ["tl", "tr", "bl", "br"]) {
+        const ctrl = obj.controls[key];
+        if (!ctrl) continue;
+        ctrl.actionHandler = resizeBoth;
+        ctrl.actionName = RESIZING;
+        ctrl.getActionName = resizingActionName;
+      }
+    }
+    for (const key of ["mt", "mb", "ml", "mr"]) {
+      const ctrl = obj.controls[key];
+      if (!ctrl) continue;
+      const horizontal = key === "mt" || key === "mb";
+      const origCalc = ctrl.calcCornerCoords.bind(ctrl);
+      ctrl.calcCornerCoords = (angle, cornerSize, cx, cy, isTouch, fObj) => {
+        const dim = fObj._calculateCurrentDimensions();
+        const along = horizontal ? dim.x : dim.y;
+        const edgeLen = Math.max(0, along - CORNER_INSET * 2);
+        ctrl.sizeX = horizontal ? edgeLen : HIT_DEPTH;
+        ctrl.sizeY = horizontal ? HIT_DEPTH : edgeLen;
+        return origCalc(angle, cornerSize, cx, cy, isTouch, fObj);
+      };
+    }
+  });
+}
+function installHoverAnimation(canvas, hoverProgress) {
+  let animating = false;
+  const tick = () => {
+    const active = canvas.getActiveObject();
+    if (!active?.controls) {
+      animating = false;
+      return;
+    }
+    let needsFrame = false;
+    for (const ctrl of Object.values(active.controls)) {
+      const p = hoverProgress.get(ctrl) ?? 0;
+      if (p > 0.01 && p < 0.99) {
+        needsFrame = true;
+        break;
+      }
+      const isHovered = active.__corner ? active.controls[active.__corner] === ctrl : false;
+      if (isHovered && p < 0.99) {
+        needsFrame = true;
+        break;
+      }
+    }
+    if (needsFrame) {
+      canvas.requestRenderAll();
+      requestAnimationFrame(tick);
+    } else {
+      animating = false;
+    }
+  };
+  let lastCorner;
+  canvas.on("mouse:move", () => {
+    const active = canvas.getActiveObject();
+    const corner = active?.__corner;
+    if (corner !== lastCorner) {
+      lastCorner = corner;
+      canvas.requestRenderAll();
+      if (!animating) {
+        animating = true;
+        requestAnimationFrame(tick);
+      }
+    }
+  });
+}
+function installHoverBorder(canvas, guideColor, resolveTarget, userSlotLabel) {
+  let hoveredObj = null;
+  const clearTopCtx = () => {
+    const fc = canvas.originalFabricCanvas;
+    const ctx = fc.contextTop;
+    if (!ctx) return;
+    ctx.clearRect(0, 0, fc.width, fc.height);
+    if (fc._groupSelector) fc.renderTopLayer(ctx);
+  };
+  canvas.on("mouse:over", (e) => {
+    const raw = e.target;
+    if (!raw) return;
+    const target = resolveTarget ? resolveTarget(raw) : raw;
+    if (target === canvas.getActiveObject()) return;
+    hoveredObj = target;
+    canvas.requestRenderAll();
+  });
+  canvas.on("mouse:out", (e) => {
+    const raw = e.target;
+    if (!raw) return;
+    const resolved = resolveTarget ? resolveTarget(raw) : raw;
+    if (resolved === hoveredObj || raw === hoveredObj) {
+      hoveredObj = null;
+      canvas.requestRenderAll();
+    }
+  });
+  canvas.on("after:render", () => {
+    clearTopCtx();
+    const ctx = canvas.originalFabricCanvas.contextTop;
+    if (!ctx) return;
+    const active = canvas.getActiveObject();
+    canvas.getObjects().forEach((obj) => {
+      if (obj === active || obj === hoveredObj) return;
+      drawDynamicMediaOutline(ctx, obj, guideColor);
+    });
+    if (!hoveredObj || hoveredObj === active) return;
+    hoveredObj._renderControls(ctx, { hasControls: false, hasBorders: true });
+  });
+  installBadgeLayer(
+    canvas.originalFabricCanvas,
+    guideColor,
+    [(obj) => bindingBadgeLabel(obj, userSlotLabel)],
+    () => {
+      const active = canvas.getActiveObject();
+      return [active, hoveredObj !== active ? hoveredObj : null].filter((obj) => Boolean(obj));
+    }
+  );
 }
 
 // src/layout/containerize-session.ts
@@ -5705,11 +6380,16 @@ var LayoutManager2 = class {
   constructor(canvas, callbacks = {}, guideColor) {
     this.dtl = { phase: "idle", cooldownUntil: 0 };
     this.resizeSession = null;
+    /** Le redimensionnement d'un groupe en cours (ouvert à before:transform). */
+    this.freeResize = null;
+    /** Les descendants d'une sélection multiple en cours de déplacement, et leur départ. */
+    this.followers = null;
     // ── Event wiring ──────────────────────────────────────────────────
     this.onMovingBound = (e) => this.onMoving(e);
     this.onModifiedBound = (e) => this.onModified(e);
     this.onResizingBound = (e) => this.onResizing(e);
     this.onTextChangedBound = (e) => this.onTextChanged(e);
+    this.onBeforeTransformBound = (e) => this.onBeforeTransform(e);
     this.canvas = canvas;
     this.callbacks = callbacks;
     this.guides = new CanvasGuides(canvas, guideColor);
@@ -5756,13 +6436,27 @@ var LayoutManager2 = class {
     this.relayout();
     this.callbacks.onLayoutChanged?.();
   }
-  /** Update padding on a container. */
+  /** Update padding on a container — one side, or "all" four. */
   setPadding(obj, side, value) {
     const layout = obj.get("layout");
     if (!layout?.container) return;
     if (!layout.container.padding) layout.container.padding = { top: 0, right: 0, bottom: 0, left: 0 };
-    layout.container.padding[side] = value;
+    const sides = side === "all" ? ["top", "right", "bottom", "left"] : [side];
+    for (const s of sides) layout.container.padding[s] = value;
     obj.set("layout", { ...layout });
+    this.relayout();
+    this.callbacks.onLayoutChanged?.();
+  }
+  /**
+   * Un groupe libre ou rangé (une pile) — la bascule ne fait rien sauter (cf. grouping).
+   */
+  setArrangement(obj, arrangement) {
+    const cd = obj.get("layout")?.container;
+    if (!cd || (cd.arrangement ?? "stack") === arrangement) return;
+    const objects = this.canvas.getObjects();
+    if (arrangement === "stack") arrangeAsStack(obj, objects);
+    else arrangeFree(obj, objects);
+    syncGroupControls(obj);
     this.relayout();
     this.callbacks.onLayoutChanged?.();
   }
@@ -5825,7 +6519,7 @@ var LayoutManager2 = class {
    * The source's position is updated to follow the cursor.
    */
   tickExternalDrag(source, cursor) {
-    source.setPositionByOrigin(new import_fabric15.Point(cursor.x, cursor.y), "center", "center");
+    source.setPositionByOrigin(new import_fabric17.Point(cursor.x, cursor.y), "center", "center");
     source.setCoords();
     switch (this.dtl.phase) {
       case "anchored":
@@ -5883,22 +6577,38 @@ var LayoutManager2 = class {
     this.canvas.off("object:modified", this.onModifiedBound);
     this.canvas.off("object:resizing", this.onResizingBound);
     this.canvas.off("text:changed", this.onTextChangedBound);
+    this.canvas.off("before:transform", this.onBeforeTransformBound);
   }
   setupEventListeners() {
     this.canvas.on("object:moving", this.onMovingBound);
     this.canvas.on("object:modified", this.onModifiedBound);
     this.canvas.on("object:resizing", this.onResizingBound);
     this.canvas.on("text:changed", this.onTextChangedBound);
+    this.canvas.on("before:transform", this.onBeforeTransformBound);
   }
   // ── Canvas event handlers ─────────────────────────────────────────
   onMoving(e) {
     const obj = e.target;
+    if (obj instanceof import_fabric17.ActiveSelection) {
+      this.moveFollowers(obj, obj.getObjects(), e.transform);
+      return;
+    }
     const layout = obj.get?.("layout");
     if (layout?.container) {
       const isSessionChild = this.dtl.phase === "anchored" && this.dtl.session.child === obj;
-      if (!isSessionChild) {
+      if (isFreeContainer(obj)) {
+        this.moveFollowers(obj, [obj], e.transform);
+      } else if (!isSessionChild) {
         relayoutSingle(obj, layout.container, this.canvas.getObjects());
         this.canvas.renderAll();
+      }
+    }
+    if (layout?.child && this.dtl.phase !== "anchored") {
+      const parent = this.findParentContainer(obj);
+      if (parent && isFreeContainer(parent)) {
+        this.fitGroupChain(parent);
+        this.canvas.renderAll();
+        return;
       }
     }
     if (layout?.child && this.dtl.phase !== "anchored") {
@@ -5940,6 +6650,49 @@ var LayoutManager2 = class {
         break;
     }
   }
+  /**
+   * Les descendants des objets déplacés (un groupe, ou les objets d'une sélection multiple
+   * — jamais dans la sélection, cf. SelectionManager) suivent la translation de `target`
+   * depuis le début du geste. Sans relayout : dans une sélection, les positions des
+   * containers sont relatives à elle.
+   */
+  moveFollowers(target, moved, transform) {
+    let start = this.followers;
+    if (!start || start.transform !== transform) {
+      start = this.followers = {
+        transform,
+        left: transform?.original?.left ?? target.left,
+        top: transform?.original?.top ?? target.top,
+        objects: descendantsOf(this.canvas.getObjects(), moved).map((o) => ({ obj: o, left: o.left, top: o.top }))
+      };
+    }
+    const dx = target.left - start.left;
+    const dy = target.top - start.top;
+    for (const f of start.objects) {
+      f.obj.set({ left: f.left + dx, top: f.top + dy });
+      f.obj.setCoords();
+    }
+  }
+  /**
+   * La boîte d'un groupe suit ses enfants, et celle des groupes qui le contiennent — pas
+   * au-delà d'une pile pendant le geste (elle déplacerait le groupe, donc l'objet tenu) :
+   * la pile se recale à la fin (relayout).
+   */
+  fitGroupChain(group) {
+    const objects = this.canvas.getObjects();
+    for (let current = group; current && isFreeContainer(current); current = this.findParentContainer(current)) {
+      fitFreeContainer(current, objects);
+    }
+  }
+  /** Le début d'une transformation : un groupe qu'on redimensionne garde son état de départ. */
+  onBeforeTransform(e) {
+    const target = e.transform?.target;
+    this.freeResize = null;
+    if (!target || !isFreeContainer(target) || e.transform.action !== "resizing") return;
+    const tl = target.getPositionByOrigin("left", "top");
+    const { w, h } = scaledSize(target);
+    this.freeResize = new FreeResizeSession(target, this.canvas.getObjects(), { left: tl.x, top: tl.y, width: w, height: h });
+  }
   /** A text inside a container was edited → its ancestors adapt. */
   onTextChanged(e) {
     const layout = e.target?.get?.("layout");
@@ -5949,6 +6702,23 @@ var LayoutManager2 = class {
   }
   onModified(e) {
     const obj = e.target;
+    if (this.followers) {
+      const moved = obj instanceof import_fabric17.ActiveSelection ? obj.getObjects() : [obj];
+      this.moveFollowers(obj, moved, this.followers.transform);
+    }
+    this.followers = null;
+    if (obj instanceof import_fabric17.ActiveSelection) {
+      this.resetToIdle();
+      return;
+    }
+    const parent = this.findParentContainer(obj);
+    const resizedGroup = this.freeResize;
+    this.freeResize = null;
+    if (this.dtl.phase === "idle" && (resizedGroup || parent && isFreeContainer(parent))) {
+      this.relayout();
+      this.callbacks.onLayoutChanged?.();
+      return;
+    }
     const childLayout = obj?.get?.("layout");
     if (childLayout?.child && isTextObject(obj) && this.dtl.phase === "idle" && e.transform?.action === "resizing") {
       this.relayout();
@@ -5987,8 +6757,13 @@ var LayoutManager2 = class {
     const layout = target?.get?.("layout");
     if (layout?.child && !layout.container) {
       const objects = this.canvas.getObjects();
-      if (!isTextObject(target)) clampToRoom(target, e.transform, objects);
       const parent = this.findParentContainer(target);
+      if (parent && isFreeContainer(parent)) {
+        this.fitGroupChain(parent);
+        this.canvas.renderAll();
+        return;
+      }
+      if (!isTextObject(target)) clampToRoom(target, e.transform, objects);
       const pLayout = parent?.get?.("layout");
       if (parent && pLayout?.container) {
         relayoutSingle(parent, pLayout.container, objects);
@@ -5998,6 +6773,11 @@ var LayoutManager2 = class {
       return;
     }
     if (!layout?.container) return;
+    const groupResize = this.freeResize;
+    if (groupResize && groupResize.container === target) {
+      this.resizeGroup(groupResize, e.transform);
+      return;
+    }
     if (!this.resizeSession) {
       this.resizeSession = new ResizeSession(target, e.transform?.corner);
     }
@@ -6162,6 +6942,24 @@ var LayoutManager2 = class {
       root
     };
   }
+  /**
+   * Un pas du redimensionnement d'un groupe : le facteur est la moyenne des deux axes
+   * (uniforme, un texte ne se déforme pas), le coin opposé à la poignée reste en place.
+   */
+  resizeGroup(session, transform) {
+    const { start, container } = session;
+    const { w, h } = scaledSize(container);
+    const k = Math.max(0.05, (w / start.width + h / start.height) / 2);
+    const fx = transform.originX === "left" ? 0 : transform.originX === "right" ? 1 : 0.5;
+    const fy = transform.originY === "top" ? 0 : transform.originY === "bottom" ? 1 : 0.5;
+    session.apply(k, { x: start.left + start.width * fx, y: start.top + start.height * fy });
+    for (const obj of descendantsOf(this.canvas.getObjects(), [container])) {
+      const cd = obj.get("layout")?.container;
+      if (cd && cd.arrangement !== "free") relayoutSingle(obj, cd, this.canvas.getObjects());
+    }
+    fitFreeContainer(container, this.canvas.getObjects());
+    this.canvas.renderAll();
+  }
   /** Create the appropriate session type for a target container. */
   createSession(target, child, cursor) {
     const targetLayout = target.get?.("layout");
@@ -6310,257 +7108,55 @@ function applyClip(obj, shapeType) {
   }
 }
 
-// src/ui/controls.ts
-var import_fabric16 = require("#fabric");
-function applyControlStyle(canvas, guideColor, resolveTarget, userSlotLabel) {
-  const gc = guideColor;
-  import_fabric16.FabricObject.ownDefaults.borderColor = gc;
-  import_fabric16.FabricObject.ownDefaults.borderScaleFactor = 2;
-  import_fabric16.FabricObject.ownDefaults.borderOpacityWhenMoving = 1;
-  import_fabric16.FabricObject.ownDefaults.cornerColor = "#ffffff";
-  import_fabric16.FabricObject.ownDefaults.cornerStrokeColor = "#000000";
-  import_fabric16.FabricObject.ownDefaults.transparentCorners = false;
-  import_fabric16.FabricObject.ownDefaults.cornerSize = 16;
-  const hoverProgress = /* @__PURE__ */ new WeakMap();
-  installControlRenderer(gc, hoverProgress);
-  installControlHitAreas(canvas);
-  installHoverAnimation(canvas, hoverProgress);
-  installHoverBorder(canvas, gc, resolveTarget, userSlotLabel);
-}
-var EDGE_CONTROLS = /* @__PURE__ */ new Set(["mt", "mb", "ml", "mr"]);
-var CORNER_CONTROLS = /* @__PURE__ */ new Set(["tl", "tr", "bl", "br"]);
-var DEFAULT_COLOR2 = "#ffffff";
-var HOVER_DELAY = 60;
-var ANIM_SPEED = 10;
-function installControlRenderer(gc, hoverProgress) {
-  const [activeR, activeG, activeB] = parseHex(gc);
-  const hoverStart = /* @__PURE__ */ new WeakMap();
-  import_fabric16.Control.prototype.render = function(ctx, left, top, styleOverride, fabricObject) {
-    if (fabricObject.isMoving) return;
-    const baseColor = styleOverride?.cornerColor ?? fabricObject.cornerColor;
-    const isDefault = baseColor === DEFAULT_COLOR2;
-    const hoveredCtrl = isDefault && fabricObject.__corner ? fabricObject.controls[fabricObject.__corner] : void 0;
-    const isHovered = hoveredCtrl === this;
-    const now = performance.now();
-    const cvs = fabricObject.canvas;
-    const transform = cvs?._currentTransform;
-    const isGrabbed = transform && transform.target === fabricObject && transform.corner && fabricObject.controls[transform.corner] === this;
-    if (isHovered && !hoverStart.has(this)) {
-      hoverStart.set(this, now);
-    } else if (!isHovered && !isGrabbed) {
-      hoverStart.delete(this);
-    }
-    const elapsed = isHovered ? now - (hoverStart.get(this) ?? now) : 0;
-    const target = isGrabbed ? 1 : isHovered && elapsed >= HOVER_DELAY ? 1 : 0;
-    const prev = hoverProgress.get(this) ?? 0;
-    const dt = 1 / 60;
-    const t = Math.min(1, ANIM_SPEED * dt);
-    const progress = prev + (target - prev) * t;
-    hoverProgress.set(this, progress);
-    const p = progress;
-    const r = Math.round(255 + (activeR - 255) * p);
-    const g = Math.round(255 + (activeG - 255) * p);
-    const b = Math.round(255 + (activeB - 255) * p);
-    const fill = isDefault ? `rgb(${r}, ${g}, ${b})` : baseColor;
-    let key = "";
-    for (const [k, c] of Object.entries(fabricObject.controls)) {
-      if (c === this) {
-        key = k;
-        break;
-      }
-    }
-    ctx.save();
-    ctx.translate(left, top);
-    ctx.rotate(fabricObject.getTotalAngle() * Math.PI / 180);
-    let w, h, cr;
-    if (EDGE_CONTROLS.has(key)) {
-      const long = 20, short = 8;
-      const horizontal = key === "mt" || key === "mb";
-      w = horizontal ? long : short;
-      h = horizontal ? short : long;
-      cr = short / 2;
-    } else if (CORNER_CONTROLS.has(key)) {
-      w = 12;
-      h = 12;
-      cr = 3;
-    } else {
-      w = 10;
-      h = 10;
-      cr = 3;
-    }
-    const x = -w / 2, y = -h / 2;
-    ctx.beginPath();
-    ctx.roundRect(x, y, w, h, cr);
-    ctx.fillStyle = fill;
-    ctx.fill();
-    ctx.strokeStyle = "rgba(0, 0, 0, 0.5)";
-    ctx.lineWidth = 0.5;
-    ctx.stroke();
-    ctx.restore();
-  };
-}
-var HIT_DEPTH = 14;
-var CORNER_INSET = 20;
-var RESIZING = "resizing";
-function fireResizing(target, e, transform, x, y) {
-  target.fire("resizing");
-  target.canvas?.fire("object:resizing", { target, e, transform, pointer: { x, y } });
-}
-var resizeBoth = (eventData, transform, x, y) => {
-  const { target } = transform;
-  const changed = target.handleCornerResize(transform, x, y);
-  if (changed) fireResizing(target, eventData, transform, x, y);
-  return changed;
-};
-var resizeEdge = (eventData, transform, x, y) => {
-  const { target } = transform;
-  const changed = target.handleEdgeResize(transform, x, y);
-  if (changed) fireResizing(target, eventData, transform, x, y);
-  return changed;
-};
-function installControlHitAreas(canvas) {
-  const createSideRotationControl = () => new import_fabric16.Control({
-    x: 0.5,
-    y: 0,
-    offsetX: 30,
-    offsetY: 0,
-    actionHandler: import_fabric16.controlsUtils.rotationWithSnapping,
-    cursorStyleHandler: import_fabric16.controlsUtils.rotationStyleHandler,
-    withConnection: true,
-    actionName: "rotate"
-  });
-  canvas.on("object:added", (e) => {
-    const obj = e.target;
-    if (!obj?.controls) return;
-    if (obj.controls.mtr) {
-      obj.controls.mtr = createSideRotationControl();
-    }
-    const resizingActionName = () => RESIZING;
-    if (typeof obj.handleEdgeResize === "function") {
-      for (const key of ["ml", "mr", "mt", "mb"]) {
-        const ctrl = obj.controls[key];
-        if (!ctrl) continue;
-        ctrl.actionHandler = resizeEdge;
-        ctrl.actionName = RESIZING;
-        ctrl.getActionName = resizingActionName;
-      }
-    }
-    if (typeof obj.handleCornerResize === "function") {
-      for (const key of ["tl", "tr", "bl", "br"]) {
-        const ctrl = obj.controls[key];
-        if (!ctrl) continue;
-        ctrl.actionHandler = resizeBoth;
-        ctrl.actionName = RESIZING;
-        ctrl.getActionName = resizingActionName;
-      }
-    }
-    for (const key of ["mt", "mb", "ml", "mr"]) {
-      const ctrl = obj.controls[key];
-      if (!ctrl) continue;
-      const horizontal = key === "mt" || key === "mb";
-      const origCalc = ctrl.calcCornerCoords.bind(ctrl);
-      ctrl.calcCornerCoords = (angle, cornerSize, cx, cy, isTouch, fObj) => {
-        const dim = fObj._calculateCurrentDimensions();
-        const along = horizontal ? dim.x : dim.y;
-        const edgeLen = Math.max(0, along - CORNER_INSET * 2);
-        ctrl.sizeX = horizontal ? edgeLen : HIT_DEPTH;
-        ctrl.sizeY = horizontal ? HIT_DEPTH : edgeLen;
-        return origCalc(angle, cornerSize, cx, cy, isTouch, fObj);
-      };
-    }
-  });
-}
-function installHoverAnimation(canvas, hoverProgress) {
-  let animating = false;
-  const tick = () => {
-    const active = canvas.getActiveObject();
-    if (!active?.controls) {
-      animating = false;
-      return;
-    }
-    let needsFrame = false;
-    for (const ctrl of Object.values(active.controls)) {
-      const p = hoverProgress.get(ctrl) ?? 0;
-      if (p > 0.01 && p < 0.99) {
-        needsFrame = true;
-        break;
-      }
-      const isHovered = active.__corner ? active.controls[active.__corner] === ctrl : false;
-      if (isHovered && p < 0.99) {
-        needsFrame = true;
-        break;
-      }
-    }
-    if (needsFrame) {
-      canvas.requestRenderAll();
-      requestAnimationFrame(tick);
-    } else {
-      animating = false;
-    }
-  };
-  let lastCorner;
-  canvas.on("mouse:move", () => {
-    const active = canvas.getActiveObject();
-    const corner = active?.__corner;
-    if (corner !== lastCorner) {
-      lastCorner = corner;
-      canvas.requestRenderAll();
-      if (!animating) {
-        animating = true;
-        requestAnimationFrame(tick);
-      }
-    }
-  });
-}
-function installHoverBorder(canvas, guideColor, resolveTarget, userSlotLabel) {
-  let hoveredObj = null;
-  const clearTopCtx = () => {
-    const fc = canvas.originalFabricCanvas;
-    const ctx = fc.contextTop;
-    if (ctx) ctx.clearRect(0, 0, fc.width, fc.height);
-  };
-  canvas.on("mouse:over", (e) => {
-    const raw = e.target;
-    if (!raw) return;
-    const target = resolveTarget ? resolveTarget(raw) : raw;
-    if (target === canvas.getActiveObject()) return;
-    hoveredObj = target;
-    canvas.requestRenderAll();
-  });
-  canvas.on("mouse:out", (e) => {
-    const raw = e.target;
-    if (!raw) return;
-    const resolved = resolveTarget ? resolveTarget(raw) : raw;
-    if (resolved === hoveredObj || raw === hoveredObj) {
-      hoveredObj = null;
-      canvas.requestRenderAll();
-    }
-  });
-  canvas.on("after:render", () => {
-    clearTopCtx();
-    const ctx = canvas.originalFabricCanvas.contextTop;
-    if (!ctx) return;
-    const active = canvas.getActiveObject();
-    canvas.getObjects().forEach((obj) => {
-      if (obj === active || obj === hoveredObj) return;
-      drawDynamicMediaOutline(ctx, obj, guideColor);
-    });
-    if (!hoveredObj || hoveredObj === active) return;
-    hoveredObj._renderControls(ctx, { hasControls: false, hasBorders: true });
-  });
-  installBadgeLayer(
-    canvas.originalFabricCanvas,
-    guideColor,
-    [(obj) => bindingBadgeLabel(obj, userSlotLabel)],
-    () => {
-      const active = canvas.getActiveObject();
-      return [active, hoveredObj !== active ? hoveredObj : null].filter((obj) => Boolean(obj));
-    }
-  );
-}
-
 // src/types.ts
 var DRAG_PREVIEW_KEY = "dragPreview";
+
+// src/arrange.ts
+function alignAxis(edge) {
+  return edge === "left" || edge === "center" || edge === "right" ? "x" : "y";
+}
+function unionBox(boxes) {
+  const left = Math.min(...boxes.map((b) => b.left));
+  const top = Math.min(...boxes.map((b) => b.top));
+  const right = Math.max(...boxes.map((b) => b.left + b.width));
+  const bottom = Math.max(...boxes.map((b) => b.top + b.height));
+  return { left, top, width: right - left, height: bottom - top };
+}
+function alignDelta(box, ref, edge) {
+  switch (edge) {
+    case "left":
+      return { dx: ref.left - box.left, dy: 0 };
+    case "center":
+      return { dx: ref.left + ref.width / 2 - (box.left + box.width / 2), dy: 0 };
+    case "right":
+      return { dx: ref.left + ref.width - (box.left + box.width), dy: 0 };
+    case "top":
+      return { dx: 0, dy: ref.top - box.top };
+    case "middle":
+      return { dx: 0, dy: ref.top + ref.height / 2 - (box.top + box.height / 2) };
+    case "bottom":
+      return { dx: 0, dy: ref.top + ref.height - (box.top + box.height) };
+  }
+}
+function distributeDeltas(boxes, axis) {
+  const deltas = boxes.map(() => ({ dx: 0, dy: 0 }));
+  if (boxes.length < 3) return deltas;
+  const start = axis === "horizontal" ? "left" : "top";
+  const size = axis === "horizontal" ? "width" : "height";
+  const order = boxes.map((_, i) => i).sort((a, b) => boxes[a][start] - boxes[b][start]);
+  const first = boxes[order[0]];
+  const last = boxes[order[order.length - 1]];
+  const span = last[start] + last[size] - first[start];
+  const filled = order.reduce((sum, i) => sum + boxes[i][size], 0);
+  const gap = (span - filled) / (order.length - 1);
+  let cursor = first[start] + first[size] + gap;
+  for (const i of order.slice(1, -1)) {
+    const shift = cursor - boxes[i][start];
+    deltas[i] = axis === "horizontal" ? { dx: shift, dy: 0 } : { dx: 0, dy: shift };
+    cursor += boxes[i][size] + gap;
+  }
+  return deltas;
+}
 
 // src/FabricEditor.ts
 var _FabricEditor = class _FabricEditor {
@@ -7015,7 +7611,7 @@ var _FabricEditor = class _FabricEditor {
       obj.nextClipShape();
       obj.dirty = true;
       this.canvas.requestRenderAll();
-    } else if (obj instanceof import_fabric17.FabricImage) {
+    } else if (obj instanceof import_fabric18.FabricImage) {
       switchClip(obj);
       obj.dirty = true;
       this.canvas.remove(obj);
@@ -7027,7 +7623,7 @@ var _FabricEditor = class _FabricEditor {
    */
   switchShape() {
     const obj = this.selection.current;
-    if (!obj || obj instanceof import_fabric17.FabricImage) return;
+    if (!obj || obj instanceof import_fabric18.FabricImage) return;
     const currentShapeId = obj.id;
     const nextShapeType = nextShape(currentShapeId);
     this.changeShape(nextShapeType);
@@ -7042,7 +7638,7 @@ var _FabricEditor = class _FabricEditor {
       obj.applyClipShape(shapeType);
       obj.dirty = true;
       this.canvas.requestRenderAll();
-    } else if (!(obj instanceof import_fabric17.FabricImage)) {
+    } else if (!(obj instanceof import_fabric18.FabricImage)) {
       const newObj = switchShape(obj, shapeType);
       const layerId = obj.get("layerId");
       const layerType = obj.get("layerType");
@@ -7144,7 +7740,9 @@ var _FabricEditor = class _FabricEditor {
   setFillColor(color) {
     const obj = this.selection.current;
     if (!obj) return;
+    const previous = obj.fill;
     obj.set({ fill: color, opacity: 1 });
+    if (padGroupOnFirstFill(obj, previous)) this.layout.relayout();
     this.canvas.renderAll();
   }
   /**
@@ -7156,7 +7754,7 @@ var _FabricEditor = class _FabricEditor {
     const rad = angleDeg * Math.PI / 180;
     const cos = Math.cos(rad);
     const sin = Math.sin(rad);
-    const gradient = new import_fabric17.Gradient({
+    const gradient = new import_fabric18.Gradient({
       type: "linear",
       gradientUnits: "percentage",
       coords: {
@@ -7170,7 +7768,9 @@ var _FabricEditor = class _FabricEditor {
         { offset: 1, color: color2 }
       ]
     });
+    const previous = obj.fill;
     obj.set({ fill: gradient, opacity: 1 });
+    if (padGroupOnFirstFill(obj, previous)) this.layout.relayout();
     this.canvas.renderAll();
   }
   /**
@@ -7232,7 +7832,7 @@ var _FabricEditor = class _FabricEditor {
     const obj = this.selection.current;
     if (!obj) return;
     const existing = obj.shadow;
-    const shadow = new import_fabric17.Shadow({
+    const shadow = new import_fabric18.Shadow({
       color: opts.color ?? existing?.color ?? "rgba(0,0,0,0.5)",
       blur: opts.blur ?? existing?.blur ?? 10,
       offsetX: opts.offsetX ?? existing?.offsetX ?? 5,
@@ -7248,25 +7848,20 @@ var _FabricEditor = class _FabricEditor {
     this.canvas.requestRenderAll();
   }
   /**
-   * Copy the current selection to an internal clipboard.
-   * If the selected object is a layout container, its children are copied too.
+   * Copy the current selection to an internal clipboard, with every descendant of the
+   * selected containers, in stack order.
    */
   copySelection() {
     const selected = this.selection.selected;
     if (selected.length === 0) return;
     const allObjects = this.canvas.getObjects();
-    const toCopy = [];
-    for (const obj of selected) {
-      toCopy.push(obj);
-      const id = obj.get("layerId");
-      if (id) {
-        for (const other of allObjects) {
-          if (other.get("layout")?.child?.parentId === id && !toCopy.includes(other)) {
-            toCopy.push(other);
-          }
-        }
-      }
-    }
+    const descendants = layoutDescendants(
+      layoutParents(allObjects),
+      selected.map((obj) => obj.get("layerId"))
+    );
+    const toCopy = allObjects.filter(
+      (obj) => selected.includes(obj) || descendants.has(obj.get("layerId"))
+    );
     this._clipboard = toCopy.map(
       (obj) => obj.toObject(["layerId", "lockMode", "lockContent", "layout", "bindings"])
     );
@@ -7280,11 +7875,11 @@ var _FabricEditor = class _FabricEditor {
     if (!this._clipboard?.length) return [];
     const OFFSET = 20;
     const idMap = /* @__PURE__ */ new Map();
-    for (const data of this._clipboard) {
+    this._clipboard.forEach((data, i) => {
       if (data.layerId) {
-        idMap.set(data.layerId, `layer_${Date.now()}_${Math.floor(Math.random() * 1e3)}`);
+        idMap.set(data.layerId, `layer_${Date.now()}_${i}_${Math.floor(Math.random() * 1e3)}`);
       }
-    }
+    });
     const cloned = this._clipboard.map((data) => {
       const copy = JSON.parse(JSON.stringify(data));
       if (copy.layerId && idMap.has(copy.layerId)) {
@@ -7307,9 +7902,7 @@ var _FabricEditor = class _FabricEditor {
         objects.push(obj);
       }
     }
-    if (objects.length === 1) {
-      this.canvas.setActiveObject(objects[0]);
-    }
+    this.selection.selectMany(objects);
     this.canvas.renderAll();
     return objects;
   }
@@ -7351,17 +7944,130 @@ var _FabricEditor = class _FabricEditor {
       this._resizeCallbacks = this._resizeCallbacks.filter((cb) => cb !== check);
     };
   }
+  // ── Grouper, dégrouper ────────────────────────────────────────────
+  /**
+   * Groupe la sélection (au moins deux objets) dans un groupe libre — rien ne bouge. La
+   * resélection de ses membres remonte au groupe : c'est lui qui est sélectionné. Rend le
+   * groupe, ou null.
+   */
+  groupSelection() {
+    const selected = this.selection.selected;
+    if (selected.length < 2) return null;
+    let group = null;
+    this.selection.withSelectionReleased(() => {
+      group = groupObjects(this.canvas, selected, `layer_${Date.now()}_${Math.floor(Math.random() * 1e3)}`);
+      if (group) this.layout.relayout();
+    });
+    return group;
+  }
+  /**
+   * Dégroupe le container sélectionné : ses enfants restent à leur place, sélectionnés.
+   * Rend les enfants (vide : rien à dégrouper).
+   */
+  ungroupSelection() {
+    const container = this.selection.current;
+    if (!container || !container.get("layout")?.container) return [];
+    this.canvas.discardActiveObject();
+    const children = ungroupObject(this.canvas, container);
+    this.layout.relayout();
+    this.selection.selectMany(children);
+    return children;
+  }
+  // ── Aligner, répartir ─────────────────────────────────────────────
+  /**
+   * Aligne la sélection. Plusieurs objets s'alignent sur leur boîte commune ; un objet
+   * seul, sur l'intérieur de son container, ou sur l'artboard. Un objet bouge avec sa
+   * descendance. Un enfant de pile ne bouge pas : il s'aligne dans la pile (alignSelf),
+   * sur l'axe qu'elle laisse libre — l'autre est le sien.
+   */
+  alignSelection(edge) {
+    if (!this.selection.hasSelection) return;
+    this.selection.withSelectionReleased((selected) => {
+      const objects = this.canvas.getObjects();
+      const ref = selected.length > 1 ? unionBox(selected.map((obj) => obj.getBoundingRect())) : this.alignReference(selected[0], objects);
+      let relayout = false;
+      for (const obj of selected) {
+        const parent = stackParentOf(obj);
+        if (parent) {
+          relayout = this.alignInStack(obj, parent, edge) || relayout;
+          continue;
+        }
+        const { dx, dy } = alignDelta(obj.getBoundingRect(), ref, edge);
+        this.moveWithDescendants(obj, dx, dy, objects);
+      }
+      if (relayout) this.layout.relayout();
+    });
+    this.canvas.renderAll();
+  }
+  /**
+   * Répartit la sélection à espace égal sur un axe : les deux extrêmes restent en place.
+   * Seulement les objets libres (un enfant de pile a la place que la pile lui donne), et
+   * à partir de trois.
+   */
+  distributeSelection(axis) {
+    const objects = this.canvas.getObjects();
+    const free = this.selection.selected.filter((obj) => !stackParentOf(obj));
+    if (free.length < 3) return;
+    this.selection.withSelectionReleased(() => {
+      const deltas = distributeDeltas(free.map((obj) => obj.getBoundingRect()), axis);
+      free.forEach((obj, i) => this.moveWithDescendants(obj, deltas[i].dx, deltas[i].dy, objects));
+    });
+    this.canvas.renderAll();
+  }
+  /** Aligne un enfant dans sa pile, sur l'axe qu'elle laisse libre. Vrai s'il a changé. */
+  alignInStack(obj, parent, edge) {
+    const direction = parent.get("layout").container?.flexDirection ?? "column";
+    if (alignAxis(edge) !== (direction === "column" ? "x" : "y")) return false;
+    const layout = obj.get("layout");
+    const alignSelf = edge === "left" || edge === "top" ? "flex-start" : edge === "right" || edge === "bottom" ? "flex-end" : "center";
+    if (layout.child.alignSelf === alignSelf) return false;
+    obj.set("layout", { ...layout, child: { ...layout.child, alignSelf } });
+    return true;
+  }
+  /** La référence d'un objet seul : l'intérieur de son container, sinon l'artboard. */
+  alignReference(obj, objects) {
+    const parentId = obj.get("layout")?.child?.parentId;
+    const parent = parentId ? objects.find((o) => o.get("layerId") === parentId) : void 0;
+    if (!parent) return { left: 0, top: 0, width: this.width, height: this.height };
+    const box = parent.getBoundingRect();
+    const pad = parent.get("layout")?.container?.padding;
+    if (!pad) return box;
+    return {
+      left: box.left + pad.left,
+      top: box.top + pad.top,
+      width: box.width - pad.left - pad.right,
+      height: box.height - pad.top - pad.bottom
+    };
+  }
+  /** Déplace un objet et toute sa descendance (positions absolues). */
+  moveWithDescendants(obj, dx, dy, objects) {
+    if (!dx && !dy) return;
+    const ids = layoutDescendants(layoutParents(objects), [obj.get("layerId")]);
+    for (const o of objects) {
+      if (o !== obj && !ids.has(o.get("layerId"))) continue;
+      o.set({ left: o.left + dx, top: o.top + dy });
+      o.setCoords();
+    }
+  }
   /**
    * Supprime l'objet ou les objets sélectionnés
-   * Les objets verrouillés (position ou full) ne peuvent pas être supprimés
+   * Les objets verrouillés (position ou full) ne peuvent pas être supprimés ; un container
+   * emporte sa descendance.
    */
   deleteSelection() {
     const selected = this.selection.selected;
     if (selected.length === 0) return;
     const deletable = selected.filter((obj) => rulesOf(obj).deletes);
     if (deletable.length === 0) return;
-    this.layers.removeMany(deletable);
+    const objects = this.canvas.getObjects();
+    const descendants = layoutDescendants(
+      layoutParents(objects),
+      deletable.map((obj) => obj.get("layerId"))
+    );
     this.canvas.discardActiveObject();
+    this.layers.removeMany(objects.filter(
+      (obj) => deletable.includes(obj) || descendants.has(obj.get("layerId"))
+    ));
     this.canvas.renderAll();
   }
   /**
@@ -7380,7 +8086,7 @@ var _FabricEditor = class _FabricEditor {
    * remplacement, et l'image est ajoutée.
    */
   findDropTargetAtPoint(x, y) {
-    const point = new import_fabric17.Point(x, y);
+    const point = new import_fabric18.Point(x, y);
     const objects = this.canvas.getObjects().slice().reverse();
     for (const obj of objects) {
       if (obj.get(DRAG_PREVIEW_KEY)) continue;
@@ -7404,12 +8110,17 @@ var _FabricEditor = class _FabricEditor {
   extendFabricObject() {
     if (_FabricEditor._toObjectExtended) return;
     _FabricEditor._toObjectExtended = true;
-    const originalToObject = import_fabric17.FabricObject.prototype.toObject;
-    import_fabric17.FabricObject.prototype.toObject = function(propertiesToInclude) {
-      return originalToObject.call(
+    const originalToObject = import_fabric18.FabricObject.prototype.toObject;
+    import_fabric18.FabricObject.prototype.toObject = function(propertiesToInclude) {
+      const data = originalToObject.call(
         this,
         ["layerId", "layout", "bindings"].concat(propertiesToInclude || [])
       );
+      if (this.group instanceof import_fabric18.ActiveSelection) {
+        const { x, y } = this.getXY();
+        Object.assign(data, { left: x, top: y });
+      }
+      return data;
     };
   }
 };
@@ -7420,8 +8131,8 @@ _FabricEditor._toObjectExtended = false;
 var FabricEditor = _FabricEditor;
 
 // src/PreviewCanvas.ts
-var import_fabric18 = require("#fabric");
-var PreviewCanvas = class extends import_fabric18.StaticCanvas {
+var import_fabric19 = require("#fabric");
+var PreviewCanvas = class extends import_fabric19.StaticCanvas {
   constructor(el, opts) {
     const { width, height, ...canvasOpts } = opts;
     super(el, {
@@ -7481,7 +8192,7 @@ var PreviewCanvas = class extends import_fabric18.StaticCanvas {
 };
 
 // src/DropHandler.ts
-var import_fabric19 = require("#fabric");
+var import_fabric20 = require("#fabric");
 var HIGHLIGHT_COLOR = "#3b82f6";
 var KIND_CAPABILITIES = {
   image: { layout: false, replaceTarget: true },
@@ -7652,7 +8363,7 @@ var DropHandler = class {
       if (!committed && object) {
         if (e) {
           const pointer = this.editor.canvas.getScenePoint(e);
-          object.setPositionByOrigin(new import_fabric19.Point(pointer.x, pointer.y), "center", "center");
+          object.setPositionByOrigin(new import_fabric20.Point(pointer.x, pointer.y), "center", "center");
           object.setCoords();
         }
         if (!this.editor.canvas.getObjects().includes(object)) {
@@ -7728,7 +8439,7 @@ var DropHandler = class {
         this.editor.layout.tickExternalDrag(object, pointer);
         return;
       }
-      object.setPositionByOrigin(new import_fabric19.Point(pointer.x, pointer.y), "center", "center");
+      object.setPositionByOrigin(new import_fabric20.Point(pointer.x, pointer.y), "center", "center");
       object.setCoords();
       this.editor.canvas.requestRenderAll();
     }
@@ -7857,7 +8568,7 @@ var DropHandler = class {
       height = target.height;
       clipPath = target.clipPath;
     }
-    const fabricOverlay = new import_fabric19.Rect({
+    const fabricOverlay = new import_fabric20.Rect({
       left: target.left,
       top: target.top,
       width,
@@ -7950,7 +8661,7 @@ var DropHandler = class {
    * drop-target detection.
    */
   async createImagePreview(url) {
-    const img = await import_fabric19.FabricImage.fromURL(url, { crossOrigin: "anonymous" });
+    const img = await import_fabric20.FabricImage.fromURL(url, { crossOrigin: "anonymous" });
     let scale = 1;
     if (img.width > 300 || img.height > 300) {
       scale = Math.min(300 / img.width, 300 / img.height);
@@ -7985,7 +8696,7 @@ var DropHandler = class {
     if (e && !this.intersectsCanvas(e, null)) return null;
     const pointer = e ? this.editor.canvas.getScenePoint(e) : null;
     const object = this.editor.layers.createUserSlot(opts);
-    if (pointer) object.setPositionByOrigin(new import_fabric19.Point(pointer.x, pointer.y), "center", "center");
+    if (pointer) object.setPositionByOrigin(new import_fabric20.Point(pointer.x, pointer.y), "center", "center");
     this.editor.layers.add(object);
     this.editor.canvas.setActiveObject(object);
     this.editor.canvas.renderAll();
@@ -8006,49 +8717,6 @@ var DropHandler = class {
 
 // src/index.ts
 init_PendingUploadsManager();
-
-// src/layout/tree.ts
-function layoutParents(layers) {
-  const all = Array.from(layers);
-  const ids = new Set(all.map((l) => l.layerId).filter(Boolean));
-  const parents = /* @__PURE__ */ new Map();
-  for (const layer of all) {
-    const parentId = layer.layout?.child?.parentId;
-    if (layer.layerId && parentId && parentId !== layer.layerId && ids.has(parentId)) {
-      parents.set(layer.layerId, parentId);
-    }
-  }
-  return parents;
-}
-function layoutRoot(parents, id) {
-  const seen = /* @__PURE__ */ new Set();
-  while (parents.has(id) && !seen.has(id)) {
-    seen.add(id);
-    id = parents.get(id);
-  }
-  return id;
-}
-function layoutChildren(parents, id) {
-  const children = [];
-  for (const [child, parent] of parents) if (parent === id && child !== id) children.push(child);
-  return children;
-}
-function layoutDescendants(parents, ids) {
-  const roots = new Set(ids);
-  const descendants = /* @__PURE__ */ new Set();
-  let grew = true;
-  while (grew) {
-    grew = false;
-    for (const [child, parent] of parents) {
-      if (descendants.has(child) || roots.has(child)) continue;
-      if (roots.has(parent) || descendants.has(parent)) {
-        descendants.add(child);
-        grew = true;
-      }
-    }
-  }
-  return descendants;
-}
 
 // src/html/cssUtils.ts
 function originXToCss(originX) {
@@ -8587,6 +9255,8 @@ function layerToHtmlStandalone(layer, zIndex) {
   addCropControls,
   addHeartClip,
   addHexagonClip,
+  alignAxis,
+  alignDelta,
   antiScale,
   applyClip,
   applyLockMode,
@@ -8603,9 +9273,11 @@ function layerToHtmlStandalone(layer, zIndex) {
   createPathsShape,
   createRect,
   createShape,
+  distributeDeltas,
   drawBindingBadge,
   drawFrameBadge,
   fabricToHtml,
+  fitFreeContainer,
   getAvailableShapes,
   getCatalogShape,
   getLockMode,
@@ -8619,6 +9291,7 @@ function layerToHtmlStandalone(layer, zIndex) {
   isContainer,
   isContainerLayout,
   isContentLocked,
+  isFreeContainer,
   isMonoPath,
   isPositionLocked,
   isStyleLocked,
@@ -8643,9 +9316,11 @@ function layerToHtmlStandalone(layer, zIndex) {
   scaledSize,
   setTextContent,
   stackBlock,
+  stackParentOf,
   switchClip,
   switchShape,
   topLeft,
+  unionBox,
   userSlotBinding,
   userSlotHint,
   wrapContainerAroundChild,

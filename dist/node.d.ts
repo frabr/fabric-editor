@@ -208,8 +208,22 @@ type JustifyContent = "flex-start" | "flex-end" | "center" | "space-between" | "
 type AlignItems = "stretch" | "flex-start" | "flex-end" | "center";
 /** Flex direction (maps to Yoga flexDirection). */
 type FlexDirection = "column" | "row";
+/**
+ * How a container places its children:
+ * - "stack": Flexbox (Yoga) — direction, gap, alignment (default)
+ * - "free": children keep the place they were put at; the container's box
+ *   follows them (their union, plus the padding) — a group
+ */
+type Arrangement = "stack" | "free";
 /** "I am a parent" — present when the object has children. */
 interface ContainerData {
+    /** How the children are placed (default: "stack"). */
+    arrangement?: Arrangement;
+    /**
+     * "group": the container was created by grouping (⌘G) — a carrier with nothing of
+     * its own, removed when its children are ungrouped.
+     */
+    origin?: "group";
     /** Flex direction: column (vertical, default) or row (horizontal). */
     flexDirection?: FlexDirection;
     /** Gap between children in the main axis direction (pixels). */
@@ -358,6 +372,7 @@ declare class CustomTextbox extends Textbox {
     handleEdgeResize(transform: any, x: number, y: number): boolean;
     /** Coin : les deux règles des bords à la fois. */
     handleCornerResize(transform: any, x: number, y: number): boolean;
+    /** Placé par une pile — un groupe (container libre) laisse ses enfants à leur propre taille. */
     private _isChild;
     private _withAnchor;
     private _resizeWidth;
@@ -748,16 +763,16 @@ declare class LayerManager {
      */
     removeMany(objects: FabricObject[]): void;
     /**
-     * Monte l'objet devant le premier objet de même niveau qui le chevauche. Un
-     * container emmène ses descendants (toujours au-dessus de lui) ; un enfant reste
-     * parmi les enfants de son container.
+     * Monte l'objet (ou les objets) devant le premier objet de même niveau qui le
+     * chevauche. Un container emmène ses descendants (toujours au-dessus de lui) ; un enfant
+     * reste parmi les enfants de son container ; des objets montés ensemble ne se doublent pas.
      */
-    bringForward(obj: FabricObject): void;
+    bringForward(obj: FabricObject | FabricObject[]): void;
     /**
-     * Descend l'objet d'un niveau, mêmes règles de blocs que bringForward. Ne peut pas
-     * descendre en dessous de l'image de fond.
+     * Descend l'objet (ou les objets) d'un niveau, mêmes règles de blocs que bringForward.
+     * Ne peut pas descendre en dessous de l'image de fond.
      */
-    sendBackward(obj: FabricObject): void;
+    sendBackward(obj: FabricObject | FabricObject[]): void;
     private applyStackOrder;
     /**
      * Crée et ajoute un calque texte
