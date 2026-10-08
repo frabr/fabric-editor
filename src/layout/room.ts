@@ -9,10 +9,10 @@
  * a nested container at its own minimum) — and the gaps too.
  */
 import type { FabricObject } from "#fabric";
-import { scaledSize, resolveContainerChildren } from "./geometry";
-import { parentContainerOf } from "./reconcile";
+import { scaledSize } from "./geometry";
 import { minSizeOf } from "./resize-session";
 import { layoutOf, sizingOf, paddingOf } from "./model";
+import { childrenOf, parentContainerOf } from "./hierarchy";
 
 export interface Room {
   w: number;
@@ -35,7 +35,7 @@ export function availableRoom(obj: FabricObject, objects: FabricObject[]): Room 
   let w = (sizing.x === "fixed" ? own.w : above.w) - pad.left - pad.right;
   let h = (sizing.y === "fixed" ? own.h : above.h) - pad.top - pad.bottom;
 
-  const siblings = resolveContainerChildren(objects, parent).filter((c) => c.obj !== obj);
+  const siblings = childrenOf(objects, parent).filter((c) => c.obj !== obj);
   const gaps = (cd.gap ?? 0) * siblings.length;
   const taken = siblings.map(({ obj: s }) => minSizeOf(s, objects));
   if (cd.flexDirection === "row") w -= taken.reduce((sum, s) => sum + s.w, 0) + gaps;

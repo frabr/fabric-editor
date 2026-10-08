@@ -28,17 +28,13 @@
  */
 import type { FabricObject } from "#fabric";
 import { type ContainerData, type ChildData } from "./types";
-import {
-  scaledSize,
-  setShapeSize,
-  syncCoords,
-  topLeft,
-  resolveContainerChildren,
-  sortChildrenByOrder,
-} from "./geometry";
+import { scaledSize, setShapeSize, syncCoords, topLeft } from "./geometry";
 import { yogaLayout } from "./yoga-engine";
+
+export { parentContainerOf } from "./hierarchy";
 import { fitFreeContainer } from "./free";
 import { layoutOf, containerDataOf, isFreeContainer, sizingOf } from "./model";
+import { childrenOf, flowChildrenOf, parentContainerOf } from "./hierarchy";
 
 // ── public entry point ───────────────────────────────────────────────
 
@@ -64,7 +60,7 @@ export function runLayout(objects: FabricObject[]): void {
  */
 function layoutTree(container: FabricObject, objects: FabricObject[]): void {
   const cd = layoutOf(container)!.container!;
-  const children = sortChildrenByOrder(resolveContainerChildren(objects, container));
+  const children = flowChildrenOf(objects, container);
   if (children.length === 0) return;
 
   if (cd.arrangement === "free") {
@@ -81,7 +77,7 @@ function layoutTree(container: FabricObject, objects: FabricObject[]): void {
 
 /** The groups inside a stack's Yoga tree get their box before the pass (bottom-up). */
 function fitGroupsUnder(container: FabricObject, objects: FabricObject[]): void {
-  for (const { obj } of resolveContainerChildren(objects, container)) {
+  for (const { obj } of childrenOf(objects, container)) {
     if (!containerDataOf(obj)) continue;
     if (isFreeContainer(obj)) layoutTree(obj, objects);
     else fitGroupsUnder(obj, objects);
@@ -117,16 +113,6 @@ export function bubbleUpLayout(container: FabricObject, allObjects: FabricObject
   }
 }
 
-/** The container `obj` is a child of — when it is in `objects` and really is a container. */
-export function parentContainerOf(obj: FabricObject, objects: FabricObject[]): FabricObject | null {
-  const layout = layoutOf(obj);
-  const parentId = layout?.child?.parentId;
-  if (!parentId) return null;
-  const parent = objects.find((o) => o.get("layerId") === parentId);
-  if (!parent || parent === obj) return null;
-  const pLayout = layoutOf(parent);
-  return pLayout?.container ? parent : null;
-}
 
 // ── orchestrator ─────────────────────────────────────────────────────
 

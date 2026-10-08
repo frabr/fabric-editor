@@ -2,6 +2,7 @@ import { Textbox, Point, controlsUtils } from "#fabric";
 import { type SizingData, type TextOverflow } from "../layout/types";
 import { resolveTextBox, type TextConstraint, type TextMeasure } from "../layout/text-box";
 import { layoutOf, parentIdOf, isFreeContainer } from "../layout/model";
+import { parentOf } from "../layout/hierarchy";
 
 const { changeObjectWidth, changeObjectHeight } = controlsUtils;
 
@@ -238,9 +239,8 @@ export class CustomTextbox extends Textbox {
 
   /** Placé par une pile — un groupe (container libre) laisse ses enfants à leur propre taille. */
   private _isChild(): boolean {
-    const parentId = parentIdOf(this);
-    if (parentId == null) return false;
-    const parent = this.canvas?.getObjects().find((o) => o.get("layerId") === parentId);
+    if (parentIdOf(this) == null) return false;
+    const parent = parentOf(this);
     // Parent introuvable (texte hors canvas, document en cours de chargement) : il est
     // traité en enfant de pile, sa boîte reste celle reçue ou sauvegardée
     return !isFreeContainer(parent);

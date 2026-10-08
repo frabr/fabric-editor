@@ -25,17 +25,9 @@
  */
 import type { FabricObject } from "#fabric";
 import { type ResolvedChild, type ContainerData, type SizingData } from "./types";
-import {
-  scaledSize,
-  setShapeSize,
-  isTextObject,
-  resolveContainerChildren,
-  sortChildrenByOrder,
-  topLeft,
-  type LayoutText,
-} from "./geometry";
-import { descendantsOf, translateObjects } from "./free";
+import { scaledSize, setShapeSize, isTextObject, topLeft, type LayoutText } from "./geometry";
 import { layoutOf, isFreeContainer, sizingOf, directionOf } from "./model";
+import { flowChildrenOf, descendantsOf, translateObjects } from "./hierarchy";
 
 // ── Yoga singleton ─────────────────────────────────────────────────
 
@@ -176,7 +168,7 @@ function nestedChildren(obj: FabricObject, allObjects?: FabricObject[]): Resolve
   if (!allObjects || isTextObject(obj) || isFreeContainer(obj)) return null;
   const layout = layoutOf(obj);
   if (!layout?.container) return null;
-  const children = sortChildrenByOrder(resolveContainerChildren(allObjects, obj));
+  const children = flowChildrenOf(allObjects, obj);
   return children.length > 0 ? children : null;
 }
 

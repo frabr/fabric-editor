@@ -7,9 +7,10 @@ export { isContainer, isChild, isContainerLayout, isChildLayout, MIN_PAD, MIN_FO
 export { layoutOf, idOf, parentIdOf, containerDataOf, childDataOf, isContainerObject, isFreeContainer, isStackContainer, directionOf, paddingOf, uniformPadding, ZERO_PADDING, sizingOf, DEFAULT_SIZING, updateLayout, updateContainer, updateChild, removeLayoutBlock, cloneLayout } from "./model";
 export type { Padding } from "./model";
 export type { Arrangement } from "./types";
-export { fitFreeContainer, stackParentOf, FreeResizeSession } from "./free";
+export { fitFreeContainer, FreeResizeSession } from "./free";
 export { migrateLegacyLayout } from "./legacy";
-export { scaledSize, topLeft, pointInObject, isTextObject, clampTopLeft, hasExceededOffset, syncCoords, cornerToAxes, sortChildrenByOrder, resolveContainerChildren } from "./geometry";
+export { scaledSize, topLeft, pointInObject, isTextObject, clampTopLeft, hasExceededOffset, syncCoords, cornerToAxes } from "./geometry";
+export { findById, parentOf, parentContainerOf, stackParentOf, ancestorsOf, childrenOf, flowChildrenOf, sortChildrenByOrder, descendantsOf, subtreeOf, translateObjects, translateSubtree, childrenOf as resolveContainerChildren } from "./hierarchy";
 export type { ResizeAxes } from "./geometry";
 export { ContainerizeSession, wrapContainerAroundChild } from "./containerize-session";
 export { InsertChildSession } from "./insert-child-session";

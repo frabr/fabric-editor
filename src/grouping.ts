@@ -15,11 +15,12 @@
  */
 import type { FabricObject } from "#fabric";
 import { FabRect } from "./shapes/FabRect";
-import { detachChild, isTextObject, sortChildrenByOrder, resolveContainerChildren } from "./layout/geometry";
+import { detachChild, isTextObject } from "./layout/geometry";
 import { fitFreeContainer } from "./layout/free";
 import { layoutParents, layoutRoot } from "./layout/tree";
 import { stackBlock } from "./layout/stacking";
 import { layoutOf, idOf, parentIdOf, containerDataOf, childDataOf, ZERO_PADDING } from "./layout/model";
+import { childrenOf, flowChildrenOf } from "./layout/hierarchy";
 
 /** Ce que le groupage demande au canvas. */
 export interface GroupingCanvas {
@@ -106,7 +107,7 @@ export function ungroupObject(canvas: GroupingCanvas, container: FabricObject): 
   if (!layout?.container) return [];
 
   const objects = canvas.getObjects();
-  const children = sortChildrenByOrder(resolveContainerChildren(objects, container)).map((c) => c.obj);
+  const children = flowChildrenOf(objects, container).map((c) => c.obj);
   const parentChild = layout.child;
 
   children.forEach((child, i) => {
@@ -146,7 +147,7 @@ const spread = (values: number[]) => Math.max(...values) - Math.min(...values);
  */
 export function arrangeAsStack(container: FabricObject, objects: FabricObject[]): void {
   const layout = layoutOf(container)!;
-  const children = resolveContainerChildren(objects, container).map((c) => {
+  const children = childrenOf(objects, container).map((c) => {
     c.obj.setCoords();
     return { obj: c.obj, box: c.obj.getBoundingRect() };
   });
@@ -187,7 +188,7 @@ export function arrangeAsStack(container: FabricObject, objects: FabricObject[])
  */
 export function arrangeFree(container: FabricObject, objects: FabricObject[]): void {
   const layout = layoutOf(container)!;
-  const children = resolveContainerChildren(objects, container).map((c) => c.obj);
+  const children = childrenOf(objects, container).map((c) => c.obj);
   const widths = new Map(children.map((c) => [c, c.width]));
 
   const { flexDirection: _d, gap: _g, alignItems: _a, justifyContent: _j, ...cd } = layout.container!;

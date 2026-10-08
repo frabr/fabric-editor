@@ -24,11 +24,12 @@ import type { FabricObject } from "#fabric";
 import type { DesignCanvas } from "../DesignCanvas";
 import { type LayoutSession, type LayoutData, type ChildData, type FlexDirection } from "./types";
 import { scaledSize, setShapeSize, topLeft, syncCoords, pointInObject, detachChild } from "./geometry";
-import { resolveContainerChildren, sortChildrenByOrder } from "./geometry";
+
 import { yogaLayout } from "./yoga-engine";
 import { runLayout, bubbleUpLayout } from "./reconcile";
 import { LayoutAnimator } from "./layout-animator";
 import { layoutOf, containerDataOf, sizingOf, directionOf, paddingOf, cloneLayout } from "./model";
+import { childrenOf, flowChildrenOf } from "./hierarchy";
 
 // ── Constants ────────────────────────────────────────────────────────
 
@@ -92,7 +93,7 @@ export class InsertChildSession implements LayoutSession {
 
     // If the container has exactly 1 child and no explicit direction yet,
     // this insertion will decide the direction.
-    const existing = sortChildrenByOrder(resolveContainerChildren(canvas.getObjects(), container));
+    const existing = flowChildrenOf(canvas.getObjects(), container);
     const cd = containerDataOf(container);
     this._decidingDirection = existing.length === 1 && !cd?.flexDirection;
 
@@ -164,7 +165,7 @@ export class InsertChildSession implements LayoutSession {
     // For reattach with exactly 2 children, allow direction + gap change
     // (the flex direction was decided during the original insertion, but
     // reattach should let the user change it again)
-    const allChildren = sortChildrenByOrder(resolveContainerChildren(canvas.getObjects(), container));
+    const allChildren = flowChildrenOf(canvas.getObjects(), container);
     session._decidingDirection = allChildren.length <= 2;
 
     // Ensure existing children have stable order values
@@ -212,7 +213,7 @@ export class InsertChildSession implements LayoutSession {
     this._container.set("layout", { ...layout, sizing: { ...sizingOf(this._container), minSize: { w, h } } });
 
     // Capture all children positions before final layout
-    const allChildren = resolveContainerChildren(this.canvas.getObjects(), this._container);
+    const allChildren = childrenOf(this.canvas.getObjects(), this._container);
     const positionsBefore = new Map<FabricObject, { left: number; top: number }>();
     for (const { obj } of allChildren) {
       positionsBefore.set(obj, { left: obj.left!, top: obj.top! });
@@ -249,7 +250,7 @@ export class InsertChildSession implements LayoutSession {
 
       // If only 1 child remains, clear flexDirection/gap so they can
       // be re-decided when a new 2nd child is inserted
-      const remaining = resolveContainerChildren(this.canvas.getObjects(), this._container);
+      const remaining = childrenOf(this.canvas.getObjects(), this._container);
       if (remaining.length <= 1) {
         const cLayout = layoutOf(this._container);
         if (cLayout?.container) {
@@ -303,9 +304,7 @@ export class InsertChildSession implements LayoutSession {
     const containerLayout = layoutOf(this._container)!;
     const cd = containerLayout.container!;
 
-    const allChildren = sortChildrenByOrder(
-      resolveContainerChildren(this.canvas.getObjects(), this._container),
-    );
+    const allChildren = flowChildrenOf(this.canvas.getObjects(), this._container);
     const otherChildren = allChildren.filter(c => c.obj !== this.newChild);
 
     const isColumn = directionOf(cd) === "column";

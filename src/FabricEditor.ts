@@ -16,9 +16,8 @@ import { DRAG_PREVIEW_KEY } from "./types";
 import type { EditorConfig, LayerData, FontsConfig, ShapeType } from "./types";
 import { initYoga } from "./layout/yoga-engine";
 import { isTextObject } from "./layout/geometry";
-import { layoutDescendants, layoutParents } from "./layout/tree";
 import { groupObjects, padGroupOnFirstFill, ungroupObject } from "./grouping";
-import { stackParentOf } from "./layout/free";
+import { parentOf, stackParentOf, subtreeOf, translateSubtree } from "./layout/hierarchy";
 import {
   alignAxis, alignDelta, distributeDeltas, unionBox,
   type AlignEdge, type Box, type DistributeAxis,
@@ -890,14 +889,7 @@ export class FabricEditor {
     const selected = this.selection.selected;
     if (selected.length === 0) return;
 
-    const allObjects = this.canvas.getObjects();
-    const descendants = layoutDescendants(
-      layoutParents(allObjects),
-      selected.map((obj) => idOf(obj)),
-    );
-    const toCopy = allObjects.filter((obj) =>
-      selected.includes(obj) || descendants.has(idOf(obj)),
-    );
+    const toCopy = subtreeOf(this.canvas.getObjects(), selected);
 
     this._clipboard = toCopy.map((obj) =>
       obj.toObject(["layerId", "lockMode", "lockContent", "layout", "bindings"])
@@ -1060,7 +1052,7 @@ export class FabricEditor {
           continue;
         }
         const { dx, dy } = alignDelta(obj.getBoundingRect(), ref, edge);
-        this.moveWithDescendants(obj, dx, dy, objects);
+        translateSubtree(objects, [obj], dx, dy);
       }
       if (relayout) this.layout.relayout();
     });
@@ -1079,7 +1071,7 @@ export class FabricEditor {
 
     this.selection.withSelectionReleased(() => {
       const deltas = distributeDeltas(free.map((obj) => obj.getBoundingRect()), axis);
-      free.forEach((obj, i) => this.moveWithDescendants(obj, deltas[i].dx, deltas[i].dy, objects));
+      free.forEach((obj, i) => translateSubtree(objects, [obj], deltas[i].dx, deltas[i].dy));
     });
     this.canvas.renderAll();
   }
@@ -1100,8 +1092,7 @@ export class FabricEditor {
 
   /** La référence d'un objet seul : l'intérieur de son container, sinon l'artboard. */
   private alignReference(obj: FabricObject, objects: FabricObject[]): Box {
-    const parentId = parentIdOf(obj);
-    const parent = parentId ? objects.find((o) => o.get("layerId") === parentId) : undefined;
+    const parent = parentOf(obj, objects);
     if (!parent) return { left: 0, top: 0, width: this.width, height: this.height };
 
     const box = parent.getBoundingRect();
@@ -1113,17 +1104,6 @@ export class FabricEditor {
       width: box.width - pad.left - pad.right,
       height: box.height - pad.top - pad.bottom,
     };
-  }
-
-  /** Déplace un objet et toute sa descendance (positions absolues). */
-  private moveWithDescendants(obj: FabricObject, dx: number, dy: number, objects: FabricObject[]): void {
-    if (!dx && !dy) return;
-    const ids = layoutDescendants(layoutParents(objects), [idOf(obj)]);
-    for (const o of objects) {
-      if (o !== obj && !ids.has(idOf(o))) continue;
-      o.set({ left: o.left + dx, top: o.top + dy });
-      o.setCoords();
-    }
   }
 
   /**
@@ -1140,15 +1120,9 @@ export class FabricEditor {
     if (deletable.length === 0) return;
 
     // Un container emporte toute sa descendance
-    const objects = this.canvas.getObjects();
-    const descendants = layoutDescendants(
-      layoutParents(objects),
-      deletable.map((obj) => idOf(obj)),
-    );
+    const doomed = subtreeOf(this.canvas.getObjects(), deletable);
     this.canvas.discardActiveObject();
-    this.layers.removeMany(objects.filter((obj) =>
-      deletable.includes(obj) || descendants.has(idOf(obj)),
-    ));
+    this.layers.removeMany(doomed);
     this.canvas.renderAll();
   }
 

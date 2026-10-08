@@ -9,22 +9,12 @@
  */
 import type { FabricObject } from "#fabric";
 import { type ContainerData, type ResolvedChild, type SizingData } from "./types";
-import {
-  scaledSize,
-  setShapeSize,
-  syncCoords,
-  topLeft,
-  cornerToAxes,
-  isTextObject,
-  resolveContainerChildren,
-  sortChildrenByOrder,
-  type LayoutText,
-  type ResizeAxes,
-} from "./geometry";
+import { scaledSize, setShapeSize, syncCoords, topLeft, cornerToAxes, isTextObject, type LayoutText, type ResizeAxes } from "./geometry";
 import { yogaLayout } from "./yoga-engine";
 import { availableRoom, type Room } from "./room";
-import { parentContainerOf, relayoutSingle, bubbleUpLayout } from "./reconcile";
+import { relayoutSingle, bubbleUpLayout } from "./reconcile";
 import { layoutOf, sizingOf, paddingOf } from "./model";
+import { flowChildrenOf, parentContainerOf } from "./hierarchy";
 
 // ── ResizeSession ───────────────────────────────────────────────────
 
@@ -120,7 +110,7 @@ export class ResizeSession {
     if (axes.x) this.userW = Math.min(currentW, this.room.w);
     if (axes.y) this.userH = Math.min(currentH, this.room.h);
 
-    const children = sortChildrenByOrder(resolveContainerChildren(objects, container));
+    const children = flowChildrenOf(objects, container);
     if (children.length === 0) {
       this.setSizeKeepingAnchor(this.userW, this.userH);
       this.settle(objects);
@@ -221,7 +211,7 @@ export function minSizeOf(obj: FabricObject, objects: FabricObject[]): { w: numb
   const size = scaledSize(obj);
   const layout = layoutOf(obj);
   if (!layout?.container) return size;
-  const children = sortChildrenByOrder(resolveContainerChildren(objects, obj));
+  const children = flowChildrenOf(objects, obj);
   if (children.length === 0) return size;
 
   const sizing = sizingOf(obj);

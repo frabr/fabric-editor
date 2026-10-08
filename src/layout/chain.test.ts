@@ -1,11 +1,11 @@
 /**
- * Tests for layout helpers: sortChildrenByOrder, resolveContainerChildren.
+ * Tests for layout helpers: sortChildrenByOrder, childrenOf (hierarchy).
  *
  * Uses minimal mock objects — no real Fabric canvas needed.
  */
 import { describe, it, expect } from "vitest";
 import type { ResolvedChild, ChildData } from "./types";
-import { sortChildrenByOrder } from "./geometry";
+import { sortChildrenByOrder } from "./hierarchy";
 
 // ── Helpers ─────────────────────────────────────────────────────────
 

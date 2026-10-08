@@ -10,9 +10,9 @@
  */
 import { Point, type FabricObject } from "#fabric";
 import { type ContainerData, type SizingData } from "./types";
-import { isTextObject, resolveContainerChildren, scaledSize, setShapeSize } from "./geometry";
-import { layoutDescendants, layoutParents } from "./tree";
+import { isTextObject, scaledSize, setShapeSize } from "./geometry";
 import { layoutOf, idOf, parentIdOf, containerDataOf, isFreeContainer, paddingOf, isStackContainer } from "./model";
+import { childrenOf, descendantsOf, translateObjects, stackParentOf } from "./hierarchy";
 
 interface Box {
   left: number;
@@ -27,20 +27,7 @@ function boxOf(obj: FabricObject): Box {
   return obj.getBoundingRect();
 }
 
-/** Toute la descendance d'objets, dans l'ordre de la pile. */
-export function descendantsOf(objects: FabricObject[], roots: FabricObject[]): FabricObject[] {
-  const ids = layoutDescendants(layoutParents(objects), roots.map((o) => idOf(o)));
-  return objects.filter((o) => ids.has(idOf(o)));
-}
 
-/** Déplace des objets d'un même vecteur (positions absolues). */
-export function translateObjects(objects: FabricObject[], dx: number, dy: number): void {
-  if (!dx && !dy) return;
-  for (const obj of objects) {
-    obj.set({ left: obj.left + dx, top: obj.top + dy });
-    obj.setCoords();
-  }
-}
 
 /** Pose le coin haut-gauche d'un objet, quelle que soit son origine. */
 function placeTopLeft(obj: FabricObject, x: number, y: number): void {
@@ -53,7 +40,7 @@ function placeTopLeft(obj: FabricObject, x: number, y: number): void {
  * enfant, rien ne bouge. Les groupes imbriqués d'abord (leur boîte compte dans la sienne).
  */
 export function fitFreeContainer(container: FabricObject, objects: FabricObject[]): void {
-  const children = resolveContainerChildren(objects, container).map((c) => c.obj);
+  const children = childrenOf(objects, container).map((c) => c.obj);
   if (children.length === 0) return;
   for (const child of children) if (isFreeContainer(child)) fitFreeContainer(child, objects);
 
@@ -164,13 +151,3 @@ export class FreeResizeSession {
   }
 }
 
-/**
- * La pile qui place `obj`, s'il est dans une pile (pas dans un groupe) : sa place est
- * celle que la pile lui donne — il ne se déplace, ne s'aligne ni ne change de plan seul.
- */
-export function stackParentOf(obj: FabricObject): FabricObject | undefined {
-  const parentId = parentIdOf(obj);
-  if (!parentId) return undefined;
-  const parent = obj.canvas?.getObjects().find((o) => o.get("layerId") === parentId);
-  return isStackContainer(parent) ? parent : undefined;
-}

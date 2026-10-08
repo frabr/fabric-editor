@@ -6,21 +6,12 @@
  * Fonctions pures sur la liste ordonnée des objets (du fond vers le dessus).
  */
 import type { FabricObject } from "#fabric";
-import { idOf, parentIdOf } from "./model";
+import { parentIdOf } from "./model";
+import { subtreeOf } from "./hierarchy";
 
 /** `root` et ses descendants, dans l'ordre de la pile. */
 export function stackBlock(objects: FabricObject[], root: FabricObject): FabricObject[] {
-  const ids = new Set([idOf(root)]);
-  const block: FabricObject[] = [];
-  // Un descendant est au-dessus de son container : un seul passage suffit
-  for (const obj of objects) {
-    if (obj === root) block.push(obj);
-    else if (ids.has(parentIdOf(obj) as string)) {
-      block.push(obj);
-      ids.add(idOf(obj));
-    }
-  }
-  return block;
+  return subtreeOf(objects, [root]);
 }
 
 /** Les objets de même niveau qu'`obj` (même container, ou racines), dans l'ordre de la pile. */

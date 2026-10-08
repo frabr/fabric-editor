@@ -12,13 +12,14 @@ import { rulesOf } from "./capabilities";
 
 /** Size presets of the UI (same vocabulary for containers and texts). */
 export type SizePreset = "hug" | "hug-y" | "fixed";
-import { resolveContainerChildren, scaledSize, setShapeSize } from "./layout/geometry";
+import { scaledSize, setShapeSize } from "./layout/geometry";
 import { availableRoom } from "./layout/room";
 import { placeBlockAbove } from "./layout/stacking";
-import { descendantsOf, fitFreeContainer, FreeResizeSession } from "./layout/free";
+import { fitFreeContainer, FreeResizeSession } from "./layout/free";
 import { ContainerizeSession } from "./layout/containerize-session";
 import { InsertChildSession } from "./layout/insert-child-session";
 import { layoutOf, containerDataOf, isFreeContainer, sizingOf, ZERO_PADDING, isStackContainer, directionOf } from "./layout/model";
+import { childrenOf, parentContainerOf, descendantsOf, findById } from "./layout/hierarchy";
 
 // ── Types ───────────────────────────────────────────────────────────
 
@@ -431,13 +432,11 @@ export class LayoutManager {
     if (layout?.child && this.dtl.phase !== "anchored") {
       const activeGroup = this.callbacks.getActiveGroupId?.();
       if (activeGroup === layout.child.parentId) {
-        const container = this.canvas.getObjects().find(
-          (o) => o.get("layerId") === layout.child!.parentId,
-        );
+        const container = findById(this.canvas.getObjects(), activeGroup);
         if (container) {
           const cursor = this.canvas.getScenePoint(e.e);
           // Check if container has other children → use InsertChildSession for reorder
-          const siblings = resolveContainerChildren(this.canvas.getObjects(), container)
+          const siblings = childrenOf(this.canvas.getObjects(), container)
             .filter(c => c.obj !== obj);
           let session: LayoutSession;
           if (siblings.length > 0) {
@@ -805,7 +804,7 @@ export class LayoutManager {
   ): FabricObject | null {
     const layout = layoutOf(container);
     if (!layout?.container) return null;
-    const children = resolveContainerChildren(this.canvas.getObjects(), container);
+    const children = childrenOf(this.canvas.getObjects(), container);
     for (const { obj } of children) {
       if (obj === exclude) continue;
       if (!rulesOf(obj).hosts) continue;
@@ -814,13 +813,9 @@ export class LayoutManager {
     return null;
   }
 
-  /** Find the parent container of `obj` by looking up its `child.parentId`. */
+  /** The container `obj` is a child of. */
   private findParentContainer(obj: FabricObject): FabricObject | null {
-    const layout = layoutOf(obj);
-    if (!layout?.child) return null;
-    return this.canvas.getObjects().find(
-      (o) => o.get("layerId") === layout.child!.parentId,
-    ) ?? null;
+    return parentContainerOf(obj, this.canvas.getObjects());
   }
 
   /** Transition to ANCHORED: create a session on the target and go live. */
@@ -890,7 +885,7 @@ export class LayoutManager {
     const targetLayout = layoutOf(target);
     const alreadyContainer = targetLayout?.container != null;
     const existingChildren = alreadyContainer
-      ? resolveContainerChildren(this.canvas.getObjects(), target)
+      ? childrenOf(this.canvas.getObjects(), target)
       : [];
 
     if (alreadyContainer && existingChildren.length > 0) {
@@ -929,7 +924,7 @@ export class LayoutManager {
   private showSessionGuides(session: LayoutSession): void {
     if (session instanceof InsertChildSession) {
       // InsertChildSession: show gap between children
-      const allChildren = resolveContainerChildren(this.canvas.getObjects(), session.container);
+      const allChildren = childrenOf(this.canvas.getObjects(), session.container);
       const childObjs = allChildren.map(c => c.obj);
       const layout = layoutOf(session.container);
       const direction = directionOf(layout?.container);

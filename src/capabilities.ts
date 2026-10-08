@@ -27,7 +27,7 @@ import { FabRect } from "./shapes/FabRect";
 import { FabCircle } from "./shapes/FabCircle";
 import { FabPath } from "./shapes/FabPath";
 import type { ControlOption } from "./types";
-import { stackParentOf } from "./layout/free";
+import { stackParentOf } from "./layout/hierarchy";
 import { isFreeContainer } from "./layout/model";
 
 

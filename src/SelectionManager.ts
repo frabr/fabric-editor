@@ -4,7 +4,7 @@ import { isPositionLocked } from "./locking";
 import { isTextObject } from "./layout/geometry";
 import type { SelectionCallbacks, ControlOption } from "./types";
 import { rulesOf } from "./capabilities";
-import { stackParentOf } from "./layout/free";
+import { ancestorsOf, findById, parentOf, stackParentOf } from "./layout/hierarchy";
 import { idOf, parentIdOf, containerDataOf } from "./layout/model";
 
 /**
@@ -119,7 +119,7 @@ export class SelectionManager {
       const parentId = parentIdOf(current);
       // Not a child, or inside its group → this is the target
       if (!parentId || parentId === this._activeGroupId) return current;
-      const parent = this.canvas.getObjects().find((o) => o.get("layerId") === parentId);
+      const parent = parentOf(current, this.canvas.getObjects());
       if (!parent) return current;
       current = parent;
     }
@@ -179,9 +179,7 @@ export class SelectionManager {
    * Sélectionne un objet par son layerId
    */
   selectByLayerId(layerId: string): boolean {
-    const obj = this.canvas.getObjects().find(
-      (o) => o.get("layerId") === layerId,
-    );
+    const obj = findById(this.canvas.getObjects(), layerId);
     if (!obj) return false;
     this.select(obj);
     return true;
@@ -418,21 +416,7 @@ export class SelectionManager {
     }
 
     const all = this.canvas.getObjects();
-    const byId = new Map(all.map((o) => [idOf(o), o]));
-    const hasPickedAncestor = (obj: FabricObject): boolean => {
-      const seen = new Set<FabricObject>();
-      let parentId = parentIdOf(obj);
-      while (parentId) {
-        const parent = byId.get(parentId);
-        if (!parent || seen.has(parent)) return false;
-        if (picked.has(parent)) return true;
-        seen.add(parent);
-        parentId = parentIdOf(parent);
-      }
-      return false;
-    };
-
-    return all.filter((obj) => picked.has(obj) && !hasPickedAncestor(obj));
+    return all.filter((obj) => picked.has(obj) && !ancestorsOf(obj, all).some((a) => picked.has(a)));
   }
 
   /**

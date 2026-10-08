@@ -25,6 +25,7 @@ import type { LayerData, TextLayerOptions, ImageLayerOptions, ShapeLayerOptions,
 import { restoreBindings, type Bindings } from "./bindings";
 import { resolveUserSlot, USER_SCOPE, USER_SLOT_FIELD } from "./userSlots";
 import { layoutOf } from "./layout/model";
+import { findById } from "./layout/hierarchy";
 
 const BACKGROUND_LAYER_ID = "originalImage";
 
@@ -57,7 +58,7 @@ export class LayerManager {
    * Trouve un calque par son ID
    */
   findById(layerId: string): FabricObject | undefined {
-    return this.canvas.getObjects().find((obj) => obj.get("layerId") === layerId);
+    return findById(this.canvas.getObjects(), layerId);
   }
 
   /**
