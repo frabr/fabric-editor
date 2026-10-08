@@ -89,7 +89,7 @@ export class FabricEditor {
     this.snapping = new SnappingManager(this.canvas, {}, config.guideColor);
     this.layout = new LayoutManager(
       this.canvas,
-      { getActiveGroupId: () => this.selection.activeGroupId },
+      { getEnteredContainerId: () => this.selection.enteredContainerId },
       config.guideColor,
     );
 

@@ -18,18 +18,23 @@ export class SelectionManager {
   private _silenced = false;
 
   /**
-   * When set, we are "inside" a layout group: hover and click target
+   * When set, we are "inside" this container: hover and click target
    * children directly instead of redirecting to the container.
    */
-  private _activeGroupId: string | null = null;
+  private _enteredId: string | null = null;
 
   constructor(private canvas: DesignCanvas) {
     this.setupListeners();
   }
 
   /** The layerId of the container we're currently editing inside, or null. */
+  get enteredContainerId(): string | null {
+    return this._enteredId;
+  }
+
+  /** @deprecated Use `enteredContainerId` (any container can be entered, not only a group). */
   get activeGroupId(): string | null {
-    return this._activeGroupId;
+    return this._enteredId;
   }
 
   /**
@@ -110,16 +115,16 @@ export class SelectionManager {
   /**
    * Given a Fabric target (the object under the cursor), return the object
    * that should actually be hovered / selected / dragged: a layout child
-   * outside the active group resolves to its container, up the chain (a
+   * outside the entered container resolves to its container, up the chain (a
    * grandchild resolves to the outermost container that isn't the active
-   * group's child).
+   * entered container's child).
    */
   resolveTarget(obj: FabricObject): FabricObject {
     let current = obj;
     for (;;) {
       const parentId = parentIdOf(current);
-      // Not a child, or inside its group → this is the target
-      if (!parentId || parentId === this._activeGroupId) return current;
+      // Not a child, or inside the entered container → this is the target
+      if (!parentId || parentId === this._enteredId) return current;
       const parent = parentOf(current, this.canvas.getObjects());
       if (!parent) return current;
       current = parent;
@@ -202,18 +207,18 @@ export class SelectionManager {
 
   /**
    * Travaille sur les objets sélectionnés hors de la sélection de Fabric — dedans, leurs
-   * positions sont relatives à elle — puis les resélectionne, dans le même groupe. L'hôte
+   * positions sont relatives à elle — puis les resélectionne, dans le même container entré. L'hôte
    * n'entend que la resélection : la barre se replace sur la nouvelle boîte.
    */
   withSelectionReleased(fn: (objects: FabricObject[]) => void): void {
     const objects = this.selected;
-    const groupId = this._activeGroupId;
+    const enteredId = this._enteredId;
 
     const silenced = this._silenced;
     this._silenced = true;
     this.canvas.discardActiveObject();
     this._silenced = silenced;
-    this._activeGroupId = groupId;
+    this._enteredId = enteredId;
 
     fn(objects);
     this.selectMany(objects);
@@ -240,7 +245,7 @@ export class SelectionManager {
   /**
    * Fabric picks the target of a press (and of hover) in searchPossibleTargets:
    * redirecting there — not after the selection — makes a press on a child
-   * outside its group a press on its container, so that a click + drag moves
+   * outside its entered container a press on its container, so that a click + drag moves
    * the container right away instead of grabbing the child.
    */
   private redirectTargetSearch(): void {
@@ -269,21 +274,21 @@ export class SelectionManager {
   }
 
   /**
-   * Group exit: a press outside the active group (or on empty canvas) leaves it.
+   * Exit: a press outside the entered container (or on empty canvas) leaves it.
    * Entering is decided on release (see handleMouseUp), so that a drag on a
    * selected container still moves it.
    */
   private handleMouseDown(e: any): void {
-    if (!this._activeGroupId) return;
+    if (!this._enteredId) return;
 
     const target = e.target as FabricObject | undefined;
-    const isTheContainer = target?.get("layerId") === this._activeGroupId;
-    const isChildOfGroup = parentIdOf(target) === this._activeGroupId;
-    if (!target || (!isTheContainer && !isChildOfGroup)) this._activeGroupId = null;
+    const isTheContainer = target?.get("layerId") === this._enteredId;
+    const isItsChild = parentIdOf(target) === this._enteredId;
+    if (!target || (!isTheContainer && !isItsChild)) this._enteredId = null;
   }
 
   /**
-   * Group enter: a click (no drag) on a container that was already selected
+   * Enter: a click (no drag) on a container that was already selected
    * enters it and selects its child under the pointer.
    */
   private handleMouseUp(e: any): void {
@@ -292,13 +297,13 @@ export class SelectionManager {
     if (!e.isClick || !before || e.target !== before) return;
     if (!containerDataOf(before)) return;
 
-    this.enterGroup(before, this.canvas.getScenePoint(e.e));
+    this.enterContainer(before, this.canvas.getScenePoint(e.e));
   }
 
-  /** Enter `container`'s group and select its topmost child under `point`. */
-  private enterGroup(container: FabricObject, point: { x: number; y: number }): void {
+  /** Enter `container` and select its topmost child under `point`. */
+  private enterContainer(container: FabricObject, point: { x: number; y: number }): void {
     const id = idOf(container);
-    this._activeGroupId = id;
+    this._enteredId = id;
 
     const child = this.canvas.getObjects().slice().reverse().find((o) =>
       parentIdOf(o) === id &&
@@ -310,7 +315,7 @@ export class SelectionManager {
 
   /**
    * Double-click on a text inside a container: its two clicks entered the
-   * group and selected the text (the press targeted the container, so
+   * container and selected the text (the press targeted the container, so
    * Fabric's own double-click editing didn't run) — edit it now, word under
    * the pointer selected, like Fabric does.
    */
@@ -323,7 +328,7 @@ export class SelectionManager {
       selectWord(index: number): void;
     }) | null;
     if (!text || !isTextObject(text) || text.isEditing || text.editable === false) return;
-    if (parentIdOf(text) !== this._activeGroupId) return;
+    if (parentIdOf(text) !== this._enteredId) return;
 
     text.enterEditing(e.e);
     text.selectWord(text.getSelectionStartFromPointer(e.e));
@@ -347,7 +352,7 @@ export class SelectionManager {
       return;
     }
 
-    // Sélection simple — redirect child → container if not inside group
+    // Sélection simple — redirect child → container if not inside it
     const resolved = this.resolveTarget(activeObject);
     if (resolved !== activeObject) {
       this.canvas.discardActiveObject();
@@ -411,7 +416,7 @@ export class SelectionManager {
     const picked = new Set<FabricObject>();
     for (const obj of objects) {
       const resolved = this.resolveTarget(obj);
-      if (this._activeGroupId && resolved.get("layerId") === this._activeGroupId) continue;
+      if (this._enteredId && resolved.get("layerId") === this._enteredId) continue;
       if (isPositionLocked(resolved)) continue;
       picked.add(resolved);
     }
@@ -425,7 +430,7 @@ export class SelectionManager {
    */
   private handleDeselection(): void {
     this._current = null;
-    this._activeGroupId = null;
+    this._enteredId = null;
     if (this._silenced) return;
     if (this.callbacks.onDeselect) {
       this.callbacks.onDeselect();

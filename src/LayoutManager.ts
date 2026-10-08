@@ -30,8 +30,8 @@ export interface LayoutManagerCallbacks {
   onLayoutCreated?: () => void;
   /** Called after any layout change (relayout, margin/anchor/mode change). */
   onLayoutChanged?: () => void;
-  /** Returns the active group layerId if we're in group-edit mode, null otherwise. */
-  getActiveGroupId?: () => string | null;
+  /** The layerId of the container the user entered (clicked into), null otherwise. */
+  getEnteredContainerId?: () => string | null;
 }
 
 /**
@@ -430,11 +430,11 @@ export class LayoutManager {
       }
     }
 
-    // Child being dragged inside active group → start reattach session
+    // Child dragged inside its entered container → start reattach session
     if (layout?.child && this.dtl.phase !== "anchored") {
-      const activeGroup = this.callbacks.getActiveGroupId?.();
-      if (activeGroup === layout.child.parentId) {
-        const container = findById(this.canvas.getObjects(), activeGroup);
+      const entered = this.callbacks.getEnteredContainerId?.();
+      if (entered === layout.child.parentId) {
+        const container = findById(this.canvas.getObjects(), entered);
         if (container) {
           const cursor = this.canvas.getScenePoint(e.e);
           // Check if container has other children → use InsertChildSession for reorder
@@ -454,7 +454,7 @@ export class LayoutManager {
       }
     }
 
-    // Already-attached child that isn't in group-edit mode → ignore
+    // Already-attached child outside its entered container → ignore
     if (layout?.child && this.dtl.phase !== "anchored") return;
 
     const cursor = this.canvas.getScenePoint(e.e);
@@ -940,16 +940,16 @@ export class LayoutManager {
 
   private findShapeUnderPoint(point: { x: number; y: number }, exclude?: FabricObject): FabricObject | null {
     const objects = this.canvas.getObjects().slice().reverse();
-    const activeGroup = this.callbacks.getActiveGroupId?.();
+    const entered = this.callbacks.getEnteredContainerId?.();
 
     for (const obj of objects) {
       if (obj === exclude) continue;
       if (!rulesOf(obj).hosts) continue;
       const layout = layoutOf(obj);
       if (layout?.child) {
-        // Allow child shapes as targets when in group-edit mode
+        // Allow child shapes as targets inside the entered container
         // (enables nesting: drag into a child shape to make it a sub-container)
-        if (!activeGroup || layout.child.parentId !== activeGroup) continue;
+        if (!entered || layout.child.parentId !== entered) continue;
       }
 
       if (pointInObject(point, obj)) return obj;
