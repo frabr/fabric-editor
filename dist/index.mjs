@@ -8611,6 +8611,130 @@ var DropHandler = class {
 // src/index.ts
 init_PendingUploadsManager();
 
+// src/tools.ts
+var ORDER = {
+  text: ["fill", "font", "animations", "effects", "variables", "layout", "lock", "forward", "backward"],
+  shape: ["fill", "clip", "outline", "animations", "effects", "layout", "lock", "forward", "backward"],
+  image: [
+    "image",
+    "promoteBackground",
+    "clip",
+    "animations",
+    "outline",
+    "effects",
+    "layout",
+    "lock",
+    "forward",
+    "backward"
+  ],
+  block: [
+    "fill",
+    "image",
+    "layout",
+    "animations",
+    "outline",
+    "effects",
+    "ungroup",
+    "lock",
+    "forward",
+    "backward"
+  ],
+  group: [
+    "arrangement",
+    "fill",
+    "layout",
+    "animations",
+    "ungroup",
+    "effects",
+    "lock",
+    "forward",
+    "backward"
+  ],
+  many: ["group", "align", "distribute", "forward", "backward"]
+};
+function selectionKindOf(selected) {
+  if (selected.length === 0) return null;
+  if (selected.length > 1) return "many";
+  const [obj] = selected;
+  if (containerDataOf(obj)?.origin === "group") return "group";
+  if (isContainerObject(obj)) return "block";
+  switch (rulesOf(obj).kind) {
+    case "text":
+      return "text";
+    case "imageShape":
+    case "legacyImage":
+      return "image";
+    default:
+      return "shape";
+  }
+}
+function toolsFor(selected, offered) {
+  const kind = selectionKindOf(selected);
+  if (!kind) return [];
+  const available = new Set(offered);
+  const allows = kind === "many" ? manyAllows(selected) : oneAllows(selected[0], kind);
+  return [...ORDER[kind], "delete"].filter((tool) => available.has(tool) && allows(tool));
+}
+function oneAllows(obj, kind) {
+  const rules = rulesOf(obj);
+  const has = (option) => rules.options.includes(option);
+  const laidOut = kind === "text" || isContainerObject(obj) || Boolean(parentIdOf(obj));
+  return (tool) => {
+    switch (tool) {
+      case "fill":
+        return has("color");
+      case "font":
+      case "variables":
+        return has("font");
+      case "outline":
+        return has("outline");
+      case "effects":
+        return has("color") || has("outline");
+      case "clip":
+        return has("clip");
+      case "image":
+        return has("image");
+      case "promoteBackground":
+        return has("image") && rules.restacks;
+      case "layout":
+        return rules.restyles && laidOut;
+      case "animations":
+      case "arrangement":
+        return rules.restyles;
+      case "ungroup":
+        return rules.deletes && isContainerObject(obj);
+      case "lock":
+        return true;
+      case "forward":
+      case "backward":
+        return rules.restacks;
+      case "delete":
+        return rules.deletes;
+      default:
+        return false;
+    }
+  };
+}
+function manyAllows(selected) {
+  const rules = selected.map((obj) => rulesOf(obj));
+  return (tool) => {
+    switch (tool) {
+      case "group":
+      case "align":
+        return true;
+      case "distribute":
+        return selected.filter((obj) => !stackParentOf(obj)).length >= 3;
+      case "forward":
+      case "backward":
+        return rules.every((r) => r.restacks);
+      case "delete":
+        return rules.some((r) => r.deletes);
+      default:
+        return false;
+    }
+  };
+}
+
 // src/html/cssUtils.ts
 function originXToCss(originX) {
   switch (originX) {
@@ -9204,11 +9328,13 @@ export {
   rulesOf,
   runLayout,
   scaledSize,
+  selectionKindOf,
   setTextContent,
   stackBlock,
   stackParentOf,
   switchClip,
   switchShape,
+  toolsFor,
   topLeft,
   unionBox,
   userSlotBinding,

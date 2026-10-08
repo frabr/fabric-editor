@@ -3002,6 +3002,34 @@ declare function kindOf(obj: FabricObject): ObjectKind;
 declare function rulesOf(obj: FabricObject, { ignoreLock }?: RulesQuery): ObjectRules;
 
 /**
+ * Les outils d'une sélection : lesquels, dans quel ordre. La barre d'actions des éditeurs
+ * ne décide rien : elle montre ce que rend `toolsFor`, dans cet ordre.
+ *
+ * Deux questions, deux sources :
+ * - ce que la sélection permet — le règlement (`rulesOf`), verrous compris, et sa place
+ *   dans l'arbre (container, groupe, enfant) ;
+ * - ce que l'éditeur propose — `offered` : un outil que l'éditeur n'a pas (les animations
+ *   hors vidéo, le verrou hors création…) n'apparaît jamais.
+ *
+ * L'ordre suit la fréquence d'usage, par sorte de sélection (barre d'actions du round 2) :
+ * la couleur et le contenu d'abord, puis l'animation, les réglages fins, l'ordre des plans ;
+ * Supprimer toujours en dernier. En multi-sélection, Grouper d'abord.
+ */
+
+type ToolId = "group" | "align" | "distribute" | "arrangement" | "ungroup" | "fill" | "font" | "variables" | "image" | "promoteBackground" | "clip" | "outline" | "effects" | "layout" | "animations" | "lock" | "forward" | "backward" | "delete";
+/**
+ * - `text`, `shape`, `image` : un objet seul, d'après sa sorte ;
+ * - `block` : une forme qui porte des éléments ;
+ * - `group` : un groupe (⌘G), libre ou rangé ;
+ * - `many` : plusieurs objets.
+ */
+type SelectionKind = "text" | "shape" | "image" | "block" | "group" | "many";
+/** La sorte d'une sélection, ou null si elle est vide. */
+declare function selectionKindOf(selected: FabricObject[]): SelectionKind | null;
+/** Les outils de la sélection que l'éditeur propose, dans l'ordre de la barre. */
+declare function toolsFor(selected: FabricObject[], offered: Iterable<ToolId>): ToolId[];
+
+/**
  * Calcule les facteurs d'anti-scale pour maintenir les proportions d'un clip
  * sur un objet étendu de manière non-uniforme.
  *
@@ -3122,4 +3150,4 @@ declare function drawFrameBadge(ctx: CanvasRenderingContext2D, obj: FabricObject
 /** Les labels d'un objet réunis en un seul badge (dédoublonnés), ou null. */
 declare function badgeLabel(obj: FabricObject, labelers: BadgeLabeler[]): string | null;
 
-export { type AlignEdge, type AlignItems, type AlignSelf, type Arrangement, type BadgeLabeler, type BindingSpec, type Bindings, type Box, CanvasGuides, type CatalogShape, type CatalogShapeInput, type ChildData, type ClipData, type ContainerData, ContainerizeSession, type ControlOption, CustomTextbox, type Delta, DesignCanvas, type DistributeAxis, type DragPayload, DropHandler, type DropHandlerConfig, type DropResult, type EditorConfig, FabCircle, FabPath, FabRect, FabricEditor, type FlexDirection, type FontConfig, type FontsConfig, type FrameRect, FreeResizeSession, HEART_PATH, HEXAGON_PATH, type HistoryCallbacks, HistoryManager, type HistoryState, type HtmlLayerOutput, type HtmlRenderOptions, ImageFrame, type ImageLayerOptions, InsertChildSession, type JustifyContent, type LayerData, LayerManager, type LayoutData, LayoutManager, type LayoutManagerCallbacks, type LayoutParents, type LayoutSession, type LockMode$1 as LockMode, type Lockable, MIN_PAD, MaskManager, type ObjectControlsConfig, type ObjectKind, type ObjectRules, PendingUploadsManager, PersistenceManager, PreviewCanvas, ResizeSession, type ResizeSnapResult, type SaveOptions, type SaveResult, type SelectionCallbacks, SelectionManager, type ShapeCatalogEntry, type ShapeLayerOptions, type ShapePathData, type ShapeType, type SizeMode, type SizePreset, type SizingData, type SnappingConfig, SnappingManager, StackResizeSession, type TextLayerOptions, type TextOverflow, type ToolboxImageReaction, type TreeLayer, USER_SCOPE, USER_SLOT_FIELD, type UserSlot, type WorkspaceOptions, addCircleClip, addCropControls, addHeartClip, addHexagonClip, alignAxis, alignDelta, antiScale, applyClip, applyLockMode, badgeLabel, bindingBadgeLabel, clampTopLeft, clipDataFor, collectUserSlots, createCircle, createDropSession, createHeart, createHexagon, createImage, createPathShape, createPathsShape, createRect, createShape, distributeDeltas, drawBindingBadge, drawFrameBadge, fabricToHtml, fitFreeContainer, getAvailableShapes, getCatalogShape, getLockMode, getNextLockMode, getShapeCatalog, hasExceededOffset, hasPendingBindings, initYoga, isContentLocked, isFreeContainer, isMonoPath, isPositionLocked, isStyleLocked, isUserSlot, isValidShape, kindOf, layerToHtmlStandalone, layoutChildren, layoutDescendants, layoutParents, layoutRoot, lockBoundText, nextShape, pendingBindings, pointInObject, registerShapes, registeredShapes, removeCropControls, rulesOf, runLayout, scaledSize, setTextContent, stackBlock, stackParentOf, switchClip, switchShape, topLeft, unionBox, userSlotBinding, userSlotHint, wrapContainerAroundChild, yogaLayout };
+export { type AlignEdge, type AlignItems, type AlignSelf, type Arrangement, type BadgeLabeler, type BindingSpec, type Bindings, type Box, CanvasGuides, type CatalogShape, type CatalogShapeInput, type ChildData, type ClipData, type ContainerData, ContainerizeSession, type ControlOption, CustomTextbox, type Delta, DesignCanvas, type DistributeAxis, type DragPayload, DropHandler, type DropHandlerConfig, type DropResult, type EditorConfig, FabCircle, FabPath, FabRect, FabricEditor, type FlexDirection, type FontConfig, type FontsConfig, type FrameRect, FreeResizeSession, HEART_PATH, HEXAGON_PATH, type HistoryCallbacks, HistoryManager, type HistoryState, type HtmlLayerOutput, type HtmlRenderOptions, ImageFrame, type ImageLayerOptions, InsertChildSession, type JustifyContent, type LayerData, LayerManager, type LayoutData, LayoutManager, type LayoutManagerCallbacks, type LayoutParents, type LayoutSession, type LockMode$1 as LockMode, type Lockable, MIN_PAD, MaskManager, type ObjectControlsConfig, type ObjectKind, type ObjectRules, PendingUploadsManager, PersistenceManager, PreviewCanvas, ResizeSession, type ResizeSnapResult, type SaveOptions, type SaveResult, type SelectionCallbacks, type SelectionKind, SelectionManager, type ShapeCatalogEntry, type ShapeLayerOptions, type ShapePathData, type ShapeType, type SizeMode, type SizePreset, type SizingData, type SnappingConfig, SnappingManager, StackResizeSession, type TextLayerOptions, type TextOverflow, type ToolId, type ToolboxImageReaction, type TreeLayer, USER_SCOPE, USER_SLOT_FIELD, type UserSlot, type WorkspaceOptions, addCircleClip, addCropControls, addHeartClip, addHexagonClip, alignAxis, alignDelta, antiScale, applyClip, applyLockMode, badgeLabel, bindingBadgeLabel, clampTopLeft, clipDataFor, collectUserSlots, createCircle, createDropSession, createHeart, createHexagon, createImage, createPathShape, createPathsShape, createRect, createShape, distributeDeltas, drawBindingBadge, drawFrameBadge, fabricToHtml, fitFreeContainer, getAvailableShapes, getCatalogShape, getLockMode, getNextLockMode, getShapeCatalog, hasExceededOffset, hasPendingBindings, initYoga, isContentLocked, isFreeContainer, isMonoPath, isPositionLocked, isStyleLocked, isUserSlot, isValidShape, kindOf, layerToHtmlStandalone, layoutChildren, layoutDescendants, layoutParents, layoutRoot, lockBoundText, nextShape, pendingBindings, pointInObject, registerShapes, registeredShapes, removeCropControls, rulesOf, runLayout, scaledSize, selectionKindOf, setTextContent, stackBlock, stackParentOf, switchClip, switchShape, toolsFor, topLeft, unionBox, userSlotBinding, userSlotHint, wrapContainerAroundChild, yogaLayout };
