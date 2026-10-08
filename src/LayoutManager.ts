@@ -1,12 +1,13 @@
-import { ActiveSelection, FabricObject, Point } from "#fabric";
+import { ActiveSelection, FabricObject } from "#fabric";
 import type { DesignCanvas } from "./DesignCanvas";
 import { CanvasGuides } from "./ui/guides";
+import { DragToLayout } from "./DragToLayout";
 import { runLayout, layoutSubtree, relayoutAncestors } from "./layout/run";
 import { StackResizeSession } from "./layout/stack/resize-session";
 import { MIN_PAD, type AlignItems, type AlignSelf, type Arrangement, type ChildData, type ContainerData, type JustifyContent, type SizingData, type TextOverflow } from "./layout/types";
 import { arrangeAsStack, arrangeFree } from "./layout/arrangement";
 import { syncGroupControls } from "./ui/controls";
-import { placeTopLeft, pointInObject, topLeft } from "./layout/geometry";
+import { placeTopLeft, topLeft } from "./layout/geometry";
 import type { CustomTextbox } from "./controls/CustomTextbox";
 import { rulesOf } from "./capabilities";
 
@@ -19,15 +20,11 @@ const SIZE_PRESETS: Record<SizePreset, Pick<SizingData, "x" | "y">> = {
   "fixed": { x: "fixed", y: "fixed" },
 };
 import { clampToRoom } from "./layout/stack/room";
-import { placeBlockAbove } from "./layout/z-order";
 import { fitFreeAncestors } from "./layout/free/fit";
 import { SubtreeDrag } from "./layout/subtree-drag";
 import { FreeResizeSession } from "./layout/free/resize-session";
-import { InsertChildSession } from "./layout/stack/sessions/insert-child";
-import { createDropSession } from "./layout/stack/sessions/drop";
-import type { LayoutSession } from "./layout/stack/sessions/session";
-import { layoutOf, containerDataOf, childDataOf, isContainerObject, isFreeContainer, sizingOf, paddingOf, directionOf, updateContainer, updateChild, updateLayout, uniformPadding, isStackContainer } from "./layout/model";
-import { childrenOf, parentContainerOf, findById } from "./layout/hierarchy";
+import { layoutOf, containerDataOf, childDataOf, isContainerObject, isFreeContainer, sizingOf, paddingOf, updateContainer, updateChild, updateLayout, uniformPadding } from "./layout/model";
+import { parentContainerOf, findById } from "./layout/hierarchy";
 import { isTextObject } from "./layout/text";
 
 // ── Types ───────────────────────────────────────────────────────────
@@ -41,108 +38,26 @@ export interface LayoutManagerCallbacks {
   getEnteredContainerId?: () => string | null;
 }
 
-/**
- * Drag-to-layout state machine
- * ─────────────────────────────
- * Governs what happens when a dragged object hovers over a potential
- * container. Four phases, strictly sequential:
- *
- *   IDLE → HOVERING → PENDING → ANCHORED
- *
- * IDLE      Nothing happening. Hit-test runs each frame to detect
- *           a shape under the cursor.
- *
- * HOVERING  A shape was detected but we wait silently (no visual
- *           feedback) for HOVER_DELAY_MS. This lets the user drag
- *           across containers without triggering anything. If the
- *           cursor leaves the shape, we go back to IDLE.
- *
- * PENDING   The hover timer fired. We show the hint highlight
- *           (hatched overlay + dashed border) and start a second
- *           timer (ANCHOR_DELAY_MS). The user sees "this shape is
- *           about to become the target". If the deepest target
- *           changes, the pending timer restarts. If the cursor
- *           leaves, we go back to IDLE.
- *
- * ANCHORED  The pending timer fired. A layout session is created
- *           (ContainerizeSession or InsertChildSession) and the
- *           child snaps into the container with live layout. On
- *           exit: if nested, we pop to the parent (back to
- *           ANCHORED on the parent); otherwise back to IDLE with
- *           a cooldown.
- *
- * Depth resolution: during HOVERING and PENDING, we resolve the
- * deepest drop target under the cursor (bottom-up) so the most
- * nested valid target is always preferred.
- *
- * Drivers: the machine advances on cursor ticks, which come from two
- * interchangeable sources:
- *   - native Fabric drags → object:moving / mouse events;
- *   - external drags (HTML dragover from a toolbox) → tickExternalDrag,
- *     ended by commitExternalDrag (drop) or rollbackExternalDrag
- *     (dragleave / cancel). The external source object is owned by the
- *     caller (DropHandler), which adds/removes it from the canvas.
- */
 
-interface IdleState {
-  phase: "idle";
-  cooldownUntil: number;
-}
-
-interface HoveringState {
-  phase: "hovering";
-  timer: ReturnType<typeof setTimeout>;
-  target: FabricObject;
-  source: FabricObject;
-  cursor: { x: number; y: number };
-  cooldownUntil: number;
-}
-
-interface PendingState {
-  phase: "pending";
-  timer: ReturnType<typeof setTimeout>;
-  target: FabricObject;
-  source: FabricObject;
-  cursor: { x: number; y: number };
-  cooldownUntil: number;
-}
-
-interface AnchoredState {
-  phase: "anchored";
-  session: LayoutSession;
-  cooldownUntil: number;
-  /** The dragged object (needed to recreate sessions on depth pop). */
-  source: FabricObject;
-  /** The outermost container from the original hit-test (for depth pop). */
-  root: FabricObject | null;
-}
-
-type DtlState = IdleState | HoveringState | PendingState | AnchoredState;
-
-// ── Constants ───────────────────────────────────────────────────────
-
-/** Silent hover before any visual feedback. */
-const HOVER_DELAY_MS = 700;
-/** Visual hint before anchoring. */
-const ANCHOR_DELAY_MS = 500;
 
 // ── LayoutManager ───────────────────────────────────────────────────
 
 /**
- * Manages layout relationships between canvas objects.
- *
- * Two responsibilities:
- * 1. **Drag-to-layout**: when a text is dragged over a shape, creates a
- *    container/child layout relationship after a short delay, with live
- *    preview, rollback support, and visual guides.
- * 2. **Automatic relayout**: keeps container/child dimensions in sync
- *    when text content changes or containers are moved/resized.
+ * The layout of the canvas, as the host sees it (`editor.layout`):
+ * 1. **Commands** of the layout panel: size mode, padding, gap, direction,
+ *    alignment, free / stacked arrangement, "use as a block" (makeContainer).
+ * 2. **Gestures** on existing containers, wired to the canvas events: a moved
+ *    container or group takes its content along, a resized stack or group
+ *    settles (StackResizeSession / FreeResizeSession), a child of a group moves
+ *    freely, a text edit relayouts its ancestors.
+ * 3. **Dropping into a stack**: delegated to DragToLayout (native drags through
+ *    object:moving, toolbox drags through the external drag API below).
  */
 export class LayoutManager {
   private canvas: DesignCanvas;
   private callbacks: LayoutManagerCallbacks;
   private guides: CanvasGuides;
-  private dtl: DtlState = { phase: "idle", cooldownUntil: 0 };
+  private readonly drag: DragToLayout;
   private resizeSession: StackResizeSession | null = null;
   /** Le redimensionnement d'un groupe en cours (ouvert à before:transform). */
   private freeResize: FreeResizeSession | null = null;
@@ -153,6 +68,7 @@ export class LayoutManager {
     this.canvas = canvas;
     this.callbacks = callbacks;
     this.guides = new CanvasGuides(canvas, guideColor);
+    this.drag = new DragToLayout(canvas, this.guides, () => this.callbacks);
     this.setupEventListeners();
   }
 
@@ -290,30 +206,7 @@ export class LayoutManager {
    * The source's position is updated to follow the cursor.
    */
   tickExternalDrag(source: FabricObject, cursor: { x: number; y: number }): void {
-    // Keep the source centered on the cursor, whatever its origin
-    source.setPositionByOrigin(new Point(cursor.x, cursor.y), "center", "center");
-    source.setCoords();
-
-    switch (this.dtl.phase) {
-      case "anchored":
-        this.handleAnchoredMoving(cursor);
-        break;
-      case "pending":
-        this.handlePendingMoving(source, cursor);
-        break;
-      case "hovering":
-        this.handleHoveringMoving(source, cursor);
-        break;
-      case "idle":
-        this.handleIdleMoving(source, cursor);
-        break;
-    }
-
-    // Native drags are rendered by Fabric on mouse:move; external drags
-    // have no such driver, so render here once the source is on canvas.
-    if (this.canvas.getObjects().includes(source)) {
-      this.canvas.requestRenderAll();
-    }
+    this.drag.tick(source, cursor);
   }
 
   /**
@@ -324,13 +217,7 @@ export class LayoutManager {
    * Returns true if a session was committed, false otherwise.
    */
   commitExternalDrag(): boolean {
-    if (this.dtl.phase === "anchored") {
-      this.doCommit();
-      return true;
-    }
-    // If we're in hovering/pending, just clean up
-    this.resetToIdle();
-    return false;
+    return this.drag.commit();
   }
 
   /**
@@ -340,20 +227,17 @@ export class LayoutManager {
    * responsible for removing it from the canvas.
    */
   rollbackExternalDrag(): void {
-    if (this.dtl.phase === "anchored") {
-      this.dtl.session.rollback();
-    }
-    this.resetToIdle();
+    this.drag.rollback();
   }
 
   /** Whether the DTL state machine is currently in ANCHORED phase. */
   get isAnchored(): boolean {
-    return this.dtl.phase === "anchored";
+    return this.drag.isAnchored;
   }
 
   /** Clean up event listeners. */
   dispose(): void {
-    this.resetToIdle();
+    this.drag.reset();
     this.canvas.off("object:moving", this.onMovingBound);
     this.canvas.off("object:modified", this.onModifiedBound);
     this.canvas.off("object:resizing", this.onResizingBound);
@@ -395,7 +279,7 @@ export class LayoutManager {
     // otherwise runLayout would snap this container back to its flex position
     // if it's also a child of another container).
     if (layout?.container) {
-      const isSessionChild = this.dtl.phase === "anchored" && this.dtl.session.child === obj;
+      const isSessionChild = this.drag.sessionChild === obj;
       if (isFreeContainer(obj)) {
         // A group's content follows it, untouched
         this.moveFollowers(obj, [obj], e.transform);
@@ -407,8 +291,8 @@ export class LayoutManager {
     }
 
     // Child of a group, moved inside it: it goes where it is put, the group's box follows
-    if (layout?.child && this.dtl.phase !== "anchored") {
-      const parent = this.findParentContainer(obj);
+    if (layout?.child && !this.drag.isAnchored) {
+      const parent = parentContainerOf(obj, this.canvas.getObjects());
       if (parent && isFreeContainer(parent)) {
         fitFreeAncestors(parent, this.canvas.getObjects());
         this.canvas.renderAll();
@@ -417,40 +301,22 @@ export class LayoutManager {
     }
 
     // Child dragged inside its entered container → start reattach session
-    if (layout?.child && this.dtl.phase !== "anchored") {
+    if (layout?.child && !this.drag.isAnchored) {
       const entered = this.callbacks.getEnteredContainerId?.();
       if (entered === layout.child.parentId) {
         const container = findById(this.canvas.getObjects(), entered);
         if (container) {
           const cursor = this.canvas.getScenePoint(e.e);
-          const session = createDropSession(this.canvas, container, obj, cursor, { reattach: true });
-          this.showSessionGuides(session);
-          this.canvas.renderAll();
-          this.dtl = { phase: "anchored", session, cooldownUntil: 0, source: obj, root: null };
+          this.drag.startReattach(container, obj, cursor);
         }
         return;
       }
     }
 
     // Already-attached child outside its entered container → ignore
-    if (layout?.child && this.dtl.phase !== "anchored") return;
+    if (layout?.child && !this.drag.isAnchored) return;
 
-    const cursor = this.canvas.getScenePoint(e.e);
-
-    switch (this.dtl.phase) {
-      case "anchored":
-        this.handleAnchoredMoving(cursor);
-        break;
-      case "pending":
-        this.handlePendingMoving(obj, cursor);
-        break;
-      case "hovering":
-        this.handleHoveringMoving(obj, cursor);
-        break;
-      case "idle":
-        this.handleIdleMoving(obj, cursor);
-        break;
-    }
+    this.drag.move(obj, this.canvas.getScenePoint(e.e));
   }
 
   /**
@@ -492,22 +358,22 @@ export class LayoutManager {
     this.followers = null;
 
     if (obj instanceof ActiveSelection) {
-      this.resetToIdle();
+      this.drag.reset();
       return;
     }
 
     // A group resized, or something moved / resized inside a group: everything settles
-    const parent = this.findParentContainer(obj);
+    const parent = parentContainerOf(obj, this.canvas.getObjects());
     const resizedGroup = this.freeResize;
     this.freeResize = null;
-    if (this.dtl.phase === "idle" && (resizedGroup || (parent && isFreeContainer(parent)))) {
+    if (this.drag.isIdle && (resizedGroup || (parent && isFreeContainer(parent)))) {
       this.changed();
       return;
     }
 
     // Text child resized → its container settles (outside any drag session)
     const childLayout = layoutOf(obj);
-    if (childLayout?.child && isTextObject(obj) && this.dtl.phase === "idle" &&
+    if (childLayout?.child && isTextObject(obj) && this.drag.isIdle &&
         e.transform?.action === "resizing") {
       this.changed();
       return;
@@ -519,27 +385,10 @@ export class LayoutManager {
       this.resizeSession = null;
       this.changed();
       // Don't return if we have an active dtl session — fall through to commit it
-      if (this.dtl.phase !== "anchored" && this.dtl.phase !== "pending") return;
+      if (!this.drag.isArmed) return;
     }
 
-    if (this.dtl.phase === "anchored") {
-      this.doCommit();
-      return;
-    }
-
-    if (this.dtl.phase === "pending") {
-      const cursor = this.canvas.getScenePoint(e.e);
-      if (pointInObject(cursor, this.dtl.target)) {
-        clearTimeout(this.dtl.timer);
-        this.dtl = { ...this.dtl, source: obj, cursor };
-        this.guides.clear();
-        this.promoteToAnchored();
-        this.doCommit();
-        return;
-      }
-    }
-
-    this.resetToIdle();
+    this.drag.release(obj, this.canvas.getScenePoint(e.e));
   }
 
   private onResizing(e: any): void {
@@ -550,7 +399,7 @@ export class LayoutManager {
     // pushed by the layout itself), and its container chain follows
     if (layout?.child && !layout.container) {
       const objects = this.canvas.getObjects();
-      const parent = this.findParentContainer(target);
+      const parent = parentContainerOf(target, this.canvas.getObjects());
       // In a group, there is no room to respect: the group follows
       if (parent && isFreeContainer(parent)) {
         fitFreeAncestors(parent, this.canvas.getObjects());
@@ -585,289 +434,4 @@ export class LayoutManager {
     this.resizeSession.handleResizing(this.canvas.getObjects());
     this.canvas.renderAll();
   }
-
-  // ── State machine: IDLE → HOVERING ────────────────────────────────
-
-  private handleIdleMoving(draggedObj: FabricObject, cursor: { x: number; y: number }): void {
-    if (Date.now() < this.dtl.cooldownUntil) return;
-
-    const shape = this.findShapeUnderPoint(cursor, draggedObj);
-    if (shape) {
-      const deepest = this.findDeepestDropTarget(cursor, shape, draggedObj);
-      this.startHovering(draggedObj, deepest, cursor);
-    }
-  }
-
-  // ── State machine: HOVERING (silent) ─────────────────────────────
-
-  private handleHoveringMoving(draggedObj: FabricObject, cursor: { x: number; y: number }): void {
-    if (this.dtl.phase !== "hovering") return;
-
-    const shape = this.findShapeUnderPoint(cursor, draggedObj);
-    if (!shape) {
-      this.resetToIdle();
-      return;
-    }
-
-    const deepest = this.findDeepestDropTarget(cursor, shape, draggedObj);
-    if (deepest !== this.dtl.target) {
-      clearTimeout(this.dtl.timer);
-      this.startHovering(draggedObj, deepest, cursor);
-      return;
-    }
-
-    this.dtl.cursor = cursor;
-  }
-
-  private startHovering(
-    draggedObj: FabricObject,
-    target: FabricObject,
-    cursor: { x: number; y: number },
-  ): void {
-    const timer = setTimeout(() => this.promoteToPending(), HOVER_DELAY_MS);
-
-    this.dtl = {
-      phase: "hovering",
-      timer,
-      target,
-      source: draggedObj,
-      cursor,
-      cooldownUntil: this.dtl.cooldownUntil,
-    };
-  }
-
-  /** HOVERING timer fired → show guides and move to PENDING. */
-  private promoteToPending(): void {
-    if (this.dtl.phase !== "hovering") return;
-    const { target, source, cursor } = this.dtl;
-    this.startPending(source, target, cursor);
-  }
-
-  // ── State machine: PENDING (visual hint) ─────────────────────────
-
-  private handlePendingMoving(draggedObj: FabricObject, cursor: { x: number; y: number }): void {
-    if (this.dtl.phase !== "pending") return;
-
-    const shape = this.findShapeUnderPoint(cursor, draggedObj);
-    if (!shape) {
-      this.resetToIdle();
-      return;
-    }
-    const deepest = this.findDeepestDropTarget(cursor, shape, draggedObj);
-    if (deepest !== this.dtl.target) {
-      // Target changed — restart pending on the new target
-      clearTimeout(this.dtl.timer);
-      this.startPending(draggedObj, deepest, cursor);
-      return;
-    }
-
-    this.dtl.cursor = cursor;
-  }
-
-  private startPending(
-    draggedObj: FabricObject,
-    target: FabricObject,
-    cursor: { x: number; y: number },
-  ): void {
-    this.guides.showHintHighlight(target, target);
-    this.canvas.renderAll();
-
-    const timer = setTimeout(() => this.promoteToAnchored(), ANCHOR_DELAY_MS);
-
-    this.dtl = {
-      phase: "pending",
-      timer,
-      target,
-      source: draggedObj,
-      cursor,
-      cooldownUntil: this.dtl.cooldownUntil,
-    };
-  }
-
-  // ── State machine: ANCHOR (PENDING → ANCHORED) ────────────────────
-
-  /** PENDING timer fired → create a session and move to ANCHORED. */
-  private promoteToAnchored(): void {
-    if (this.dtl.phase !== "pending") return;
-    const { target, source: child, cursor } = this.dtl;
-
-    // Find the root (outermost container) for depth-pop support
-    const root = this.findShapeUnderPoint(cursor, child);
-    this.anchorOn(target, child, cursor, root);
-  }
-
-  // ── State machine: ANCHORED (during drag) ─────────────────────────
-
-  private handleAnchoredMoving(cursor: { x: number; y: number }): void {
-    if (this.dtl.phase !== "anchored") return;
-    const { session, source, root } = this.dtl;
-
-    const result = session.handleMoving(cursor);
-    if (result === "exited") {
-      // Session already rolled back internally.
-      // If we're nested inside a root container, pop up to the parent.
-      if (root && session.container !== root) {
-        const parent = this.findParentContainer(session.container);
-        if (parent && pointInObject(cursor, parent)) {
-          this.anchorOn(parent, source, cursor, root);
-          return;
-        }
-      }
-      this.resetToIdle(Date.now() + 1000);
-      return;
-    }
-
-    this.showSessionGuides(session);
-    this.canvas.renderAll();
-  }
-
-  // ── Depth helpers ─────────────────────────────────────────────────
-
-  /**
-   * Walk down from `root` to find the deepest drop target under the
-   * cursor. Returns `root` itself if no children qualify.
-   */
-  private findDeepestDropTarget(
-    cursor: { x: number; y: number },
-    root: FabricObject,
-    exclude: FabricObject,
-  ): FabricObject {
-    let current = root;
-    for (;;) {
-      const child = this.findChildDropTarget(cursor, current, exclude);
-      if (!child) return current;
-      current = child;
-    }
-  }
-
-  /**
-   * Among the children of `container`, find the first one under the cursor
-   * that can host (see rulesOf) — it would become a sub-container.
-   */
-  private findChildDropTarget(
-    cursor: { x: number; y: number },
-    container: FabricObject,
-    exclude: FabricObject,
-  ): FabricObject | null {
-    const layout = layoutOf(container);
-    if (!layout?.container) return null;
-    const children = childrenOf(this.canvas.getObjects(), container);
-    for (const { obj } of children) {
-      if (obj === exclude) continue;
-      if (!isDropTarget(obj)) continue;
-      if (pointInObject(cursor, obj)) return obj;
-    }
-    return null;
-  }
-
-  /** The container `obj` is a child of. */
-  private findParentContainer(obj: FabricObject): FabricObject | null {
-    return parentContainerOf(obj, this.canvas.getObjects());
-  }
-
-  /** Transition to ANCHORED: create a session on the target and go live. */
-  private anchorOn(
-    target: FabricObject,
-    child: FabricObject,
-    cursor: { x: number; y: number },
-    root: FabricObject | null = null,
-  ): void {
-    // If the child is not yet on the canvas (external drag), add it now
-    const objects = this.canvas.getObjects();
-    if (!objects.includes(child)) {
-      this.canvas.add(child);
-    }
-
-    // Ensure the child renders above the container (z-index) — with its own
-    // descendants, or a container child would pass over its own content
-    const stack = this.canvas.getObjects();
-    const containerIdx = stack.indexOf(target);
-    const childIdx = stack.indexOf(child);
-    if (containerIdx >= 0 && childIdx >= 0 && childIdx < containerIdx) {
-      placeBlockAbove(stack, child, target).forEach((obj, index) => this.canvas.moveObjectTo(obj, index));
-    }
-
-    const session = createDropSession(this.canvas, target, child, cursor);
-
-    this.guides.clear();
-    this.showSessionGuides(session);
-    this.canvas.renderAll();
-
-    this.dtl = {
-      phase: "anchored",
-      session,
-      cooldownUntil: this.dtl.cooldownUntil,
-      source: child,
-      root,
-    };
-  }
-
-  // ── State machine: COMMIT ─────────────────────────────────────────
-
-  private doCommit(): void {
-    if (this.dtl.phase !== "anchored") return;
-    const { session } = this.dtl;
-
-    this.guides.clear();
-    session.commit();
-
-    this.callbacks.onLayoutChanged?.();
-    this.callbacks.onLayoutCreated?.();
-
-    this.dtl = { phase: "idle", cooldownUntil: 0 };
-  }
-
-  // ── Reset ─────────────────────────────────────────────────────────
-
-  private resetToIdle(cooldownUntil = 0): void {
-    this.guides.clear();
-    if (this.dtl.phase === "pending" || this.dtl.phase === "hovering") {
-      clearTimeout(this.dtl.timer);
-    }
-    this.dtl = { phase: "idle", cooldownUntil: cooldownUntil || this.dtl.cooldownUntil };
-  }
-
-  // ── Guide rendering ───────────────────────────────────────────────
-
-  private showSessionGuides(session: LayoutSession): void {
-    if (session instanceof InsertChildSession) {
-      // InsertChildSession: show gap between children
-      const allChildren = childrenOf(this.canvas.getObjects(), session.container);
-      const childObjs = allChildren.map(c => c.obj);
-      const layout = layoutOf(session.container);
-      const direction = directionOf(layout?.container);
-      this.guides.showInsertGuides(session.container, childObjs, direction);
-    } else {
-      // ContainerizeSession: show margin guides
-      this.guides.showLayoutGuides(session.container, session.child);
-    }
-  }
-
-  // ── Shape hit-testing ─────────────────────────────────────────────
-
-  private findShapeUnderPoint(point: { x: number; y: number }, exclude?: FabricObject): FabricObject | null {
-    const objects = this.canvas.getObjects().slice().reverse();
-    const entered = this.callbacks.getEnteredContainerId?.();
-
-    for (const obj of objects) {
-      if (obj === exclude) continue;
-      if (!isDropTarget(obj)) continue;
-      const layout = layoutOf(obj);
-      if (layout?.child) {
-        // Allow child containers as targets inside the entered container
-        if (!entered || layout.child.parentId !== entered) continue;
-      }
-
-      if (pointInObject(point, obj)) return obj;
-    }
-    return null;
-  }
-}
-
-/**
- * Ce qui reçoit un objet qu'on glisse dessus : une pile (un container rangé), jamais une
- * forme simple ni un groupe — une forme devient un bloc par makeContainer.
- */
-function isDropTarget(obj: FabricObject): boolean {
-  return rulesOf(obj).hosts && isStackContainer(obj);
 }
