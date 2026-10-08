@@ -26,7 +26,7 @@ import { type LayoutSession, type LayoutData, type ChildData, type FlexDirection
 import { scaledSize, setShapeSize, topLeft, syncCoords, pointInObject } from "./geometry";
 
 import { yogaLayout } from "./yoga-engine";
-import { runLayout, bubbleUpLayout } from "./reconcile";
+import { runLayout, relayoutAncestors } from "./reconcile";
 import { LayoutAnimator } from "./layout-animator";
 import { layoutOf, containerDataOf, sizingOf, directionOf, paddingOf, cloneLayout, detachChild } from "./model";
 import { childrenOf, flowChildrenOf } from "./hierarchy";
@@ -122,7 +122,7 @@ export class InsertChildSession implements LayoutSession {
     const childData: ChildData = {
       parentId: containerId,
     };
-    const existingChildLayout = layoutOf(newChild)! ?? {};
+    const existingChildLayout = layoutOf(newChild) ?? {};
     newChild.set("layout", { ...existingChildLayout, child: childData });
 
     // Normalize new child origin to top-left
@@ -586,7 +586,7 @@ export class InsertChildSession implements LayoutSession {
 
     // Bubble up the entire ancestor chain so all parents accommodate the new size
     if (finalW !== currentW || finalH !== currentH) {
-      bubbleUpLayout(this._container, this.canvas.getObjects());
+      relayoutAncestors(this._container, this.canvas.getObjects());
     }
   }
 

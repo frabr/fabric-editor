@@ -1,4 +1,4 @@
-export { runLayout, relayoutSingle, bubbleUpLayout } from "./reconcile";
+export { runLayout, layoutSubtree, relayoutAncestors, relayoutSingle, bubbleUpLayout } from "./reconcile";
 export { ResizeSession } from "./resize-session";
 export { availableRoom } from "./room";
 export type { Room } from "./room";

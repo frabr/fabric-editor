@@ -8,7 +8,7 @@ import { describe, it, expect, beforeAll } from "vitest";
 import { CustomTextbox } from "../controls/CustomTextbox";
 import { FabRect } from "../shapes/FabRect";
 import { initYoga } from "./yoga-engine";
-import { runLayout, relayoutSingle, bubbleUpLayout } from "./reconcile";
+import { runLayout, layoutSubtree, relayoutAncestors } from "./reconcile";
 import { ResizeSession } from "./resize-session";
 import { setTextContent } from "../bindings";
 import { type LayoutData } from "./types";
@@ -176,21 +176,21 @@ describe("container contenu dans un container à largeur fixe", () => {
 });
 
 describe("container imbriqué, hors runLayout", () => {
-  it("relayoutSingle sur la racine met en page tout le sous-arbre", () => {
+  it("layoutSubtree sur la racine met en page tout le sous-arbre", () => {
     const { parent, child } = family();
     const t = text(LONG, "c");
     const objects = [parent, child, t];
-    relayoutSingle(parent, layoutOf(parent)!.container!, objects);
+    layoutSubtree(parent, objects);
 
     expect(t.textLines.length).toBeGreaterThan(1);
     expect(right(child)).toBeLessThanOrEqual(right(parent) + 0.5);
   });
 
-  it("bubbleUpLayout depuis l'enfant remonte jusqu'à la racine", () => {
+  it("relayoutAncestors depuis l'enfant remonte jusqu'à la racine", () => {
     const { parent, child } = family();
     const t = text(LONG, "c");
     const objects = [parent, child, t];
-    bubbleUpLayout(child, objects);
+    relayoutAncestors(child, objects);
 
     expect(parent.height).toBeCloseTo(child.height + 20, 0);
   });

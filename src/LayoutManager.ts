@@ -1,7 +1,7 @@
 import { ActiveSelection, FabricObject, Point } from "#fabric";
 import type { DesignCanvas } from "./DesignCanvas";
 import { CanvasGuides } from "./ui/guides";
-import { runLayout, relayoutSingle, bubbleUpLayout } from "./layout/reconcile";
+import { runLayout, layoutSubtree, relayoutAncestors } from "./layout/reconcile";
 import { ResizeSession } from "./layout/resize-session";
 import { type LayoutSession, type SizingData, type TextOverflow, type Arrangement } from "./layout/types";
 import { arrangeAsStack, arrangeFree } from "./grouping";
@@ -413,7 +413,7 @@ export class LayoutManager {
         // A group's content follows it, untouched
         this.moveFollowers(obj, [obj], e.transform);
       } else if (!isSessionChild) {
-        relayoutSingle(obj, layout.container, this.canvas.getObjects());
+        layoutSubtree(obj, this.canvas.getObjects());
         this.canvas.renderAll();
       }
       // Don't return — the container can also be dragged into another shape
@@ -615,8 +615,8 @@ export class LayoutManager {
       if (!isTextObject(target)) clampToRoom(target, e.transform, objects);
       const pLayout = layoutOf(parent);
       if (parent && pLayout?.container) {
-        relayoutSingle(parent, pLayout.container, objects);
-        bubbleUpLayout(parent, objects);
+        layoutSubtree(parent, objects);
+        relayoutAncestors(parent, objects);
         this.canvas.renderAll();
       }
       return;
@@ -870,8 +870,7 @@ export class LayoutManager {
     session.apply(k, { x: start.left + start.width * fx, y: start.top + start.height * fy });
     // Les piles du groupe se rangent dans leurs nouvelles dimensions
     for (const obj of descendantsOf(this.canvas.getObjects(), [container])) {
-      const cd = containerDataOf(obj);
-      if (cd && isStackContainer(obj)) relayoutSingle(obj, cd, this.canvas.getObjects());
+      if (isStackContainer(obj)) layoutSubtree(obj, this.canvas.getObjects());
     }
     fitFreeContainer(container, this.canvas.getObjects());
     this.canvas.renderAll();

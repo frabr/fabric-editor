@@ -10,7 +10,7 @@ import type { FabricObject } from "#fabric";
 import type { DesignCanvas } from "../DesignCanvas";
 import { type AttachSnapshot, MIN_PAD } from "./types";
 import { scaledSize, setShapeSize, topLeft, clampTopLeft, hasExceededOffset, pointInObject } from "./geometry";
-import { runLayout, relayoutSingle, bubbleUpLayout } from "./reconcile";
+import { runLayout, layoutSubtree, relayoutAncestors } from "./reconcile";
 import { layoutOf, sizingOf, cloneLayout, detachChild } from "./model";
 import { isTextObject, type LayoutText } from "./text";
 
@@ -63,7 +63,7 @@ export class ContainerizeSession {
     // If the child is itself a container, reposition its own children
     const textLayout = layoutOf(text);
     if (textLayout?.container) {
-      relayoutSingle(text, textLayout.container, canvas.getObjects());
+      layoutSubtree(text, canvas.getObjects());
     }
   }
 
@@ -108,11 +108,11 @@ export class ContainerizeSession {
     // If the child is itself a container, reposition its own children
     const childLayout = layoutOf(this.text);
     if (childLayout?.container) {
-      relayoutSingle(this.text, childLayout.container, this.canvas.getObjects());
+      layoutSubtree(this.text, this.canvas.getObjects());
     }
 
     // Bubble up the entire ancestor chain so all parents accommodate the new size
-    bubbleUpLayout(this.shape, this.canvas.getObjects());
+    relayoutAncestors(this.shape, this.canvas.getObjects());
 
     return "anchored";
   }
@@ -246,7 +246,7 @@ function applyInitialLayout(shape: FabricObject, child: FabricObject): void {
   // The container hugs its child — a text brings its own sizing (a wrapping
   // text is fixed-width on its own), nothing to guess. The shape's current
   // size is the floor.
-  const shapeLayout = layoutOf(shape)! ?? {};
+  const shapeLayout = layoutOf(shape) ?? {};
   shape.set("layout", {
     ...shapeLayout,
     sizing: shapeLayout.sizing ?? { x: "hug", y: "hug", minSize: { w: shapeW, h: shapeH } },
@@ -254,7 +254,7 @@ function applyInitialLayout(shape: FabricObject, child: FabricObject): void {
   });
 
   // Add child block to child (preserve existing container block if it has children)
-  const childLayout = layoutOf(child)! ?? {};
+  const childLayout = layoutOf(child) ?? {};
   child.set("layout", { ...childLayout, child: { parentId: containerId } });
 }
 

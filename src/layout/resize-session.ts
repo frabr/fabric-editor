@@ -12,7 +12,7 @@ import { type ContainerData, type ResolvedChild, type SizingData } from "./types
 import { scaledSize, setShapeSize, syncCoords, topLeft, cornerToAxes, type ResizeAxes } from "./geometry";
 import { yogaLayout } from "./yoga-engine";
 import { availableRoom, type Room } from "./room";
-import { relayoutSingle, bubbleUpLayout } from "./reconcile";
+import { layoutSubtree, relayoutAncestors } from "./reconcile";
 import { layoutOf, sizingOf, paddingOf } from "./model";
 import { flowChildrenOf, parentContainerOf } from "./hierarchy";
 import { isTextObject, type LayoutText } from "./text";
@@ -176,8 +176,8 @@ export class ResizeSession {
     this.persistFloor();
     const parent = parentContainerOf(this.container, objects);
     if (!parent) return;
-    relayoutSingle(parent, layoutOf(parent)!.container!, objects);
-    bubbleUpLayout(parent, objects);
+    layoutSubtree(parent, objects);
+    relayoutAncestors(parent, objects);
   }
 }
 

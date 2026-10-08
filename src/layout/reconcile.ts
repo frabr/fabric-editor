@@ -85,34 +85,30 @@ function fitGroupsUnder(container: FabricObject, objects: FabricObject[]): void 
 }
 
 /**
- * Run layout on a single container and its subtree (not the full canvas).
- * Used during drag sessions when we need to update a container's
- * children without triggering a global relayout.
+ * Lay out one container and its subtree (not the whole canvas): during a drag, a
+ * container's children follow it without a global relayout.
  */
-export function relayoutSingle(
-  container: FabricObject,
-  _cd: ContainerData,
-  allObjects: FabricObject[],
-): void {
+export function layoutSubtree(container: FabricObject, allObjects: FabricObject[]): void {
   layoutTree(container, allObjects);
 }
 
 /**
- * Bubble layout changes upward through the entire ancestor chain.
- * Starting from `container`, walks up via child→parentId links,
- * calling relayoutSingle on each ancestor so it accommodates the
- * new size of its child.
+ * Lay out every ancestor of `obj`, from its parent up: each one accommodates the new
+ * size of the child below it.
  */
-export function bubbleUpLayout(container: FabricObject, allObjects: FabricObject[]): void {
-  let current = container;
-  for (;;) {
-    const parent = parentContainerOf(current, allObjects);
-    if (!parent) return;
-    relayoutSingle(parent, layoutOf(parent)!.container!, allObjects);
-    current = parent;
+export function relayoutAncestors(obj: FabricObject, allObjects: FabricObject[]): void {
+  for (let parent = parentContainerOf(obj, allObjects); parent; parent = parentContainerOf(parent, allObjects)) {
+    layoutTree(parent, allObjects);
   }
 }
 
+/** @deprecated Use `layoutSubtree` (the container data was never read). */
+export function relayoutSingle(container: FabricObject, _cd: ContainerData, allObjects: FabricObject[]): void {
+  layoutSubtree(container, allObjects);
+}
+
+/** @deprecated Use `relayoutAncestors`. */
+export const bubbleUpLayout = relayoutAncestors;
 
 // ── orchestrator ─────────────────────────────────────────────────────
 
