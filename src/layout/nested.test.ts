@@ -11,10 +11,11 @@ import { initYoga } from "./yoga-engine";
 import { runLayout, relayoutSingle, bubbleUpLayout } from "./reconcile";
 import { ResizeSession } from "./resize-session";
 import { setTextContent } from "../bindings";
-import { type LayoutData, sizingOf } from "./types";
+import { type LayoutData } from "./types";
 import { availableRoom } from "./room";
 import type { FabricObject } from "#fabric";
 import { topLeft, scaledSize } from "./geometry";
+import { layoutOf, sizingOf } from "./model";
 
 beforeAll(async () => {
   await initYoga();
@@ -179,7 +180,7 @@ describe("container imbriqué, hors runLayout", () => {
     const { parent, child } = family();
     const t = text(LONG, "c");
     const objects = [parent, child, t];
-    relayoutSingle(parent, (parent.get("layout") as LayoutData).container!, objects);
+    relayoutSingle(parent, layoutOf(parent)!.container!, objects);
 
     expect(t.textLines.length).toBeGreaterThan(1);
     expect(right(child)).toBeLessThanOrEqual(right(parent) + 0.5);

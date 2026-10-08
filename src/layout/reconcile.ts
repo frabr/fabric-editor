@@ -27,7 +27,7 @@
  * changes, move, etc.).
  */
 import type { FabricObject } from "#fabric";
-import { type LayoutData, type ContainerData, type ChildData, sizingOf, isFreeContainer } from "./types";
+import { type ContainerData, type ChildData } from "./types";
 import {
   scaledSize,
   setShapeSize,
@@ -38,6 +38,7 @@ import {
 } from "./geometry";
 import { yogaLayout } from "./yoga-engine";
 import { fitFreeContainer } from "./free";
+import { layoutOf, containerDataOf, isFreeContainer, sizingOf } from "./model";
 
 // ── public entry point ───────────────────────────────────────────────
 
@@ -48,7 +49,7 @@ import { fitFreeContainer } from "./free";
  */
 export function runLayout(objects: FabricObject[]): void {
   for (const obj of objects) {
-    const layout = obj.get("layout") as LayoutData | undefined;
+    const layout = layoutOf(obj);
     if (!layout?.container) continue;
     // A nested container is laid out by its root's pass
     if (parentContainerOf(obj, objects)) continue;
@@ -62,13 +63,13 @@ export function runLayout(objects: FabricObject[]): void {
  * fits the groups it holds first (rigid blocks for Yoga), then runs its Yoga pass.
  */
 function layoutTree(container: FabricObject, objects: FabricObject[]): void {
-  const cd = (container.get("layout") as LayoutData).container!;
+  const cd = layoutOf(container)!.container!;
   const children = sortChildrenByOrder(resolveContainerChildren(objects, container));
   if (children.length === 0) return;
 
   if (cd.arrangement === "free") {
     for (const { obj } of children) {
-      if ((obj.get("layout") as LayoutData | undefined)?.container) layoutTree(obj, objects);
+      if (containerDataOf(obj)) layoutTree(obj, objects);
     }
     fitFreeContainer(container, objects);
     return;
@@ -81,7 +82,7 @@ function layoutTree(container: FabricObject, objects: FabricObject[]): void {
 /** The groups inside a stack's Yoga tree get their box before the pass (bottom-up). */
 function fitGroupsUnder(container: FabricObject, objects: FabricObject[]): void {
   for (const { obj } of resolveContainerChildren(objects, container)) {
-    if (!(obj.get("layout") as LayoutData | undefined)?.container) continue;
+    if (!containerDataOf(obj)) continue;
     if (isFreeContainer(obj)) layoutTree(obj, objects);
     else fitGroupsUnder(obj, objects);
   }
@@ -111,19 +112,19 @@ export function bubbleUpLayout(container: FabricObject, allObjects: FabricObject
   for (;;) {
     const parent = parentContainerOf(current, allObjects);
     if (!parent) return;
-    relayoutSingle(parent, (parent.get("layout") as LayoutData).container!, allObjects);
+    relayoutSingle(parent, layoutOf(parent)!.container!, allObjects);
     current = parent;
   }
 }
 
 /** The container `obj` is a child of — when it is in `objects` and really is a container. */
 export function parentContainerOf(obj: FabricObject, objects: FabricObject[]): FabricObject | null {
-  const layout = obj.get?.("layout") as LayoutData | undefined;
+  const layout = layoutOf(obj);
   const parentId = layout?.child?.parentId;
   if (!parentId) return null;
   const parent = objects.find((o) => o.get("layerId") === parentId);
   if (!parent || parent === obj) return null;
-  const pLayout = parent.get?.("layout") as LayoutData | undefined;
+  const pLayout = layoutOf(parent);
   return pLayout?.container ? parent : null;
 }
 

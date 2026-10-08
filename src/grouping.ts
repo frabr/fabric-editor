@@ -15,11 +15,11 @@
  */
 import type { FabricObject } from "#fabric";
 import { FabRect } from "./shapes/FabRect";
-import type { LayoutData } from "./layout/types";
 import { detachChild, isTextObject, sortChildrenByOrder, resolveContainerChildren } from "./layout/geometry";
 import { fitFreeContainer } from "./layout/free";
 import { layoutParents, layoutRoot } from "./layout/tree";
 import { stackBlock } from "./layout/stacking";
+import { layoutOf, idOf, parentIdOf, containerDataOf, childDataOf, ZERO_PADDING } from "./layout/model";
 
 /** Ce que le groupage demande au canvas. */
 export interface GroupingCanvas {
@@ -28,9 +28,6 @@ export interface GroupingCanvas {
   remove(...objects: FabricObject[]): unknown;
   moveObjectTo(obj: FabricObject, index: number): unknown;
 }
-
-const parentIdOf = (obj: FabricObject) => (obj.get("layout") as LayoutData | undefined)?.child?.parentId;
-const idOf = (obj: FabricObject) => obj.get("layerId") as string;
 
 /**
  * Les objets à grouper, ramenés à un même niveau : s'ils n'ont pas tous le même parent,
@@ -60,7 +57,7 @@ export function groupObjects(canvas: GroupingCanvas, selected: FabricObject[], l
   if (members.length < 2) return null;
 
   const parentId = parentIdOf(members[0]);
-  const orders = members.map((m) => (m.get("layout") as LayoutData | undefined)?.child?.order).filter((o): o is number => o != null);
+  const orders = members.map((m) => childDataOf(m)?.order).filter((o): o is number => o != null);
 
   const carrier = new FabRect({
     layerId,
@@ -74,13 +71,13 @@ export function groupObjects(canvas: GroupingCanvas, selected: FabricObject[], l
     fill: "transparent",
     strokeWidth: 0,
     layout: {
-      container: { arrangement: "free", origin: "group", padding: { top: 0, right: 0, bottom: 0, left: 0 } },
+      container: { arrangement: "free", origin: "group", padding: { ...ZERO_PADDING } },
       ...(parentId ? { child: { parentId, ...(orders.length ? { order: Math.min(...orders) } : {}) } } : {}),
     },
   } as never);
 
   for (const member of members) {
-    const layout = member.get("layout") as LayoutData | undefined;
+    const layout = layoutOf(member);
     member.set("layout", { ...layout, child: { parentId: layerId } });
     // Un texte quitte la boîte que lui imposait sa pile
     if (layout?.child && isTextObject(member)) (member as unknown as { layoutWith(c: null): void }).layoutWith(null);
@@ -105,7 +102,7 @@ export function groupObjects(canvas: GroupingCanvas, selected: FabricObject[], l
  * Dans une pile, les enfants prennent la place du container, dans leur ordre.
  */
 export function ungroupObject(canvas: GroupingCanvas, container: FabricObject): FabricObject[] {
-  const layout = container.get("layout") as LayoutData | undefined;
+  const layout = layoutOf(container);
   if (!layout?.container) return [];
 
   const objects = canvas.getObjects();
@@ -114,7 +111,7 @@ export function ungroupObject(canvas: GroupingCanvas, container: FabricObject): 
 
   children.forEach((child, i) => {
     if (parentChild) {
-      const childLayout = child.get("layout") as LayoutData;
+      const childLayout = layoutOf(child)!;
       const order = parentChild.order != null ? parentChild.order + i / children.length : undefined;
       child.set("layout", { ...childLayout, child: { parentId: parentChild.parentId, ...(order != null ? { order } : {}) } });
     } else {
@@ -148,7 +145,7 @@ const spread = (values: number[]) => Math.max(...values) - Math.min(...values);
  * Le container reste un groupe (`origin`) : il se dégroupe, il redevient libre.
  */
 export function arrangeAsStack(container: FabricObject, objects: FabricObject[]): void {
-  const layout = container.get("layout") as LayoutData;
+  const layout = layoutOf(container)!;
   const children = resolveContainerChildren(objects, container).map((c) => {
     c.obj.setCoords();
     return { obj: c.obj, box: c.obj.getBoundingRect() };
@@ -180,7 +177,7 @@ export function arrangeAsStack(container: FabricObject, objects: FabricObject[])
     container: { ...cd, arrangement: "stack", flexDirection: row ? "row" : "column", gap, alignItems },
   });
   children.forEach(({ obj }, order) => {
-    obj.set("layout", { ...(obj.get("layout") as LayoutData), child: { parentId: idOf(container), order } });
+    obj.set("layout", { ...layoutOf(obj)!, child: { parentId: idOf(container), order } });
   });
 }
 
@@ -189,7 +186,7 @@ export function arrangeAsStack(container: FabricObject, objects: FabricObject[])
  * pile mettait en forme garde sa largeur (elle devient la sienne).
  */
 export function arrangeFree(container: FabricObject, objects: FabricObject[]): void {
-  const layout = container.get("layout") as LayoutData;
+  const layout = layoutOf(container)!;
   const children = resolveContainerChildren(objects, container).map((c) => c.obj);
   const widths = new Map(children.map((c) => [c, c.width]));
 
@@ -197,7 +194,7 @@ export function arrangeFree(container: FabricObject, objects: FabricObject[]): v
   container.set("layout", { ...layout, container: { ...cd, arrangement: "free" } });
 
   for (const child of children) {
-    child.set("layout", { ...(child.get("layout") as LayoutData), child: { parentId: idOf(container) } });
+    child.set("layout", { ...layoutOf(child)!, child: { parentId: idOf(container) } });
     if (!isTextObject(child)) continue;
 
     const text = child as unknown as { sizing: { x: string; y: string }; setSizing(s: object): void; initDimensions(): void; width: number };
@@ -219,7 +216,7 @@ export const GROUP_FILL_PADDING = 24;
  * GROUP_FILL_PADDING de chaque côté. Vrai s'il l'a prise.
  */
 export function padGroupOnFirstFill(container: FabricObject, previousFill: unknown): boolean {
-  const cd = (container.get("layout") as LayoutData | undefined)?.container;
+  const cd = containerDataOf(container);
   if (cd?.origin !== "group") return false;
   const wasBare = !previousFill || previousFill === "transparent";
   const fill = container.fill;
@@ -229,7 +226,7 @@ export function padGroupOnFirstFill(container: FabricObject, previousFill: unkno
 
   const pad = GROUP_FILL_PADDING;
   container.set("layout", {
-    ...(container.get("layout") as LayoutData),
+    ...layoutOf(container)!,
     container: { ...cd, padding: { top: pad, right: pad, bottom: pad, left: pad } },
   });
   return true;

@@ -22,12 +22,13 @@
  */
 import type { FabricObject } from "#fabric";
 import type { DesignCanvas } from "../DesignCanvas";
-import { type LayoutSession, type LayoutData, type ChildData, type FlexDirection, sizingOf } from "./types";
-import { scaledSize, setShapeSize, topLeft, syncCoords, pointInObject, detachChild, cloneLayout } from "./geometry";
+import { type LayoutSession, type LayoutData, type ChildData, type FlexDirection } from "./types";
+import { scaledSize, setShapeSize, topLeft, syncCoords, pointInObject, detachChild } from "./geometry";
 import { resolveContainerChildren, sortChildrenByOrder } from "./geometry";
 import { yogaLayout } from "./yoga-engine";
 import { runLayout, bubbleUpLayout } from "./reconcile";
 import { LayoutAnimator } from "./layout-animator";
+import { layoutOf, containerDataOf, sizingOf, directionOf, paddingOf, cloneLayout } from "./model";
 
 // ── Constants ────────────────────────────────────────────────────────
 
@@ -92,14 +93,14 @@ export class InsertChildSession implements LayoutSession {
     // If the container has exactly 1 child and no explicit direction yet,
     // this insertion will decide the direction.
     const existing = sortChildrenByOrder(resolveContainerChildren(canvas.getObjects(), container));
-    const cd = (container.get?.("layout") as LayoutData | undefined)?.container;
+    const cd = containerDataOf(container);
     this._decidingDirection = existing.length === 1 && !cd?.flexDirection;
 
     // Ensure existing children have stable order values
     for (let i = 0; i < existing.length; i++) {
       if (existing[i].cl.order == null) {
         existing[i].cl.order = i;
-        const childLayout = existing[i].obj.get?.("layout") as LayoutData;
+        const childLayout = layoutOf(existing[i].obj)!;
         if (childLayout?.child) {
           childLayout.child.order = i;
           existing[i].obj.set("layout", { ...childLayout });
@@ -120,7 +121,7 @@ export class InsertChildSession implements LayoutSession {
     const childData: ChildData = {
       parentId: containerId,
     };
-    const existingChildLayout = (newChild.get?.("layout") as LayoutData) ?? {};
+    const existingChildLayout = layoutOf(newChild)! ?? {};
     newChild.set("layout", { ...existingChildLayout, child: childData });
 
     // Normalize new child origin to top-left
@@ -170,7 +171,7 @@ export class InsertChildSession implements LayoutSession {
     for (let i = 0; i < allChildren.length; i++) {
       if (allChildren[i].cl.order == null) {
         allChildren[i].cl.order = i;
-        const cl = allChildren[i].obj.get?.("layout") as LayoutData;
+        const cl = layoutOf(allChildren[i].obj)!;
         if (cl?.child) {
           cl.child.order = i;
           allChildren[i].obj.set("layout", { ...cl });
@@ -206,7 +207,7 @@ export class InsertChildSession implements LayoutSession {
 
   commit(): () => void {
     // Capture the floor so the container stays at its expanded size
-    const layout = this._container.get?.("layout") as LayoutData;
+    const layout = layoutOf(this._container)!;
     const { w, h } = scaledSize(this._container);
     this._container.set("layout", { ...layout, sizing: { ...sizingOf(this._container), minSize: { w, h } } });
 
@@ -250,7 +251,7 @@ export class InsertChildSession implements LayoutSession {
       // be re-decided when a new 2nd child is inserted
       const remaining = resolveContainerChildren(this.canvas.getObjects(), this._container);
       if (remaining.length <= 1) {
-        const cLayout = this._container.get?.("layout") as LayoutData | undefined;
+        const cLayout = layoutOf(this._container);
         if (cLayout?.container) {
           delete cLayout.container.flexDirection;
           delete cLayout.container.gap;
@@ -299,7 +300,7 @@ export class InsertChildSession implements LayoutSession {
     // Exclude the dragged child — Fabric's drag handler sets its position.
     this._animator.flushToTargets(this.newChild);
 
-    const containerLayout = this._container.get?.("layout") as LayoutData;
+    const containerLayout = layoutOf(this._container)!;
     const cd = containerLayout.container!;
 
     const allChildren = sortChildrenByOrder(
@@ -307,7 +308,7 @@ export class InsertChildSession implements LayoutSession {
     );
     const otherChildren = allChildren.filter(c => c.obj !== this.newChild);
 
-    const isColumn = (cd.flexDirection ?? "column") === "column";
+    const isColumn = directionOf(cd) === "column";
 
     if (this._decidingDirection && otherChildren.length === 1) {
       // ── 2nd child: decide direction + gap ──
@@ -319,7 +320,7 @@ export class InsertChildSession implements LayoutSession {
       cd.gap = Math.min(gap, this.freeMainSpace(otherChildren, dirIsColumn));
       this._container.set("layout", { ...containerLayout });
 
-      const layout = this.newChild.get?.("layout") as LayoutData;
+      const layout = layoutOf(this.newChild)!;
       if (layout?.child) {
         layout.child.order = insertOrder;
         this.newChild.set("layout", { ...layout });
@@ -329,7 +330,7 @@ export class InsertChildSession implements LayoutSession {
       // ── 3rd+ child: only change order, direction and gap are locked ──
       const insertOrder = this.computeInsertOrder(cursor, otherChildren, isColumn);
 
-      const layout = this.newChild.get?.("layout") as LayoutData;
+      const layout = layoutOf(this.newChild)!;
       if (layout?.child) {
         layout.child.order = insertOrder;
         this.newChild.set("layout", { ...layout });
@@ -464,8 +465,8 @@ export class InsertChildSession implements LayoutSession {
     const sizing = sizingOf(this._container);
     if ((isColumn ? sizing.y : sizing.x) === "hug") return Infinity;
 
-    const cd = (this._container.get?.("layout") as LayoutData).container!;
-    const pad = cd.padding ?? { top: 0, right: 0, bottom: 0, left: 0 };
+    const cd = layoutOf(this._container)!.container!;
+    const pad = paddingOf(cd);
     const { w, h } = scaledSize(this._container);
     const inner = isColumn ? h - pad.top - pad.bottom : w - pad.left - pad.right;
 
@@ -536,7 +537,7 @@ export class InsertChildSession implements LayoutSession {
    * Container grows if needed (never shrinks during session).
    */
   private previewLayout(allChildren: { obj: FabricObject; cl: ChildData }[]): void {
-    const containerLayout = this._container.get?.("layout") as LayoutData;
+    const containerLayout = layoutOf(this._container)!;
     const cd = containerLayout.container!;
     const sizing = sizingOf(this._container);
     const { w: currentW, h: currentH } = scaledSize(this._container);

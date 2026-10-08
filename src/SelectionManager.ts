@@ -1,11 +1,11 @@
 import { ActiveSelection, Point, type FabricObject } from "#fabric";
 import type { DesignCanvas } from "./DesignCanvas";
 import { isPositionLocked } from "./locking";
-import type { LayoutData } from "./layout/types";
 import { isTextObject } from "./layout/geometry";
 import type { SelectionCallbacks, ControlOption } from "./types";
 import { rulesOf } from "./capabilities";
 import { stackParentOf } from "./layout/free";
+import { idOf, parentIdOf, containerDataOf } from "./layout/model";
 
 /**
  * Gère la sélection des objets sur le canvas
@@ -116,7 +116,7 @@ export class SelectionManager {
   resolveTarget(obj: FabricObject): FabricObject {
     let current = obj;
     for (;;) {
-      const parentId = (current.get("layout") as LayoutData | undefined)?.child?.parentId;
+      const parentId = parentIdOf(current);
       // Not a child, or inside its group → this is the target
       if (!parentId || parentId === this._activeGroupId) return current;
       const parent = this.canvas.getObjects().find((o) => o.get("layerId") === parentId);
@@ -279,7 +279,7 @@ export class SelectionManager {
 
     const target = e.target as FabricObject | undefined;
     const isTheContainer = target?.get("layerId") === this._activeGroupId;
-    const isChildOfGroup = (target?.get("layout") as LayoutData | undefined)?.child?.parentId === this._activeGroupId;
+    const isChildOfGroup = parentIdOf(target) === this._activeGroupId;
     if (!target || (!isTheContainer && !isChildOfGroup)) this._activeGroupId = null;
   }
 
@@ -291,18 +291,18 @@ export class SelectionManager {
     const before = this._selectedBeforePress;
     this._selectedBeforePress = null;
     if (!e.isClick || !before || e.target !== before) return;
-    if (!(before.get("layout") as LayoutData | undefined)?.container) return;
+    if (!containerDataOf(before)) return;
 
     this.enterGroup(before, this.canvas.getScenePoint(e.e));
   }
 
   /** Enter `container`'s group and select its topmost child under `point`. */
   private enterGroup(container: FabricObject, point: { x: number; y: number }): void {
-    const id = container.get("layerId") as string;
+    const id = idOf(container);
     this._activeGroupId = id;
 
     const child = this.canvas.getObjects().slice().reverse().find((o) =>
-      (o.get("layout") as LayoutData | undefined)?.child?.parentId === id &&
+      parentIdOf(o) === id &&
       o.containsPoint(new Point(point.x, point.y)),
     );
     if (child) this.canvas.setActiveObject(child);
@@ -324,7 +324,7 @@ export class SelectionManager {
       selectWord(index: number): void;
     }) | null;
     if (!text || !isTextObject(text) || text.isEditing || text.editable === false) return;
-    if ((text.get("layout") as LayoutData | undefined)?.child?.parentId !== this._activeGroupId) return;
+    if (parentIdOf(text) !== this._activeGroupId) return;
 
     text.enterEditing(e.e);
     text.selectWord(text.getSelectionStartFromPointer(e.e));
@@ -418,16 +418,16 @@ export class SelectionManager {
     }
 
     const all = this.canvas.getObjects();
-    const byId = new Map(all.map((o) => [o.get("layerId") as string, o]));
+    const byId = new Map(all.map((o) => [idOf(o), o]));
     const hasPickedAncestor = (obj: FabricObject): boolean => {
       const seen = new Set<FabricObject>();
-      let parentId = (obj.get("layout") as LayoutData | undefined)?.child?.parentId;
+      let parentId = parentIdOf(obj);
       while (parentId) {
         const parent = byId.get(parentId);
         if (!parent || seen.has(parent)) return false;
         if (picked.has(parent)) return true;
         seen.add(parent);
-        parentId = (parent.get("layout") as LayoutData | undefined)?.child?.parentId;
+        parentId = parentIdOf(parent);
       }
       return false;
     };

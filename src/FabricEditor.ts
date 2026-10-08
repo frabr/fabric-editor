@@ -17,7 +17,6 @@ import type { EditorConfig, LayerData, FontsConfig, ShapeType } from "./types";
 import { initYoga } from "./layout/yoga-engine";
 import { isTextObject } from "./layout/geometry";
 import { layoutDescendants, layoutParents } from "./layout/tree";
-import type { LayoutData } from "./layout/types";
 import { groupObjects, padGroupOnFirstFill, ungroupObject } from "./grouping";
 import { stackParentOf } from "./layout/free";
 import {
@@ -26,6 +25,7 @@ import {
 } from "./arrange";
 import { rulesOf } from "./capabilities";
 import { collectUserSlots, USER_SLOT_STYLE_KEY, type UserSlot, type UserSlotStyle } from "./userSlots";
+import { layoutOf, idOf, parentIdOf, containerDataOf, directionOf } from "./layout/model";
 
 /**
  * Éditeur d'images basé sur Fabric.js
@@ -893,10 +893,10 @@ export class FabricEditor {
     const allObjects = this.canvas.getObjects();
     const descendants = layoutDescendants(
       layoutParents(allObjects),
-      selected.map((obj) => obj.get("layerId") as string),
+      selected.map((obj) => idOf(obj)),
     );
     const toCopy = allObjects.filter((obj) =>
-      selected.includes(obj) || descendants.has(obj.get("layerId") as string),
+      selected.includes(obj) || descendants.has(idOf(obj)),
     );
 
     this._clipboard = toCopy.map((obj) =>
@@ -1026,7 +1026,7 @@ export class FabricEditor {
    */
   ungroupSelection(): FabricObject[] {
     const container = this.selection.current;
-    if (!container || !(container.get("layout") as LayoutData | undefined)?.container) return [];
+    if (!container || !containerDataOf(container)) return [];
 
     this.canvas.discardActiveObject();
     const children = ungroupObject(this.canvas, container);
@@ -1086,10 +1086,10 @@ export class FabricEditor {
 
   /** Aligne un enfant dans sa pile, sur l'axe qu'elle laisse libre. Vrai s'il a changé. */
   private alignInStack(obj: FabricObject, parent: FabricObject, edge: AlignEdge): boolean {
-    const direction = (parent.get("layout") as LayoutData).container?.flexDirection ?? "column";
+    const direction = directionOf(containerDataOf(parent));
     if (alignAxis(edge) !== (direction === "column" ? "x" : "y")) return false;
 
-    const layout = obj.get("layout") as LayoutData;
+    const layout = layoutOf(obj)!;
     const alignSelf = edge === "left" || edge === "top" ? "flex-start"
       : edge === "right" || edge === "bottom" ? "flex-end"
       : "center";
@@ -1100,12 +1100,12 @@ export class FabricEditor {
 
   /** La référence d'un objet seul : l'intérieur de son container, sinon l'artboard. */
   private alignReference(obj: FabricObject, objects: FabricObject[]): Box {
-    const parentId = (obj.get("layout") as LayoutData | undefined)?.child?.parentId;
+    const parentId = parentIdOf(obj);
     const parent = parentId ? objects.find((o) => o.get("layerId") === parentId) : undefined;
     if (!parent) return { left: 0, top: 0, width: this.width, height: this.height };
 
     const box = parent.getBoundingRect();
-    const pad = (parent.get("layout") as LayoutData | undefined)?.container?.padding;
+    const pad = containerDataOf(parent)?.padding;
     if (!pad) return box;
     return {
       left: box.left + pad.left,
@@ -1118,9 +1118,9 @@ export class FabricEditor {
   /** Déplace un objet et toute sa descendance (positions absolues). */
   private moveWithDescendants(obj: FabricObject, dx: number, dy: number, objects: FabricObject[]): void {
     if (!dx && !dy) return;
-    const ids = layoutDescendants(layoutParents(objects), [obj.get("layerId") as string]);
+    const ids = layoutDescendants(layoutParents(objects), [idOf(obj)]);
     for (const o of objects) {
-      if (o !== obj && !ids.has(o.get("layerId") as string)) continue;
+      if (o !== obj && !ids.has(idOf(o))) continue;
       o.set({ left: o.left + dx, top: o.top + dy });
       o.setCoords();
     }
@@ -1143,11 +1143,11 @@ export class FabricEditor {
     const objects = this.canvas.getObjects();
     const descendants = layoutDescendants(
       layoutParents(objects),
-      deletable.map((obj) => obj.get("layerId") as string),
+      deletable.map((obj) => idOf(obj)),
     );
     this.canvas.discardActiveObject();
     this.layers.removeMany(objects.filter((obj) =>
-      deletable.includes(obj) || descendants.has(obj.get("layerId") as string),
+      deletable.includes(obj) || descendants.has(idOf(obj)),
     ));
     this.canvas.renderAll();
   }

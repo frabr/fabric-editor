@@ -9,9 +9,10 @@
  * pile ses marges et son espacement), au prorata, autour du coin qui ne bouge pas.
  */
 import { Point, type FabricObject } from "#fabric";
-import { type ContainerData, type LayoutData, type SizingData, isFreeContainer } from "./types";
+import { type ContainerData, type SizingData } from "./types";
 import { isTextObject, resolveContainerChildren, scaledSize, setShapeSize } from "./geometry";
 import { layoutDescendants, layoutParents } from "./tree";
+import { layoutOf, idOf, parentIdOf, containerDataOf, isFreeContainer, paddingOf, isStackContainer } from "./model";
 
 interface Box {
   left: number;
@@ -28,8 +29,8 @@ function boxOf(obj: FabricObject): Box {
 
 /** Toute la descendance d'objets, dans l'ordre de la pile. */
 export function descendantsOf(objects: FabricObject[], roots: FabricObject[]): FabricObject[] {
-  const ids = layoutDescendants(layoutParents(objects), roots.map((o) => o.get("layerId") as string));
-  return objects.filter((o) => ids.has(o.get("layerId") as string));
+  const ids = layoutDescendants(layoutParents(objects), roots.map((o) => idOf(o)));
+  return objects.filter((o) => ids.has(idOf(o)));
 }
 
 /** Déplace des objets d'un même vecteur (positions absolues). */
@@ -61,7 +62,7 @@ export function fitFreeContainer(container: FabricObject, objects: FabricObject[
   const top = Math.min(...boxes.map((b) => b.top));
   const right = Math.max(...boxes.map((b) => b.left + b.width));
   const bottom = Math.max(...boxes.map((b) => b.top + b.height));
-  const pad = (container.get("layout") as LayoutData).container?.padding ?? { top: 0, right: 0, bottom: 0, left: 0 };
+  const pad = paddingOf(containerDataOf(container));
 
   setShapeSize(container, right - left + pad.left + pad.right, bottom - top + pad.top + pad.bottom);
   placeTopLeft(container, left - pad.left, top - pad.top);
@@ -103,7 +104,7 @@ export class FreeResizeSession {
     const { w, h } = scaledSize(obj);
     const tl = obj.getPositionByOrigin("left", "top");
     const state: ScaledState = { obj, box: { left: tl.x, top: tl.y, width: w, height: h } };
-    const layout = obj.get("layout") as LayoutData | undefined;
+    const layout = layoutOf(obj);
 
     if (isTextObject(obj)) {
       const t = obj as FabricObject & { fontSize: number; fontSizeIntent?: number; styles?: object };
@@ -126,7 +127,7 @@ export class FreeResizeSession {
 
   private scale(state: ScaledState, k: number, anchor: { x: number; y: number }): void {
     const { obj, box } = state;
-    const layout = obj.get("layout") as LayoutData | undefined;
+    const layout = layoutOf(obj);
 
     if (state.text) {
       const t = obj as FabricObject & { fontSize: number; fontSizeIntent?: number; styles?: Record<string, Record<string, { fontSize?: number }>>; initDimensions(): void };
@@ -168,9 +169,8 @@ export class FreeResizeSession {
  * celle que la pile lui donne — il ne se déplace, ne s'aligne ni ne change de plan seul.
  */
 export function stackParentOf(obj: FabricObject): FabricObject | undefined {
-  const parentId = (obj.get("layout") as LayoutData | undefined)?.child?.parentId;
+  const parentId = parentIdOf(obj);
   if (!parentId) return undefined;
   const parent = obj.canvas?.getObjects().find((o) => o.get("layerId") === parentId);
-  const cd = (parent?.get("layout") as LayoutData | undefined)?.container;
-  return cd && cd.arrangement !== "free" ? parent : undefined;
+  return isStackContainer(parent) ? parent : undefined;
 }

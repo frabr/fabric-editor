@@ -24,7 +24,7 @@
  *   before the pass (see reconcile) — and its descendants follow when Yoga moves it.
  */
 import type { FabricObject } from "#fabric";
-import { type ResolvedChild, type ContainerData, type SizingData, type LayoutData, sizingOf, isFreeContainer } from "./types";
+import { type ResolvedChild, type ContainerData, type SizingData } from "./types";
 import {
   scaledSize,
   setShapeSize,
@@ -35,6 +35,7 @@ import {
   type LayoutText,
 } from "./geometry";
 import { descendantsOf, translateObjects } from "./free";
+import { layoutOf, isFreeContainer, sizingOf, directionOf } from "./model";
 
 // ── Yoga singleton ─────────────────────────────────────────────────
 
@@ -142,7 +143,7 @@ export function yogaLayout(
 
 /** Direction, alignment, gap and padding of a container, on its node. */
 function applyContainerStyle(node: YogaNode, cd: ContainerData, Y: Yoga): void {
-  const isColumn = (cd.flexDirection ?? "column") === "column";
+  const isColumn = directionOf(cd) === "column";
   node.setFlexDirection(isColumn ? Y.FLEX_DIRECTION_COLUMN : Y.FLEX_DIRECTION_ROW);
   node.setAlignItems(mapAlignItems(cd.alignItems ?? "flex-start", Y));
   node.setJustifyContent(mapJustifyContent(cd.justifyContent ?? "flex-start", Y));
@@ -173,7 +174,7 @@ function applyHugFloor(node: YogaNode, sizing: SizingData): void {
 /** The children of a nested container, when the caller lets us look them up. */
 function nestedChildren(obj: FabricObject, allObjects?: FabricObject[]): ResolvedChild[] | null {
   if (!allObjects || isTextObject(obj) || isFreeContainer(obj)) return null;
-  const layout = obj.get("layout") as LayoutData | undefined;
+  const layout = layoutOf(obj);
   if (!layout?.container) return null;
   const children = sortChildrenByOrder(resolveContainerChildren(allObjects, obj));
   return children.length > 0 ? children : null;
@@ -187,7 +188,7 @@ function buildChildren(
   allObjects: FabricObject[] | undefined,
   Y: Yoga,
 ): Built[] {
-  const isColumn = (cd.flexDirection ?? "column") === "column";
+  const isColumn = directionOf(cd) === "column";
   const alignItems = cd.alignItems ?? "flex-start";
 
   // Restore intrinsic sizes: children that were shrunk in a previous pass need
@@ -234,7 +235,7 @@ function buildChildren(
       setRigidSize(node, obj, { isColumn, willStretch: false, parentSizing: sizing, flexGrow: 0 });
       if (allObjects) entry.followers = descendantsOf(allObjects, [obj]);
     } else if (nested) {
-      const childCd = (obj.get("layout") as LayoutData).container!;
+      const childCd = layoutOf(obj)!.container!;
       const childSizing = sizingOf(obj);
       applyContainerStyle(node, childCd, Y);
       setNestedSize(node, obj, childSizing, { isColumn, willStretch, parentSizing: sizing, flexGrow });

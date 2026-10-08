@@ -28,7 +28,8 @@ import { FabCircle } from "./shapes/FabCircle";
 import { FabPath } from "./shapes/FabPath";
 import type { ControlOption } from "./types";
 import { stackParentOf } from "./layout/free";
-import { isFreeContainer } from "./layout/types";
+import { isFreeContainer } from "./layout/model";
+
 
 /**
  * - `text` : un texte

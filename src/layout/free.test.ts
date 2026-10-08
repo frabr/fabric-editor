@@ -14,6 +14,7 @@ import { fitFreeContainer, FreeResizeSession, stackParentOf } from "./free";
 import { arrangeAsStack, arrangeFree, groupObjects, padGroupOnFirstFill, ungroupObject } from "../grouping";
 import type { LayoutData } from "./types";
 import { topLeft, scaledSize } from "./geometry";
+import { layoutOf, containerDataOf, childDataOf } from "./model";
 
 beforeAll(async () => {
   await initYoga();
@@ -134,7 +135,7 @@ describe("grouper, dégrouper", () => {
     expect(ids(canvas.getObjects())).toEqual(["bg", "x", "g", "a", "b", "y"]);
     expect(box(a)).toEqual({ x: 100, y: 100, w: 50, h: 50 });
     expect(box(g)).toEqual({ x: 100, y: 100, w: 250, h: 50 });
-    expect((a.get("layout") as LayoutData).child?.parentId).toBe("g");
+    expect(layoutOf(a)!.child?.parentId).toBe("g");
     expect(stackParentOf(a)).toBeUndefined();
   });
 
@@ -146,9 +147,9 @@ describe("grouper, dégrouper", () => {
     runLayout(canvas.getObjects());
 
     const g = groupObjects(canvas, [inner, c], "g")!;
-    expect((outer.get("layout") as LayoutData).child?.parentId).toBe("g");
-    expect((c.get("layout") as LayoutData).child?.parentId).toBe("g");
-    expect((inner.get("layout") as LayoutData).child?.parentId).toBe("o");
+    expect(layoutOf(outer)!.child?.parentId).toBe("g");
+    expect(layoutOf(c)!.child?.parentId).toBe("g");
+    expect(layoutOf(inner)!.child?.parentId).toBe("o");
     expect(ids(canvas.getObjects())).toEqual(["g", "o", "in", "c"]);
     expect(g).toBeTruthy();
   });
@@ -163,7 +164,7 @@ describe("grouper, dégrouper", () => {
     const freed = ungroupObject(canvas, g);
     expect(ids(freed)).toEqual(["a", "b"]);
     expect(ids(canvas.getObjects())).toEqual(["a", "b"]);
-    expect((a.get("layout") as LayoutData | undefined)?.child).toBeUndefined();
+    expect(childDataOf(a)).toBeUndefined();
     expect(box(b)).toEqual({ x: 300, y: 100, w: 50, h: 50 });
   });
 
@@ -175,7 +176,7 @@ describe("grouper, dégrouper", () => {
 
     ungroupObject(canvas, shape);
     expect(ids(canvas.getObjects())).toEqual(["s", "a"]);
-    expect((shape.get("layout") as LayoutData | undefined)?.container).toBeUndefined();
+    expect(containerDataOf(shape)).toBeUndefined();
   });
 
   it("grouper dans une pile : le groupe prend la place des membres dans la pile", () => {
@@ -189,7 +190,7 @@ describe("grouper, dégrouper", () => {
     const g = groupObjects(canvas, [s2, s3], "g")!;
     runLayout(canvas.getObjects());
 
-    expect((g.get("layout") as LayoutData).child).toEqual({ parentId: "s", order: 1 });
+    expect(layoutOf(g)!.child).toEqual({ parentId: "s", order: 1 });
     expect(box(s2)).toEqual({ x: 0, y: 30, w: 20, h: 20 });
     expect(box(s3)).toEqual({ x: 0, y: 60, w: 20, h: 20 });
     expect(stackParentOf(g)).toBe(stack);
@@ -226,10 +227,10 @@ describe("libre ↔ rangé", () => {
   it("rangé : sens, ordre, espacement et alignement déduits ; le premier ne bouge pas", () => {
     const { canvas, g, a, b, c } = row();
     arrangeAsStack(g, canvas.getObjects());
-    const cd = (g.get("layout") as LayoutData).container!;
+    const cd = layoutOf(g)!.container!;
     expect(cd).toMatchObject({ arrangement: "stack", flexDirection: "row", gap: 30, alignItems: "center", origin: "group" });
-    expect(ids([a, c, b].filter((o) => (o.get("layout") as LayoutData).child?.order != null)
-      .sort((x, y) => (x.get("layout") as LayoutData).child!.order! - (y.get("layout") as LayoutData).child!.order!))).toEqual(["a", "c", "b"]);
+    expect(ids([a, c, b].filter((o) => layoutOf(o)!.child?.order != null)
+      .sort((x, y) => layoutOf(x)!.child!.order! - layoutOf(y)!.child!.order!))).toEqual(["a", "c", "b"]);
 
     runLayout(canvas.getObjects());
     expect(box(a)).toEqual({ x: 100, y: 100, w: 40, h: 40 });
@@ -248,7 +249,7 @@ describe("libre ↔ rangé", () => {
     runLayout(canvas.getObjects());
     expect([a, b, c].map(box)).toEqual(before);
     expect(stackParentOf(a)).toBeUndefined();
-    expect((g.get("layout") as LayoutData).container).toEqual({ arrangement: "free", origin: "group", padding: { top: 8, right: 8, bottom: 8, left: 8 } });
+    expect(layoutOf(g)!.container).toEqual({ arrangement: "free", origin: "group", padding: { top: 8, right: 8, bottom: 8, left: 8 } });
   });
 
   it("un empilement vertical aligné à gauche reste une colonne alignée au début", () => {
@@ -259,7 +260,7 @@ describe("libre ↔ rangé", () => {
     runLayout(canvas.getObjects());
 
     arrangeAsStack(g, canvas.getObjects());
-    expect((g.get("layout") as LayoutData).container).toMatchObject({ flexDirection: "column", gap: 20, alignItems: "flex-start" });
+    expect(layoutOf(g)!.container).toMatchObject({ flexDirection: "column", gap: 20, alignItems: "flex-start" });
   });
 
   it("premier fond d'un groupe sans marge : une marge de 24 ; ensuite, plus rien", () => {
@@ -267,7 +268,7 @@ describe("libre ↔ rangé", () => {
     const bare = group("bare");
     bare.set({ fill: "#ff0000" });
     expect(padGroupOnFirstFill(bare, "transparent")).toBe(true);
-    expect((bare.get("layout") as LayoutData).container?.padding).toEqual({ top: 24, right: 24, bottom: 24, left: 24 });
+    expect(layoutOf(bare)!.container?.padding).toEqual({ top: 24, right: 24, bottom: 24, left: 24 });
 
     // Le groupe de row() a déjà une marge : on n'y touche pas
     g.set({ fill: "#ff0000" });

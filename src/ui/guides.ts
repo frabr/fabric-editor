@@ -1,8 +1,8 @@
 import { FabricObject, Line, Rect, Pattern } from "#fabric";
 import type { DesignCanvas } from "../DesignCanvas";
-import type { LayoutData } from "../layout/types";
 import { scaledSize, topLeft } from "../layout/geometry";
 import { hexAlpha } from "./color";
+import { layoutOf } from "../layout/model";
 
 /**
  * Manages ephemeral visual guides (overlays) on a Fabric canvas.
@@ -174,7 +174,7 @@ export class CanvasGuides {
     });
 
     // Padding zones (hatched)
-    const containerLayout = container.get?.("layout") as LayoutData | undefined;
+    const containerLayout = layoutOf(container);
     const p = containerLayout?.container?.padding;
     if (!p) return;
 

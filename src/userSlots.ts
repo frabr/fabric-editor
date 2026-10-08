@@ -1,5 +1,6 @@
 import { Pattern, util, type FabricObject } from "#fabric";
 import { pendingBindings, type BindingSpec, type Bindings } from "./bindings";
+import { idOf } from "./layout/model";
 
 /**
  * Les images à fournir (apibots, plan user-image-slots) : un cadre que l'utilisateur final
@@ -57,7 +58,7 @@ export function collectUserSlots(objects: FabricObject[]): UserSlot[] {
     const { left, top, width, height } = object.getBoundingRect();
     return {
       object,
-      layerId: object.get("layerId") as string | undefined,
+      layerId: idOf(object),
       hint: userSlotHint(object),
       rect: { left, top, width, height },
     };

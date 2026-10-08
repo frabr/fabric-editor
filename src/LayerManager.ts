@@ -12,7 +12,6 @@ import { CustomTextbox } from "./controls/CustomTextbox";
 import { migrateLegacyLayout } from "./layout/legacy";
 import { bringBlocksForward, sendBlocksBackward } from "./layout/stacking";
 import { kindOf, rulesOf } from "./capabilities";
-import type { LayoutData } from "./layout/types";
 import { createShape as createShapeObject, createPathsShape, createImage } from "./shapes/factories";
 import { FabRect } from "./shapes/FabRect";
 import { FabCircle } from "./shapes/FabCircle";
@@ -25,6 +24,7 @@ import { ImageFrame, type ImageFrameData, type ImageMeta } from "./ImageFrame";
 import type { LayerData, TextLayerOptions, ImageLayerOptions, ShapeLayerOptions, ShapeType } from "./types";
 import { restoreBindings, type Bindings } from "./bindings";
 import { resolveUserSlot, USER_SCOPE, USER_SLOT_FIELD } from "./userSlots";
+import { layoutOf } from "./layout/model";
 
 const BACKGROUND_LAYER_ID = "originalImage";
 
@@ -434,7 +434,7 @@ export class LayerManager {
    * son rang dans la pile (sous ses enfants).
    */
   private takeOver(previous: FabricObject, next: FabricObject): void {
-    const layout = previous.get("layout") as LayoutData | undefined;
+    const layout = layoutOf(previous);
     if (layout) next.set("layout", JSON.parse(JSON.stringify(layout)));
     const lockMode = getLockMode(previous);
     if (lockMode !== "free") applyLockMode(next, lockMode);
@@ -594,7 +594,7 @@ export class LayerManager {
     }
 
     // Données de layout d'avant layout.sizing
-    const migrated = obj && migrateLegacyLayout(obj.get("layout") as LayoutData | undefined);
+    const migrated = obj && migrateLegacyLayout(layoutOf(obj));
     if (obj && migrated) obj.set("layout", migrated);
 
     // Appliquer les propriétés de verrouillage si présentes

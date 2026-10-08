@@ -1,6 +1,7 @@
 import { Textbox, Point, controlsUtils } from "#fabric";
-import { type LayoutData, type SizingData, type TextOverflow, isFreeContainer } from "../layout/types";
+import { type SizingData, type TextOverflow } from "../layout/types";
 import { resolveTextBox, type TextConstraint, type TextMeasure } from "../layout/text-box";
+import { layoutOf, parentIdOf, isFreeContainer } from "../layout/model";
 
 const { changeObjectWidth, changeObjectHeight } = controlsUtils;
 
@@ -74,23 +75,23 @@ export class CustomTextbox extends Textbox {
    * stockée fait foi : largeur fixe.
    */
   get sizing(): SizingData {
-    return (this.get("layout") as LayoutData | undefined)?.sizing ?? { x: "fixed", y: "hug" };
+    return layoutOf(this)?.sizing ?? { x: "fixed", y: "hug" };
   }
 
   get textOverflow(): TextOverflow {
-    return (this.get("layout") as LayoutData | undefined)?.overflow ?? "shrink";
+    return layoutOf(this)?.overflow ?? "shrink";
   }
 
   /** Remplace le bloc `sizing` (nouvel objet `layout`, jamais muté en place). */
   setSizing(sizing: SizingData): void {
-    const layout = (this.get("layout") as LayoutData | undefined) ?? {};
+    const layout = layoutOf(this) ?? {};
     this.set("layout", { ...layout, sizing });
     this.initDimensions();
     this.setCoords();
   }
 
   setTextOverflow(overflow: TextOverflow): void {
-    const layout = (this.get("layout") as LayoutData | undefined) ?? {};
+    const layout = layoutOf(this) ?? {};
     this.set("layout", { ...layout, overflow });
     this.initDimensions();
     this.setCoords();
@@ -237,9 +238,11 @@ export class CustomTextbox extends Textbox {
 
   /** Placé par une pile — un groupe (container libre) laisse ses enfants à leur propre taille. */
   private _isChild(): boolean {
-    const parentId = (this.get("layout") as LayoutData | undefined)?.child?.parentId;
+    const parentId = parentIdOf(this);
     if (parentId == null) return false;
     const parent = this.canvas?.getObjects().find((o) => o.get("layerId") === parentId);
+    // Parent introuvable (texte hors canvas, document en cours de chargement) : il est
+    // traité en enfant de pile, sa boîte reste celle reçue ou sauvegardée
     return !isFreeContainer(parent);
   }
 
@@ -253,7 +256,7 @@ export class CustomTextbox extends Textbox {
 
   private _resizeWidth(transform: any, x: number, y: number): boolean {
     if (this.sizing.x !== "fixed") {
-      const layout = (this.get("layout") as LayoutData | undefined) ?? {};
+      const layout = layoutOf(this) ?? {};
       this.set("layout", { ...layout, sizing: { ...this.sizing, x: "fixed" } });
     }
     // set("width") relance initDimensions (width est une textLayoutProperty)
@@ -266,7 +269,7 @@ export class CustomTextbox extends Textbox {
     const sizing = this.sizing;
     if (sizing.y === "hug") {
       const minSize = { w: sizing.minSize?.w ?? 0, h: this.height };
-      const layout = (this.get("layout") as LayoutData | undefined) ?? {};
+      const layout = layoutOf(this) ?? {};
       this.set("layout", { ...layout, sizing: { ...sizing, minSize } });
     }
     this.initDimensions();
@@ -306,7 +309,7 @@ export class CustomTextbox extends Textbox {
    *   (texte qui wrappe, ou boîte élargie pour un alignement).
    */
   private _ensureSizing(hasExplicitWidth: boolean): void {
-    const layout = this.get("layout") as LayoutData | undefined;
+    const layout = layoutOf(this);
     if (layout?.sizing) return;
 
     let x: "hug" | "fixed" = "hug";

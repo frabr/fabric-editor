@@ -3,15 +3,7 @@ import type { DesignCanvas } from "./DesignCanvas";
 import { CanvasGuides } from "./ui/guides";
 import { runLayout, relayoutSingle, bubbleUpLayout } from "./layout/reconcile";
 import { ResizeSession } from "./layout/resize-session";
-import {
-  type LayoutData,
-  type LayoutSession,
-  type SizingData,
-  type TextOverflow,
-  sizingOf,
-  isFreeContainer,
-  type Arrangement,
-} from "./layout/types";
+import { type LayoutSession, type SizingData, type TextOverflow, type Arrangement } from "./layout/types";
 import { arrangeAsStack, arrangeFree } from "./grouping";
 import { syncGroupControls } from "./ui/controls";
 import { pointInObject, isTextObject } from "./layout/geometry";
@@ -26,6 +18,7 @@ import { placeBlockAbove } from "./layout/stacking";
 import { descendantsOf, fitFreeContainer, FreeResizeSession } from "./layout/free";
 import { ContainerizeSession } from "./layout/containerize-session";
 import { InsertChildSession } from "./layout/insert-child-session";
+import { layoutOf, containerDataOf, isFreeContainer, sizingOf, ZERO_PADDING, isStackContainer, directionOf } from "./layout/model";
 
 // ── Types ───────────────────────────────────────────────────────────
 
@@ -175,7 +168,7 @@ export class LayoutManager {
    * content again, as the mode says.
    */
   setMode(obj: FabricObject, mode: SizePreset): void {
-    const layout = obj.get("layout") as LayoutData | undefined;
+    const layout = layoutOf(obj);
     const isText = isTextObject(obj);
     if (!layout?.container && !isText) return;
 
@@ -205,10 +198,10 @@ export class LayoutManager {
 
   /** Update padding on a container — one side, or "all" four. */
   setPadding(obj: FabricObject, side: string, value: number): void {
-    const layout = obj.get("layout") as LayoutData | undefined;
+    const layout = layoutOf(obj);
     if (!layout?.container) return;
 
-    if (!layout.container.padding) layout.container.padding = { top: 0, right: 0, bottom: 0, left: 0 };
+    if (!layout.container.padding) layout.container.padding = { ...ZERO_PADDING };
     const sides = side === "all" ? ["top", "right", "bottom", "left"] : [side];
     for (const s of sides) (layout.container.padding as Record<string, number>)[s] = value;
     obj.set("layout", { ...layout });
@@ -221,7 +214,7 @@ export class LayoutManager {
    * Un groupe libre ou rangé (une pile) — la bascule ne fait rien sauter (cf. grouping).
    */
   setArrangement(obj: FabricObject, arrangement: Arrangement): void {
-    const cd = (obj.get("layout") as LayoutData | undefined)?.container;
+    const cd = containerDataOf(obj);
     if (!cd || (cd.arrangement ?? "stack") === arrangement) return;
 
     const objects = this.canvas.getObjects();
@@ -235,7 +228,7 @@ export class LayoutManager {
 
   /** Update alignSelf on a child layout object. */
   setAlignSelf(obj: FabricObject, value: string): void {
-    const layout = obj.get("layout") as LayoutData | undefined;
+    const layout = layoutOf(obj);
     if (!layout?.child) return;
 
     layout.child.alignSelf = value as any;
@@ -247,7 +240,7 @@ export class LayoutManager {
 
   /** Update gap on a container. */
   setGap(obj: FabricObject, value: number): void {
-    const layout = obj.get("layout") as LayoutData | undefined;
+    const layout = layoutOf(obj);
     if (!layout?.container) return;
 
     layout.container.gap = Math.max(0, value);
@@ -259,7 +252,7 @@ export class LayoutManager {
 
   /** Update flex direction on a container. */
   setFlexDirection(obj: FabricObject, direction: "column" | "row"): void {
-    const layout = obj.get("layout") as LayoutData | undefined;
+    const layout = layoutOf(obj);
     if (!layout?.container) return;
 
     layout.container.flexDirection = direction;
@@ -271,7 +264,7 @@ export class LayoutManager {
 
   /** Update alignItems on a container. */
   setAlignItems(obj: FabricObject, value: string): void {
-    const layout = obj.get("layout") as LayoutData | undefined;
+    const layout = layoutOf(obj);
     if (!layout?.container) return;
 
     layout.container.alignItems = value as any;
@@ -283,7 +276,7 @@ export class LayoutManager {
 
   /** Update justifyContent on a container. */
   setJustifyContent(obj: FabricObject, value: string): void {
-    const layout = obj.get("layout") as LayoutData | undefined;
+    const layout = layoutOf(obj);
     if (!layout?.container) return;
 
     layout.container.justifyContent = value as any;
@@ -407,7 +400,7 @@ export class LayoutManager {
       return;
     }
 
-    const layout = obj.get?.("layout") as LayoutData | undefined;
+    const layout = layoutOf(obj);
 
     // Container being dragged → reposition its children (not the full canvas,
     // otherwise runLayout would snap this container back to its flex position
@@ -531,7 +524,7 @@ export class LayoutManager {
 
   /** A text inside a container was edited → its ancestors adapt. */
   private onTextChanged(e: any): void {
-    const layout = e.target?.get?.("layout") as LayoutData | undefined;
+    const layout = layoutOf(e.target);
     if (!layout?.child) return;
     this.relayout();
     this.callbacks.onLayoutChanged?.();
@@ -563,7 +556,7 @@ export class LayoutManager {
     }
 
     // Text child resized → its container settles (outside any drag session)
-    const childLayout = obj?.get?.("layout") as LayoutData | undefined;
+    const childLayout = layoutOf(obj);
     if (childLayout?.child && isTextObject(obj) && this.dtl.phase === "idle" &&
         e.transform?.action === "resizing") {
       this.relayout();
@@ -572,7 +565,7 @@ export class LayoutManager {
     }
 
     // Container modified → commit resize session if active, then relayout
-    const layout = obj.get?.("layout") as LayoutData | undefined;
+    const layout = layoutOf(obj);
     if (layout?.container) {
       if (this.resizeSession) {
         this.resizeSession.commit(this.canvas.getObjects());
@@ -606,7 +599,7 @@ export class LayoutManager {
 
   private onResizing(e: any): void {
     const target = e.target;
-    const layout = target?.get?.("layout") as LayoutData | undefined;
+    const layout = layoutOf(target);
 
     // Text, shape or image child resized live → the room stops it (a text is
     // pushed by the layout itself), and its container chain follows
@@ -620,7 +613,7 @@ export class LayoutManager {
         return;
       }
       if (!isTextObject(target)) clampToRoom(target, e.transform, objects);
-      const pLayout = parent?.get?.("layout") as LayoutData | undefined;
+      const pLayout = layoutOf(parent);
       if (parent && pLayout?.container) {
         relayoutSingle(parent, pLayout.container, objects);
         bubbleUpLayout(parent, objects);
@@ -810,7 +803,7 @@ export class LayoutManager {
     container: FabricObject,
     exclude: FabricObject,
   ): FabricObject | null {
-    const layout = container.get?.("layout") as LayoutData | undefined;
+    const layout = layoutOf(container);
     if (!layout?.container) return null;
     const children = resolveContainerChildren(this.canvas.getObjects(), container);
     for (const { obj } of children) {
@@ -823,7 +816,7 @@ export class LayoutManager {
 
   /** Find the parent container of `obj` by looking up its `child.parentId`. */
   private findParentContainer(obj: FabricObject): FabricObject | null {
-    const layout = obj.get?.("layout") as LayoutData | undefined;
+    const layout = layoutOf(obj);
     if (!layout?.child) return null;
     return this.canvas.getObjects().find(
       (o) => o.get("layerId") === layout.child!.parentId,
@@ -881,8 +874,8 @@ export class LayoutManager {
     session.apply(k, { x: start.left + start.width * fx, y: start.top + start.height * fy });
     // Les piles du groupe se rangent dans leurs nouvelles dimensions
     for (const obj of descendantsOf(this.canvas.getObjects(), [container])) {
-      const cd = (obj.get("layout") as LayoutData | undefined)?.container;
-      if (cd && cd.arrangement !== "free") relayoutSingle(obj, cd, this.canvas.getObjects());
+      const cd = containerDataOf(obj);
+      if (cd && isStackContainer(obj)) relayoutSingle(obj, cd, this.canvas.getObjects());
     }
     fitFreeContainer(container, this.canvas.getObjects());
     this.canvas.renderAll();
@@ -894,7 +887,7 @@ export class LayoutManager {
     child: FabricObject,
     cursor: { x: number; y: number },
   ): LayoutSession {
-    const targetLayout = target.get?.("layout") as LayoutData | undefined;
+    const targetLayout = layoutOf(target);
     const alreadyContainer = targetLayout?.container != null;
     const existingChildren = alreadyContainer
       ? resolveContainerChildren(this.canvas.getObjects(), target)
@@ -938,8 +931,8 @@ export class LayoutManager {
       // InsertChildSession: show gap between children
       const allChildren = resolveContainerChildren(this.canvas.getObjects(), session.container);
       const childObjs = allChildren.map(c => c.obj);
-      const layout = session.container.get?.("layout") as LayoutData | undefined;
-      const direction = layout?.container?.flexDirection ?? "column";
+      const layout = layoutOf(session.container);
+      const direction = directionOf(layout?.container);
       this.guides.showInsertGuides(session.container, childObjs, direction);
     } else {
       // ContainerizeSession: show margin guides
@@ -956,7 +949,7 @@ export class LayoutManager {
     for (const obj of objects) {
       if (obj === exclude) continue;
       if (!rulesOf(obj).hosts) continue;
-      const layout = obj.get?.("layout") as LayoutData | undefined;
+      const layout = layoutOf(obj);
       if (layout?.child) {
         // Allow child shapes as targets when in group-edit mode
         // (enables nesting: drag into a child shape to make it a sub-container)

@@ -6,6 +6,7 @@
  */
 import type { FabricObject } from "#fabric";
 import type { LayoutData, ResolvedChild } from "./types";
+import { idOf, layoutOf, removeLayoutBlock } from "./model";
 
 // ── Children resolution ─────────────────────────────────────────────
 
@@ -14,10 +15,10 @@ export function resolveContainerChildren(
   objects: FabricObject[],
   container: FabricObject,
 ): ResolvedChild[] {
-  const containerId = container.get("layerId") as string;
+  const containerId = idOf(container);
   const out: ResolvedChild[] = [];
   for (const obj of objects) {
-    const layout = obj.get("layout") as LayoutData | undefined;
+    const layout = layoutOf(obj);
     if (!layout?.child) continue;
     if (layout.child.parentId === containerId) {
       out.push({ obj, cl: layout.child });
@@ -138,19 +139,10 @@ export function hasExceededOffset(
  * container, overflow). A text also drops the box its container imposed.
  */
 export function detachChild(obj: FabricObject): void {
-  const layout = obj.get?.("layout") as LayoutData | undefined;
-  if (layout?.child) {
-    const { child: _child, ...rest } = layout;
-    obj.set("layout", Object.keys(rest).length ? rest : undefined);
-  }
+  removeLayoutBlock(obj, "child");
   if (isTextObject(obj)) (obj as unknown as LayoutText).layoutWith(null);
 }
 
-/** Deep-clone a Fabric object's layout data for snapshot/rollback. */
-export function cloneLayout(obj: FabricObject): LayoutData | undefined {
-  const layout = obj.get?.("layout") as LayoutData | undefined;
-  return layout ? JSON.parse(JSON.stringify(layout)) : undefined;
-}
 
 /** Refresh Fabric's internal coordinate caches. */
 export function syncCoords(

@@ -8,12 +8,7 @@
  */
 import type { FabricObject } from "#fabric";
 import type { DesignCanvas } from "../DesignCanvas";
-import {
-  type LayoutData,
-  type AttachSnapshot,
-  MIN_PAD,
-  sizingOf,
-} from "./types";
+import { type AttachSnapshot, MIN_PAD } from "./types";
 import {
   scaledSize,
   setShapeSize,
@@ -23,10 +18,10 @@ import {
   isTextObject,
   pointInObject,
   detachChild,
-  cloneLayout,
   type LayoutText,
 } from "./geometry";
 import { runLayout, relayoutSingle, bubbleUpLayout } from "./reconcile";
+import { layoutOf, sizingOf, cloneLayout } from "./model";
 
 // ── Constants ────────────────────────────────────────────────────────
 
@@ -75,7 +70,7 @@ export class ContainerizeSession {
     wrapContainerAroundChild(text, shape);
 
     // If the child is itself a container, reposition its own children
-    const textLayout = text.get?.("layout") as LayoutData | undefined;
+    const textLayout = layoutOf(text);
     if (textLayout?.container) {
       relayoutSingle(text, textLayout.container, canvas.getObjects());
     }
@@ -120,7 +115,7 @@ export class ContainerizeSession {
     wrapContainerAroundChild(this.text, this.shape);
 
     // If the child is itself a container, reposition its own children
-    const childLayout = this.text.get?.("layout") as LayoutData | undefined;
+    const childLayout = layoutOf(this.text);
     if (childLayout?.container) {
       relayoutSingle(this.text, childLayout.container, this.canvas.getObjects());
     }
@@ -260,7 +255,7 @@ function applyInitialLayout(shape: FabricObject, child: FabricObject): void {
   // The container hugs its child — a text brings its own sizing (a wrapping
   // text is fixed-width on its own), nothing to guess. The shape's current
   // size is the floor.
-  const shapeLayout = (shape.get?.("layout") as LayoutData) ?? {};
+  const shapeLayout = layoutOf(shape)! ?? {};
   shape.set("layout", {
     ...shapeLayout,
     sizing: shapeLayout.sizing ?? { x: "hug", y: "hug", minSize: { w: shapeW, h: shapeH } },
@@ -268,14 +263,14 @@ function applyInitialLayout(shape: FabricObject, child: FabricObject): void {
   });
 
   // Add child block to child (preserve existing container block if it has children)
-  const childLayout = (child.get?.("layout") as LayoutData) ?? {};
+  const childLayout = layoutOf(child)! ?? {};
   child.set("layout", { ...childLayout, child: { parentId: containerId } });
 }
 
 /** Resize container to wrap around its child, updating padding from current position. */
 export function wrapContainerAroundChild(child: FabricObject, container: FabricObject): void {
-  const childLayout = child.get?.("layout") as LayoutData | undefined;
-  const containerLayout = container.get?.("layout") as LayoutData | undefined;
+  const childLayout = layoutOf(child);
+  const containerLayout = layoutOf(container);
   if (!childLayout?.child || !containerLayout?.container) return;
 
   const cd = containerLayout.container;

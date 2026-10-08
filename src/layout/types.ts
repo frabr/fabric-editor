@@ -120,10 +120,6 @@ export function isChild(l: LayoutData): boolean {
   return l.child != null;
 }
 
-/** Is this object a free container (a group: children placed by hand)? */
-export function isFreeContainer(obj: { get(key: string): unknown } | null | undefined): boolean {
-  return (obj?.get("layout") as LayoutData | undefined)?.container?.arrangement === "free";
-}
 
 // ── Deprecated aliases (to be removed) ─────────────────────────────
 
@@ -161,13 +157,6 @@ export const MIN_PAD = 8;
 /** Floor of the "shrink" text overflow. */
 export const MIN_FONT_SIZE = 8;
 
-/** Sizing of an object without a `sizing` block (new containers, legacy data). */
-export const DEFAULT_SIZING: SizingData = { x: "hug", y: "hug" };
-
-/** The object's sizing — DEFAULT_SIZING when it declares none. */
-export function sizingOf(obj: { get(key: string): unknown }): SizingData {
-  return (obj.get("layout") as LayoutData | undefined)?.sizing ?? DEFAULT_SIZING;
-}
 
 // ── Attach types ────────────────────────────────────────────────────
 

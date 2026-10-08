@@ -10,8 +10,9 @@ import type { DesignCanvas } from "../DesignCanvas";
 import { parseHex, hexAlpha } from "./color";
 import { bindingBadgeLabel, drawDynamicMediaOutline } from "../bindings";
 import { installBadgeLayer } from "./badges";
-import { isFreeContainer } from "../layout/types";
+
 import { getLockMode } from "../locking";
+import { isFreeContainer } from "../layout/model";
 
 // ── Public entry point ─────────────────────────────────────────────
 

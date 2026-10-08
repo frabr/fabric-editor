@@ -7,9 +7,10 @@ import { describe, it, expect, beforeAll } from "vitest";
 import { FabRect } from "../shapes/FabRect";
 import { initYoga } from "./yoga-engine";
 import { runLayout } from "./reconcile";
-import { sizingOf, type LayoutData } from "./types";
+import { type LayoutData } from "./types";
 import { scaledSize } from "./geometry";
 import { LayoutManager } from "../LayoutManager";
+import { sizingOf } from "./model";
 
 beforeAll(async () => {
   await initYoga();

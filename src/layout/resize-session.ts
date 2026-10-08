@@ -8,13 +8,7 @@
  * the programmatic layout reconciliation that runs on every frame.
  */
 import type { FabricObject } from "#fabric";
-import {
-  type LayoutData,
-  type ContainerData,
-  type ResolvedChild,
-  type SizingData,
-  sizingOf,
-} from "./types";
+import { type ContainerData, type ResolvedChild, type SizingData } from "./types";
 import {
   scaledSize,
   setShapeSize,
@@ -30,6 +24,7 @@ import {
 import { yogaLayout } from "./yoga-engine";
 import { availableRoom, type Room } from "./room";
 import { parentContainerOf, relayoutSingle, bubbleUpLayout } from "./reconcile";
+import { layoutOf, sizingOf, paddingOf } from "./model";
 
 // ── ResizeSession ───────────────────────────────────────────────────
 
@@ -69,7 +64,7 @@ export class ResizeSession {
 
   constructor(container: FabricObject, corner?: string) {
     this.container = container;
-    const layout = container.get("layout") as LayoutData;
+    const layout = layoutOf(container)!;
     this.containerData = layout.container!;
     this.axes = cornerToAxes(corner);
     this.corner = corner;
@@ -181,7 +176,7 @@ export class ResizeSession {
     if (dragsHugY) minSize.h = this.userH;
     this.sizing = { ...sizing, minSize };
 
-    const layout = container.get("layout") as LayoutData;
+    const layout = layoutOf(container)!;
     container.set("layout", { ...layout, sizing: this.sizing });
   }
 
@@ -190,7 +185,7 @@ export class ResizeSession {
     this.persistFloor();
     const parent = parentContainerOf(this.container, objects);
     if (!parent) return;
-    relayoutSingle(parent, (parent.get("layout") as LayoutData).container!, objects);
+    relayoutSingle(parent, layoutOf(parent)!.container!, objects);
     bubbleUpLayout(parent, objects);
   }
 }
@@ -207,7 +202,7 @@ function minContentSize(
   cd: ContainerData,
   objects: FabricObject[],
 ): { w: number; h: number } {
-  const pad = cd.padding ?? { top: 0, right: 0, bottom: 0, left: 0 };
+  const pad = paddingOf(cd);
   const gaps = (cd.gap ?? 0) * Math.max(0, children.length - 1);
   const sizes = children.map(({ obj }) => minSizeOf(obj, objects));
   const sum = (key: "w" | "h") => sizes.reduce((total, s) => total + s[key], 0);
@@ -224,7 +219,7 @@ function minContentSize(
 export function minSizeOf(obj: FabricObject, objects: FabricObject[]): { w: number; h: number } {
   if (isTextObject(obj)) return { w: (obj as unknown as LayoutText).minContentWidth(), h: 0 };
   const size = scaledSize(obj);
-  const layout = obj.get("layout") as LayoutData | undefined;
+  const layout = layoutOf(obj);
   if (!layout?.container) return size;
   const children = sortChildrenByOrder(resolveContainerChildren(objects, obj));
   if (children.length === 0) return size;
