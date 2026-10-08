@@ -7,8 +7,9 @@
 import type { FabricObject } from "#fabric";
 import type { ContainerData, SizingData } from "../types";
 import { placeTopLeft, scaledSize, setShapeSize, type Box } from "../geometry";
-import { layoutOf } from "../model";
+import { isStackContainer, layoutOf } from "../model";
 import { descendantsOf } from "../hierarchy";
+import { layoutSubtree } from "../run";
 import { isTextObject, scaleStyleFontSizes, type TextStyles } from "../text";
 import { fitFreeContainer } from "./fit";
 
@@ -34,6 +35,32 @@ export class FreeResizeSession {
 
   constructor(readonly container: FabricObject, private readonly objects: FabricObject[], readonly start: Box) {
     this.states = descendantsOf(objects, [container]).map((obj) => this.snapshot(obj));
+  }
+
+  /** Au début du geste : le groupe tel qu'il est. */
+  static begin(container: FabricObject, objects: FabricObject[]): FreeResizeSession {
+    const tl = container.getPositionByOrigin("left", "top");
+    const { w, h } = scaledSize(container);
+    return new FreeResizeSession(container, objects, { left: tl.x, top: tl.y, width: w, height: h });
+  }
+
+  /**
+   * Un pas du geste : le facteur est la moyenne des deux axes (uniforme, un texte ne se
+   * déforme pas), le coin opposé à la poignée (l'origine du transform) reste en place ;
+   * les piles du groupe se rangent dans leurs nouvelles dimensions.
+   */
+  step(transform: { originX?: string; originY?: string }): void {
+    const { start, container } = this;
+    const { w, h } = scaledSize(container);
+    const k = Math.max(0.05, (w / start.width + h / start.height) / 2);
+    const fx = transform.originX === "left" ? 0 : transform.originX === "right" ? 1 : 0.5;
+    const fy = transform.originY === "top" ? 0 : transform.originY === "bottom" ? 1 : 0.5;
+
+    this.apply(k, { x: start.left + start.width * fx, y: start.top + start.height * fy });
+    for (const obj of descendantsOf(this.objects, [container])) {
+      if (isStackContainer(obj)) layoutSubtree(obj, this.objects);
+    }
+    fitFreeContainer(container, this.objects);
   }
 
   /** Le groupe à l'échelle `k` de son état de départ, `anchor` (scène) immobile. */

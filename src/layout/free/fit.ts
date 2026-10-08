@@ -9,7 +9,7 @@
 import type { FabricObject } from "#fabric";
 import { boxOf, outsetBox, placeTopLeft, setShapeSize, unionBox } from "../geometry";
 import { containerDataOf, isFreeContainer, paddingOf } from "../model";
-import { childrenOf } from "../hierarchy";
+import { childrenOf, parentContainerOf } from "../hierarchy";
 
 
 /**
@@ -24,4 +24,15 @@ export function fitFreeContainer(container: FabricObject, objects: FabricObject[
   const box = outsetBox(unionBox(children.map(boxOf)), paddingOf(containerDataOf(container)));
   setShapeSize(container, box.width, box.height);
   placeTopLeft(container, box.left, box.top);
+}
+
+/**
+ * La boîte d'un groupe suit ses enfants, et celle des groupes qui le contiennent — pas
+ * au-delà d'une pile pendant un geste (elle déplacerait le groupe, donc l'objet tenu) :
+ * la pile se recale à la fin (relayout).
+ */
+export function fitFreeAncestors(group: FabricObject, objects: FabricObject[]): void {
+  for (let current: FabricObject | null = group; current && isFreeContainer(current); current = parentContainerOf(current, objects)) {
+    fitFreeContainer(current, objects);
+  }
 }

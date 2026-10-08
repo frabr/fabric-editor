@@ -18,15 +18,15 @@ const SIZE_PRESETS: Record<SizePreset, Pick<SizingData, "x" | "y">> = {
   "hug-y": { x: "fixed", y: "hug" },
   "fixed": { x: "fixed", y: "fixed" },
 };
-import { scaledSize } from "./layout/geometry";
 import { clampToRoom } from "./layout/stack/room";
 import { placeBlockAbove } from "./layout/z-order";
-import { fitFreeContainer } from "./layout/free/fit";
+import { fitFreeAncestors } from "./layout/free/fit";
+import { SubtreeDrag } from "./layout/subtree-drag";
 import { FreeResizeSession } from "./layout/free/resize-session";
 import { ContainerizeSession } from "./layout/stack/sessions/containerize";
 import { InsertChildSession } from "./layout/stack/sessions/insert-child";
-import { layoutOf, containerDataOf, childDataOf, isContainerObject, isFreeContainer, sizingOf, paddingOf, isStackContainer, directionOf, updateContainer, updateChild, updateLayout } from "./layout/model";
-import { childrenOf, parentContainerOf, descendantsOf, findById } from "./layout/hierarchy";
+import { layoutOf, containerDataOf, childDataOf, isContainerObject, isFreeContainer, sizingOf, paddingOf, directionOf, updateContainer, updateChild, updateLayout } from "./layout/model";
+import { childrenOf, parentContainerOf, findById } from "./layout/hierarchy";
 import { isTextObject } from "./layout/text";
 
 // ── Types ───────────────────────────────────────────────────────────
@@ -145,8 +145,8 @@ export class LayoutManager {
   private resizeSession: StackResizeSession | null = null;
   /** Le redimensionnement d'un groupe en cours (ouvert à before:transform). */
   private freeResize: FreeResizeSession | null = null;
-  /** Les descendants d'une sélection multiple en cours de déplacement, et leur départ. */
-  private followers: { transform: unknown; left: number; top: number; objects: Array<{ obj: FabricObject; left: number; top: number }> } | null = null;
+  /** Les descendants qui suivent les objets déplacés (un groupe, une sélection multiple). */
+  private followers: SubtreeDrag | null = null;
 
   constructor(canvas: DesignCanvas, callbacks: LayoutManagerCallbacks = {}, guideColor?: string) {
     this.canvas = canvas;
@@ -395,7 +395,7 @@ export class LayoutManager {
     if (layout?.child && this.dtl.phase !== "anchored") {
       const parent = this.findParentContainer(obj);
       if (parent && isFreeContainer(parent)) {
-        this.fitGroupChain(parent);
+        fitFreeAncestors(parent, this.canvas.getObjects());
         this.canvas.renderAll();
         return;
       }
@@ -453,34 +453,10 @@ export class LayoutManager {
    * containers sont relatives à elle.
    */
   private moveFollowers(target: FabricObject, moved: FabricObject[], transform: any): void {
-    let start = this.followers;
-    if (!start || start.transform !== transform) {
-      start = this.followers = {
-        transform,
-        left: transform?.original?.left ?? target.left,
-        top: transform?.original?.top ?? target.top,
-        objects: descendantsOf(this.canvas.getObjects(), moved).map((o) => ({ obj: o, left: o.left, top: o.top })),
-      };
+    if (!this.followers || this.followers.transform !== transform) {
+      this.followers = SubtreeDrag.begin(target, moved, transform, this.canvas.getObjects());
     }
-
-    const dx = target.left - start.left;
-    const dy = target.top - start.top;
-    for (const f of start.objects) {
-      f.obj.set({ left: f.left + dx, top: f.top + dy });
-      f.obj.setCoords();
-    }
-  }
-
-  /**
-   * La boîte d'un groupe suit ses enfants, et celle des groupes qui le contiennent — pas
-   * au-delà d'une pile pendant le geste (elle déplacerait le groupe, donc l'objet tenu) :
-   * la pile se recale à la fin (relayout).
-   */
-  private fitGroupChain(group: FabricObject): void {
-    const objects = this.canvas.getObjects();
-    for (let current: FabricObject | null = group; current && isFreeContainer(current); current = this.findParentContainer(current)) {
-      fitFreeContainer(current, objects);
-    }
+    this.followers.follow(target);
   }
 
   /** Le début d'une transformation : un groupe qu'on redimensionne garde son état de départ. */
@@ -488,10 +464,7 @@ export class LayoutManager {
     const target = e.transform?.target;
     this.freeResize = null;
     if (!target || !isFreeContainer(target) || e.transform.action !== "resizing") return;
-
-    const tl = target.getPositionByOrigin("left", "top");
-    const { w, h } = scaledSize(target);
-    this.freeResize = new FreeResizeSession(target, this.canvas.getObjects(), { left: tl.x, top: tl.y, width: w, height: h });
+    this.freeResize = FreeResizeSession.begin(target, this.canvas.getObjects());
   }
 
   /** A text inside a container was edited → its ancestors adapt. */
@@ -573,7 +546,7 @@ export class LayoutManager {
       const parent = this.findParentContainer(target);
       // In a group, there is no room to respect: the group follows
       if (parent && isFreeContainer(parent)) {
-        this.fitGroupChain(parent);
+        fitFreeAncestors(parent, this.canvas.getObjects());
         this.canvas.renderAll();
         return;
       }
@@ -592,7 +565,8 @@ export class LayoutManager {
     // A group: its content absorbs the resize, uniformly, around the fixed corner
     const groupResize = this.freeResize;
     if (groupResize && groupResize.container === target) {
-      this.resizeGroup(groupResize, e.transform);
+      groupResize.step(e.transform);
+      this.canvas.renderAll();
       return;
     }
 
@@ -819,26 +793,6 @@ export class LayoutManager {
       source: child,
       root,
     };
-  }
-
-  /**
-   * Un pas du redimensionnement d'un groupe : le facteur est la moyenne des deux axes
-   * (uniforme, un texte ne se déforme pas), le coin opposé à la poignée reste en place.
-   */
-  private resizeGroup(session: FreeResizeSession, transform: any): void {
-    const { start, container } = session;
-    const { w, h } = scaledSize(container);
-    const k = Math.max(0.05, (w / start.width + h / start.height) / 2);
-    const fx = transform.originX === "left" ? 0 : transform.originX === "right" ? 1 : 0.5;
-    const fy = transform.originY === "top" ? 0 : transform.originY === "bottom" ? 1 : 0.5;
-
-    session.apply(k, { x: start.left + start.width * fx, y: start.top + start.height * fy });
-    // Les piles du groupe se rangent dans leurs nouvelles dimensions
-    for (const obj of descendantsOf(this.canvas.getObjects(), [container])) {
-      if (isStackContainer(obj)) layoutSubtree(obj, this.canvas.getObjects());
-    }
-    fitFreeContainer(container, this.canvas.getObjects());
-    this.canvas.renderAll();
   }
 
   /** Create the appropriate session type for a target container. */

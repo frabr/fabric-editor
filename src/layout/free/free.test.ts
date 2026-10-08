@@ -125,6 +125,24 @@ describe("groupe libre", () => {
   });
 });
 
+describe("redimensionner un groupe à la poignée", () => {
+  it("le coin tiré agrandit, le coin opposé reste : step() lit la boîte du porteur", () => {
+    const g = group("g");
+    const a = rect("a", 100, 100, 50, 50, { child: { parentId: "g" } });
+    const b = rect("b", 150, 150, 50, 50, { child: { parentId: "g" } });
+    const canvas = canvasWith(g, a, b);
+    runLayout(canvas.getObjects());
+
+    const session = FreeResizeSession.begin(g, canvas.getObjects());
+    // La poignée bas-droite a porté le porteur à 200 × 200 (le haut-gauche reste)
+    g.set({ width: 200, height: 200 });
+    session.step({ originX: "left", originY: "top" });
+
+    expect(box(g)).toEqual({ x: 100, y: 100, w: 200, h: 200 });
+    expect(box(b)).toEqual({ x: 200, y: 200, w: 100, h: 100 });
+  });
+});
+
 describe("grouper, dégrouper", () => {
   it("grouper : rien ne bouge, le groupe prend la place du membre le plus haut", () => {
     const bg = rect("bg", 0, 0, 1000, 1000);
