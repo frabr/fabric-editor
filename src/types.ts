@@ -130,6 +130,11 @@ export type ControlOption = "clip" | "color" | "font" | "outline" | "corner_radi
 // Callbacks de sélection
 export interface SelectionCallbacks {
   onSelect?: (object: FabricObject) => void;
+  /**
+   * Sélection de plusieurs objets (déjà normalisée : jamais un objet avec son ancêtre,
+   * jamais un verrouillé). Absent, la lib retombe sur onSelect(premier objet).
+   */
+  onSelectMany?: (objects: FabricObject[]) => void;
   onDeselect?: () => void;
   /** Appelé quand une transformation commence (déplacement, rotation, redimensionnement) */
   onTransformStart?: () => void;

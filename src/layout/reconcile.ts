@@ -18,12 +18,16 @@
  * by the room above it, sized by the content below it — in the same pass.
  * Single pass, deterministic, no solver.
  *
+ * A free container (a group, `arrangement: "free"`) has no Yoga pass: its children
+ * keep their place and its box follows them (see free.ts). Its child containers are
+ * laid out as roots; inside a stack, a group is a rigid block (see yoga-engine).
+ *
  * Note: user-initiated resize is handled by ResizeSession, not here.
  * This module only handles programmatic relayout (content changes, mode
  * changes, move, etc.).
  */
 import type { FabricObject } from "#fabric";
-import { type LayoutData, type ContainerData, type ChildData, sizingOf } from "./types";
+import { type LayoutData, type ContainerData, type ChildData, sizingOf, isFreeContainer } from "./types";
 import {
   scaledSize,
   setShapeSize,
@@ -33,6 +37,7 @@ import {
   sortChildrenByOrder,
 } from "./geometry";
 import { yogaLayout } from "./yoga-engine";
+import { fitFreeContainer } from "./free";
 
 // ── public entry point ───────────────────────────────────────────────
 
@@ -47,10 +52,38 @@ export function runLayout(objects: FabricObject[]): void {
     if (!layout?.container) continue;
     // A nested container is laid out by its root's pass
     if (parentContainerOf(obj, objects)) continue;
+    layoutTree(obj, objects);
+  }
+}
 
-    const children = sortChildrenByOrder(resolveContainerChildren(objects, obj));
-    if (children.length === 0) continue;
-    layoutContainer(obj, layout.container, children, objects);
+/**
+ * A container and everything under it. A group lays its child containers out first
+ * (each one a root: its place is its own), then fits its box around them. A stack
+ * fits the groups it holds first (rigid blocks for Yoga), then runs its Yoga pass.
+ */
+function layoutTree(container: FabricObject, objects: FabricObject[]): void {
+  const cd = (container.get("layout") as LayoutData).container!;
+  const children = sortChildrenByOrder(resolveContainerChildren(objects, container));
+  if (children.length === 0) return;
+
+  if (cd.arrangement === "free") {
+    for (const { obj } of children) {
+      if ((obj.get("layout") as LayoutData | undefined)?.container) layoutTree(obj, objects);
+    }
+    fitFreeContainer(container, objects);
+    return;
+  }
+
+  fitGroupsUnder(container, objects);
+  layoutContainer(container, cd, children, objects);
+}
+
+/** The groups inside a stack's Yoga tree get their box before the pass (bottom-up). */
+function fitGroupsUnder(container: FabricObject, objects: FabricObject[]): void {
+  for (const { obj } of resolveContainerChildren(objects, container)) {
+    if (!(obj.get("layout") as LayoutData | undefined)?.container) continue;
+    if (isFreeContainer(obj)) layoutTree(obj, objects);
+    else fitGroupsUnder(obj, objects);
   }
 }
 
@@ -61,12 +94,10 @@ export function runLayout(objects: FabricObject[]): void {
  */
 export function relayoutSingle(
   container: FabricObject,
-  cd: ContainerData,
+  _cd: ContainerData,
   allObjects: FabricObject[],
 ): void {
-  const children = sortChildrenByOrder(resolveContainerChildren(allObjects, container));
-  if (children.length === 0) return;
-  layoutContainer(container, cd, children, allObjects);
+  layoutTree(container, allObjects);
 }
 
 /**

@@ -93,12 +93,19 @@ export { runLayout } from "./layout";
 export { ResizeSession } from "./layout";
 export type { LayoutData, SizingData, TextOverflow, ContainerData, ChildData, ContainerLayout, ChildLayout, SizeMode, AlignSelf, AlignItems, JustifyContent, FlexDirection, AttachSnapshot, LayoutSession } from "./layout";
 export { isContainer, isChild, isContainerLayout, isChildLayout, MIN_PAD } from "./layout";
+// Les groupes (containers libres) : leur boîte suit leurs enfants
+export { isFreeContainer, stackParentOf, fitFreeContainer } from "./layout";
+export type { Arrangement } from "./layout";
 // L'arbre de layout sur calques sérialisés (apibots : tracks, suppression ; creatorstudio : rendu).
 export { layoutParents, layoutRoot, layoutChildren, layoutDescendants, stackBlock } from "./layout";
 export type { TreeLayer, LayoutParents } from "./layout";
 export { scaledSize, topLeft, pointInObject, clampTopLeft, hasExceededOffset } from "./layout";
 export { ContainerizeSession, InsertChildSession, wrapContainerAroundChild } from "./layout";
 export { initYoga, isYogaReady, yogaLayout } from "./layout";
+
+// Aligner, répartir
+export { alignAxis, alignDelta, distributeDeltas, unionBox } from "./arrange";
+export type { AlignEdge, DistributeAxis, Box, Delta } from "./arrange";
 
 // HTML Renderer
 export { fabricToHtml, layerToHtmlStandalone } from "./html";

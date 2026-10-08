@@ -1,4 +1,4 @@
-import { FabricObject, Point } from "#fabric";
+import { ActiveSelection, FabricObject, Point } from "#fabric";
 import type { DesignCanvas } from "./DesignCanvas";
 import { CanvasGuides } from "./ui/guides";
 import { runLayout, relayoutSingle, bubbleUpLayout } from "./layout/reconcile";
@@ -9,7 +9,11 @@ import {
   type SizingData,
   type TextOverflow,
   sizingOf,
+  isFreeContainer,
+  type Arrangement,
 } from "./layout/types";
+import { arrangeAsStack, arrangeFree } from "./grouping";
+import { syncGroupControls } from "./ui/controls";
 import { pointInObject, isTextObject } from "./layout/geometry";
 import type { CustomTextbox } from "./controls/CustomTextbox";
 import { rulesOf } from "./capabilities";
@@ -19,6 +23,7 @@ export type SizePreset = "hug" | "hug-y" | "fixed";
 import { resolveContainerChildren, scaledSize, setShapeSize } from "./layout/geometry";
 import { availableRoom } from "./layout/room";
 import { placeBlockAbove } from "./layout/stacking";
+import { descendantsOf, fitFreeContainer, FreeResizeSession } from "./layout/free";
 import { ContainerizeSession } from "./layout/containerize-session";
 import { InsertChildSession } from "./layout/insert-child-session";
 
@@ -136,6 +141,10 @@ export class LayoutManager {
   private guides: CanvasGuides;
   private dtl: DtlState = { phase: "idle", cooldownUntil: 0 };
   private resizeSession: ResizeSession | null = null;
+  /** Le redimensionnement d'un groupe en cours (ouvert à before:transform). */
+  private freeResize: FreeResizeSession | null = null;
+  /** Les descendants d'une sélection multiple en cours de déplacement, et leur départ. */
+  private followers: { transform: unknown; left: number; top: number; objects: Array<{ obj: FabricObject; left: number; top: number }> } | null = null;
 
   constructor(canvas: DesignCanvas, callbacks: LayoutManagerCallbacks = {}, guideColor?: string) {
     this.canvas = canvas;
@@ -194,14 +203,31 @@ export class LayoutManager {
     this.callbacks.onLayoutChanged?.();
   }
 
-  /** Update padding on a container. */
+  /** Update padding on a container — one side, or "all" four. */
   setPadding(obj: FabricObject, side: string, value: number): void {
     const layout = obj.get("layout") as LayoutData | undefined;
     if (!layout?.container) return;
 
     if (!layout.container.padding) layout.container.padding = { top: 0, right: 0, bottom: 0, left: 0 };
-    (layout.container.padding as Record<string, number>)[side] = value;
+    const sides = side === "all" ? ["top", "right", "bottom", "left"] : [side];
+    for (const s of sides) (layout.container.padding as Record<string, number>)[s] = value;
     obj.set("layout", { ...layout });
+
+    this.relayout();
+    this.callbacks.onLayoutChanged?.();
+  }
+
+  /**
+   * Un groupe libre ou rangé (une pile) — la bascule ne fait rien sauter (cf. grouping).
+   */
+  setArrangement(obj: FabricObject, arrangement: Arrangement): void {
+    const cd = (obj.get("layout") as LayoutData | undefined)?.container;
+    if (!cd || (cd.arrangement ?? "stack") === arrangement) return;
+
+    const objects = this.canvas.getObjects();
+    if (arrangement === "stack") arrangeAsStack(obj, objects);
+    else arrangeFree(obj, objects);
+    syncGroupControls(obj);
 
     this.relayout();
     this.callbacks.onLayoutChanged?.();
@@ -350,6 +376,7 @@ export class LayoutManager {
     this.canvas.off("object:modified", this.onModifiedBound);
     this.canvas.off("object:resizing", this.onResizingBound);
     this.canvas.off("text:changed", this.onTextChangedBound);
+    this.canvas.off("before:transform", this.onBeforeTransformBound);
   }
 
   // ── Event wiring ──────────────────────────────────────────────────
@@ -358,18 +385,27 @@ export class LayoutManager {
   private onModifiedBound = (e: any) => this.onModified(e);
   private onResizingBound = (e: any) => this.onResizing(e);
   private onTextChangedBound = (e: any) => this.onTextChanged(e);
+  private onBeforeTransformBound = (e: any) => this.onBeforeTransform(e);
 
   private setupEventListeners(): void {
     this.canvas.on("object:moving", this.onMovingBound);
     this.canvas.on("object:modified", this.onModifiedBound);
     this.canvas.on("object:resizing", this.onResizingBound);
     this.canvas.on("text:changed", this.onTextChangedBound);
+    this.canvas.on("before:transform", this.onBeforeTransformBound);
   }
 
   // ── Canvas event handlers ─────────────────────────────────────────
 
   private onMoving(e: any): void {
     const obj = e.target;
+
+    // Plusieurs objets déplacés : pas de dépôt dans un container (une session ne prend
+    // qu'un enfant), leurs descendants suivent
+    if (obj instanceof ActiveSelection) {
+      this.moveFollowers(obj, obj.getObjects(), e.transform);
+      return;
+    }
 
     const layout = obj.get?.("layout") as LayoutData | undefined;
 
@@ -378,11 +414,24 @@ export class LayoutManager {
     // if it's also a child of another container).
     if (layout?.container) {
       const isSessionChild = this.dtl.phase === "anchored" && this.dtl.session.child === obj;
-      if (!isSessionChild) {
+      if (isFreeContainer(obj)) {
+        // A group's content follows it, untouched
+        this.moveFollowers(obj, [obj], e.transform);
+      } else if (!isSessionChild) {
         relayoutSingle(obj, layout.container, this.canvas.getObjects());
         this.canvas.renderAll();
       }
       // Don't return — the container can also be dragged into another shape
+    }
+
+    // Child of a group, moved inside it: it goes where it is put, the group's box follows
+    if (layout?.child && this.dtl.phase !== "anchored") {
+      const parent = this.findParentContainer(obj);
+      if (parent && isFreeContainer(parent)) {
+        this.fitGroupChain(parent);
+        this.canvas.renderAll();
+        return;
+      }
     }
 
     // Child being dragged inside active group → start reattach session
@@ -432,6 +481,54 @@ export class LayoutManager {
     }
   }
 
+  /**
+   * Les descendants des objets déplacés (un groupe, ou les objets d'une sélection multiple
+   * — jamais dans la sélection, cf. SelectionManager) suivent la translation de `target`
+   * depuis le début du geste. Sans relayout : dans une sélection, les positions des
+   * containers sont relatives à elle.
+   */
+  private moveFollowers(target: FabricObject, moved: FabricObject[], transform: any): void {
+    let start = this.followers;
+    if (!start || start.transform !== transform) {
+      start = this.followers = {
+        transform,
+        left: transform?.original?.left ?? target.left,
+        top: transform?.original?.top ?? target.top,
+        objects: descendantsOf(this.canvas.getObjects(), moved).map((o) => ({ obj: o, left: o.left, top: o.top })),
+      };
+    }
+
+    const dx = target.left - start.left;
+    const dy = target.top - start.top;
+    for (const f of start.objects) {
+      f.obj.set({ left: f.left + dx, top: f.top + dy });
+      f.obj.setCoords();
+    }
+  }
+
+  /**
+   * La boîte d'un groupe suit ses enfants, et celle des groupes qui le contiennent — pas
+   * au-delà d'une pile pendant le geste (elle déplacerait le groupe, donc l'objet tenu) :
+   * la pile se recale à la fin (relayout).
+   */
+  private fitGroupChain(group: FabricObject): void {
+    const objects = this.canvas.getObjects();
+    for (let current: FabricObject | null = group; current && isFreeContainer(current); current = this.findParentContainer(current)) {
+      fitFreeContainer(current, objects);
+    }
+  }
+
+  /** Le début d'une transformation : un groupe qu'on redimensionne garde son état de départ. */
+  private onBeforeTransform(e: any): void {
+    const target = e.transform?.target;
+    this.freeResize = null;
+    if (!target || !isFreeContainer(target) || e.transform.action !== "resizing") return;
+
+    const tl = target.getPositionByOrigin("left", "top");
+    const { w, h } = scaledSize(target);
+    this.freeResize = new FreeResizeSession(target, this.canvas.getObjects(), { left: tl.x, top: tl.y, width: w, height: h });
+  }
+
   /** A text inside a container was edited → its ancestors adapt. */
   private onTextChanged(e: any): void {
     const layout = e.target?.get?.("layout") as LayoutData | undefined;
@@ -442,6 +539,28 @@ export class LayoutManager {
 
   private onModified(e: any): void {
     const obj = e.target;
+
+    // Le magnétisme a pu décaler l'objet après le dernier object:moving
+    if (this.followers) {
+      const moved = obj instanceof ActiveSelection ? obj.getObjects() : [obj];
+      this.moveFollowers(obj, moved, this.followers.transform);
+    }
+    this.followers = null;
+
+    if (obj instanceof ActiveSelection) {
+      this.resetToIdle();
+      return;
+    }
+
+    // A group resized, or something moved / resized inside a group: everything settles
+    const parent = this.findParentContainer(obj);
+    const resizedGroup = this.freeResize;
+    this.freeResize = null;
+    if (this.dtl.phase === "idle" && (resizedGroup || (parent && isFreeContainer(parent)))) {
+      this.relayout();
+      this.callbacks.onLayoutChanged?.();
+      return;
+    }
 
     // Text child resized → its container settles (outside any drag session)
     const childLayout = obj?.get?.("layout") as LayoutData | undefined;
@@ -493,8 +612,14 @@ export class LayoutManager {
     // pushed by the layout itself), and its container chain follows
     if (layout?.child && !layout.container) {
       const objects = this.canvas.getObjects();
-      if (!isTextObject(target)) clampToRoom(target, e.transform, objects);
       const parent = this.findParentContainer(target);
+      // In a group, there is no room to respect: the group follows
+      if (parent && isFreeContainer(parent)) {
+        this.fitGroupChain(parent);
+        this.canvas.renderAll();
+        return;
+      }
+      if (!isTextObject(target)) clampToRoom(target, e.transform, objects);
       const pLayout = parent?.get?.("layout") as LayoutData | undefined;
       if (parent && pLayout?.container) {
         relayoutSingle(parent, pLayout.container, objects);
@@ -505,6 +630,13 @@ export class LayoutManager {
     }
 
     if (!layout?.container) return;
+
+    // A group: its content absorbs the resize, uniformly, around the fixed corner
+    const groupResize = this.freeResize;
+    if (groupResize && groupResize.container === target) {
+      this.resizeGroup(groupResize, e.transform);
+      return;
+    }
 
     // Create session on first resizing frame
     if (!this.resizeSession) {
@@ -733,6 +865,27 @@ export class LayoutManager {
       source: child,
       root,
     };
+  }
+
+  /**
+   * Un pas du redimensionnement d'un groupe : le facteur est la moyenne des deux axes
+   * (uniforme, un texte ne se déforme pas), le coin opposé à la poignée reste en place.
+   */
+  private resizeGroup(session: FreeResizeSession, transform: any): void {
+    const { start, container } = session;
+    const { w, h } = scaledSize(container);
+    const k = Math.max(0.05, (w / start.width + h / start.height) / 2);
+    const fx = transform.originX === "left" ? 0 : transform.originX === "right" ? 1 : 0.5;
+    const fy = transform.originY === "top" ? 0 : transform.originY === "bottom" ? 1 : 0.5;
+
+    session.apply(k, { x: start.left + start.width * fx, y: start.top + start.height * fy });
+    // Les piles du groupe se rangent dans leurs nouvelles dimensions
+    for (const obj of descendantsOf(this.canvas.getObjects(), [container])) {
+      const cd = (obj.get("layout") as LayoutData | undefined)?.container;
+      if (cd && cd.arrangement !== "free") relayoutSingle(obj, cd, this.canvas.getObjects());
+    }
+    fitFreeContainer(container, this.canvas.getObjects());
+    this.canvas.renderAll();
   }
 
   /** Create the appropriate session type for a target container. */

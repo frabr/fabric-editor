@@ -1,4 +1,4 @@
-import { FabricObject, FabricImage, Point, Gradient, Shadow } from "#fabric";
+import { ActiveSelection, FabricObject, FabricImage, Point, Gradient, Shadow } from "#fabric";
 import { DesignCanvas, type FrameRect } from "./DesignCanvas";
 import { LayerManager } from "./LayerManager";
 import { SelectionManager } from "./SelectionManager";
@@ -16,6 +16,14 @@ import { DRAG_PREVIEW_KEY } from "./types";
 import type { EditorConfig, LayerData, FontsConfig, ShapeType } from "./types";
 import { initYoga } from "./layout/yoga-engine";
 import { isTextObject } from "./layout/geometry";
+import { layoutDescendants, layoutParents } from "./layout/tree";
+import type { LayoutData } from "./layout/types";
+import { groupObjects, padGroupOnFirstFill, ungroupObject } from "./grouping";
+import { stackParentOf } from "./layout/free";
+import {
+  alignAxis, alignDelta, distributeDeltas, unionBox,
+  type AlignEdge, type Box, type DistributeAxis,
+} from "./arrange";
 import { rulesOf } from "./capabilities";
 import { collectUserSlots, USER_SLOT_STYLE_KEY, type UserSlot, type UserSlotStyle } from "./userSlots";
 
@@ -745,7 +753,9 @@ export class FabricEditor {
   setFillColor(color: string): void {
     const obj = this.selection.current;
     if (!obj) return;
+    const previous = obj.fill;
     obj.set({ fill: color, opacity: 1 });
+    if (padGroupOnFirstFill(obj, previous)) this.layout.relayout();
     this.canvas.renderAll();
   }
 
@@ -772,7 +782,9 @@ export class FabricEditor {
         { offset: 1, color: color2 },
       ],
     });
+    const previous = obj.fill;
     obj.set({ fill: gradient, opacity: 1 });
+    if (padGroupOnFirstFill(obj, previous)) this.layout.relayout();
     this.canvas.renderAll();
   }
 
@@ -871,28 +883,21 @@ export class FabricEditor {
   private _clipboard: any[] | null = null;
 
   /**
-   * Copy the current selection to an internal clipboard.
-   * If the selected object is a layout container, its children are copied too.
+   * Copy the current selection to an internal clipboard, with every descendant of the
+   * selected containers, in stack order.
    */
   copySelection(): void {
     const selected = this.selection.selected;
     if (selected.length === 0) return;
 
     const allObjects = this.canvas.getObjects();
-    const toCopy: FabricObject[] = [];
-
-    for (const obj of selected) {
-      toCopy.push(obj);
-      // If this object is a layout container, also copy its children
-      const id = obj.get("layerId") as string | undefined;
-      if (id) {
-        for (const other of allObjects) {
-          if (other.get("layout")?.child?.parentId === id && !toCopy.includes(other)) {
-            toCopy.push(other);
-          }
-        }
-      }
-    }
+    const descendants = layoutDescendants(
+      layoutParents(allObjects),
+      selected.map((obj) => obj.get("layerId") as string),
+    );
+    const toCopy = allObjects.filter((obj) =>
+      selected.includes(obj) || descendants.has(obj.get("layerId") as string),
+    );
 
     this._clipboard = toCopy.map((obj) =>
       obj.toObject(["layerId", "lockMode", "lockContent", "layout", "bindings"])
@@ -911,11 +916,11 @@ export class FabricEditor {
 
     // Build an ID remapping table: old layerId → new layerId
     const idMap = new Map<string, string>();
-    for (const data of this._clipboard) {
+    this._clipboard.forEach((data, i) => {
       if (data.layerId) {
-        idMap.set(data.layerId, `layer_${Date.now()}_${Math.floor(Math.random() * 1000)}`);
+        idMap.set(data.layerId, `layer_${Date.now()}_${i}_${Math.floor(Math.random() * 1000)}`);
       }
-    }
+    });
 
     // Deep-clone each layer, assign new IDs, remap layout references, offset position
     const cloned: any[] = this._clipboard.map((data) => {
@@ -952,10 +957,8 @@ export class FabricEditor {
       }
     }
 
-    // Select the pasted objects
-    if (objects.length === 1) {
-      this.canvas.setActiveObject(objects[0]);
-    }
+    // Select the pasted objects (their roots: children follow their container)
+    this.selection.selectMany(objects);
     this.canvas.renderAll();
     return objects;
   }
@@ -998,9 +1001,135 @@ export class FabricEditor {
     };
   }
 
+  // ── Grouper, dégrouper ────────────────────────────────────────────
+
+  /**
+   * Groupe la sélection (au moins deux objets) dans un groupe libre — rien ne bouge. La
+   * resélection de ses membres remonte au groupe : c'est lui qui est sélectionné. Rend le
+   * groupe, ou null.
+   */
+  groupSelection(): FabricObject | null {
+    const selected = this.selection.selected;
+    if (selected.length < 2) return null;
+
+    let group: FabricObject | null = null;
+    this.selection.withSelectionReleased(() => {
+      group = groupObjects(this.canvas, selected, `layer_${Date.now()}_${Math.floor(Math.random() * 1000)}`);
+      if (group) this.layout.relayout();
+    });
+    return group;
+  }
+
+  /**
+   * Dégroupe le container sélectionné : ses enfants restent à leur place, sélectionnés.
+   * Rend les enfants (vide : rien à dégrouper).
+   */
+  ungroupSelection(): FabricObject[] {
+    const container = this.selection.current;
+    if (!container || !(container.get("layout") as LayoutData | undefined)?.container) return [];
+
+    this.canvas.discardActiveObject();
+    const children = ungroupObject(this.canvas, container);
+    this.layout.relayout();
+    this.selection.selectMany(children);
+    return children;
+  }
+
+  // ── Aligner, répartir ─────────────────────────────────────────────
+
+  /**
+   * Aligne la sélection. Plusieurs objets s'alignent sur leur boîte commune ; un objet
+   * seul, sur l'intérieur de son container, ou sur l'artboard. Un objet bouge avec sa
+   * descendance. Un enfant de pile ne bouge pas : il s'aligne dans la pile (alignSelf),
+   * sur l'axe qu'elle laisse libre — l'autre est le sien.
+   */
+  alignSelection(edge: AlignEdge): void {
+    if (!this.selection.hasSelection) return;
+
+    this.selection.withSelectionReleased((selected) => {
+      const objects = this.canvas.getObjects();
+      const ref = selected.length > 1
+        ? unionBox(selected.map((obj) => obj.getBoundingRect()))
+        : this.alignReference(selected[0], objects);
+
+      let relayout = false;
+      for (const obj of selected) {
+        const parent = stackParentOf(obj);
+        if (parent) {
+          relayout = this.alignInStack(obj, parent, edge) || relayout;
+          continue;
+        }
+        const { dx, dy } = alignDelta(obj.getBoundingRect(), ref, edge);
+        this.moveWithDescendants(obj, dx, dy, objects);
+      }
+      if (relayout) this.layout.relayout();
+    });
+    this.canvas.renderAll();
+  }
+
+  /**
+   * Répartit la sélection à espace égal sur un axe : les deux extrêmes restent en place.
+   * Seulement les objets libres (un enfant de pile a la place que la pile lui donne), et
+   * à partir de trois.
+   */
+  distributeSelection(axis: DistributeAxis): void {
+    const objects = this.canvas.getObjects();
+    const free = this.selection.selected.filter((obj) => !stackParentOf(obj));
+    if (free.length < 3) return;
+
+    this.selection.withSelectionReleased(() => {
+      const deltas = distributeDeltas(free.map((obj) => obj.getBoundingRect()), axis);
+      free.forEach((obj, i) => this.moveWithDescendants(obj, deltas[i].dx, deltas[i].dy, objects));
+    });
+    this.canvas.renderAll();
+  }
+
+  /** Aligne un enfant dans sa pile, sur l'axe qu'elle laisse libre. Vrai s'il a changé. */
+  private alignInStack(obj: FabricObject, parent: FabricObject, edge: AlignEdge): boolean {
+    const direction = (parent.get("layout") as LayoutData).container?.flexDirection ?? "column";
+    if (alignAxis(edge) !== (direction === "column" ? "x" : "y")) return false;
+
+    const layout = obj.get("layout") as LayoutData;
+    const alignSelf = edge === "left" || edge === "top" ? "flex-start"
+      : edge === "right" || edge === "bottom" ? "flex-end"
+      : "center";
+    if (layout.child!.alignSelf === alignSelf) return false;
+    obj.set("layout", { ...layout, child: { ...layout.child!, alignSelf } });
+    return true;
+  }
+
+  /** La référence d'un objet seul : l'intérieur de son container, sinon l'artboard. */
+  private alignReference(obj: FabricObject, objects: FabricObject[]): Box {
+    const parentId = (obj.get("layout") as LayoutData | undefined)?.child?.parentId;
+    const parent = parentId ? objects.find((o) => o.get("layerId") === parentId) : undefined;
+    if (!parent) return { left: 0, top: 0, width: this.width, height: this.height };
+
+    const box = parent.getBoundingRect();
+    const pad = (parent.get("layout") as LayoutData | undefined)?.container?.padding;
+    if (!pad) return box;
+    return {
+      left: box.left + pad.left,
+      top: box.top + pad.top,
+      width: box.width - pad.left - pad.right,
+      height: box.height - pad.top - pad.bottom,
+    };
+  }
+
+  /** Déplace un objet et toute sa descendance (positions absolues). */
+  private moveWithDescendants(obj: FabricObject, dx: number, dy: number, objects: FabricObject[]): void {
+    if (!dx && !dy) return;
+    const ids = layoutDescendants(layoutParents(objects), [obj.get("layerId") as string]);
+    for (const o of objects) {
+      if (o !== obj && !ids.has(o.get("layerId") as string)) continue;
+      o.set({ left: o.left + dx, top: o.top + dy });
+      o.setCoords();
+    }
+  }
+
   /**
    * Supprime l'objet ou les objets sélectionnés
-   * Les objets verrouillés (position ou full) ne peuvent pas être supprimés
+   * Les objets verrouillés (position ou full) ne peuvent pas être supprimés ; un container
+   * emporte sa descendance.
    */
   deleteSelection(): void {
     const selected = this.selection.selected;
@@ -1010,8 +1139,16 @@ export class FabricEditor {
     const deletable = selected.filter((obj) => rulesOf(obj).deletes);
     if (deletable.length === 0) return;
 
-    this.layers.removeMany(deletable);
+    // Un container emporte toute sa descendance
+    const objects = this.canvas.getObjects();
+    const descendants = layoutDescendants(
+      layoutParents(objects),
+      deletable.map((obj) => obj.get("layerId") as string),
+    );
     this.canvas.discardActiveObject();
+    this.layers.removeMany(objects.filter((obj) =>
+      deletable.includes(obj) || descendants.has(obj.get("layerId") as string),
+    ));
     this.canvas.renderAll();
   }
 
@@ -1075,12 +1212,21 @@ export class FabricEditor {
     if (FabricEditor._toObjectExtended) return;
     FabricEditor._toObjectExtended = true;
 
+    // Dans une sélection multiple, Fabric donne des positions relatives à la sélection :
+    // un calque exporté (historique, copie, overlays de l'hôte) garde sa place sur le canvas.
+    // La sélection n'a ni poignées de taille ni rotation (SelectionManager) : seule la
+    // translation diffère.
     const originalToObject = FabricObject.prototype.toObject;
     FabricObject.prototype.toObject = function(propertiesToInclude) {
-      return originalToObject.call(
+      const data = originalToObject.call(
         this,
         ["layerId", "layout", "bindings"].concat(propertiesToInclude || [])
       );
+      if (this.group instanceof ActiveSelection) {
+        const { x, y } = this.getXY();
+        Object.assign(data, { left: x, top: y });
+      }
+      return data;
     };
   }
 

@@ -1,5 +1,5 @@
 import { Textbox, Point, controlsUtils } from "#fabric";
-import { type LayoutData, type SizingData, type TextOverflow } from "../layout/types";
+import { type LayoutData, type SizingData, type TextOverflow, isFreeContainer } from "../layout/types";
 import { resolveTextBox, type TextConstraint, type TextMeasure } from "../layout/text-box";
 
 const { changeObjectWidth, changeObjectHeight } = controlsUtils;
@@ -235,8 +235,12 @@ export class CustomTextbox extends Textbox {
     });
   }
 
+  /** Placé par une pile — un groupe (container libre) laisse ses enfants à leur propre taille. */
   private _isChild(): boolean {
-    return (this.get("layout") as LayoutData | undefined)?.child != null;
+    const parentId = (this.get("layout") as LayoutData | undefined)?.child?.parentId;
+    if (parentId == null) return false;
+    const parent = this.canvas?.getObjects().find((o) => o.get("layerId") === parentId);
+    return !isFreeContainer(parent);
   }
 
   private _withAnchor(transform: any, resize: () => boolean): boolean {

@@ -55,8 +55,23 @@ export type AlignItems = "stretch" | "flex-start" | "flex-end" | "center";
 /** Flex direction (maps to Yoga flexDirection). */
 export type FlexDirection = "column" | "row";
 
+/**
+ * How a container places its children:
+ * - "stack": Flexbox (Yoga) — direction, gap, alignment (default)
+ * - "free": children keep the place they were put at; the container's box
+ *   follows them (their union, plus the padding) — a group
+ */
+export type Arrangement = "stack" | "free";
+
 /** "I am a parent" — present when the object has children. */
 export interface ContainerData {
+  /** How the children are placed (default: "stack"). */
+  arrangement?: Arrangement;
+  /**
+   * "group": the container was created by grouping (⌘G) — a carrier with nothing of
+   * its own, removed when its children are ungrouped.
+   */
+  origin?: "group";
   /** Flex direction: column (vertical, default) or row (horizontal). */
   flexDirection?: FlexDirection;
   /** Gap between children in the main axis direction (pixels). */
@@ -103,6 +118,11 @@ export function isContainer(l: LayoutData): boolean {
 
 export function isChild(l: LayoutData): boolean {
   return l.child != null;
+}
+
+/** Is this object a free container (a group: children placed by hand)? */
+export function isFreeContainer(obj: { get(key: string): unknown } | null | undefined): boolean {
+  return (obj?.get("layout") as LayoutData | undefined)?.container?.arrangement === "free";
 }
 
 // ── Deprecated aliases (to be removed) ─────────────────────────────

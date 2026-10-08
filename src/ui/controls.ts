@@ -10,6 +10,8 @@ import type { DesignCanvas } from "../DesignCanvas";
 import { parseHex, hexAlpha } from "./color";
 import { bindingBadgeLabel, drawDynamicMediaOutline } from "../bindings";
 import { installBadgeLayer } from "./badges";
+import { isFreeContainer } from "../layout/types";
+import { getLockMode } from "../locking";
 
 // ── Public entry point ─────────────────────────────────────────────
 
@@ -140,6 +142,21 @@ function installControlRenderer(
   };
 }
 
+// ── Groups ──────────────────────────────────────────────────────────
+
+/**
+ * Un groupe ne se redimensionne que par les coins (uniforme : son contenu absorbe
+ * l'agrandissement sans se déformer) et ne tourne pas. À rappeler quand un objet
+ * devient ou cesse d'être un groupe.
+ */
+export function syncGroupControls(obj: FabricObject): void {
+  const group = isFreeContainer(obj);
+  obj.setControlsVisibility({ ml: !group, mr: !group, mt: !group, mb: !group, mtr: !group });
+  // Hors groupe, la rotation reste celle du verrou
+  if (group) obj.lockRotation = true;
+  else if (getLockMode(obj) === "free") obj.lockRotation = false;
+}
+
 // ── Edge hit areas + rotation control ──────────────────────────────
 
 const HIT_DEPTH = 14;
@@ -196,6 +213,7 @@ function installControlHitAreas(canvas: DesignCanvas): void {
   canvas.on("object:added", (e) => {
     const obj = e.target;
     if (!obj?.controls) return;
+    if (isFreeContainer(obj)) syncGroupControls(obj);
 
     // Rotation on the right side
     if (obj.controls.mtr) {
@@ -296,10 +314,14 @@ function installHoverBorder(
 ): void {
   let hoveredObj: FabricObject | null = null;
 
+  // Le lasso vit sur le calque du dessus, peint juste avant after:render : on le repeint
+  // après l'effacement, sinon il n'apparaît jamais pendant qu'on le trace.
   const clearTopCtx = () => {
     const fc = canvas.originalFabricCanvas as any;
     const ctx = fc.contextTop as CanvasRenderingContext2D;
-    if (ctx) ctx.clearRect(0, 0, fc.width, fc.height);
+    if (!ctx) return;
+    ctx.clearRect(0, 0, fc.width, fc.height);
+    if (fc._groupSelector) fc.renderTopLayer(ctx);
   };
 
   canvas.on("mouse:over", (e: any) => {

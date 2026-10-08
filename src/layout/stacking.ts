@@ -63,9 +63,7 @@ export function bringBlockForward(
   obj: FabricObject,
   overlaps: (a: FabricObject, b: FabricObject) => boolean,
 ): FabricObject[] | null {
-  const siblings = siblingsOf(objects, obj);
-  const next = siblings.slice(siblings.indexOf(obj) + 1).find((s) => overlaps(obj, s));
-  return next ? placeBlockAbove(objects, obj, next) : null;
+  return bringBlocksForward(objects, [obj], overlaps);
 }
 
 /**
@@ -74,8 +72,47 @@ export function bringBlockForward(
  * fond). Null : rien ne bouge.
  */
 export function sendBlockBackward(objects: FabricObject[], obj: FabricObject): FabricObject[] | null {
-  const siblings = siblingsOf(objects, obj);
-  const prev = siblings[siblings.indexOf(obj) - 1];
-  if (!prev || prev === objects[0]) return null;
-  return placeBelow(objects, obj, prev);
+  return sendBlocksBackward(objects, [obj]);
+}
+
+/**
+ * Monte plusieurs blocs d'un plan, chacun devant le premier bloc de même niveau qui le
+ * chevauche et n'est pas lui-même monté — des objets sélectionnés ensemble ne se
+ * doublent pas. Le plus haut d'abord. Null : rien ne bouge.
+ */
+export function bringBlocksForward(
+  objects: FabricObject[],
+  moved: FabricObject[],
+  overlaps: (a: FabricObject, b: FabricObject) => boolean,
+): FabricObject[] | null {
+  let order = objects;
+  let changed = false;
+  for (const obj of [...moved].sort((a, b) => objects.indexOf(b) - objects.indexOf(a))) {
+    const siblings = siblingsOf(order, obj);
+    const next = siblings
+      .slice(siblings.indexOf(obj) + 1)
+      .find((s) => !moved.includes(s) && overlaps(obj, s));
+    if (!next) continue;
+    order = placeBlockAbove(order, obj, next);
+    changed = true;
+  }
+  return changed ? order : null;
+}
+
+/**
+ * Descend plusieurs blocs d'un plan, chacun sous le bloc de même niveau juste en dessous
+ * qui n'est pas lui-même descendu. Le plus bas d'abord, jamais sous le fond. Null : rien
+ * ne bouge.
+ */
+export function sendBlocksBackward(objects: FabricObject[], moved: FabricObject[]): FabricObject[] | null {
+  let order = objects;
+  let changed = false;
+  for (const obj of [...moved].sort((a, b) => objects.indexOf(a) - objects.indexOf(b))) {
+    const siblings = siblingsOf(order, obj);
+    const prev = siblings.slice(0, siblings.indexOf(obj)).reverse().find((s) => !moved.includes(s));
+    if (!prev || prev === order[0]) continue;
+    order = placeBelow(order, obj, prev);
+    changed = true;
+  }
+  return changed ? order : null;
 }

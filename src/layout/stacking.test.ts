@@ -4,7 +4,7 @@
  */
 import { describe, it, expect } from "vitest";
 import type { FabricObject } from "#fabric";
-import { bringBlockForward, placeBlockAbove, sendBlockBackward, stackBlock } from "./stacking";
+import { bringBlockForward, bringBlocksForward, placeBlockAbove, sendBlockBackward, sendBlocksBackward, stackBlock } from "./stacking";
 
 function obj(id: string, parentId?: string): FabricObject {
   const layout = parentId ? { child: { parentId } } : undefined;
@@ -67,5 +67,17 @@ describe("stacking", () => {
     expect(sendBlockBackward(stack, A)).toBeNull();
     expect(sendBlockBackward(stack, a1)).toBeNull();
     expect(ids(sendBlockBackward(stack, a2))).toEqual(["bg", "A", "a2", "a1", "B", "C", "c1"]);
+  });
+
+  it("monter plusieurs objets : ils passent devant leur voisin sans se doubler", () => {
+    // B et C montent ensemble : C est déjà en haut, B ne passe pas par-dessus C
+    expect(bringBlocksForward(stack, [B, C], always)).toBeNull();
+    // A et B montent : chacun passe devant C, dans leur ordre
+    expect(ids(bringBlocksForward(stack, [A, B], always))).toEqual(["bg", "C", "c1", "A", "a1", "a2", "B"]);
+  });
+
+  it("descendre plusieurs objets : jamais sous le fond, sans se doubler", () => {
+    expect(sendBlocksBackward(stack, [A, B])).toBeNull();
+    expect(ids(sendBlocksBackward(stack, [B, C]))).toEqual(["bg", "B", "C", "c1", "A", "a1", "a2"]);
   });
 });

@@ -10,7 +10,7 @@ import {
 import type { DesignCanvas } from "./DesignCanvas";
 import { CustomTextbox } from "./controls/CustomTextbox";
 import { migrateLegacyLayout } from "./layout/legacy";
-import { bringBlockForward, sendBlockBackward } from "./layout/stacking";
+import { bringBlocksForward, sendBlocksBackward } from "./layout/stacking";
 import { kindOf, rulesOf } from "./capabilities";
 import type { LayoutData } from "./layout/types";
 import { createShape as createShapeObject, createPathsShape, createImage } from "./shapes/factories";
@@ -142,21 +142,23 @@ export class LayerManager {
   }
 
   /**
-   * Monte l'objet devant le premier objet de même niveau qui le chevauche. Un
-   * container emmène ses descendants (toujours au-dessus de lui) ; un enfant reste
-   * parmi les enfants de son container.
+   * Monte l'objet (ou les objets) devant le premier objet de même niveau qui le
+   * chevauche. Un container emmène ses descendants (toujours au-dessus de lui) ; un enfant
+   * reste parmi les enfants de son container ; des objets montés ensemble ne se doublent pas.
    */
-  bringForward(obj: FabricObject): void {
-    const order = bringBlockForward(this.canvas.getObjects(), obj, (a, b) => a.isOverlapping(b));
+  bringForward(obj: FabricObject | FabricObject[]): void {
+    const moved = Array.isArray(obj) ? obj : [obj];
+    const order = bringBlocksForward(this.canvas.getObjects(), moved, (a, b) => a.isOverlapping(b));
     if (order) this.applyStackOrder(order);
   }
 
   /**
-   * Descend l'objet d'un niveau, mêmes règles de blocs que bringForward. Ne peut pas
-   * descendre en dessous de l'image de fond.
+   * Descend l'objet (ou les objets) d'un niveau, mêmes règles de blocs que bringForward.
+   * Ne peut pas descendre en dessous de l'image de fond.
    */
-  sendBackward(obj: FabricObject): void {
-    const order = sendBlockBackward(this.canvas.getObjects(), obj);
+  sendBackward(obj: FabricObject | FabricObject[]): void {
+    const moved = Array.isArray(obj) ? obj : [obj];
+    const order = sendBlocksBackward(this.canvas.getObjects(), moved);
     if (order) this.applyStackOrder(order);
   }
 

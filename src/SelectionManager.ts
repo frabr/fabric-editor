@@ -5,6 +5,7 @@ import type { LayoutData } from "./layout/types";
 import { isTextObject } from "./layout/geometry";
 import type { SelectionCallbacks, ControlOption } from "./types";
 import { rulesOf } from "./capabilities";
+import { stackParentOf } from "./layout/free";
 
 /**
  * Gère la sélection des objets sur le canvas
@@ -75,6 +76,13 @@ export class SelectionManager {
    */
   set onSelect(callback: ((obj: FabricObject) => void) | undefined) {
     this.callbacks.onSelect = callback;
+  }
+
+  /**
+   * Définit le callback onSelectMany
+   */
+  set onSelectMany(callback: ((objects: FabricObject[]) => void) | undefined) {
+    this.callbacks.onSelectMany = callback;
   }
 
   /**
@@ -177,6 +185,39 @@ export class SelectionManager {
     if (!obj) return false;
     this.select(obj);
     return true;
+  }
+
+  /**
+   * Sélectionne plusieurs objets (normalisés comme une sélection à la souris). Un seul
+   * objet retenu : sélection simple ; aucun : rien n'est sélectionné.
+   */
+  selectMany(objects: FabricObject[]): void {
+    const kept = this.normalizeMany(objects);
+    if (kept.length === 0) this.clear();
+    else if (kept.length === 1) this.select(kept[0]);
+    else {
+      this.canvas.setActiveObject(new ActiveSelection(kept, { canvas: this.canvas.originalFabricCanvas }));
+      this.canvas.renderAll();
+    }
+  }
+
+  /**
+   * Travaille sur les objets sélectionnés hors de la sélection de Fabric — dedans, leurs
+   * positions sont relatives à elle — puis les resélectionne, dans le même groupe. L'hôte
+   * n'entend que la resélection : la barre se replace sur la nouvelle boîte.
+   */
+  withSelectionReleased(fn: (objects: FabricObject[]) => void): void {
+    const objects = this.selected;
+    const groupId = this._activeGroupId;
+
+    const silenced = this._silenced;
+    this._silenced = true;
+    this.canvas.discardActiveObject();
+    this._silenced = silenced;
+    this._activeGroupId = groupId;
+
+    fn(objects);
+    this.selectMany(objects);
   }
 
   /**
@@ -294,7 +335,7 @@ export class SelectionManager {
    * Gère la création/mise à jour de sélection
    * Les objets verrouillés sont exclus des sélections multiples
    */
-  private handleSelection(e: { selected?: FabricObject[] }): void {
+  private handleSelection(): void {
     if (this._silenced) return;
 
     const activeObject = this.canvas.getActiveObject();
@@ -302,48 +343,8 @@ export class SelectionManager {
     if (!activeObject) return;
 
     // Sélection multiple (activeSelection)
-    if (activeObject.type === "activeselection" && e.selected) {
-      // Filtrer les objets verrouillés de la sélection
-      const unlocked = e.selected.filter((obj) => !isPositionLocked(obj));
-
-      // Si tous les objets sont verrouillés, annuler la sélection
-      if (unlocked.length === 0) {
-        this.canvas.discardActiveObject();
-        this._current = null;
-        if (this.callbacks.onDeselect) {
-          this.callbacks.onDeselect();
-        }
-        return;
-      }
-
-      // Si un seul objet non verrouillé, le sélectionner individuellement
-      if (unlocked.length === 1) {
-        this.canvas.discardActiveObject();
-        this.canvas.setActiveObject(unlocked[0]);
-        this._current = unlocked[0];
-        if (this.callbacks.onSelect) {
-          this.callbacks.onSelect(unlocked[0]);
-        }
-        return;
-      }
-
-      // Si des objets verrouillés ont été filtrés, recréer la sélection sans eux
-      if (unlocked.length < e.selected.length) {
-        this.canvas.discardActiveObject();
-        const newSelection = new ActiveSelection(unlocked, { canvas: this.canvas.originalFabricCanvas });
-        this.canvas.setActiveObject(newSelection);
-        this._current = unlocked;
-        if (this.callbacks.onSelect && unlocked[0]) {
-          this.callbacks.onSelect(unlocked[0]);
-        }
-        return;
-      }
-
-      // Sélection normale (aucun objet verrouillé)
-      this._current = e.selected;
-      if (this.callbacks.onSelect && e.selected[0]) {
-        this.callbacks.onSelect(e.selected[0]);
-      }
+    if (activeObject instanceof ActiveSelection) {
+      this.handleMultipleSelection(activeObject);
       return;
     }
 
@@ -363,6 +364,75 @@ export class SelectionManager {
     if (this.callbacks.onSelect) {
       this.callbacks.onSelect(activeObject);
     }
+  }
+
+  /**
+   * Une sélection multiple ne garde que des objets du niveau visé : chacun remonte à son
+   * container comme un clic (resolveTarget), un objet dont l'ancêtre est pris suit cet
+   * ancêtre, les verrouillés restent dehors. Si la sélection de Fabric n'est pas déjà
+   * celle-là, on la remplace — l'événement qui suit repasse ici, sélection conforme.
+   * Pas de poignées de taille ni de rotation : un redimensionnement ne s'empile jamais
+   * en `scale`, et la sélection n'a pas encore le sien (cf. groupes libres). Des enfants
+   * d'une pile ne se déplacent pas à plusieurs : leur place est celle que la pile leur
+   * donne (ceux d'un groupe, si).
+   */
+  private handleMultipleSelection(selection: ActiveSelection): void {
+    const members = selection.getObjects();
+    const kept = this.normalizeMany(members);
+
+    if (kept.length === 0) {
+      this.canvas.discardActiveObject();
+      this.canvas.requestRenderAll();
+      return;
+    }
+    if (kept.length === 1) {
+      this.canvas.setActiveObject(kept[0]);
+      this.canvas.requestRenderAll();
+      return;
+    }
+    if (kept.length !== members.length || kept.some((obj) => !members.includes(obj))) {
+      this.canvas.setActiveObject(new ActiveSelection(kept, { canvas: this.canvas.originalFabricCanvas }));
+      this.canvas.requestRenderAll();
+      return;
+    }
+
+    const pinned = kept.some((obj) => stackParentOf(obj));
+    selection.set({ hasControls: false, lockMovementX: pinned, lockMovementY: pinned });
+    this._current = kept;
+    if (this.callbacks.onSelectMany) this.callbacks.onSelectMany(kept);
+    else this.callbacks.onSelect?.(kept[0]);
+  }
+
+  /**
+   * Les objets d'une sélection multiple ramenés au niveau visé, dans l'ordre de la pile.
+   * Le container dans lequel on est entré n'en fait pas partie : c'est le cadre de la
+   * sélection, pas un de ses éléments.
+   */
+  normalizeMany(objects: FabricObject[]): FabricObject[] {
+    const picked = new Set<FabricObject>();
+    for (const obj of objects) {
+      const resolved = this.resolveTarget(obj);
+      if (this._activeGroupId && resolved.get("layerId") === this._activeGroupId) continue;
+      if (isPositionLocked(resolved)) continue;
+      picked.add(resolved);
+    }
+
+    const all = this.canvas.getObjects();
+    const byId = new Map(all.map((o) => [o.get("layerId") as string, o]));
+    const hasPickedAncestor = (obj: FabricObject): boolean => {
+      const seen = new Set<FabricObject>();
+      let parentId = (obj.get("layout") as LayoutData | undefined)?.child?.parentId;
+      while (parentId) {
+        const parent = byId.get(parentId);
+        if (!parent || seen.has(parent)) return false;
+        if (picked.has(parent)) return true;
+        seen.add(parent);
+        parentId = (parent.get("layout") as LayoutData | undefined)?.child?.parentId;
+      }
+      return false;
+    };
+
+    return all.filter((obj) => picked.has(obj) && !hasPickedAncestor(obj));
   }
 
   /**

@@ -27,6 +27,8 @@ import { FabRect } from "./shapes/FabRect";
 import { FabCircle } from "./shapes/FabCircle";
 import { FabPath } from "./shapes/FabPath";
 import type { ControlOption } from "./types";
+import { stackParentOf } from "./layout/free";
+import { isFreeContainer } from "./layout/types";
 
 /**
  * - `text` : un texte
@@ -78,6 +80,12 @@ export function kindOf(obj: FabricObject): ObjectKind {
 export function rulesOf(obj: FabricObject, { ignoreLock = false }: RulesQuery = {}): ObjectRules {
   const rules = kindRules(obj, kindOf(obj));
   if (isOutOfPlay(obj)) Object.assign(rules, { onToolboxImage: null, hosts: false });
+  // Un groupe ne reçoit rien par dépôt (on dégroupe, on regroupe) ; son porteur n'a pas
+  // d'image à recevoir
+  if (isFreeContainer(obj)) Object.assign(rules, { onToolboxImage: null, hosts: false });
+  // Dans une pile, l'ordre est celui de la pile : il se change en glissant, pas par plans.
+  // Dans un groupe (container libre), les plans sont libres.
+  if (stackParentOf(obj)) rules.restacks = false;
   const locked = lockedRules(rules, ignoreLock ? "free" : getLockMode(obj));
   if (rules.onToolboxImage !== "fill" || !isUserSlot(obj)) return locked;
 

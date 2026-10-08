@@ -20,17 +20,21 @@
  *   its content, never wider than the room its parent gives (a text three
  *   levels down wraps at the top container's width), and heights flow up
  *   in the same pass. Without the objects, a nested container is a rigid box.
+ * - A group (free container) is always a rigid box — its size is its content's, fitted
+ *   before the pass (see reconcile) — and its descendants follow when Yoga moves it.
  */
 import type { FabricObject } from "#fabric";
-import { type ResolvedChild, type ContainerData, type SizingData, type LayoutData, sizingOf } from "./types";
+import { type ResolvedChild, type ContainerData, type SizingData, type LayoutData, sizingOf, isFreeContainer } from "./types";
 import {
   scaledSize,
   setShapeSize,
   isTextObject,
   resolveContainerChildren,
   sortChildrenByOrder,
+  topLeft,
   type LayoutText,
 } from "./geometry";
+import { descendantsOf, translateObjects } from "./free";
 
 // ── Yoga singleton ─────────────────────────────────────────────────
 
@@ -71,6 +75,8 @@ interface Built {
   obj: FabricObject;
   node: YogaNode;
   children?: Built[];
+  /** A group's descendants: they follow it where Yoga puts it. */
+  followers?: FabricObject[];
 }
 
 /**
@@ -166,7 +172,7 @@ function applyHugFloor(node: YogaNode, sizing: SizingData): void {
 
 /** The children of a nested container, when the caller lets us look them up. */
 function nestedChildren(obj: FabricObject, allObjects?: FabricObject[]): ResolvedChild[] | null {
-  if (!allObjects || isTextObject(obj)) return null;
+  if (!allObjects || isTextObject(obj) || isFreeContainer(obj)) return null;
   const layout = obj.get("layout") as LayoutData | undefined;
   if (!layout?.container) return null;
   const children = sortChildrenByOrder(resolveContainerChildren(allObjects, obj));
@@ -205,7 +211,7 @@ function buildChildren(
     if (alignSelf !== "auto") node.setAlignSelf(mapAlignSelf(alignSelf, Y));
 
     const flexGrow = cl.flexGrow ?? 0;
-    if (flexGrow > 0) node.setFlexGrow(flexGrow);
+    if (flexGrow > 0 && !isFreeContainer(obj)) node.setFlexGrow(flexGrow);
 
     // Stretch happens when: alignSelf is "stretch" or ("auto" and alignItems is "stretch")
     const effectiveAlign = alignSelf !== "auto" ? alignSelf : alignItems;
@@ -223,6 +229,10 @@ function buildChildren(
 
     if (isTextObject(obj)) {
       setupTextMeasure(node, obj, Y);
+    } else if (isFreeContainer(obj)) {
+      // A group never stretches nor grows: its box is its content's
+      setRigidSize(node, obj, { isColumn, willStretch: false, parentSizing: sizing, flexGrow: 0 });
+      if (allObjects) entry.followers = descendantsOf(allObjects, [obj]);
     } else if (nested) {
       const childCd = (obj.get("layout") as LayoutData).container!;
       const childSizing = sizingOf(obj);
@@ -294,7 +304,8 @@ function setNestedSize(node: YogaNode, obj: FabricObject, sizing: SizingData, sl
  * from their container's new top-left.
  */
 function placeChildren(built: Built[], parentLeft: number, parentTop: number, depth: number): void {
-  for (const { obj, node, children } of built) {
+  for (const { obj, node, children, followers } of built) {
+    const before = followers && topLeft(obj);
     const left = parentLeft + node.getComputedLeft();
     const top = parentTop + node.getComputedTop();
 
@@ -331,6 +342,10 @@ function placeChildren(built: Built[], parentLeft: number, parentTop: number, de
     const objTop = obj.originY === "center" ? top + childH / 2
       : obj.originY === "bottom" ? top + childH : top;
     obj.set({ left: objLeft, top: objTop });
+    if (before) {
+      const after = topLeft(obj);
+      translateObjects(followers!, after.x - before.x, after.y - before.y);
+    }
 
     // Direct children are synced by the caller (syncCoords); deeper ones here
     if (depth > 0) obj.setCoords();
