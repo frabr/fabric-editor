@@ -15,11 +15,10 @@
 import type { FabricObject } from "#fabric";
 import { FabRect } from "../shapes/FabRect";
 import { fitFreeContainer } from "./free/fit";
-import { boxOf } from "./geometry";
 import { layoutParents, layoutRoot } from "./tree";
 import { stackBlock } from "./z-order";
 import { layoutOf, idOf, parentIdOf, containerDataOf, childDataOf, ZERO_PADDING, detachChild } from "./model";
-import { childrenOf, flowChildrenOf } from "./hierarchy";
+import { flowChildrenOf } from "./hierarchy";
 import { isTextObject } from "./text";
 
 /** Ce que le groupage demande au canvas. */

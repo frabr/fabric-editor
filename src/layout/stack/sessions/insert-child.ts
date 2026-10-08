@@ -146,7 +146,6 @@ export class InsertChildSession implements LayoutSession {
     session._newChildAnchorSize = scaledSize(child);
     session._isReattach = true;
     session._currentDirection = null;
-    session._lastOrder = null;
     session._animator = new LayoutAnimator(canvas);
 
     // Snapshot for rollback
@@ -384,7 +383,6 @@ export class InsertChildSession implements LayoutSession {
   }
 
   /** Last computed order — for hysteresis. */
-  private _lastOrder: number | null = null;
 
   /**
    * Compute the insertion order based on cursor position in the main axis.
@@ -443,12 +441,10 @@ export class InsertChildSession implements LayoutSession {
     // Find which slot the cursor is in: last slot whose boundary we've passed
     for (let i = slots.length - 1; i >= 0; i--) {
       if (cursorPos >= slots[i].boundary) {
-        this._lastOrder = slots[i].order;
         return slots[i].order;
       }
     }
 
-    this._lastOrder = slots[0].order;
     return slots[0].order;
   }
 

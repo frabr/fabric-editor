@@ -1,12 +1,4 @@
-import {
-  FabricImage,
-  FabricObject,
-  Group,
-  Rect,
-  Path,
-  Circle,
-  util,
-} from "#fabric";
+import { FabricImage, FabricObject, Group, Path, util } from "#fabric";
 import type { DesignCanvas } from "./DesignCanvas";
 import { CustomTextbox } from "./controls/CustomTextbox";
 import { migrateLegacyLayout } from "./layout/legacy";
@@ -501,7 +493,9 @@ export class LayerManager {
   }
 
   /**
-   * Groupe plusieurs objets ensemble
+   * @legacy Fusionne des objets dans un `fabric.Group` (éditeur SAFTI legacy, « fusionner
+   * les calques »). Pour grouper dans l'éditeur : `FabricEditor.groupSelection` (un groupe
+   * libre, ses objets restent des calques).
    */
   groupObjects(objects: FabricObject[]): Group {
     const group = new Group(objects);

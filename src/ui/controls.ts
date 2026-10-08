@@ -7,7 +7,7 @@
  */
 import { FabricObject, Control, controlsUtils, type TPointerEvent } from "#fabric";
 import type { DesignCanvas } from "../DesignCanvas";
-import { parseHex, hexAlpha } from "./color";
+import { parseHex } from "./color";
 import { bindingBadgeLabel, drawDynamicMediaOutline } from "../bindings";
 import { installBadgeLayer } from "./badges";
 

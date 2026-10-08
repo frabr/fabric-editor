@@ -302,7 +302,6 @@ describe("StackResizeSession — poignées des containers", () => {
     const session = new StackResizeSession(c, "mb");
     c.set({ height: 300 });
     session.handleResizing([c]);
-    session.commit([c]);
     expect(layoutOf(c).sizing).toEqual({ x: "hug", y: "hug", minSize: { w: 0, h: 300 } });
   });
 });

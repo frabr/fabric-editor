@@ -229,7 +229,6 @@ describe("les poignées d'un enfant s'arrêtent à la place du parent", () => {
     expect(child.width).toBe(200);
     expect(parent.width).toBe(220);
     expect(right(child)).toBeLessThanOrEqual(right(parent) + 0.5);
-    session.commit(objects);
     expect(sizingOf(child).x).toBe("fixed");
   });
 

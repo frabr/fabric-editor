@@ -10,7 +10,7 @@ import {
   LayoutManager,
   FixedLayout,
 } from "#fabric";
-import type { ShapeType, LockMode, ControlOption } from "./types";
+import type { ShapeType, LockMode } from "./types";
 import {
   createCircle,
   createRect,

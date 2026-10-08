@@ -110,33 +110,6 @@ export interface ResolvedChild {
   cl: ChildData;
 }
 
-// ── Type guards ────────────────────────────────────────────────────
-
-export function isContainer(l: LayoutData): boolean {
-  return l.container != null;
-}
-
-export function isChild(l: LayoutData): boolean {
-  return l.child != null;
-}
-
-
-// ── Deprecated aliases (to be removed) ─────────────────────────────
-
-/** @deprecated Use `layout.container != null` instead. */
-export type ContainerLayout = LayoutData & { container: ContainerData };
-/** @deprecated Use `layout.child != null` instead. */
-export type ChildLayout = ChildData;
-
-/** @deprecated Use `isContainer` instead. */
-export function isContainerLayout(l: LayoutData): boolean {
-  return isContainer(l);
-}
-
-/** @deprecated Use `isChild` instead. */
-export function isChildLayout(l: LayoutData): boolean {
-  return isChild(l);
-}
 
 // ── Session interface ───────────────────────────────────────────────
 

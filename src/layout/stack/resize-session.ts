@@ -3,7 +3,7 @@
  * free/resize-session).
  *
  * Created by the LayoutManager on the first `object:resizing` event,
- * fed with each subsequent scaling frame, and committed on `object:modified`.
+ * fed with each subsequent scaling frame, and dropped on `object:modified`.
  *
  * Separates the user's resize intent (which axes, what size) from
  * the programmatic layout reconciliation that runs on every frame.
@@ -148,9 +148,6 @@ export class StackResizeSession {
     syncCoords(container, children);
     this.settle(objects);
   }
-
-  /** Called on `object:modified`: the floor is already written, nothing left to do. */
-  commit(_objects: FabricObject[]): void {}
 
   /**
    * On a hug axis the user drags, what they drag is the floor — under the content

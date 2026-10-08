@@ -53,9 +53,6 @@ export async function initYoga(): Promise<void> {
   yogaConfig.setPointScaleFactor(0);
 }
 
-export function isYogaReady(): boolean {
-  return yoga !== null;
-}
 
 function getYoga(): Yoga {
   if (!yoga) throw new Error("Yoga not initialized. Call initYoga() first.");

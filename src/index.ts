@@ -91,8 +91,8 @@ export { addCropControls, removeCropControls, CustomTextbox } from "./controls";
 // Layout
 export { runLayout } from "./layout";
 export { ResizeSession, StackResizeSession, FreeResizeSession } from "./layout";
-export type { LayoutData, SizingData, TextOverflow, ContainerData, ChildData, ContainerLayout, ChildLayout, SizeMode, AlignSelf, AlignItems, JustifyContent, FlexDirection, AttachSnapshot, LayoutSession } from "./layout";
-export { isContainer, isChild, isContainerLayout, isChildLayout, MIN_PAD } from "./layout";
+export type { LayoutData, SizingData, TextOverflow, ContainerData, ChildData, SizeMode, AlignSelf, AlignItems, JustifyContent, FlexDirection, AttachSnapshot, LayoutSession } from "./layout";
+export { MIN_PAD } from "./layout";
 // Les groupes (containers libres) : leur boîte suit leurs enfants
 export { isFreeContainer, stackParentOf, fitFreeContainer } from "./layout";
 export type { Arrangement } from "./layout";
@@ -101,7 +101,7 @@ export { layoutParents, layoutRoot, layoutChildren, layoutDescendants, stackBloc
 export type { TreeLayer, LayoutParents } from "./layout";
 export { scaledSize, topLeft, pointInObject, clampTopLeft, hasExceededOffset } from "./layout";
 export { ContainerizeSession, InsertChildSession, wrapContainerAroundChild } from "./layout";
-export { initYoga, isYogaReady, yogaLayout } from "./layout";
+export { initYoga, yogaLayout } from "./layout";
 
 // Aligner, répartir
 export { alignAxis, alignDelta, distributeDeltas, unionBox } from "./align";

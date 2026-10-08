@@ -527,12 +527,8 @@ export class FabricEditor {
    * When disabled, discards selection and marks the canvas as non-interactive.
    * When enabled, discards selection (clean state) and optionally syncs visibility.
    */
-  setInteractive(enabled: boolean): void {
-    if (enabled) {
-      this.canvas.discardActiveObject();
-    } else {
-      this.canvas.discardActiveObject();
-    }
+  setInteractive(_enabled: boolean): void {
+    this.canvas.discardActiveObject();
     this.canvas.renderAll();
   }
 

@@ -565,13 +565,10 @@ export class LayoutManager {
       return;
     }
 
-    // Container modified → commit resize session if active, then relayout
+    // Container modified → its resize session ends, then relayout
     const layout = layoutOf(obj);
     if (layout?.container) {
-      if (this.resizeSession) {
-        this.resizeSession.commit(this.canvas.getObjects());
-        this.resizeSession = null;
-      }
+      this.resizeSession = null;
       this.relayout();
       this.callbacks.onLayoutChanged?.();
       // Don't return if we have an active dtl session — fall through to commit it

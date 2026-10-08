@@ -2,8 +2,8 @@ export { runLayout, layoutSubtree, relayoutAncestors, relayoutSingle, bubbleUpLa
 export { StackResizeSession, ResizeSession } from "./stack/resize-session";
 export { availableRoom } from "./stack/room";
 export type { Room } from "./stack/room";
-export type { LayoutData, SizingData, TextOverflow, ContainerData, ChildData, ContainerLayout, ChildLayout, SizeMode, AlignSelf, AlignItems, JustifyContent, FlexDirection, AttachSnapshot, ResolvedChild, LayoutSession } from "./types";
-export { isContainer, isChild, isContainerLayout, isChildLayout, MIN_PAD, MIN_FONT_SIZE } from "./types";
+export type { LayoutData, SizingData, TextOverflow, ContainerData, ChildData, SizeMode, AlignSelf, AlignItems, JustifyContent, FlexDirection, AttachSnapshot, ResolvedChild, LayoutSession } from "./types";
+export { MIN_PAD, MIN_FONT_SIZE } from "./types";
 export { layoutOf, idOf, parentIdOf, containerDataOf, childDataOf, isContainerObject, isFreeContainer, isStackContainer, directionOf, paddingOf, uniformPadding, ZERO_PADDING, sizingOf, DEFAULT_SIZING, updateLayout, updateContainer, updateChild, removeLayoutBlock, cloneLayout, detachChild } from "./model";
 export type { Padding } from "./model";
 export type { Arrangement } from "./types";
@@ -22,7 +22,7 @@ export { findById, parentOf, parentContainerOf, stackParentOf, ancestorsOf, chil
 export type { ResizeAxes } from "./geometry";
 export { ContainerizeSession, wrapContainerAroundChild } from "./stack/sessions/containerize";
 export { InsertChildSession } from "./stack/sessions/insert-child";
-export { initYoga, isYogaReady, yogaLayout } from "./stack/engine";
+export { initYoga, yogaLayout } from "./stack/engine";
 export { LayoutAnimator } from "./stack/sessions/animator";
 export { layoutParents, layoutRoot, layoutChildren, layoutDescendants } from "./tree";
 export type { TreeLayer, LayoutParents } from "./tree";

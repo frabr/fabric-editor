@@ -16,7 +16,7 @@ const require = createRequire(import.meta.url);
 import { LayerManager } from "./LayerManager";
 import { PersistenceManager } from "./PersistenceManager";
 import { HistoryManager } from "./HistoryManager";
-import type { LayerData, FontConfig } from "./types";
+import type { LayerData } from "./types";
 import { initYoga } from "./layout/stack/engine";
 
 /**

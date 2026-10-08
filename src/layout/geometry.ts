@@ -5,8 +5,7 @@
  * LayoutManager (drag-to-layout interactions).
  */
 import { Point, type FabricObject } from "#fabric";
-import type { LayoutData, ResolvedChild } from "./types";
-import { idOf, layoutOf } from "./model";
+import type { ResolvedChild } from "./types";
 
 /** Scaled dimensions (width × scaleX, height × scaleY). */
 export function scaledSize(obj: FabricObject): { w: number; h: number } {

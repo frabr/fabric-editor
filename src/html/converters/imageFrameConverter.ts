@@ -1,10 +1,5 @@
 import type { ImageFrameLayerData, HtmlLayerOutput } from "../types";
-import {
-  buildPositionStyles,
-  buildTransform,
-  stylesToString,
-  getTransformOrigin,
-} from "../cssUtils";
+import { buildPositionStyles, buildTransform, stylesToString } from "../cssUtils";
 import { getClipPathCss, getInlineSvgClip } from "../clipPaths";
 
 /**
