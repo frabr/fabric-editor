@@ -111,16 +111,6 @@ export interface ResolvedChild {
 }
 
 
-// ── Session interface ───────────────────────────────────────────────
-
-/** Common interface for layout sessions (ContainerizeSession, InsertChildSession). */
-export interface LayoutSession {
-  handleMoving(cursor: { x: number; y: number }): "anchored" | "exited";
-  commit(): () => void;
-  rollback(): void;
-  readonly container: import("#fabric").FabricObject;
-  readonly child: import("#fabric").FabricObject;
-}
 
 // ── Layout constants ────────────────────────────────────────────────
 
@@ -131,10 +121,3 @@ export const MIN_PAD = 8;
 export const MIN_FONT_SIZE = 8;
 
 
-// ── Attach types ────────────────────────────────────────────────────
-
-/** Snapshot of shape + text properties before attach, used for rollback. */
-export interface AttachSnapshot {
-  shape: Record<string, any>;
-  text: Record<string, any>;
-}

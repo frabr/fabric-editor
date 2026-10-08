@@ -22,35 +22,20 @@
  */
 import type { FabricObject } from "#fabric";
 import type { DesignCanvas } from "../../../DesignCanvas";
-import { type LayoutSession, type LayoutData, type ChildData, type FlexDirection } from "../../types";
+import type { ChildData, FlexDirection } from "../../types";
 import { scaledSize, setShapeSize, topLeft, syncCoords, pointInObject } from "../../geometry";
 
 import { yogaLayout } from "../engine";
 import { runLayout, relayoutAncestors } from "../../run";
 import { LayoutAnimator } from "./animator";
-import { layoutOf, containerDataOf, sizingOf, directionOf, paddingOf, cloneLayout, detachChild } from "../../model";
+import { layoutOf, containerDataOf, sizingOf, directionOf, paddingOf, detachChild, idOf, updateLayout, updateContainer, updateChild } from "../../model";
+import { ensureStableOrders, EXIT_MARGIN, restorePlacement, siblingAnchors, takePlacement, type LayoutSession, type Placement, type SiblingAnchor } from "./session";
 import { childrenOf, flowChildrenOf } from "../../hierarchy";
-
-// ── Constants ────────────────────────────────────────────────────────
-
-const EXIT_MARGIN = 5;
 
 // ── InsertChildSession ──────────────────────────────────────────────
 
 export class InsertChildSession implements LayoutSession {
-  private canvas: DesignCanvas;
-  private _container: FabricObject;
-  private newChild: FabricObject;
-
-  private snapshot: {
-    containerW: number; containerH: number;
-    containerLeft: number; containerTop: number;
-    containerLayout: LayoutData | undefined;
-    childLeft: number; childTop: number; childLayout: LayoutData | undefined;
-  };
-
-  /** Whether this is a reattach (repositioning existing child) vs new insertion. */
-  private _isReattach: boolean;
+  private readonly before: { container: Placement; child: Placement };
 
   /** Whether this insertion is deciding the container's flex direction (2nd child). */
   private _decidingDirection: boolean;
@@ -62,137 +47,54 @@ export class InsertChildSession implements LayoutSession {
   private _animator: LayoutAnimator;
 
   /** Sibling positions at anchor time — stable reference for gap calculation. */
-  private _siblingAnchors = new Map<FabricObject, { left: number; top: number; w: number; h: number }>();
+  private _siblingAnchors: Map<FabricObject, SiblingAnchor>;
 
   /** Size of the dragged child when grabbed — Yoga may squeeze it in later frames. */
-  private _newChildAnchorSize = { w: 0, h: 0 };
+  private _newChildAnchorSize: { w: number; h: number };
 
   /** Last Yoga-computed position of the dragged child (not the cursor position). */
   private _lastDraggedYogaPos: { left: number; top: number } | null = null;
 
-  constructor(canvas: DesignCanvas, container: FabricObject, newChild: FabricObject, cursor: { x: number; y: number }) {
-    this.canvas = canvas;
-    this._container = container;
-    this.newChild = newChild;
-    this._newChildAnchorSize = scaledSize(newChild);
-    this._isReattach = false;
+  /**
+   * `reattach`: the child is already in the container and is moved inside it — on
+   * rollback (dragged out) it leaves the container instead of going back.
+   */
+  constructor(
+    private readonly canvas: DesignCanvas,
+    readonly container: FabricObject,
+    readonly child: FabricObject,
+    cursor: { x: number; y: number },
+    private readonly isReattach = false,
+  ) {
+    this._newChildAnchorSize = scaledSize(child);
     this._animator = new LayoutAnimator(canvas);
+    this.before = { container: takePlacement(container), child: takePlacement(child) };
 
-    // Snapshot for rollback
-    const { w: cw, h: ch } = scaledSize(container);
-    this.snapshot = {
-      containerW: cw,
-      containerH: ch,
-      containerLeft: container.left,
-      containerTop: container.top,
-      containerLayout: cloneLayout(container),
-      childLeft: newChild.left,
-      childTop: newChild.top,
-      childLayout: cloneLayout(newChild),
-    };
+    const all = flowChildrenOf(canvas.getObjects(), container);
+    const siblings = all.filter((c) => c.obj !== child);
+    // The 2nd child decides the direction; a reattach among two lets the user change it again
+    this._decidingDirection = isReattach
+      ? all.length <= 2
+      : siblings.length === 1 && !containerDataOf(container)?.flexDirection;
 
-    // If the container has exactly 1 child and no explicit direction yet,
-    // this insertion will decide the direction.
-    const existing = flowChildrenOf(canvas.getObjects(), container);
-    const cd = containerDataOf(container);
-    this._decidingDirection = existing.length === 1 && !cd?.flexDirection;
+    ensureStableOrders(all);
+    // Reading topLeft here is safe: Yoga hasn't touched the siblings yet in this session
+    this._siblingAnchors = siblingAnchors(siblings);
 
-    // Ensure existing children have stable order values
-    for (let i = 0; i < existing.length; i++) {
-      if (existing[i].cl.order == null) {
-        existing[i].cl.order = i;
-        const childLayout = layoutOf(existing[i].obj)!;
-        if (childLayout?.child) {
-          childLayout.child.order = i;
-          existing[i].obj.set("layout", { ...childLayout });
-        }
-      }
+    if (!isReattach) {
+      // Spacing is the container's padding + gap: the child only says where it belongs
+      updateLayout(child, { child: { parentId: idOf(container) } });
+      const tl = topLeft(child);
+      child.set({ left: tl.x, top: tl.y, originX: "left", originY: "top" });
+      child.setCoords();
     }
 
-    // Snapshot sibling positions — stable reference for gap calculation.
-    // Reading topLeft here is safe: Yoga hasn't touched them yet in this session.
-    for (const { obj } of existing) {
-      const tl = topLeft(obj);
-      const sz = scaledSize(obj);
-      this._siblingAnchors.set(obj, { left: tl.x, top: tl.y, w: sz.w, h: sz.h });
-    }
-
-    // Set up the new child's layout (no margins — spacing is container padding + gap)
-    const containerId = container.get?.("layerId") as string;
-    const childData: ChildData = {
-      parentId: containerId,
-    };
-    const existingChildLayout = layoutOf(newChild) ?? {};
-    newChild.set("layout", { ...existingChildLayout, child: childData });
-
-    // Normalize new child origin to top-left
-    const tTL = topLeft(newChild);
-    newChild.set({ left: tTL.x, top: tTL.y, originX: "left", originY: "top" });
-    newChild.setCoords();
-
-    // Initial direction + order computation and preview
     this.updateFromCursor(cursor);
   }
 
-  /**
-   * Create a session for repositioning a child that is already in the container.
-   * On rollback (drag outside), the child is detached from the container.
-   */
+  /** @deprecated Use `new InsertChildSession(…, true)` or createDropSession. */
   static reattach(canvas: DesignCanvas, container: FabricObject, child: FabricObject, cursor: { x: number; y: number }): InsertChildSession {
-    const session = Object.create(InsertChildSession.prototype) as InsertChildSession;
-    session.canvas = canvas;
-    session._container = container;
-    session.newChild = child;
-    session._newChildAnchorSize = scaledSize(child);
-    session._isReattach = true;
-    session._currentDirection = null;
-    session._animator = new LayoutAnimator(canvas);
-
-    // Snapshot for rollback
-    const { w: cw, h: ch } = scaledSize(container);
-    session.snapshot = {
-      containerW: cw,
-      containerH: ch,
-      containerLeft: container.left,
-      containerTop: container.top,
-      containerLayout: cloneLayout(container),
-      childLeft: child.left,
-      childTop: child.top,
-      childLayout: cloneLayout(child),
-    };
-
-    // For reattach with exactly 2 children, allow direction + gap change
-    // (the flex direction was decided during the original insertion, but
-    // reattach should let the user change it again)
-    const allChildren = flowChildrenOf(canvas.getObjects(), container);
-    session._decidingDirection = allChildren.length <= 2;
-
-    // Ensure existing children have stable order values
-    for (let i = 0; i < allChildren.length; i++) {
-      if (allChildren[i].cl.order == null) {
-        allChildren[i].cl.order = i;
-        const cl = layoutOf(allChildren[i].obj)!;
-        if (cl?.child) {
-          cl.child.order = i;
-          allChildren[i].obj.set("layout", { ...cl });
-        }
-      }
-    }
-
-    // Snapshot sibling positions — stable reference for gap calculation.
-    session._siblingAnchors = new Map();
-    for (const { obj } of allChildren) {
-      if (obj !== child) {
-        const tl = topLeft(obj);
-        const sz = scaledSize(obj);
-        session._siblingAnchors.set(obj, { left: tl.x, top: tl.y, w: sz.w, h: sz.h });
-      }
-    }
-
-    // Initial preview from cursor
-    session.updateFromCursor(cursor);
-
-    return session;
+    return new InsertChildSession(canvas, container, child, cursor, true);
   }
 
   handleMoving(cursor: { x: number; y: number }): "anchored" | "exited" {
@@ -205,17 +107,15 @@ export class InsertChildSession implements LayoutSession {
     return "anchored";
   }
 
-  commit(): () => void {
+  commit(): void {
     // Capture the floor so the container stays at its expanded size
-    const layout = layoutOf(this._container)!;
-    const { w, h } = scaledSize(this._container);
-    this._container.set("layout", { ...layout, sizing: { ...sizingOf(this._container), minSize: { w, h } } });
+    const { w, h } = scaledSize(this.container);
+    updateLayout(this.container, { sizing: { ...sizingOf(this.container), minSize: { w, h } } });
 
     // Capture all children positions before final layout
-    const allChildren = childrenOf(this.canvas.getObjects(), this._container);
     const positionsBefore = new Map<FabricObject, { left: number; top: number }>();
-    for (const { obj } of allChildren) {
-      positionsBefore.set(obj, { left: obj.left!, top: obj.top! });
+    for (const { obj } of childrenOf(this.canvas.getObjects(), this.container)) {
+      positionsBefore.set(obj, { left: obj.left, top: obj.top });
     }
 
     // Yoga takes full control at commit — positions everything properly
@@ -228,65 +128,38 @@ export class InsertChildSession implements LayoutSession {
       }
     }
 
-    this.canvas.renderAll();
     // Text edits relayout through the LayoutManager's `text:changed` listener
-    return () => {};
+    this.canvas.renderAll();
   }
 
   rollback(): void {
-    // Kill any in-flight animations — positions will be restored from snapshot
+    // Kill any in-flight animations — positions will be restored from the snapshot
     this._animator.cancelAll();
+    detachChild(this.child);
 
-    if (this._isReattach) {
-      detachChild(this.newChild);
-
-      // Restore container to snapshot state
-      this._container.set("layout", this.snapshot.containerLayout ?? undefined);
-      this._container.set({ left: this.snapshot.containerLeft, top: this.snapshot.containerTop });
-      setShapeSize(this._container, this.snapshot.containerW, this.snapshot.containerH);
-      this._container.setCoords();
-      this.newChild.setCoords();
-
-      // If only 1 child remains, clear flexDirection/gap so they can
-      // be re-decided when a new 2nd child is inserted
-      const remaining = childrenOf(this.canvas.getObjects(), this._container);
-      if (remaining.length <= 1) {
-        const cLayout = layoutOf(this._container);
-        if (cLayout?.container) {
-          delete cLayout.container.flexDirection;
-          delete cLayout.container.gap;
-          this._container.set("layout", { ...cLayout });
-        }
+    if (this.isReattach) {
+      // A lone remaining child: the direction and gap are re-decided by the next 2nd child
+      const remaining = childrenOf(this.canvas.getObjects(), this.container);
+      const cd = this.before.container.layout?.container;
+      if (remaining.length <= 1 && cd) {
+        const { flexDirection: _d, gap: _g, ...rest } = cd;
+        this.before.container.layout = { ...this.before.container.layout, container: rest };
       }
-
-      // Re-run layout to reposition remaining children
-      runLayout(this.canvas.getObjects());
-      this.canvas.renderAll();
-      return;
+      this.child.setCoords();
+    } else {
+      restorePlacement(this.child, this.before.child, { position: true, layout: true });
     }
+    restorePlacement(this.container, this.before.container, { size: true, position: true, layout: true });
 
-    // New insertion: restore everything to pre-session state
-    detachChild(this.newChild);
-    this.newChild.set("layout", this.snapshot.childLayout ?? undefined);
-    this.newChild.set({ left: this.snapshot.childLeft, top: this.snapshot.childTop });
-    this.newChild.setCoords();
-
-    this._container.set("layout", this.snapshot.containerLayout ?? undefined);
-    this._container.set({ left: this.snapshot.containerLeft, top: this.snapshot.containerTop });
-    setShapeSize(this._container, this.snapshot.containerW, this.snapshot.containerH);
-    this._container.setCoords();
-
+    // Re-run layout to reposition the remaining children
     runLayout(this.canvas.getObjects());
     this.canvas.renderAll();
   }
 
-  get container(): FabricObject { return this._container; }
-  get child(): FabricObject { return this.newChild; }
-
   // ── Private ───────────────────────────────────────────────────────
 
   private shouldExit(cursor: { x: number; y: number }): boolean {
-    return !pointInObject(cursor, this._container, EXIT_MARGIN);
+    return !pointInObject(cursor, this.container, EXIT_MARGIN);
   }
 
   /**
@@ -298,46 +171,30 @@ export class InsertChildSession implements LayoutSession {
     // Snap mid-animation siblings to their Yoga targets so that
     // computeInsertOrder reads stable positions, not interpolated ones.
     // Exclude the dragged child — Fabric's drag handler sets its position.
-    this._animator.flushToTargets(this.newChild);
+    this._animator.flushToTargets(this.child);
 
-    const containerLayout = layoutOf(this._container)!;
-    const cd = containerLayout.container!;
-
-    const allChildren = flowChildrenOf(this.canvas.getObjects(), this._container);
-    const otherChildren = allChildren.filter(c => c.obj !== this.newChild);
-
-    const isColumn = directionOf(cd) === "column";
+    const allChildren = flowChildrenOf(this.canvas.getObjects(), this.container);
+    const otherChildren = allChildren.filter(c => c.obj !== this.child);
 
     if (this._decidingDirection && otherChildren.length === 1) {
       // ── 2nd child: decide direction + gap ──
       const direction = this.detectDirection(cursor, otherChildren[0]);
-      cd.flexDirection = direction;
-      const dirIsColumn = direction === "column";
-      const insertOrder = this.computeInsertOrder(cursor, otherChildren, dirIsColumn);
-      const gap = this.computeGap(cursor, otherChildren, insertOrder, dirIsColumn);
-      cd.gap = Math.min(gap, this.freeMainSpace(otherChildren, dirIsColumn));
-      this._container.set("layout", { ...containerLayout });
-
-      const layout = layoutOf(this.newChild)!;
-      if (layout?.child) {
-        layout.child.order = insertOrder;
-        this.newChild.set("layout", { ...layout });
-      }
-
+      const isColumn = direction === "column";
+      const order = this.computeInsertOrder(cursor, otherChildren, isColumn);
+      const gap = Math.min(
+        this.computeGap(cursor, otherChildren, order, isColumn),
+        this.freeMainSpace(otherChildren, isColumn),
+      );
+      updateContainer(this.container, { flexDirection: direction, gap });
+      updateChild(this.child, { order });
     } else {
       // ── 3rd+ child: only change order, direction and gap are locked ──
-      const insertOrder = this.computeInsertOrder(cursor, otherChildren, isColumn);
-
-      const layout = layoutOf(this.newChild)!;
-      if (layout?.child) {
-        layout.child.order = insertOrder;
-        this.newChild.set("layout", { ...layout });
-      }
-
+      const isColumn = directionOf(containerDataOf(this.container)) === "column";
+      updateChild(this.child, { order: this.computeInsertOrder(cursor, otherChildren, isColumn) });
     }
 
-    // ── Ask yoga to preview positions ──
-    this.previewLayout(allChildren);
+    // ── Ask yoga to preview positions (the children with their new order) ──
+    this.previewLayout(flowChildrenOf(this.canvas.getObjects(), this.container));
   }
 
   /**
@@ -457,12 +314,12 @@ export class InsertChildSession implements LayoutSession {
     existingChildren: { obj: FabricObject; cl: ChildData }[],
     isColumn: boolean,
   ): number {
-    const sizing = sizingOf(this._container);
+    const sizing = sizingOf(this.container);
     if ((isColumn ? sizing.y : sizing.x) === "hug") return Infinity;
 
-    const cd = layoutOf(this._container)!.container!;
+    const cd = layoutOf(this.container)!.container!;
     const pad = paddingOf(cd);
-    const { w, h } = scaledSize(this._container);
+    const { w, h } = scaledSize(this.container);
     const inner = isColumn ? h - pad.top - pad.bottom : w - pad.left - pad.right;
 
     const main = (size: { w: number; h: number }) => (isColumn ? size.h : size.w);
@@ -489,7 +346,7 @@ export class InsertChildSession implements LayoutSession {
     if (existingChildren.length === 0) return 0;
 
     const cursorPos = isColumn ? cursor.y : cursor.x;
-    const newChildSize = scaledSize(this.newChild);
+    const newChildSize = scaledSize(this.child);
     const newChildHalf = isColumn ? newChildSize.h / 2 : newChildSize.w / 2;
 
     // Measure the gap between the dragged child and the nearest sibling.
@@ -532,14 +389,14 @@ export class InsertChildSession implements LayoutSession {
    * Container grows if needed (never shrinks during session).
    */
   private previewLayout(allChildren: { obj: FabricObject; cl: ChildData }[]): void {
-    const containerLayout = layoutOf(this._container)!;
+    const containerLayout = layoutOf(this.container)!;
     const cd = containerLayout.container!;
-    const sizing = sizingOf(this._container);
-    const { w: currentW, h: currentH } = scaledSize(this._container);
+    const sizing = sizingOf(this.container);
+    const { w: currentW, h: currentH } = scaledSize(this.container);
     const minW = sizing.minSize?.w ?? 0;
     const minH = sizing.minSize?.h ?? 0;
 
-    const containerTL = topLeft(this._container);
+    const containerTL = topLeft(this.container);
 
     // Capture sibling Yoga-target positions before the new layout pass.
     // For mid-animation objects we read the animator's target (the last
@@ -563,15 +420,15 @@ export class InsertChildSession implements LayoutSession {
     const finalH = modeY === "hug" ? Math.max(requiredH, minH) : currentH;
 
     if (finalW !== currentW || finalH !== currentH) {
-      setShapeSize(this._container, finalW, finalH);
-      const tl2 = topLeft(this._container);
+      setShapeSize(this.container, finalW, finalH);
+      const tl2 = topLeft(this.container);
       yogaLayout(allChildren, tl2.x, tl2.y, finalW, finalH, cd, sizing, objects);
     }
 
-    syncCoords(this._container, allChildren);
+    syncCoords(this.container, allChildren);
 
     // Save the dragged child's Yoga position (before animation overwrites it)
-    this._lastDraggedYogaPos = { left: this.newChild.left!, top: this.newChild.top! };
+    this._lastDraggedYogaPos = { left: this.child.left!, top: this.child.top! };
 
     // Animate all children whose position changed (order swap / crossing).
     for (const [obj, before] of positionsBefore) {
@@ -582,7 +439,7 @@ export class InsertChildSession implements LayoutSession {
 
     // Bubble up the entire ancestor chain so all parents accommodate the new size
     if (finalW !== currentW || finalH !== currentH) {
-      relayoutAncestors(this._container, this.canvas.getObjects());
+      relayoutAncestors(this.container, this.canvas.getObjects());
     }
   }
 
@@ -595,7 +452,7 @@ export class InsertChildSession implements LayoutSession {
       const target = this._animator.getTarget(obj);
       if (target) {
         map.set(obj, target);
-      } else if (obj === this.newChild && this._lastDraggedYogaPos) {
+      } else if (obj === this.child && this._lastDraggedYogaPos) {
         // For the dragged child, obj.left/top holds the cursor position
         // (set by Fabric's drag handler), not the Yoga slot. Use the
         // last known Yoga position instead.

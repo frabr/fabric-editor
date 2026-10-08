@@ -3,7 +3,7 @@ import type { DesignCanvas } from "./DesignCanvas";
 import { CanvasGuides } from "./ui/guides";
 import { runLayout, layoutSubtree, relayoutAncestors } from "./layout/run";
 import { StackResizeSession } from "./layout/stack/resize-session";
-import { MIN_PAD, type AlignItems, type AlignSelf, type Arrangement, type ChildData, type ContainerData, type JustifyContent, type LayoutSession, type SizingData, type TextOverflow } from "./layout/types";
+import { MIN_PAD, type AlignItems, type AlignSelf, type Arrangement, type ChildData, type ContainerData, type JustifyContent, type SizingData, type TextOverflow } from "./layout/types";
 import { arrangeAsStack, arrangeFree } from "./layout/arrangement";
 import { syncGroupControls } from "./ui/controls";
 import { placeTopLeft, pointInObject, topLeft } from "./layout/geometry";
@@ -23,8 +23,9 @@ import { placeBlockAbove } from "./layout/z-order";
 import { fitFreeAncestors } from "./layout/free/fit";
 import { SubtreeDrag } from "./layout/subtree-drag";
 import { FreeResizeSession } from "./layout/free/resize-session";
-import { ContainerizeSession } from "./layout/stack/sessions/containerize";
 import { InsertChildSession } from "./layout/stack/sessions/insert-child";
+import { createDropSession } from "./layout/stack/sessions/drop";
+import type { LayoutSession } from "./layout/stack/sessions/session";
 import { layoutOf, containerDataOf, childDataOf, isContainerObject, isFreeContainer, sizingOf, paddingOf, directionOf, updateContainer, updateChild, updateLayout, uniformPadding, isStackContainer } from "./layout/model";
 import { childrenOf, parentContainerOf, findById } from "./layout/hierarchy";
 import { isTextObject } from "./layout/text";
@@ -422,15 +423,7 @@ export class LayoutManager {
         const container = findById(this.canvas.getObjects(), entered);
         if (container) {
           const cursor = this.canvas.getScenePoint(e.e);
-          // Check if container has other children → use InsertChildSession for reorder
-          const siblings = childrenOf(this.canvas.getObjects(), container)
-            .filter(c => c.obj !== obj);
-          let session: LayoutSession;
-          if (siblings.length > 0) {
-            session = InsertChildSession.reattach(this.canvas, container, obj, cursor);
-          } else {
-            session = ContainerizeSession.reattach(this.canvas, container, obj, cursor);
-          }
+          const session = createDropSession(this.canvas, container, obj, cursor, { reattach: true });
           this.showSessionGuides(session);
           this.canvas.renderAll();
           this.dtl = { phase: "anchored", session, cooldownUntil: 0, source: obj, root: null };
@@ -794,7 +787,7 @@ export class LayoutManager {
       placeBlockAbove(stack, child, target).forEach((obj, index) => this.canvas.moveObjectTo(obj, index));
     }
 
-    const session = this.createSession(target, child, cursor);
+    const session = createDropSession(this.canvas, target, child, cursor);
 
     this.guides.clear();
     this.showSessionGuides(session);
@@ -807,24 +800,6 @@ export class LayoutManager {
       source: child,
       root,
     };
-  }
-
-  /** Create the appropriate session type for a target container. */
-  private createSession(
-    target: FabricObject,
-    child: FabricObject,
-    cursor: { x: number; y: number },
-  ): LayoutSession {
-    const targetLayout = layoutOf(target);
-    const alreadyContainer = targetLayout?.container != null;
-    const existingChildren = alreadyContainer
-      ? childrenOf(this.canvas.getObjects(), target)
-      : [];
-
-    if (alreadyContainer && existingChildren.length > 0) {
-      return new InsertChildSession(this.canvas, target, child, cursor);
-    }
-    return new ContainerizeSession(this.canvas, target, child, cursor);
   }
 
   // ── State machine: COMMIT ─────────────────────────────────────────

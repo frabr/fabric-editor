@@ -1,118 +1,85 @@
 /**
- * ContainerizeSession — encapsulates the "first attach" interaction.
+ * ContainerizeSession — the first child of a stack.
  *
- * Transforms a plain shape into a layout container when any object (text,
- * shape, or another container) is dragged into it. Establishes padding,
- * size mode, and the initial container/child relationship.
- * Created by the LayoutManager, destroyed after commit or rollback.
+ * An object (text, shape, or another container) dragged into an empty stack — a
+ * block made with makeContainer, or a container that lost its children — becomes
+ * its first child: the padding comes from where it is dropped, a hug axis wraps
+ * around it, a fixed axis keeps its size. Created by createDropSession, destroyed
+ * after commit or rollback.
  */
 import type { FabricObject } from "#fabric";
 import type { DesignCanvas } from "../../../DesignCanvas";
-import { type AttachSnapshot, MIN_PAD } from "../../types";
+import { MIN_PAD } from "../../types";
 import { scaledSize, setShapeSize, topLeft, clampTopLeft, hasExceededOffset, pointInObject } from "../../geometry";
 import { runLayout, layoutSubtree, relayoutAncestors } from "../../run";
-import { layoutOf, sizingOf, cloneLayout, detachChild } from "../../model";
-import { isTextObject, type LayoutText } from "../../text";
-
-// ── Constants ────────────────────────────────────────────────────────
-
-const EXIT_MARGIN = 5;
+import { layoutOf, sizingOf, detachChild, isContainerObject, updateContainer } from "../../model";
+import { asLayoutText, isTextObject } from "../../text";
+import { EXIT_MARGIN, restorePlacement, takePlacement, type LayoutSession, type Placement } from "./session";
 
 // ── ContainerizeSession ─────────────────────────────────────────────
 
-export class ContainerizeSession {
-  private canvas: DesignCanvas;
-  private shape: FabricObject;
-  private text: FabricObject;
-
-  private snapshot: AttachSnapshot;
-  private clampDx: number;
-  private clampDy: number;
-  private anchorCursor: { x: number; y: number };
-
-  /** If true, rollback detaches the child instead of restoring the snapshot. */
-  private _isReattach: boolean;
-
-  constructor(canvas: DesignCanvas, shape: FabricObject, text: FabricObject, cursor: { x: number; y: number }) {
-    this.canvas = canvas;
-    this.shape = shape;
-    this.text = text;
-    this.anchorCursor = cursor;
-    this._isReattach = false;
-
-    this.snapshot = takeSnapshot(shape, text);
-    normalizeShapeOrigin(shape);
-
-    applyInitialLayout(shape, text);
-
-    const clampedPos = clampTopLeft(text, shape, MIN_PAD);
-    const preTL = topLeft(text);
-    this.clampDx = clampedPos.x - preTL.x;
-    this.clampDy = clampedPos.y - preTL.y;
-
-    canvas.adjustGrabOffset(this.clampDx, this.clampDy);
-
-    if (this.clampDx !== 0 || this.clampDy !== 0) {
-      text.left += this.clampDx;
-      text.top += this.clampDy;
-      text.setCoords();
-    }
-
-    wrapContainerAroundChild(text, shape);
-
-    // If the child is itself a container, reposition its own children
-    const textLayout = layoutOf(text);
-    if (textLayout?.container) {
-      layoutSubtree(text, canvas.getObjects());
-    }
-  }
+export class ContainerizeSession implements LayoutSession {
+  private readonly before: { container: Placement; child: Placement };
+  /** Le décalage imposé à l'enfant pour qu'il entre dans les marges (pas de reattach). */
+  private clampDx = 0;
+  private clampDy = 0;
 
   /**
-   * Create a session for repositioning a child that is already attached.
-   * Skips layout creation, origin normalization, and clamp/grab offset.
-   * On exit (rollback), the child is detached instead of restored.
+   * `reattach` : l'enfant est déjà dedans et on l'y déplace — rien à créer ; l'annulation
+   * le sort du container au lieu de tout remettre comme avant.
    */
-  static reattach(canvas: DesignCanvas, shape: FabricObject, text: FabricObject, cursor: { x: number; y: number }): ContainerizeSession {
-    const session = Object.create(ContainerizeSession.prototype) as ContainerizeSession;
-    session.canvas = canvas;
-    session.shape = shape;
-    session.text = text;
-    session.anchorCursor = cursor;
-    session._isReattach = true;
-    session.snapshot = takeSnapshot(shape, text);
-    session.clampDx = 0;
-    session.clampDy = 0;
-    return session;
+  constructor(
+    private readonly canvas: DesignCanvas,
+    readonly container: FabricObject,
+    readonly child: FabricObject,
+    private readonly anchorCursor: { x: number; y: number },
+    private readonly isReattach = false,
+  ) {
+    this.before = { container: takePlacement(container), child: takePlacement(child) };
+    if (isReattach) return;
+
+    normalizeShapeOrigin(container);
+    applyInitialLayout(container, child);
+
+    const clamped = clampTopLeft(child, container, MIN_PAD);
+    const preTL = topLeft(child);
+    this.clampDx = clamped.x - preTL.x;
+    this.clampDy = clamped.y - preTL.y;
+    canvas.adjustGrabOffset(this.clampDx, this.clampDy);
+    if (this.clampDx !== 0 || this.clampDy !== 0) {
+      child.set({ left: child.left + this.clampDx, top: child.top + this.clampDy });
+      child.setCoords();
+    }
+
+    wrapContainerAroundChild(child, container);
+    if (isContainerObject(child)) layoutSubtree(child, canvas.getObjects());
   }
 
-  /** During drag: clamp text, resize container, check for exit. */
+  /** @deprecated Use `new ContainerizeSession(…, true)` or createDropSession. */
+  static reattach(canvas: DesignCanvas, container: FabricObject, child: FabricObject, cursor: { x: number; y: number }): ContainerizeSession {
+    return new ContainerizeSession(canvas, container, child, cursor, true);
+  }
+
+  /** During drag: keep the child in the margins, fit the container, check for exit. */
   handleMoving(cursor: { x: number; y: number }): "anchored" | "exited" {
     if (this.shouldExit(cursor)) {
       this.rollback();
       return "exited";
     }
 
-    const clamped = clampTopLeft(this.text, this.shape, MIN_PAD);
-    const currentTL = topLeft(this.text);
+    const clamped = clampTopLeft(this.child, this.container, MIN_PAD);
+    const currentTL = topLeft(this.child);
     const dx = clamped.x - currentTL.x;
     const dy = clamped.y - currentTL.y;
-
     if (dx !== 0 || dy !== 0) {
-      this.text.left += dx;
-      this.text.top += dy;
-      this.text.setCoords();
+      this.child.set({ left: this.child.left + dx, top: this.child.top + dy });
+      this.child.setCoords();
     }
 
-    wrapContainerAroundChild(this.text, this.shape);
-
-    // If the child is itself a container, reposition its own children
-    const childLayout = layoutOf(this.text);
-    if (childLayout?.container) {
-      layoutSubtree(this.text, this.canvas.getObjects());
-    }
-
-    // Bubble up the entire ancestor chain so all parents accommodate the new size
-    relayoutAncestors(this.shape, this.canvas.getObjects());
+    wrapContainerAroundChild(this.child, this.container);
+    if (isContainerObject(this.child)) layoutSubtree(this.child, this.canvas.getObjects());
+    // Every ancestor accommodates the new size
+    relayoutAncestors(this.container, this.canvas.getObjects());
 
     return "anchored";
   }
@@ -121,97 +88,40 @@ export class ContainerizeSession {
    * Finalize the attach. Text edits relayout through the LayoutManager's
    * canvas-wide `text:changed` listener — nothing to clean up here.
    */
-  commit(): () => void {
-    const tTL = topLeft(this.text);
-    this.text.set({ left: tTL.x, top: tTL.y, originX: "left", originY: "top" });
-    this.text.setCoords();
+  commit(): void {
+    const tTL = topLeft(this.child);
+    this.child.set({ left: tTL.x, top: tTL.y, originX: "left", originY: "top" });
+    this.child.setCoords();
 
     runLayout(this.canvas.getObjects());
     this.canvas.renderAll();
-    return () => {};
   }
 
-  /** Undo anchor: restore snapshot, reverse grab offset. */
+  /** Undo: a reattached child leaves; a new one goes back where it was, so does the container. */
   rollback(): void {
-    if (this._isReattach) {
-      detachChild(this.text);
-
-      // Restore container to snapshot (before the drag resized it)
-      restoreShapeSize(this.shape, this.snapshot.shape);
-      this.shape.set("layout", this.snapshot.shape.layout ?? undefined);
-
-      this.shape.setCoords();
-      this.text.setCoords();
+    if (this.isReattach) {
+      detachChild(this.child);
+      restorePlacement(this.container, this.before.container, { size: true, layout: true });
+      this.child.setCoords();
       this.canvas.renderAll();
       return;
     }
 
-    restoreShapeSize(this.shape, this.snapshot.shape);
-    this.shape.set({
-      left: this.snapshot.shape.left, top: this.snapshot.shape.top,
-      originX: this.snapshot.shape.originX, originY: this.snapshot.shape.originY,
-      stroke: this.snapshot.shape.stroke, strokeWidth: this.snapshot.shape.strokeWidth,
-    });
-    this.shape.set("layout", this.snapshot.shape.layout ?? undefined);
-
-    this.text.set({
-      left: this.snapshot.text.left, top: this.snapshot.text.top,
-      originX: this.snapshot.text.originX, originY: this.snapshot.text.originY,
-      width: this.snapshot.text.width,
-      scaleX: this.snapshot.text.scaleX, scaleY: this.snapshot.text.scaleY,
-      textAlign: this.snapshot.text.textAlign,
-    } as any);
-    this.text.set("layout", this.snapshot.text.layout ?? undefined);
-    if (isTextObject(this.text)) (this.text as unknown as LayoutText).layoutWith(null);
+    restorePlacement(this.container, this.before.container, { size: true, position: true, style: true, layout: true });
+    restorePlacement(this.child, this.before.child, { size: true, position: true, style: true, layout: true });
+    if (isTextObject(this.child)) asLayoutText(this.child).layoutWith(null);
 
     this.canvas.adjustGrabOffset(-this.clampDx, -this.clampDy);
-
-    this.shape.setCoords();
-    this.text.setCoords();
     this.canvas.renderAll();
   }
 
-  /** The shape this session is attached to (for guide rendering). */
-  get container(): FabricObject { return this.shape; }
-  /** The text being attached (for guide rendering). */
-  get child(): FabricObject { return this.text; }
-
   private shouldExit(cursor: { x: number; y: number }): boolean {
-    if (!pointInObject(cursor, this.shape, EXIT_MARGIN)) return true;
+    if (!pointInObject(cursor, this.container, EXIT_MARGIN)) return true;
     return hasExceededOffset(cursor, this.anchorCursor, this.clampDx, this.clampDy, EXIT_MARGIN);
   }
 }
 
 // ── Helpers (module-private) ─────────────────────────────────────────
-
-function takeSnapshot(shape: FabricObject, text: FabricObject): AttachSnapshot {
-  return {
-    shape: {
-      left: shape.left, top: shape.top,
-      originX: shape.originX, originY: shape.originY,
-      width: shape.width, height: shape.height,
-      scaleX: shape.scaleX, scaleY: shape.scaleY,
-      stroke: (shape as any).stroke, strokeWidth: (shape as any).strokeWidth,
-      layout: cloneLayout(shape),
-    },
-    text: {
-      left: text.left, top: text.top,
-      originX: text.originX, originY: text.originY,
-      width: text.width,
-      scaleX: text.scaleX, scaleY: text.scaleY,
-      textAlign: (text as any).textAlign,
-      layout: cloneLayout(text),
-    },
-  };
-}
-
-/**
- * Back to the snapshot's visual size, through the shape's own sizing (a rect sets
- * width/height, a circle or a path its scale, an image frame its frame).
- */
-function restoreShapeSize(shape: FabricObject, snap: AttachSnapshot["shape"]): void {
-  setShapeSize(shape, snap.width * (snap.scaleX || 1), snap.height * (snap.scaleY || 1));
-}
 
 function normalizeShapeOrigin(shape: FabricObject): void {
   const center = shape.getRelativeCenterPoint();
@@ -265,8 +175,6 @@ export function wrapContainerAroundChild(child: FabricObject, container: FabricO
   const containerLayout = layoutOf(container);
   if (!childLayout?.child || !containerLayout?.container) return;
 
-  const cd = containerLayout.container;
-
   const { w: childW, h: childH } = scaledSize(child);
   const sTL = topLeft(container);
   const tTL = topLeft(child);
@@ -274,8 +182,7 @@ export function wrapContainerAroundChild(child: FabricObject, container: FabricO
   const padLeft = Math.max(MIN_PAD, Math.round(tTL.x - sTL.x));
   const padTop = Math.max(MIN_PAD, Math.round(tTL.y - sTL.y));
 
-  cd.padding = { top: padTop, right: padLeft, bottom: padTop, left: padLeft };
-  container.set("layout", { ...containerLayout });
+  updateContainer(container, { padding: { top: padTop, right: padLeft, bottom: padTop, left: padLeft } });
 
   const sizing = sizingOf(container);
   const minW = sizing.minSize?.w ?? 0;
