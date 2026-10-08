@@ -9,19 +9,10 @@
 import type { FabricObject } from "#fabric";
 import type { DesignCanvas } from "../DesignCanvas";
 import { type AttachSnapshot, MIN_PAD } from "./types";
-import {
-  scaledSize,
-  setShapeSize,
-  topLeft,
-  clampTopLeft,
-  hasExceededOffset,
-  isTextObject,
-  pointInObject,
-  detachChild,
-  type LayoutText,
-} from "./geometry";
+import { scaledSize, setShapeSize, topLeft, clampTopLeft, hasExceededOffset, pointInObject } from "./geometry";
 import { runLayout, relayoutSingle, bubbleUpLayout } from "./reconcile";
-import { layoutOf, sizingOf, cloneLayout } from "./model";
+import { layoutOf, sizingOf, cloneLayout, detachChild } from "./model";
+import { isTextObject, type LayoutText } from "./text";
 
 // ── Constants ────────────────────────────────────────────────────────
 

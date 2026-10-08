@@ -1,11 +1,12 @@
 import { ActiveSelection, Point, type FabricObject } from "#fabric";
 import type { DesignCanvas } from "./DesignCanvas";
 import { isPositionLocked } from "./locking";
-import { isTextObject } from "./layout/geometry";
+
 import type { SelectionCallbacks, ControlOption } from "./types";
 import { rulesOf } from "./capabilities";
 import { ancestorsOf, findById, parentOf, stackParentOf } from "./layout/hierarchy";
 import { idOf, parentIdOf, containerDataOf } from "./layout/model";
+import { isTextObject } from "./layout/text";
 
 /**
  * Gère la sélection des objets sur le canvas

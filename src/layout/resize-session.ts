@@ -9,12 +9,13 @@
  */
 import type { FabricObject } from "#fabric";
 import { type ContainerData, type ResolvedChild, type SizingData } from "./types";
-import { scaledSize, setShapeSize, syncCoords, topLeft, cornerToAxes, isTextObject, type LayoutText, type ResizeAxes } from "./geometry";
+import { scaledSize, setShapeSize, syncCoords, topLeft, cornerToAxes, type ResizeAxes } from "./geometry";
 import { yogaLayout } from "./yoga-engine";
 import { availableRoom, type Room } from "./room";
 import { relayoutSingle, bubbleUpLayout } from "./reconcile";
 import { layoutOf, sizingOf, paddingOf } from "./model";
 import { flowChildrenOf, parentContainerOf } from "./hierarchy";
+import { isTextObject, type LayoutText } from "./text";
 
 // ── ResizeSession ───────────────────────────────────────────────────
 

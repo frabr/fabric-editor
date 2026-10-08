@@ -8,32 +8,13 @@
  * dans ses propres dimensions (une forme sa taille, un texte sa largeur et sa police, une
  * pile ses marges et son espacement), au prorata, autour du coin qui ne bouge pas.
  */
-import { Point, type FabricObject } from "#fabric";
+import type { FabricObject } from "#fabric";
 import { type ContainerData, type SizingData } from "./types";
-import { isTextObject, scaledSize, setShapeSize } from "./geometry";
-import { layoutOf, idOf, parentIdOf, containerDataOf, isFreeContainer, paddingOf, isStackContainer } from "./model";
-import { childrenOf, descendantsOf, translateObjects, stackParentOf } from "./hierarchy";
+import { boxOf, outsetBox, placeTopLeft, scaledSize, setShapeSize, unionBox, type Box } from "./geometry";
+import { layoutOf, containerDataOf, isFreeContainer, paddingOf } from "./model";
+import { childrenOf, descendantsOf } from "./hierarchy";
+import { isTextObject, scaleStyleFontSizes, type TextStyles } from "./text";
 
-interface Box {
-  left: number;
-  top: number;
-  width: number;
-  height: number;
-}
-
-/** La boîte (alignée sur les axes, coordonnées scène) d'un objet. */
-function boxOf(obj: FabricObject): Box {
-  obj.setCoords();
-  return obj.getBoundingRect();
-}
-
-
-
-/** Pose le coin haut-gauche d'un objet, quelle que soit son origine. */
-function placeTopLeft(obj: FabricObject, x: number, y: number): void {
-  obj.setPositionByOrigin(new Point(x, y), "left", "top");
-  obj.setCoords();
-}
 
 /**
  * La boîte d'un groupe se recale sur ses enfants : leur union, plus la marge. Sans
@@ -44,15 +25,9 @@ export function fitFreeContainer(container: FabricObject, objects: FabricObject[
   if (children.length === 0) return;
   for (const child of children) if (isFreeContainer(child)) fitFreeContainer(child, objects);
 
-  const boxes = children.map(boxOf);
-  const left = Math.min(...boxes.map((b) => b.left));
-  const top = Math.min(...boxes.map((b) => b.top));
-  const right = Math.max(...boxes.map((b) => b.left + b.width));
-  const bottom = Math.max(...boxes.map((b) => b.top + b.height));
-  const pad = paddingOf(containerDataOf(container));
-
-  setShapeSize(container, right - left + pad.left + pad.right, bottom - top + pad.top + pad.bottom);
-  placeTopLeft(container, left - pad.left, top - pad.top);
+  const box = outsetBox(unionBox(children.map(boxOf)), paddingOf(containerDataOf(container)));
+  setShapeSize(container, box.width, box.height);
+  placeTopLeft(container, box.left, box.top);
 }
 
 // ── Redimensionner un groupe ────────────────────────────────────────
@@ -62,7 +37,7 @@ interface ScaledState {
   obj: FabricObject;
   /** Coin haut-gauche et taille. */
   box: Box;
-  text?: { width: number; fontSize: number; fontSizeIntent: number; styles: string; minSize?: SizingData["minSize"] };
+  text?: { width: number; fontSize: number; fontSizeIntent: number; styles: TextStyles; minSize?: SizingData["minSize"] };
   container?: { padding?: ContainerData["padding"]; gap?: number; minSize?: SizingData["minSize"] };
 }
 
@@ -99,7 +74,7 @@ export class FreeResizeSession {
         width: obj.width,
         fontSize: t.fontSize,
         fontSizeIntent: t.fontSizeIntent ?? t.fontSize,
-        styles: JSON.stringify(t.styles ?? {}),
+        styles: scaleStyleFontSizes(t.styles as TextStyles, 1),
         minSize: layout?.sizing?.minSize,
       };
     } else if (layout?.container) {
@@ -117,12 +92,8 @@ export class FreeResizeSession {
     const layout = layoutOf(obj);
 
     if (state.text) {
-      const t = obj as FabricObject & { fontSize: number; fontSizeIntent?: number; styles?: Record<string, Record<string, { fontSize?: number }>>; initDimensions(): void };
-      const styles = JSON.parse(state.text.styles) as Record<string, Record<string, { fontSize?: number }>>;
-      for (const line of Object.values(styles)) {
-        for (const style of Object.values(line)) if (style.fontSize) style.fontSize *= k;
-      }
-      t.styles = styles;
+      const t = obj as FabricObject & { fontSize: number; fontSizeIntent?: number; styles?: TextStyles; initDimensions(): void };
+      t.styles = scaleStyleFontSizes(state.text.styles, k);
       t.fontSizeIntent = state.text.fontSizeIntent * k;
       t.fontSize = state.text.fontSize * k;
       t.width = state.text.width * k;

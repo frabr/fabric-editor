@@ -20,7 +20,7 @@
  * Plan : apibots docs/plans/object-capabilities.md.
  */
 import { FabricImage, Group, Rect, type FabricObject } from "#fabric";
-import { isTextObject } from "./layout/geometry";
+
 import { getLockMode, type LockMode } from "./locking";
 import { isUserSlot } from "./userSlots";
 import { FabRect } from "./shapes/FabRect";
@@ -29,6 +29,7 @@ import { FabPath } from "./shapes/FabPath";
 import type { ControlOption } from "./types";
 import { stackParentOf } from "./layout/hierarchy";
 import { isFreeContainer } from "./layout/model";
+import { isTextObject } from "./layout/text";
 
 
 /**

@@ -6,7 +6,7 @@ import { ResizeSession } from "./layout/resize-session";
 import { type LayoutSession, type SizingData, type TextOverflow, type Arrangement } from "./layout/types";
 import { arrangeAsStack, arrangeFree } from "./grouping";
 import { syncGroupControls } from "./ui/controls";
-import { pointInObject, isTextObject } from "./layout/geometry";
+import { pointInObject } from "./layout/geometry";
 import type { CustomTextbox } from "./controls/CustomTextbox";
 import { rulesOf } from "./capabilities";
 
@@ -20,6 +20,7 @@ import { ContainerizeSession } from "./layout/containerize-session";
 import { InsertChildSession } from "./layout/insert-child-session";
 import { layoutOf, containerDataOf, isFreeContainer, sizingOf, ZERO_PADDING, isStackContainer, directionOf } from "./layout/model";
 import { childrenOf, parentContainerOf, descendantsOf, findById } from "./layout/hierarchy";
+import { isTextObject } from "./layout/text";
 
 // ── Types ───────────────────────────────────────────────────────────
 

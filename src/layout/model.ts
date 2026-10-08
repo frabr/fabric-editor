@@ -8,6 +8,7 @@
  */
 import type { FabricObject } from "#fabric";
 import type { ChildData, ContainerData, FlexDirection, LayoutData, SizingData } from "./types";
+import { asLayoutText, isTextObject } from "./text";
 
 /** Ce qu'il faut d'un objet pour lire son layout (un objet Fabric, ou un calque réduit). */
 type Readable = { get?(key: string): unknown } | null | undefined;
@@ -104,6 +105,15 @@ export function removeLayoutBlock(obj: FabricObject, block: keyof LayoutData): v
   if (!layout || !(block in layout)) return;
   const { [block]: _removed, ...rest } = layout;
   obj.set("layout", Object.keys(rest).length ? rest : undefined);
+}
+
+/**
+ * Sort un objet de son container : le bloc `child` part, le reste du layout reste
+ * (sizing, container, overflow). Un texte quitte la boîte que son container lui imposait.
+ */
+export function detachChild(obj: FabricObject): void {
+  removeLayoutBlock(obj, "child");
+  if (isTextObject(obj)) asLayoutText(obj).layoutWith(null);
 }
 
 /** Copie profonde du layout, pour un instantané. */

@@ -15,16 +15,18 @@ import { hexAlpha } from "./ui/color";
 import { DRAG_PREVIEW_KEY } from "./types";
 import type { EditorConfig, LayerData, FontsConfig, ShapeType } from "./types";
 import { initYoga } from "./layout/yoga-engine";
-import { isTextObject } from "./layout/geometry";
+
 import { groupObjects, padGroupOnFirstFill, ungroupObject } from "./grouping";
 import { parentOf, stackParentOf, subtreeOf, translateSubtree } from "./layout/hierarchy";
+import { boxOf, insetBox } from "./layout/geometry";
 import {
   alignAxis, alignDelta, distributeDeltas, unionBox,
   type AlignEdge, type Box, type DistributeAxis,
 } from "./arrange";
 import { rulesOf } from "./capabilities";
 import { collectUserSlots, USER_SLOT_STYLE_KEY, type UserSlot, type UserSlotStyle } from "./userSlots";
-import { layoutOf, idOf, parentIdOf, containerDataOf, directionOf } from "./layout/model";
+import { layoutOf, idOf, parentIdOf, containerDataOf, directionOf, paddingOf } from "./layout/model";
+import { isTextObject } from "./layout/text";
 
 /**
  * Éditeur d'images basé sur Fabric.js
@@ -1041,7 +1043,7 @@ export class FabricEditor {
     this.selection.withSelectionReleased((selected) => {
       const objects = this.canvas.getObjects();
       const ref = selected.length > 1
-        ? unionBox(selected.map((obj) => obj.getBoundingRect()))
+        ? unionBox(selected.map(boxOf))
         : this.alignReference(selected[0], objects);
 
       let relayout = false;
@@ -1051,7 +1053,7 @@ export class FabricEditor {
           relayout = this.alignInStack(obj, parent, edge) || relayout;
           continue;
         }
-        const { dx, dy } = alignDelta(obj.getBoundingRect(), ref, edge);
+        const { dx, dy } = alignDelta(boxOf(obj), ref, edge);
         translateSubtree(objects, [obj], dx, dy);
       }
       if (relayout) this.layout.relayout();
@@ -1070,7 +1072,7 @@ export class FabricEditor {
     if (free.length < 3) return;
 
     this.selection.withSelectionReleased(() => {
-      const deltas = distributeDeltas(free.map((obj) => obj.getBoundingRect()), axis);
+      const deltas = distributeDeltas(free.map(boxOf), axis);
       free.forEach((obj, i) => translateSubtree(objects, [obj], deltas[i].dx, deltas[i].dy));
     });
     this.canvas.renderAll();
@@ -1095,15 +1097,7 @@ export class FabricEditor {
     const parent = parentOf(obj, objects);
     if (!parent) return { left: 0, top: 0, width: this.width, height: this.height };
 
-    const box = parent.getBoundingRect();
-    const pad = containerDataOf(parent)?.padding;
-    if (!pad) return box;
-    return {
-      left: box.left + pad.left,
-      top: box.top + pad.top,
-      width: box.width - pad.left - pad.right,
-      height: box.height - pad.top - pad.bottom,
-    };
+    return insetBox(boxOf(parent), paddingOf(containerDataOf(parent)));
   }
 
   /**

@@ -3,6 +3,7 @@ import { type SizingData, type TextOverflow } from "../layout/types";
 import { resolveTextBox, type TextConstraint, type TextMeasure } from "../layout/text-box";
 import { layoutOf, parentIdOf, isFreeContainer } from "../layout/model";
 import { parentOf } from "../layout/hierarchy";
+import { scaleStyleFontSizes, type TextStyles } from "../layout/text";
 
 const { changeObjectWidth, changeObjectHeight } = controlsUtils;
 
@@ -291,11 +292,7 @@ export class CustomTextbox extends Textbox {
     this.height *= sy;
     this.fontSize *= sy;
     this.fontSizeIntent *= sy;
-    for (const line of Object.values(this.styles ?? {})) {
-      for (const style of Object.values(line as Record<string, { fontSize?: number }>)) {
-        if (style.fontSize) style.fontSize *= sy;
-      }
-    }
+    this.styles = scaleStyleFontSizes(this.styles as TextStyles, sy) as typeof this.styles;
     this.scaleX = 1;
     this.scaleY = 1;
   }

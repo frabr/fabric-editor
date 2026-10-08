@@ -23,12 +23,12 @@
 import type { FabricObject } from "#fabric";
 import type { DesignCanvas } from "../DesignCanvas";
 import { type LayoutSession, type LayoutData, type ChildData, type FlexDirection } from "./types";
-import { scaledSize, setShapeSize, topLeft, syncCoords, pointInObject, detachChild } from "./geometry";
+import { scaledSize, setShapeSize, topLeft, syncCoords, pointInObject } from "./geometry";
 
 import { yogaLayout } from "./yoga-engine";
 import { runLayout, bubbleUpLayout } from "./reconcile";
 import { LayoutAnimator } from "./layout-animator";
-import { layoutOf, containerDataOf, sizingOf, directionOf, paddingOf, cloneLayout } from "./model";
+import { layoutOf, containerDataOf, sizingOf, directionOf, paddingOf, cloneLayout, detachChild } from "./model";
 import { childrenOf, flowChildrenOf } from "./hierarchy";
 
 // ── Constants ────────────────────────────────────────────────────────

@@ -25,9 +25,10 @@
  */
 import type { FabricObject } from "#fabric";
 import { type ResolvedChild, type ContainerData, type SizingData } from "./types";
-import { scaledSize, setShapeSize, isTextObject, topLeft, type LayoutText } from "./geometry";
+import { scaledSize, setShapeSize, topLeft } from "./geometry";
 import { layoutOf, isFreeContainer, sizingOf, directionOf } from "./model";
 import { flowChildrenOf, descendantsOf, translateObjects } from "./hierarchy";
+import { isTextObject, type LayoutText } from "./text";
 
 // ── Yoga singleton ─────────────────────────────────────────────────
 

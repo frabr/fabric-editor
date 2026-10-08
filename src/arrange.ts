@@ -3,15 +3,12 @@
  * alignées sur les axes). L'éditeur décide de la référence (la sélection, le container,
  * l'artboard) et de ce qui bouge ; ici, seulement de combien.
  */
+import type { Box } from "./layout/geometry";
+
+export { unionBox, type Box } from "./layout/geometry";
+
 export type AlignEdge = "left" | "center" | "right" | "top" | "middle" | "bottom";
 export type DistributeAxis = "horizontal" | "vertical";
-
-export interface Box {
-  left: number;
-  top: number;
-  width: number;
-  height: number;
-}
 
 export interface Delta {
   dx: number;
@@ -21,15 +18,6 @@ export interface Delta {
 /** L'axe d'un alignement : gauche, centre, droite sont horizontaux. */
 export function alignAxis(edge: AlignEdge): "x" | "y" {
   return edge === "left" || edge === "center" || edge === "right" ? "x" : "y";
-}
-
-/** La boîte qui englobe toutes les autres. */
-export function unionBox(boxes: Box[]): Box {
-  const left = Math.min(...boxes.map((b) => b.left));
-  const top = Math.min(...boxes.map((b) => b.top));
-  const right = Math.max(...boxes.map((b) => b.left + b.width));
-  const bottom = Math.max(...boxes.map((b) => b.top + b.height));
-  return { left, top, width: right - left, height: bottom - top };
 }
 
 /** Le déplacement qui aligne `box` sur le bord (ou le centre) `edge` de `ref`. */

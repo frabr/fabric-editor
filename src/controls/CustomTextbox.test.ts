@@ -10,7 +10,7 @@ import { runLayout } from "../layout/reconcile";
 import { migrateLegacyLayout } from "../layout/legacy";
 import { ResizeSession } from "../layout/resize-session";
 import type { LayoutData } from "../layout/types";
-import { detachChild } from "../layout/geometry";
+import { detachChild } from "../layout/model";
 
 beforeAll(async () => {
   await initYoga();

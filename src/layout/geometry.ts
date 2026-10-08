@@ -4,9 +4,9 @@
  * Used by both the layout engine (steady-state relayout) and the
  * LayoutManager (drag-to-layout interactions).
  */
-import type { FabricObject } from "#fabric";
+import { Point, type FabricObject } from "#fabric";
 import type { LayoutData, ResolvedChild } from "./types";
-import { idOf, layoutOf, removeLayoutBlock } from "./model";
+import { idOf, layoutOf } from "./model";
 
 /** Scaled dimensions (width × scaleX, height × scaleY). */
 export function scaledSize(obj: FabricObject): { w: number; h: number } {
@@ -34,6 +34,53 @@ export function topLeft(obj: FabricObject): { x: number; y: number } {
   return { x: center.x - w / 2, y: center.y - h / 2 };
 }
 
+/** Une boîte alignée sur les axes, en coordonnées scène. */
+export interface Box {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+}
+
+/** La boîte d'un objet, coordonnées recalculées avant lecture. */
+export function boxOf(obj: FabricObject): Box {
+  obj.setCoords();
+  const { left, top, width, height } = obj.getBoundingRect();
+  return { left, top, width, height };
+}
+
+/** La boîte qui englobe toutes les autres. */
+export function unionBox(boxes: Box[]): Box {
+  const left = Math.min(...boxes.map((b) => b.left));
+  const top = Math.min(...boxes.map((b) => b.top));
+  const right = Math.max(...boxes.map((b) => b.left + b.width));
+  const bottom = Math.max(...boxes.map((b) => b.top + b.height));
+  return { left, top, width: right - left, height: bottom - top };
+}
+
+type Insets = { top: number; right: number; bottom: number; left: number };
+
+/** La boîte rétrécie de ses marges (l'intérieur d'un container). */
+export function insetBox(box: Box, pad: Insets): Box {
+  return {
+    left: box.left + pad.left,
+    top: box.top + pad.top,
+    width: box.width - pad.left - pad.right,
+    height: box.height - pad.top - pad.bottom,
+  };
+}
+
+/** La boîte agrandie de marges (un groupe autour de ses enfants). */
+export function outsetBox(box: Box, pad: Insets): Box {
+  return insetBox(box, { top: -pad.top, right: -pad.right, bottom: -pad.bottom, left: -pad.left });
+}
+
+/** Pose le coin haut-gauche d'un objet, quelle que soit son origine. */
+export function placeTopLeft(obj: FabricObject, x: number, y: number): void {
+  obj.setPositionByOrigin(new Point(x, y), "left", "top");
+  obj.setCoords();
+}
+
 /** Hit-test: is a point inside an object's bounding box (with optional margin)? */
 export function pointInObject(
   point: { x: number; y: number },
@@ -48,19 +95,6 @@ export function pointInObject(
   );
 }
 
-const TEXT_TYPES = ["i-text", "textbox"];
-
-/** The layout-facing surface of a text object (implemented by CustomTextbox). */
-export interface LayoutText {
-  /** Narrowest the text can get: its longest word. */
-  minContentWidth(): number;
-  /** A layout pass: the container's constraint (null: the text left its container). */
-  layoutWith(constraint: { maxW?: number; w?: number; h?: number } | null): void;
-}
-
-export function isTextObject(obj: FabricObject): boolean {
-  return TEXT_TYPES.includes(obj.type);
-}
 
 /**
  * Clamp the top-left of `obj` so it doesn't go above/left of
@@ -102,14 +136,6 @@ export function hasExceededOffset(
   );
 }
 
-/**
- * Remove an object's `child` block, keeping the rest of its layout (sizing,
- * container, overflow). A text also drops the box its container imposed.
- */
-export function detachChild(obj: FabricObject): void {
-  removeLayoutBlock(obj, "child");
-  if (isTextObject(obj)) (obj as unknown as LayoutText).layoutWith(null);
-}
 
 
 /** Refresh Fabric's internal coordinate caches. */

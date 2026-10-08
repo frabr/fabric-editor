@@ -15,12 +15,13 @@
  */
 import type { FabricObject } from "#fabric";
 import { FabRect } from "./shapes/FabRect";
-import { detachChild, isTextObject } from "./layout/geometry";
 import { fitFreeContainer } from "./layout/free";
+import { boxOf } from "./layout/geometry";
 import { layoutParents, layoutRoot } from "./layout/tree";
 import { stackBlock } from "./layout/stacking";
-import { layoutOf, idOf, parentIdOf, containerDataOf, childDataOf, ZERO_PADDING } from "./layout/model";
+import { layoutOf, idOf, parentIdOf, containerDataOf, childDataOf, ZERO_PADDING, detachChild } from "./layout/model";
 import { childrenOf, flowChildrenOf } from "./layout/hierarchy";
+import { isTextObject } from "./layout/text";
 
 /** Ce que le groupage demande au canvas. */
 export interface GroupingCanvas {
@@ -147,10 +148,7 @@ const spread = (values: number[]) => Math.max(...values) - Math.min(...values);
  */
 export function arrangeAsStack(container: FabricObject, objects: FabricObject[]): void {
   const layout = layoutOf(container)!;
-  const children = childrenOf(objects, container).map((c) => {
-    c.obj.setCoords();
-    return { obj: c.obj, box: c.obj.getBoundingRect() };
-  });
+  const children = childrenOf(objects, container).map((c) => ({ obj: c.obj, box: boxOf(c.obj) }));
   if (children.length === 0) return;
 
   const row = spread(children.map((c) => c.box.left + c.box.width / 2)) >
