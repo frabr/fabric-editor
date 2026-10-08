@@ -2020,6 +2020,12 @@ declare class LayoutManager {
     setPadding(obj: FabricObject, side: string, value: number): void;
     /** Un groupe libre ou rangé (une pile) — la bascule ne fait rien sauter (cf. arrangement). */
     setArrangement(obj: FabricObject, arrangement: Arrangement): void;
+    /**
+     * Une forme devient un bloc : un container vide, à sa taille, en colonne — les objets
+     * qu'on y glisse s'y rangent. Glisser un objet sur une forme simple ne la change plus
+     * en container : c'est ce geste-ci, ou grouper puis ranger. Dégrouper la rend simple.
+     */
+    makeContainer(obj: FabricObject): void;
     /** Cross-axis alignment of one child in its stack. */
     setAlignSelf(obj: FabricObject, value: string): void;
     /** Space between the children of a stack. */

@@ -516,6 +516,9 @@ var ZERO_PADDING = Object.freeze({ top: 0, right: 0, bottom: 0, left: 0 });
 function paddingOf(cd) {
   return cd?.padding ?? { ...ZERO_PADDING };
 }
+function uniformPadding(value) {
+  return { top: value, right: value, bottom: value, left: value };
+}
 var DEFAULT_SIZING = { x: "hug", y: "hug" };
 function sizingOf(obj) {
   return layoutOf(obj)?.sizing ?? DEFAULT_SIZING;
@@ -5696,7 +5699,8 @@ function applyInitialLayout(shape, child) {
   shape.set("layout", {
     ...shapeLayout,
     sizing: shapeLayout.sizing ?? { x: "hug", y: "hug", minSize: { w: shapeW, h: shapeH } },
-    container: { padding: { top: padY, right: padX, bottom: padY, left: padX } }
+    // Un bloc déjà activé (makeContainer) garde ses réglages ; la marge vient du dépôt
+    container: { ...shapeLayout.container, padding: { top: padY, right: padX, bottom: padY, left: padX } }
   });
   const childLayout = layoutOf(child) ?? {};
   child.set("layout", { ...childLayout, child: { parentId: containerId } });
@@ -5718,7 +5722,12 @@ function wrapContainerAroundChild(child, container) {
   const minH = sizing.minSize?.h ?? 0;
   const requiredW = padLeft + childW + padLeft;
   const requiredH = padTop + childH + padTop;
-  setShapeSize(container, Math.max(requiredW, minW), Math.max(requiredH, minH));
+  const { w, h } = scaledSize(container);
+  setShapeSize(
+    container,
+    sizing.x === "fixed" ? w : Math.max(requiredW, minW),
+    sizing.y === "fixed" ? h : Math.max(requiredH, minH)
+  );
   container.setCoords();
 }
 
@@ -6330,6 +6339,19 @@ var LayoutManager2 = class {
     syncGroupControls(obj);
     this.changed();
   }
+  /**
+   * Une forme devient un bloc : un container vide, à sa taille, en colonne — les objets
+   * qu'on y glisse s'y rangent. Glisser un objet sur une forme simple ne la change plus
+   * en container : c'est ce geste-ci, ou grouper puis ranger. Dégrouper la rend simple.
+   */
+  makeContainer(obj) {
+    if (isContainerObject(obj) || !rulesOf(obj).hosts) return;
+    const tl = topLeft(obj);
+    obj.set({ originX: "left", originY: "top" });
+    placeTopLeft(obj, tl.x, tl.y);
+    updateLayout(obj, { sizing: { x: "fixed", y: "fixed" }, container: { padding: uniformPadding(MIN_PAD) } });
+    this.changed();
+  }
   /** Cross-axis alignment of one child in its stack. */
   setAlignSelf(obj, value) {
     this.editChild(obj, { alignSelf: value });
@@ -6718,7 +6740,7 @@ var LayoutManager2 = class {
     const children = childrenOf(this.canvas.getObjects(), container);
     for (const { obj } of children) {
       if (obj === exclude) continue;
-      if (!rulesOf(obj).hosts) continue;
+      if (!isDropTarget(obj)) continue;
       if (pointInObject(cursor, obj)) return obj;
     }
     return null;
@@ -6797,7 +6819,7 @@ var LayoutManager2 = class {
     const entered = this.callbacks.getEnteredContainerId?.();
     for (const obj of objects) {
       if (obj === exclude) continue;
-      if (!rulesOf(obj).hosts) continue;
+      if (!isDropTarget(obj)) continue;
       const layout = layoutOf(obj);
       if (layout?.child) {
         if (!entered || layout.child.parentId !== entered) continue;
@@ -6807,6 +6829,9 @@ var LayoutManager2 = class {
     return null;
   }
 };
+function isDropTarget(obj) {
+  return rulesOf(obj).hosts && isStackContainer(obj);
+}
 
 // src/types.ts
 var DRAG_PREVIEW_KEY = "dragPreview";
@@ -7408,7 +7433,8 @@ var SelectionCommands = class {
     this.editor.canvas.discardActiveObject();
     const children = ungroupObject(this.editor.canvas, container);
     this.editor.layout.relayout();
-    this.editor.selection.selectMany(children);
+    const kept = this.editor.canvas.getObjects().includes(container);
+    this.editor.selection.selectMany(children.length || !kept ? children : [container]);
     return children;
   }
   // ── Aligner, répartir ─────────────────────────────────────────────
