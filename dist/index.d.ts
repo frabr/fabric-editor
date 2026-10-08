@@ -265,24 +265,8 @@ interface ResolvedChild {
     obj: _fabric.FabricObject;
     cl: ChildData;
 }
-/** Common interface for layout sessions (ContainerizeSession, InsertChildSession). */
-interface LayoutSession {
-    handleMoving(cursor: {
-        x: number;
-        y: number;
-    }): "anchored" | "exited";
-    commit(): () => void;
-    rollback(): void;
-    readonly container: _fabric.FabricObject;
-    readonly child: _fabric.FabricObject;
-}
 /** Minimum padding between a child and its container edges. */
 declare const MIN_PAD = 8;
-/** Snapshot of shape + text properties before attach, used for rollback. */
-interface AttachSnapshot {
-    shape: Record<string, any>;
-    text: Record<string, any>;
-}
 
 /**
  * Boîte d'un texte : fonction pure de son mode de taille, de la contrainte que lui
@@ -719,38 +703,62 @@ declare class FreeResizeSession {
 }
 
 /**
- * ContainerizeSession — encapsulates the "first attach" interaction.
+ * Ce que les sessions de dépôt dans une pile partagent : leur contrat, la marge de sortie,
+ * l'instantané qui permet de tout remettre en place si le geste est annulé, et les ordres
+ * stables des enfants.
  *
- * Transforms a plain shape into a layout container when any object (text,
- * shape, or another container) is dragged into it. Establishes padding,
- * size mode, and the initial container/child relationship.
- * Created by the LayoutManager, destroyed after commit or rollback.
+ * Une session vit le temps d'un geste : un objet entre dans une pile (son premier enfant,
+ * ContainerizeSession ; le suivant, InsertChildSession), ou un enfant déjà dedans y est
+ * déplacé (`reattach`). Le choix est fait par createDropSession (drop.ts).
  */
 
-declare class ContainerizeSession {
-    private canvas;
-    private shape;
-    private text;
-    private snapshot;
-    private clampDx;
-    private clampDy;
-    private anchorCursor;
-    /** If true, rollback detaches the child instead of restoring the snapshot. */
-    private _isReattach;
-    constructor(canvas: DesignCanvas, shape: FabricObject, text: FabricObject, cursor: {
+/** Une session de dépôt, du premier pas du geste au commit ou à l'annulation. */
+interface LayoutSession {
+    /** Un pas du geste. "exited" : le pointeur est sorti, la session s'est annulée. */
+    handleMoving(cursor: {
         x: number;
         y: number;
-    });
+    }): "anchored" | "exited";
+    commit(): void;
+    rollback(): void;
+    readonly container: FabricObject;
+    readonly child: FabricObject;
+}
+
+/**
+ * ContainerizeSession — the first child of a stack.
+ *
+ * An object (text, shape, or another container) dragged into an empty stack — a
+ * block made with makeContainer, or a container that lost its children — becomes
+ * its first child: the padding comes from where it is dropped, a hug axis wraps
+ * around it, a fixed axis keeps its size. Created by createDropSession, destroyed
+ * after commit or rollback.
+ */
+
+declare class ContainerizeSession implements LayoutSession {
+    private readonly canvas;
+    readonly container: FabricObject;
+    readonly child: FabricObject;
+    private readonly anchorCursor;
+    private readonly isReattach;
+    private readonly before;
+    /** Le décalage imposé à l'enfant pour qu'il entre dans les marges (pas de reattach). */
+    private clampDx;
+    private clampDy;
     /**
-     * Create a session for repositioning a child that is already attached.
-     * Skips layout creation, origin normalization, and clamp/grab offset.
-     * On exit (rollback), the child is detached instead of restored.
+     * `reattach` : l'enfant est déjà dedans et on l'y déplace — rien à créer ; l'annulation
+     * le sort du container au lieu de tout remettre comme avant.
      */
-    static reattach(canvas: DesignCanvas, shape: FabricObject, text: FabricObject, cursor: {
+    constructor(canvas: DesignCanvas, container: FabricObject, child: FabricObject, anchorCursor: {
+        x: number;
+        y: number;
+    }, isReattach?: boolean);
+    /** @deprecated Use `new ContainerizeSession(…, true)` or createDropSession. */
+    static reattach(canvas: DesignCanvas, container: FabricObject, child: FabricObject, cursor: {
         x: number;
         y: number;
     }): ContainerizeSession;
-    /** During drag: clamp text, resize container, check for exit. */
+    /** During drag: keep the child in the margins, fit the container, check for exit. */
     handleMoving(cursor: {
         x: number;
         y: number;
@@ -759,13 +767,9 @@ declare class ContainerizeSession {
      * Finalize the attach. Text edits relayout through the LayoutManager's
      * canvas-wide `text:changed` listener — nothing to clean up here.
      */
-    commit(): () => void;
-    /** Undo anchor: restore snapshot, reverse grab offset. */
+    commit(): void;
+    /** Undo: a reattached child leaves; a new one goes back where it was, so does the container. */
     rollback(): void;
-    /** The shape this session is attached to (for guide rendering). */
-    get container(): FabricObject;
-    /** The text being attached (for guide rendering). */
-    get child(): FabricObject;
     private shouldExit;
 }
 /** Resize container to wrap around its child, updating padding from current position. */
@@ -795,12 +799,11 @@ declare function wrapContainerAroundChild(child: FabricObject, container: Fabric
  */
 
 declare class InsertChildSession implements LayoutSession {
-    private canvas;
-    private _container;
-    private newChild;
-    private snapshot;
-    /** Whether this is a reattach (repositioning existing child) vs new insertion. */
-    private _isReattach;
+    private readonly canvas;
+    readonly container: FabricObject;
+    readonly child: FabricObject;
+    private readonly isReattach;
+    private readonly before;
     /** Whether this insertion is deciding the container's flex direction (2nd child). */
     private _decidingDirection;
     /** Current decided direction — cached for hysteresis. null = not yet decided. */
@@ -813,14 +816,15 @@ declare class InsertChildSession implements LayoutSession {
     private _newChildAnchorSize;
     /** Last Yoga-computed position of the dragged child (not the cursor position). */
     private _lastDraggedYogaPos;
-    constructor(canvas: DesignCanvas, container: FabricObject, newChild: FabricObject, cursor: {
+    /**
+     * `reattach`: the child is already in the container and is moved inside it — on
+     * rollback (dragged out) it leaves the container instead of going back.
+     */
+    constructor(canvas: DesignCanvas, container: FabricObject, child: FabricObject, cursor: {
         x: number;
         y: number;
-    });
-    /**
-     * Create a session for repositioning a child that is already in the container.
-     * On rollback (drag outside), the child is detached from the container.
-     */
+    }, isReattach?: boolean);
+    /** @deprecated Use `new InsertChildSession(…, true)` or createDropSession. */
     static reattach(canvas: DesignCanvas, container: FabricObject, child: FabricObject, cursor: {
         x: number;
         y: number;
@@ -829,10 +833,8 @@ declare class InsertChildSession implements LayoutSession {
         x: number;
         y: number;
     }): "anchored" | "exited";
-    commit(): () => void;
+    commit(): void;
     rollback(): void;
-    get container(): FabricObject;
-    get child(): FabricObject;
     private shouldExit;
     /**
      * Session decides direction + order from cursor, then asks yoga
@@ -883,6 +885,18 @@ declare class InsertChildSession implements LayoutSession {
     /** Snapshot all children positions using animator targets when available. */
     private captureChildPositions;
 }
+
+/**
+ * Quelle session pour un dépôt dans une pile : son premier enfant (ContainerizeSession) ou
+ * le suivant (InsertChildSession) ; `reattach` pour un enfant déjà dedans qu'on y déplace.
+ */
+
+declare function createDropSession(canvas: DesignCanvas, container: FabricObject, child: FabricObject, cursor: {
+    x: number;
+    y: number;
+}, { reattach }?: {
+    reattach?: boolean;
+}): LayoutSession;
 
 /**
  * Yoga layout engine — Flexbox computation for containers.
@@ -1975,20 +1989,21 @@ interface LayoutManagerCallbacks {
     getEnteredContainerId?: () => string | null;
 }
 /**
- * Manages layout relationships between canvas objects.
- *
- * Two responsibilities:
- * 1. **Drag-to-layout**: when a text is dragged over a shape, creates a
- *    container/child layout relationship after a short delay, with live
- *    preview, rollback support, and visual guides.
- * 2. **Automatic relayout**: keeps container/child dimensions in sync
- *    when text content changes or containers are moved/resized.
+ * The layout of the canvas, as the host sees it (`editor.layout`):
+ * 1. **Commands** of the layout panel: size mode, padding, gap, direction,
+ *    alignment, free / stacked arrangement, "use as a block" (makeContainer).
+ * 2. **Gestures** on existing containers, wired to the canvas events: a moved
+ *    container or group takes its content along, a resized stack or group
+ *    settles (StackResizeSession / FreeResizeSession), a child of a group moves
+ *    freely, a text edit relayouts its ancestors.
+ * 3. **Dropping into a stack**: delegated to DragToLayout (native drags through
+ *    object:moving, toolbox drags through the external drag API below).
  */
 declare class LayoutManager {
     private canvas;
     private callbacks;
     private guides;
-    private dtl;
+    private readonly drag;
     private resizeSession;
     /** Le redimensionnement d'un groupe en cours (ouvert à before:transform). */
     private freeResize;
@@ -2086,36 +2101,6 @@ declare class LayoutManager {
     private onTextChanged;
     private onModified;
     private onResizing;
-    private handleIdleMoving;
-    private handleHoveringMoving;
-    private startHovering;
-    /** HOVERING timer fired → show guides and move to PENDING. */
-    private promoteToPending;
-    private handlePendingMoving;
-    private startPending;
-    /** PENDING timer fired → create a session and move to ANCHORED. */
-    private promoteToAnchored;
-    private handleAnchoredMoving;
-    /**
-     * Walk down from `root` to find the deepest drop target under the
-     * cursor. Returns `root` itself if no children qualify.
-     */
-    private findDeepestDropTarget;
-    /**
-     * Among the children of `container`, find the first one under the cursor
-     * that can host (see rulesOf) — it would become a sub-container.
-     */
-    private findChildDropTarget;
-    /** The container `obj` is a child of. */
-    private findParentContainer;
-    /** Transition to ANCHORED: create a session on the target and go live. */
-    private anchorOn;
-    /** Create the appropriate session type for a target container. */
-    private createSession;
-    private doCommit;
-    private resetToIdle;
-    private showSessionGuides;
-    private findShapeUnderPoint;
 }
 
 /**
@@ -3137,4 +3122,4 @@ declare function drawFrameBadge(ctx: CanvasRenderingContext2D, obj: FabricObject
 /** Les labels d'un objet réunis en un seul badge (dédoublonnés), ou null. */
 declare function badgeLabel(obj: FabricObject, labelers: BadgeLabeler[]): string | null;
 
-export { type AlignEdge, type AlignItems, type AlignSelf, type Arrangement, type AttachSnapshot, type BadgeLabeler, type BindingSpec, type Bindings, type Box, CanvasGuides, type CatalogShape, type CatalogShapeInput, type ChildData, type ClipData, type ContainerData, ContainerizeSession, type ControlOption, CustomTextbox, type Delta, DesignCanvas, type DistributeAxis, type DragPayload, DropHandler, type DropHandlerConfig, type DropResult, type EditorConfig, FabCircle, FabPath, FabRect, FabricEditor, type FlexDirection, type FontConfig, type FontsConfig, type FrameRect, FreeResizeSession, HEART_PATH, HEXAGON_PATH, type HistoryCallbacks, HistoryManager, type HistoryState, type HtmlLayerOutput, type HtmlRenderOptions, ImageFrame, type ImageLayerOptions, InsertChildSession, type JustifyContent, type LayerData, LayerManager, type LayoutData, LayoutManager, type LayoutManagerCallbacks, type LayoutParents, type LayoutSession, type LockMode$1 as LockMode, type Lockable, MIN_PAD, MaskManager, type ObjectControlsConfig, type ObjectKind, type ObjectRules, PendingUploadsManager, PersistenceManager, PreviewCanvas, ResizeSession, type ResizeSnapResult, type SaveOptions, type SaveResult, type SelectionCallbacks, SelectionManager, type ShapeCatalogEntry, type ShapeLayerOptions, type ShapePathData, type ShapeType, type SizeMode, type SizePreset, type SizingData, type SnappingConfig, SnappingManager, StackResizeSession, type TextLayerOptions, type TextOverflow, type ToolboxImageReaction, type TreeLayer, USER_SCOPE, USER_SLOT_FIELD, type UserSlot, type WorkspaceOptions, addCircleClip, addCropControls, addHeartClip, addHexagonClip, alignAxis, alignDelta, antiScale, applyClip, applyLockMode, badgeLabel, bindingBadgeLabel, clampTopLeft, clipDataFor, collectUserSlots, createCircle, createHeart, createHexagon, createImage, createPathShape, createPathsShape, createRect, createShape, distributeDeltas, drawBindingBadge, drawFrameBadge, fabricToHtml, fitFreeContainer, getAvailableShapes, getCatalogShape, getLockMode, getNextLockMode, getShapeCatalog, hasExceededOffset, hasPendingBindings, initYoga, isContentLocked, isFreeContainer, isMonoPath, isPositionLocked, isStyleLocked, isUserSlot, isValidShape, kindOf, layerToHtmlStandalone, layoutChildren, layoutDescendants, layoutParents, layoutRoot, lockBoundText, nextShape, pendingBindings, pointInObject, registerShapes, registeredShapes, removeCropControls, rulesOf, runLayout, scaledSize, setTextContent, stackBlock, stackParentOf, switchClip, switchShape, topLeft, unionBox, userSlotBinding, userSlotHint, wrapContainerAroundChild, yogaLayout };
+export { type AlignEdge, type AlignItems, type AlignSelf, type Arrangement, type BadgeLabeler, type BindingSpec, type Bindings, type Box, CanvasGuides, type CatalogShape, type CatalogShapeInput, type ChildData, type ClipData, type ContainerData, ContainerizeSession, type ControlOption, CustomTextbox, type Delta, DesignCanvas, type DistributeAxis, type DragPayload, DropHandler, type DropHandlerConfig, type DropResult, type EditorConfig, FabCircle, FabPath, FabRect, FabricEditor, type FlexDirection, type FontConfig, type FontsConfig, type FrameRect, FreeResizeSession, HEART_PATH, HEXAGON_PATH, type HistoryCallbacks, HistoryManager, type HistoryState, type HtmlLayerOutput, type HtmlRenderOptions, ImageFrame, type ImageLayerOptions, InsertChildSession, type JustifyContent, type LayerData, LayerManager, type LayoutData, LayoutManager, type LayoutManagerCallbacks, type LayoutParents, type LayoutSession, type LockMode$1 as LockMode, type Lockable, MIN_PAD, MaskManager, type ObjectControlsConfig, type ObjectKind, type ObjectRules, PendingUploadsManager, PersistenceManager, PreviewCanvas, ResizeSession, type ResizeSnapResult, type SaveOptions, type SaveResult, type SelectionCallbacks, SelectionManager, type ShapeCatalogEntry, type ShapeLayerOptions, type ShapePathData, type ShapeType, type SizeMode, type SizePreset, type SizingData, type SnappingConfig, SnappingManager, StackResizeSession, type TextLayerOptions, type TextOverflow, type ToolboxImageReaction, type TreeLayer, USER_SCOPE, USER_SLOT_FIELD, type UserSlot, type WorkspaceOptions, addCircleClip, addCropControls, addHeartClip, addHexagonClip, alignAxis, alignDelta, antiScale, applyClip, applyLockMode, badgeLabel, bindingBadgeLabel, clampTopLeft, clipDataFor, collectUserSlots, createCircle, createDropSession, createHeart, createHexagon, createImage, createPathShape, createPathsShape, createRect, createShape, distributeDeltas, drawBindingBadge, drawFrameBadge, fabricToHtml, fitFreeContainer, getAvailableShapes, getCatalogShape, getLockMode, getNextLockMode, getShapeCatalog, hasExceededOffset, hasPendingBindings, initYoga, isContentLocked, isFreeContainer, isMonoPath, isPositionLocked, isStyleLocked, isUserSlot, isValidShape, kindOf, layerToHtmlStandalone, layoutChildren, layoutDescendants, layoutParents, layoutRoot, lockBoundText, nextShape, pendingBindings, pointInObject, registerShapes, registeredShapes, removeCropControls, rulesOf, runLayout, scaledSize, setTextContent, stackBlock, stackParentOf, switchClip, switchShape, topLeft, unionBox, userSlotBinding, userSlotHint, wrapContainerAroundChild, yogaLayout };
