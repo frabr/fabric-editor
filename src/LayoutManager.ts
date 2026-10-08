@@ -3,10 +3,10 @@ import type { DesignCanvas } from "./DesignCanvas";
 import { CanvasGuides } from "./ui/guides";
 import { runLayout, layoutSubtree, relayoutAncestors } from "./layout/run";
 import { StackResizeSession } from "./layout/stack/resize-session";
-import type { AlignItems, AlignSelf, Arrangement, ChildData, ContainerData, JustifyContent, LayoutSession, SizingData, TextOverflow } from "./layout/types";
+import { MIN_PAD, type AlignItems, type AlignSelf, type Arrangement, type ChildData, type ContainerData, type JustifyContent, type LayoutSession, type SizingData, type TextOverflow } from "./layout/types";
 import { arrangeAsStack, arrangeFree } from "./layout/arrangement";
 import { syncGroupControls } from "./ui/controls";
-import { pointInObject } from "./layout/geometry";
+import { placeTopLeft, pointInObject, topLeft } from "./layout/geometry";
 import type { CustomTextbox } from "./controls/CustomTextbox";
 import { rulesOf } from "./capabilities";
 
@@ -25,7 +25,7 @@ import { SubtreeDrag } from "./layout/subtree-drag";
 import { FreeResizeSession } from "./layout/free/resize-session";
 import { ContainerizeSession } from "./layout/stack/sessions/containerize";
 import { InsertChildSession } from "./layout/stack/sessions/insert-child";
-import { layoutOf, containerDataOf, childDataOf, isContainerObject, isFreeContainer, sizingOf, paddingOf, directionOf, updateContainer, updateChild, updateLayout } from "./layout/model";
+import { layoutOf, containerDataOf, childDataOf, isContainerObject, isFreeContainer, sizingOf, paddingOf, directionOf, updateContainer, updateChild, updateLayout, uniformPadding, isStackContainer } from "./layout/model";
 import { childrenOf, parentContainerOf, findById } from "./layout/hierarchy";
 import { isTextObject } from "./layout/text";
 
@@ -232,6 +232,20 @@ export class LayoutManager {
     if (arrangement === "stack") arrangeAsStack(obj, objects);
     else arrangeFree(obj, objects);
     syncGroupControls(obj);
+    this.changed();
+  }
+
+  /**
+   * Une forme devient un bloc : un container vide, à sa taille, en colonne — les objets
+   * qu'on y glisse s'y rangent. Glisser un objet sur une forme simple ne la change plus
+   * en container : c'est ce geste-ci, ou grouper puis ranger. Dégrouper la rend simple.
+   */
+  makeContainer(obj: FabricObject): void {
+    if (isContainerObject(obj) || !rulesOf(obj).hosts) return;
+    const tl = topLeft(obj);
+    obj.set({ originX: "left", originY: "top" });
+    placeTopLeft(obj, tl.x, tl.y);
+    updateLayout(obj, { sizing: { x: "fixed", y: "fixed" }, container: { padding: uniformPadding(MIN_PAD) } });
     this.changed();
   }
 
@@ -747,7 +761,7 @@ export class LayoutManager {
     const children = childrenOf(this.canvas.getObjects(), container);
     for (const { obj } of children) {
       if (obj === exclude) continue;
-      if (!rulesOf(obj).hosts) continue;
+      if (!isDropTarget(obj)) continue;
       if (pointInObject(cursor, obj)) return obj;
     }
     return null;
@@ -862,11 +876,10 @@ export class LayoutManager {
 
     for (const obj of objects) {
       if (obj === exclude) continue;
-      if (!rulesOf(obj).hosts) continue;
+      if (!isDropTarget(obj)) continue;
       const layout = layoutOf(obj);
       if (layout?.child) {
-        // Allow child shapes as targets inside the entered container
-        // (enables nesting: drag into a child shape to make it a sub-container)
+        // Allow child containers as targets inside the entered container
         if (!entered || layout.child.parentId !== entered) continue;
       }
 
@@ -876,3 +889,10 @@ export class LayoutManager {
   }
 }
 
+/**
+ * Ce qui reçoit un objet qu'on glisse dessus : une pile (un container rangé), jamais une
+ * forme simple ni un groupe — une forme devient un bloc par makeContainer.
+ */
+function isDropTarget(obj: FabricObject): boolean {
+  return rulesOf(obj).hosts && isStackContainer(obj);
+}

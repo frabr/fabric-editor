@@ -43,7 +43,9 @@ export class SelectionCommands {
     this.editor.canvas.discardActiveObject();
     const children = ungroupObject(this.editor.canvas, container);
     this.editor.layout.relayout();
-    this.editor.selection.selectMany(children);
+    // Un bloc vide redevient une forme : elle reste sélectionnée
+    const kept = this.editor.canvas.getObjects().includes(container);
+    this.editor.selection.selectMany(children.length || !kept ? children : [container]);
     return children;
   }
 

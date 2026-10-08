@@ -250,7 +250,8 @@ function applyInitialLayout(shape: FabricObject, child: FabricObject): void {
   shape.set("layout", {
     ...shapeLayout,
     sizing: shapeLayout.sizing ?? { x: "hug", y: "hug", minSize: { w: shapeW, h: shapeH } },
-    container: { padding: { top: padY, right: padX, bottom: padY, left: padX } },
+    // Un bloc déjà activé (makeContainer) garde ses réglages ; la marge vient du dépôt
+    container: { ...shapeLayout.container, padding: { top: padY, right: padX, bottom: padY, left: padX } },
   });
 
   // Add child block to child (preserve existing container block if it has children)
@@ -282,6 +283,12 @@ export function wrapContainerAroundChild(child: FabricObject, container: FabricO
   const requiredW = padLeft + childW + padLeft;
   const requiredH = padTop + childH + padTop;
 
-  setShapeSize(container, Math.max(requiredW, minW), Math.max(requiredH, minH));
+  // Un axe fixe garde sa taille (un bloc activé) ; un axe « contenu » épouse l'enfant
+  const { w, h } = scaledSize(container);
+  setShapeSize(
+    container,
+    sizing.x === "fixed" ? w : Math.max(requiredW, minW),
+    sizing.y === "fixed" ? h : Math.max(requiredH, minH),
+  );
   container.setCoords();
 }
