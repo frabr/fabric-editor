@@ -158,9 +158,6 @@ var import_fabric11 = require("#fabric");
 var import_fabric = require("#fabric");
 
 // src/layout/types.ts
-function isFreeContainer(obj) {
-  return obj?.get("layout")?.container?.arrangement === "free";
-}
 var MIN_FONT_SIZE = 8;
 
 // src/layout/text-box.ts
@@ -194,6 +191,83 @@ function largestFittingFont(width, boundH, intent, measure) {
   return Math.floor(lo * 2) / 2;
 }
 
+// src/layout/text.ts
+var TEXT_TYPES = ["i-text", "textbox"];
+function isTextObject(obj) {
+  return TEXT_TYPES.includes(obj.type);
+}
+function scaleStyleFontSizes(styles, k) {
+  const scaled = JSON.parse(JSON.stringify(styles ?? {}));
+  for (const line of Object.values(scaled)) {
+    for (const style of Object.values(line)) if (style.fontSize) style.fontSize *= k;
+  }
+  return scaled;
+}
+
+// src/layout/model.ts
+function layoutOf(obj) {
+  return obj?.get?.("layout");
+}
+function idOf(obj) {
+  return obj.get("layerId");
+}
+function containerDataOf(obj) {
+  return layoutOf(obj)?.container;
+}
+function childDataOf(obj) {
+  return layoutOf(obj)?.child;
+}
+function parentIdOf(obj) {
+  return childDataOf(obj)?.parentId;
+}
+function isFreeContainer(obj) {
+  return containerDataOf(obj)?.arrangement === "free";
+}
+function isStackContainer(obj) {
+  const cd = containerDataOf(obj);
+  return cd != null && cd.arrangement !== "free";
+}
+var ZERO_PADDING = Object.freeze({ top: 0, right: 0, bottom: 0, left: 0 });
+
+// src/layout/hierarchy.ts
+function canvasObjects(obj) {
+  return obj.canvas?.getObjects() ?? [];
+}
+function findById(objects, layerId) {
+  return objects.find((o) => o.get("layerId") === layerId);
+}
+function parentOf(obj, objects = canvasObjects(obj)) {
+  const parentId = parentIdOf(obj);
+  if (!parentId) return void 0;
+  const parent = findById(objects, parentId);
+  return parent === obj ? void 0 : parent;
+}
+function stackParentOf(obj, objects = canvasObjects(obj)) {
+  const parent = parentOf(obj, objects);
+  return isStackContainer(parent) ? parent : void 0;
+}
+function descendantSet(objects, roots) {
+  const byParent = /* @__PURE__ */ new Map();
+  for (const obj of objects) {
+    const parentId = parentIdOf(obj);
+    if (parentId) byParent.set(parentId, [...byParent.get(parentId) ?? [], obj]);
+  }
+  const found = /* @__PURE__ */ new Set();
+  const queue = [...roots];
+  while (queue.length) {
+    for (const child of byParent.get(idOf(queue.shift())) ?? []) {
+      if (found.has(child) || roots.includes(child)) continue;
+      found.add(child);
+      queue.push(child);
+    }
+  }
+  return found;
+}
+function subtreeOf(objects, roots) {
+  const found = descendantSet(objects, roots);
+  return objects.filter((o) => roots.includes(o) || found.has(o));
+}
+
 // src/controls/CustomTextbox.ts
 var { changeObjectWidth, changeObjectHeight } = import_fabric.controlsUtils;
 var UNBOUNDED_WIDTH = 1e4;
@@ -213,20 +287,20 @@ var CustomTextbox = class extends import_fabric.Textbox {
    * stockée fait foi : largeur fixe.
    */
   get sizing() {
-    return this.get("layout")?.sizing ?? { x: "fixed", y: "hug" };
+    return layoutOf(this)?.sizing ?? { x: "fixed", y: "hug" };
   }
   get textOverflow() {
-    return this.get("layout")?.overflow ?? "shrink";
+    return layoutOf(this)?.overflow ?? "shrink";
   }
   /** Remplace le bloc `sizing` (nouvel objet `layout`, jamais muté en place). */
   setSizing(sizing) {
-    const layout = this.get("layout") ?? {};
+    const layout = layoutOf(this) ?? {};
     this.set("layout", { ...layout, sizing });
     this.initDimensions();
     this.setCoords();
   }
   setTextOverflow(overflow) {
-    const layout = this.get("layout") ?? {};
+    const layout = layoutOf(this) ?? {};
     this.set("layout", { ...layout, overflow });
     this.initDimensions();
     this.setCoords();
@@ -350,9 +424,8 @@ var CustomTextbox = class extends import_fabric.Textbox {
   }
   /** Placé par une pile — un groupe (container libre) laisse ses enfants à leur propre taille. */
   _isChild() {
-    const parentId = this.get("layout")?.child?.parentId;
-    if (parentId == null) return false;
-    const parent = this.canvas?.getObjects().find((o) => o.get("layerId") === parentId);
+    if (parentIdOf(this) == null) return false;
+    const parent = parentOf(this);
     return !isFreeContainer(parent);
   }
   _withAnchor(transform, resize) {
@@ -364,7 +437,7 @@ var CustomTextbox = class extends import_fabric.Textbox {
   }
   _resizeWidth(transform, x, y) {
     if (this.sizing.x !== "fixed") {
-      const layout = this.get("layout") ?? {};
+      const layout = layoutOf(this) ?? {};
       this.set("layout", { ...layout, sizing: { ...this.sizing, x: "fixed" } });
     }
     return changeObjectWidth({}, transform, x, y);
@@ -375,7 +448,7 @@ var CustomTextbox = class extends import_fabric.Textbox {
     const sizing = this.sizing;
     if (sizing.y === "hug") {
       const minSize = { w: sizing.minSize?.w ?? 0, h: this.height };
-      const layout = this.get("layout") ?? {};
+      const layout = layoutOf(this) ?? {};
       this.set("layout", { ...layout, sizing: { ...sizing, minSize } });
     }
     this.initDimensions();
@@ -395,11 +468,7 @@ var CustomTextbox = class extends import_fabric.Textbox {
     this.height *= sy;
     this.fontSize *= sy;
     this.fontSizeIntent *= sy;
-    for (const line of Object.values(this.styles ?? {})) {
-      for (const style of Object.values(line)) {
-        if (style.fontSize) style.fontSize *= sy;
-      }
-    }
+    this.styles = scaleStyleFontSizes(this.styles, sy);
     this.scaleX = 1;
     this.scaleY = 1;
   }
@@ -412,7 +481,7 @@ var CustomTextbox = class extends import_fabric.Textbox {
    *   (texte qui wrappe, ou boîte élargie pour un alignement).
    */
   _ensureSizing(hasExplicitWidth) {
-    const layout = this.get("layout");
+    const layout = layoutOf(this);
     if (layout?.sizing) return;
     let x = "hug";
     if (hasExplicitWidth && !layout?.child) {
@@ -602,21 +671,9 @@ function migrateLegacyLayout(layout) {
   return { ...layout, sizing, container };
 }
 
-// src/layout/stacking.ts
-function parentIdOf(obj) {
-  return obj.get("layout")?.child?.parentId;
-}
+// src/layout/z-order.ts
 function stackBlock(objects, root) {
-  const ids = /* @__PURE__ */ new Set([root.get("layerId")]);
-  const block = [];
-  for (const obj of objects) {
-    if (obj === root) block.push(obj);
-    else if (ids.has(parentIdOf(obj))) {
-      block.push(obj);
-      ids.add(obj.get("layerId"));
-    }
-  }
-  return block;
+  return subtreeOf(objects, [root]);
 }
 function siblingsOf(objects, obj) {
   const parentId = parentIdOf(obj);
@@ -661,19 +718,7 @@ function sendBlocksBackward(objects, moved) {
 }
 
 // src/capabilities.ts
-var import_fabric7 = require("#fabric");
-
-// src/layout/geometry.ts
-function scaledSize(obj) {
-  return {
-    w: obj.width * (obj.scaleX || 1),
-    h: obj.height * (obj.scaleY || 1)
-  };
-}
-var TEXT_TYPES = ["i-text", "textbox"];
-function isTextObject(obj) {
-  return TEXT_TYPES.includes(obj.type);
-}
+var import_fabric6 = require("#fabric");
 
 // src/locking.ts
 function getLockMode(obj) {
@@ -1151,23 +1196,13 @@ installLockMethods(FabPath.prototype);
 installUserSlotRendering(FabPath.prototype);
 import_fabric5.classRegistry.setClass(FabPath, "Path");
 
-// src/layout/free.ts
-var import_fabric6 = require("#fabric");
-function stackParentOf(obj) {
-  const parentId = obj.get("layout")?.child?.parentId;
-  if (!parentId) return void 0;
-  const parent = obj.canvas?.getObjects().find((o) => o.get("layerId") === parentId);
-  const cd = parent?.get("layout")?.container;
-  return cd && cd.arrangement !== "free" ? parent : void 0;
-}
-
 // src/capabilities.ts
 function kindOf(obj) {
   const layerType = obj.layerType;
   if (isTextObject(obj)) return "text";
   if (layerType === "imageFrame") return "imageShape";
-  if (obj instanceof import_fabric7.FabricImage) return "legacyImage";
-  if (layerType === "shape" || obj instanceof import_fabric7.Rect) return "shape";
+  if (obj instanceof import_fabric6.FabricImage) return "legacyImage";
+  if (layerType === "shape" || obj instanceof import_fabric6.Rect) return "shape";
   return "other";
 }
 function rulesOf(obj, { ignoreLock = false } = {}) {
@@ -1211,7 +1246,7 @@ function kindRules(obj, kind) {
     case "shape":
       return {
         kind,
-        onToolboxImage: obj instanceof import_fabric7.Group ? null : "fill",
+        onToolboxImage: obj instanceof import_fabric6.Group ? null : "fill",
         hosts: true,
         options: shapeOptions(obj),
         ...free
@@ -1240,10 +1275,10 @@ function isOutOfPlay(obj) {
 }
 
 // src/shapes/factories.ts
-var import_fabric9 = require("#fabric");
+var import_fabric8 = require("#fabric");
 
 // src/controls/cropControls.ts
-var import_fabric8 = require("#fabric");
+var import_fabric7 = require("#fabric");
 var CROP_CONFIGS = {
   left: {
     dimension: "width",
@@ -1337,7 +1372,7 @@ function addCropControls(obj) {
   sides.forEach((side) => {
     const position = CONTROL_POSITIONS[side];
     const controlName = CONTROL_NAMES[side];
-    obj.controls[controlName] = new import_fabric8.Control({
+    obj.controls[controlName] = new import_fabric7.Control({
       x: position.x,
       y: position.y,
       actionHandler: createCropActionHandler(side),
@@ -1355,7 +1390,7 @@ function createCircle(options) {
   return new FabCircle(options);
 }
 async function createImage(url, options) {
-  const img = await import_fabric9.FabricImage.fromURL(url, { crossOrigin: "anonymous" });
+  const img = await import_fabric8.FabricImage.fromURL(url, { crossOrigin: "anonymous" });
   let scale = 1;
   if (img.width > 300 || img.height > 300) {
     scale = Math.min(300 / img.width, 300 / img.height);
@@ -1397,7 +1432,7 @@ function createPathsShape(paths, options = {}) {
     child.setCoords();
     return child;
   });
-  const group = new import_fabric9.Group(children, { originX: "center", originY: "center", ...withoutUndefined({ left, top }) });
+  const group = new import_fabric8.Group(children, { originX: "center", originY: "center", ...withoutUndefined({ left, top }) });
   if (id) group.set({ id });
   const target = targetDims(group.width, group.height, options.width, options.height);
   group.set({ scaleX: target.width / group.width, scaleY: target.height / group.height });
@@ -1459,6 +1494,15 @@ function shapeIds() {
 }
 function isValidShape(id) {
   return shapeIds().includes(id);
+}
+
+// src/layout/geometry.ts
+var import_fabric9 = require("#fabric");
+function scaledSize(obj) {
+  return {
+    w: obj.width * (obj.scaleX || 1),
+    h: obj.height * (obj.scaleY || 1)
+  };
 }
 
 // src/ImageFrame.ts
@@ -2040,7 +2084,7 @@ var LayerManager = class {
    * Trouve un calque par son ID
    */
   findById(layerId) {
-    return this.canvas.getObjects().find((obj) => obj.get("layerId") === layerId);
+    return findById(this.canvas.getObjects(), layerId);
   }
   /**
    * Charge l'image de fond
@@ -2328,7 +2372,7 @@ var LayerManager = class {
    * son rang dans la pile (sous ses enfants).
    */
   takeOver(previous, next) {
-    const layout = previous.get("layout");
+    const layout = layoutOf(previous);
     if (layout) next.set("layout", JSON.parse(JSON.stringify(layout)));
     const lockMode = getLockMode(previous);
     if (lockMode !== "free") applyLockMode(next, lockMode);
@@ -2381,7 +2425,9 @@ var LayerManager = class {
     return shape;
   }
   /**
-   * Groupe plusieurs objets ensemble
+   * @legacy Fusionne des objets dans un `fabric.Group` (éditeur SAFTI legacy, « fusionner
+   * les calques »). Pour grouper dans l'éditeur : `FabricEditor.groupSelection` (un groupe
+   * libre, ses objets restent des calques).
    */
   groupObjects(objects) {
     const group = new import_fabric11.Group(objects);
@@ -2453,7 +2499,7 @@ var LayerManager = class {
         console.warn(`Type de calque inconnu: ${layer.type}`);
         return null;
     }
-    const migrated = obj && migrateLegacyLayout(obj.get("layout"));
+    const migrated = obj && migrateLegacyLayout(layoutOf(obj));
     if (obj && migrated) obj.set("layout", migrated);
     if (obj && layer.lockMode) {
       const mode = layer.lockMode;
@@ -2800,7 +2846,7 @@ var HistoryManager = class {
   }
 };
 
-// src/layout/yoga-engine.ts
+// src/layout/stack/engine.ts
 var yoga = null;
 var yogaConfig = null;
 async function initYoga() {

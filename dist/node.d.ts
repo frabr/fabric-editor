@@ -851,7 +851,9 @@ declare class LayerManager {
     }): FabricObject;
     addShape(options?: ShapeLayerOptions): FabricObject;
     /**
-     * Groupe plusieurs objets ensemble
+     * @legacy Fusionne des objets dans un `fabric.Group` (éditeur SAFTI legacy, « fusionner
+     * les calques »). Pour grouper dans l'éditeur : `FabricEditor.groupSelection` (un groupe
+     * libre, ses objets restent des calques).
      */
     groupObjects(objects: FabricObject[]): Group;
     /**

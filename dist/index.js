@@ -148,6 +148,7 @@ __export(index_exports, {
   FabPath: () => FabPath,
   FabRect: () => FabRect,
   FabricEditor: () => FabricEditor,
+  FreeResizeSession: () => FreeResizeSession,
   HEART_PATH: () => HEART_PATH,
   HEXAGON_PATH: () => HEXAGON_PATH,
   HistoryManager: () => HistoryManager,
@@ -163,6 +164,7 @@ __export(index_exports, {
   ResizeSession: () => ResizeSession,
   SelectionManager: () => SelectionManager,
   SnappingManager: () => SnappingManager,
+  StackResizeSession: () => StackResizeSession,
   USER_SCOPE: () => USER_SCOPE,
   USER_SLOT_FIELD: () => USER_SLOT_FIELD,
   addCircleClip: () => addCircleClip,
@@ -200,10 +202,6 @@ __export(index_exports, {
   hasExceededOffset: () => hasExceededOffset,
   hasPendingBindings: () => hasPendingBindings,
   initYoga: () => initYoga,
-  isChild: () => isChild,
-  isChildLayout: () => isChildLayout,
-  isContainer: () => isContainer,
-  isContainerLayout: () => isContainerLayout,
   isContentLocked: () => isContentLocked,
   isFreeContainer: () => isFreeContainer,
   isMonoPath: () => isMonoPath,
@@ -211,7 +209,6 @@ __export(index_exports, {
   isStyleLocked: () => isStyleLocked,
   isUserSlot: () => isUserSlot,
   isValidShape: () => isValidShape,
-  isYogaReady: () => isYogaReady,
   kindOf: () => kindOf,
   layerToHtmlStandalone: () => layerToHtmlStandalone,
   layoutChildren: () => layoutChildren,
@@ -243,7 +240,7 @@ __export(index_exports, {
 module.exports = __toCommonJS(index_exports);
 
 // src/FabricEditor.ts
-var import_fabric18 = require("#fabric");
+var import_fabric19 = require("#fabric");
 
 // src/DesignCanvas.ts
 var import_fabric = require("#fabric");
@@ -561,27 +558,8 @@ var import_fabric12 = require("#fabric");
 var import_fabric2 = require("#fabric");
 
 // src/layout/types.ts
-function isContainer(l) {
-  return l.container != null;
-}
-function isChild(l) {
-  return l.child != null;
-}
-function isFreeContainer(obj) {
-  return obj?.get("layout")?.container?.arrangement === "free";
-}
-function isContainerLayout(l) {
-  return isContainer(l);
-}
-function isChildLayout(l) {
-  return isChild(l);
-}
 var MIN_PAD = 8;
 var MIN_FONT_SIZE = 8;
-var DEFAULT_SIZING = { x: "hug", y: "hug" };
-function sizingOf(obj) {
-  return obj.get("layout")?.sizing ?? DEFAULT_SIZING;
-}
 
 // src/layout/text-box.ts
 function resolveTextBox(input, measure) {
@@ -614,6 +592,163 @@ function largestFittingFont(width, boundH, intent, measure) {
   return Math.floor(lo * 2) / 2;
 }
 
+// src/layout/text.ts
+var TEXT_TYPES = ["i-text", "textbox"];
+function isTextObject(obj) {
+  return TEXT_TYPES.includes(obj.type);
+}
+function asLayoutText(obj) {
+  return obj;
+}
+function scaleStyleFontSizes(styles, k) {
+  const scaled = JSON.parse(JSON.stringify(styles ?? {}));
+  for (const line of Object.values(scaled)) {
+    for (const style of Object.values(line)) if (style.fontSize) style.fontSize *= k;
+  }
+  return scaled;
+}
+
+// src/layout/model.ts
+function layoutOf(obj) {
+  return obj?.get?.("layout");
+}
+function idOf(obj) {
+  return obj.get("layerId");
+}
+function containerDataOf(obj) {
+  return layoutOf(obj)?.container;
+}
+function childDataOf(obj) {
+  return layoutOf(obj)?.child;
+}
+function parentIdOf(obj) {
+  return childDataOf(obj)?.parentId;
+}
+function isContainerObject(obj) {
+  return containerDataOf(obj) != null;
+}
+function isFreeContainer(obj) {
+  return containerDataOf(obj)?.arrangement === "free";
+}
+function isStackContainer(obj) {
+  const cd = containerDataOf(obj);
+  return cd != null && cd.arrangement !== "free";
+}
+function directionOf(cd) {
+  return cd?.flexDirection ?? "column";
+}
+var ZERO_PADDING = Object.freeze({ top: 0, right: 0, bottom: 0, left: 0 });
+function paddingOf(cd) {
+  return cd?.padding ?? { ...ZERO_PADDING };
+}
+var DEFAULT_SIZING = { x: "hug", y: "hug" };
+function sizingOf(obj) {
+  return layoutOf(obj)?.sizing ?? DEFAULT_SIZING;
+}
+function updateLayout(obj, patch) {
+  obj.set("layout", { ...layoutOf(obj), ...patch });
+}
+function updateContainer(obj, patch) {
+  updateLayout(obj, { container: { ...containerDataOf(obj), ...patch } });
+}
+function updateChild(obj, patch) {
+  updateLayout(obj, { child: { ...childDataOf(obj), ...patch } });
+}
+function removeLayoutBlock(obj, block) {
+  const layout = layoutOf(obj);
+  if (!layout || !(block in layout)) return;
+  const { [block]: _removed, ...rest } = layout;
+  obj.set("layout", Object.keys(rest).length ? rest : void 0);
+}
+function detachChild(obj) {
+  removeLayoutBlock(obj, "child");
+  if (isTextObject(obj)) asLayoutText(obj).layoutWith(null);
+}
+function cloneLayout(obj) {
+  const layout = layoutOf(obj);
+  return layout ? JSON.parse(JSON.stringify(layout)) : void 0;
+}
+
+// src/layout/hierarchy.ts
+function canvasObjects(obj) {
+  return obj.canvas?.getObjects() ?? [];
+}
+function findById(objects, layerId) {
+  return objects.find((o) => o.get("layerId") === layerId);
+}
+function parentOf(obj, objects = canvasObjects(obj)) {
+  const parentId = parentIdOf(obj);
+  if (!parentId) return void 0;
+  const parent = findById(objects, parentId);
+  return parent === obj ? void 0 : parent;
+}
+function parentContainerOf(obj, objects = canvasObjects(obj)) {
+  const parent = parentOf(obj, objects);
+  return parent && isContainerObject(parent) ? parent : null;
+}
+function stackParentOf(obj, objects = canvasObjects(obj)) {
+  const parent = parentOf(obj, objects);
+  return isStackContainer(parent) ? parent : void 0;
+}
+function ancestorsOf(obj, objects = canvasObjects(obj)) {
+  const ancestors = [];
+  for (let current = parentOf(obj, objects); current && !ancestors.includes(current) && current !== obj; current = parentOf(current, objects)) {
+    ancestors.push(current);
+  }
+  return ancestors;
+}
+function childrenOf(objects, container) {
+  const id = idOf(container);
+  const out = [];
+  for (const obj of objects) {
+    const cl = childDataOf(obj);
+    if (cl?.parentId === id && obj !== container) out.push({ obj, cl });
+  }
+  return out;
+}
+function sortChildrenByOrder(children) {
+  if (children.length <= 1) return children;
+  return [...children].sort((a, b) => (a.cl.order ?? Infinity) - (b.cl.order ?? Infinity));
+}
+function flowChildrenOf(objects, container) {
+  return sortChildrenByOrder(childrenOf(objects, container));
+}
+function descendantSet(objects, roots) {
+  const byParent = /* @__PURE__ */ new Map();
+  for (const obj of objects) {
+    const parentId = parentIdOf(obj);
+    if (parentId) byParent.set(parentId, [...byParent.get(parentId) ?? [], obj]);
+  }
+  const found = /* @__PURE__ */ new Set();
+  const queue = [...roots];
+  while (queue.length) {
+    for (const child of byParent.get(idOf(queue.shift())) ?? []) {
+      if (found.has(child) || roots.includes(child)) continue;
+      found.add(child);
+      queue.push(child);
+    }
+  }
+  return found;
+}
+function descendantsOf(objects, roots) {
+  const found = descendantSet(objects, roots);
+  return objects.filter((o) => found.has(o));
+}
+function subtreeOf(objects, roots) {
+  const found = descendantSet(objects, roots);
+  return objects.filter((o) => roots.includes(o) || found.has(o));
+}
+function translateObjects(objects, dx, dy) {
+  if (!dx && !dy) return;
+  for (const obj of objects) {
+    obj.set({ left: obj.left + dx, top: obj.top + dy });
+    obj.setCoords();
+  }
+}
+function translateSubtree(objects, roots, dx, dy) {
+  translateObjects(subtreeOf(objects, roots), dx, dy);
+}
+
 // src/controls/CustomTextbox.ts
 var { changeObjectWidth, changeObjectHeight } = import_fabric2.controlsUtils;
 var UNBOUNDED_WIDTH = 1e4;
@@ -633,20 +768,20 @@ var CustomTextbox = class extends import_fabric2.Textbox {
    * stockée fait foi : largeur fixe.
    */
   get sizing() {
-    return this.get("layout")?.sizing ?? { x: "fixed", y: "hug" };
+    return layoutOf(this)?.sizing ?? { x: "fixed", y: "hug" };
   }
   get textOverflow() {
-    return this.get("layout")?.overflow ?? "shrink";
+    return layoutOf(this)?.overflow ?? "shrink";
   }
   /** Remplace le bloc `sizing` (nouvel objet `layout`, jamais muté en place). */
   setSizing(sizing) {
-    const layout = this.get("layout") ?? {};
+    const layout = layoutOf(this) ?? {};
     this.set("layout", { ...layout, sizing });
     this.initDimensions();
     this.setCoords();
   }
   setTextOverflow(overflow) {
-    const layout = this.get("layout") ?? {};
+    const layout = layoutOf(this) ?? {};
     this.set("layout", { ...layout, overflow });
     this.initDimensions();
     this.setCoords();
@@ -770,9 +905,8 @@ var CustomTextbox = class extends import_fabric2.Textbox {
   }
   /** Placé par une pile — un groupe (container libre) laisse ses enfants à leur propre taille. */
   _isChild() {
-    const parentId = this.get("layout")?.child?.parentId;
-    if (parentId == null) return false;
-    const parent = this.canvas?.getObjects().find((o) => o.get("layerId") === parentId);
+    if (parentIdOf(this) == null) return false;
+    const parent = parentOf(this);
     return !isFreeContainer(parent);
   }
   _withAnchor(transform, resize) {
@@ -784,7 +918,7 @@ var CustomTextbox = class extends import_fabric2.Textbox {
   }
   _resizeWidth(transform, x, y) {
     if (this.sizing.x !== "fixed") {
-      const layout = this.get("layout") ?? {};
+      const layout = layoutOf(this) ?? {};
       this.set("layout", { ...layout, sizing: { ...this.sizing, x: "fixed" } });
     }
     return changeObjectWidth({}, transform, x, y);
@@ -795,7 +929,7 @@ var CustomTextbox = class extends import_fabric2.Textbox {
     const sizing = this.sizing;
     if (sizing.y === "hug") {
       const minSize = { w: sizing.minSize?.w ?? 0, h: this.height };
-      const layout = this.get("layout") ?? {};
+      const layout = layoutOf(this) ?? {};
       this.set("layout", { ...layout, sizing: { ...sizing, minSize } });
     }
     this.initDimensions();
@@ -815,11 +949,7 @@ var CustomTextbox = class extends import_fabric2.Textbox {
     this.height *= sy;
     this.fontSize *= sy;
     this.fontSizeIntent *= sy;
-    for (const line of Object.values(this.styles ?? {})) {
-      for (const style of Object.values(line)) {
-        if (style.fontSize) style.fontSize *= sy;
-      }
-    }
+    this.styles = scaleStyleFontSizes(this.styles, sy);
     this.scaleX = 1;
     this.scaleY = 1;
   }
@@ -832,7 +962,7 @@ var CustomTextbox = class extends import_fabric2.Textbox {
    *   (texte qui wrappe, ou boîte élargie pour un alignement).
    */
   _ensureSizing(hasExplicitWidth) {
-    const layout = this.get("layout");
+    const layout = layoutOf(this);
     if (layout?.sizing) return;
     let x = "hug";
     if (hasExplicitWidth && !layout?.child) {
@@ -1022,21 +1152,9 @@ function migrateLegacyLayout(layout) {
   return { ...layout, sizing, container };
 }
 
-// src/layout/stacking.ts
-function parentIdOf(obj) {
-  return obj.get("layout")?.child?.parentId;
-}
+// src/layout/z-order.ts
 function stackBlock(objects, root) {
-  const ids = /* @__PURE__ */ new Set([root.get("layerId")]);
-  const block = [];
-  for (const obj of objects) {
-    if (obj === root) block.push(obj);
-    else if (ids.has(parentIdOf(obj))) {
-      block.push(obj);
-      ids.add(obj.get("layerId"));
-    }
-  }
-  return block;
+  return subtreeOf(objects, [root]);
 }
 function siblingsOf(objects, obj) {
   const parentId = parentIdOf(obj);
@@ -1081,91 +1199,7 @@ function sendBlocksBackward(objects, moved) {
 }
 
 // src/capabilities.ts
-var import_fabric8 = require("#fabric");
-
-// src/layout/geometry.ts
-function resolveContainerChildren(objects, container) {
-  const containerId = container.get("layerId");
-  const out = [];
-  for (const obj of objects) {
-    const layout = obj.get("layout");
-    if (!layout?.child) continue;
-    if (layout.child.parentId === containerId) {
-      out.push({ obj, cl: layout.child });
-    }
-  }
-  return out;
-}
-function sortChildrenByOrder(children) {
-  if (children.length <= 1) return children;
-  return [...children].sort((a, b) => {
-    const orderA = a.cl.order ?? Infinity;
-    const orderB = b.cl.order ?? Infinity;
-    return orderA - orderB;
-  });
-}
-function scaledSize(obj) {
-  return {
-    w: obj.width * (obj.scaleX || 1),
-    h: obj.height * (obj.scaleY || 1)
-  };
-}
-function setShapeSize(obj, w, h) {
-  const sized = obj;
-  if (typeof sized.setSize === "function") sized.setSize(w, h);
-  else obj.set({ scaleX: w / (obj.width || 1), scaleY: h / (obj.height || 1) });
-}
-function topLeft(obj) {
-  const { w, h } = scaledSize(obj);
-  const center = obj.getRelativeCenterPoint();
-  return { x: center.x - w / 2, y: center.y - h / 2 };
-}
-function pointInObject(point, obj, margin = 0) {
-  const tl = topLeft(obj);
-  const { w, h } = scaledSize(obj);
-  return point.x >= tl.x - margin && point.x <= tl.x + w + margin && point.y >= tl.y - margin && point.y <= tl.y + h + margin;
-}
-var TEXT_TYPES = ["i-text", "textbox"];
-function isTextObject(obj) {
-  return TEXT_TYPES.includes(obj.type);
-}
-function clampTopLeft(obj, reference, padding) {
-  const tl = topLeft(obj);
-  const refTl = topLeft(reference);
-  return {
-    x: Math.max(refTl.x + padding, tl.x),
-    y: Math.max(refTl.y + padding, tl.y)
-  };
-}
-function hasExceededOffset(current, origin, offsetX, offsetY, margin) {
-  const dx = current.x - origin.x;
-  const dy = current.y - origin.y;
-  return offsetX > 0 && dx < -(offsetX + margin) || offsetX < 0 && dx > -offsetX + margin || offsetY > 0 && dy < -(offsetY + margin) || offsetY < 0 && dy > -offsetY + margin;
-}
-function detachChild(obj) {
-  const layout = obj.get?.("layout");
-  if (layout?.child) {
-    const { child: _child, ...rest } = layout;
-    obj.set("layout", Object.keys(rest).length ? rest : void 0);
-  }
-  if (isTextObject(obj)) obj.layoutWith(null);
-}
-function cloneLayout(obj) {
-  const layout = obj.get?.("layout");
-  return layout ? JSON.parse(JSON.stringify(layout)) : void 0;
-}
-function syncCoords(container, children) {
-  container.setCoords();
-  for (const { obj } of children) {
-    obj.setCoords();
-  }
-}
-function cornerToAxes(corner) {
-  if (!corner) return { x: true, y: true };
-  const hasX = corner.includes("l") || corner.includes("r");
-  const hasY = corner.includes("t") || corner.includes("b");
-  return { x: hasX, y: hasY };
-}
+var import_fabric7 = require("#fabric");
 
 // src/locking.ts
 var LOCK_MODES = ["free", "position", "full"];
@@ -1327,7 +1361,7 @@ function collectUserSlots(objects) {
     const { left, top, width, height } = object.getBoundingRect();
     return {
       object,
-      layerId: object.get("layerId"),
+      layerId: idOf(object),
       hint: userSlotHint(object),
       rect: { left, top, width, height }
     };
@@ -1763,172 +1797,13 @@ installLockMethods(FabPath.prototype);
 installUserSlotRendering(FabPath.prototype);
 import_fabric6.classRegistry.setClass(FabPath, "Path");
 
-// src/layout/free.ts
-var import_fabric7 = require("#fabric");
-
-// src/layout/tree.ts
-function layoutParents(layers) {
-  const all = Array.from(layers);
-  const ids = new Set(all.map((l) => l.layerId).filter(Boolean));
-  const parents = /* @__PURE__ */ new Map();
-  for (const layer of all) {
-    const parentId = layer.layout?.child?.parentId;
-    if (layer.layerId && parentId && parentId !== layer.layerId && ids.has(parentId)) {
-      parents.set(layer.layerId, parentId);
-    }
-  }
-  return parents;
-}
-function layoutRoot(parents, id) {
-  const seen = /* @__PURE__ */ new Set();
-  while (parents.has(id) && !seen.has(id)) {
-    seen.add(id);
-    id = parents.get(id);
-  }
-  return id;
-}
-function layoutChildren(parents, id) {
-  const children = [];
-  for (const [child, parent] of parents) if (parent === id && child !== id) children.push(child);
-  return children;
-}
-function layoutDescendants(parents, ids) {
-  const roots = new Set(ids);
-  const descendants = /* @__PURE__ */ new Set();
-  let grew = true;
-  while (grew) {
-    grew = false;
-    for (const [child, parent] of parents) {
-      if (descendants.has(child) || roots.has(child)) continue;
-      if (roots.has(parent) || descendants.has(parent)) {
-        descendants.add(child);
-        grew = true;
-      }
-    }
-  }
-  return descendants;
-}
-
-// src/layout/free.ts
-function boxOf(obj) {
-  obj.setCoords();
-  return obj.getBoundingRect();
-}
-function descendantsOf(objects, roots) {
-  const ids = layoutDescendants(layoutParents(objects), roots.map((o) => o.get("layerId")));
-  return objects.filter((o) => ids.has(o.get("layerId")));
-}
-function translateObjects(objects, dx, dy) {
-  if (!dx && !dy) return;
-  for (const obj of objects) {
-    obj.set({ left: obj.left + dx, top: obj.top + dy });
-    obj.setCoords();
-  }
-}
-function placeTopLeft(obj, x, y) {
-  obj.setPositionByOrigin(new import_fabric7.Point(x, y), "left", "top");
-  obj.setCoords();
-}
-function fitFreeContainer(container, objects) {
-  const children = resolveContainerChildren(objects, container).map((c) => c.obj);
-  if (children.length === 0) return;
-  for (const child of children) if (isFreeContainer(child)) fitFreeContainer(child, objects);
-  const boxes = children.map(boxOf);
-  const left = Math.min(...boxes.map((b) => b.left));
-  const top = Math.min(...boxes.map((b) => b.top));
-  const right = Math.max(...boxes.map((b) => b.left + b.width));
-  const bottom = Math.max(...boxes.map((b) => b.top + b.height));
-  const pad = container.get("layout").container?.padding ?? { top: 0, right: 0, bottom: 0, left: 0 };
-  setShapeSize(container, right - left + pad.left + pad.right, bottom - top + pad.top + pad.bottom);
-  placeTopLeft(container, left - pad.left, top - pad.top);
-}
-var scaleMin = (minSize, k) => minSize && { w: minSize.w * k, h: minSize.h * k };
-var FreeResizeSession = class {
-  constructor(container, objects, start) {
-    this.container = container;
-    this.objects = objects;
-    this.start = start;
-    this.states = descendantsOf(objects, [container]).map((obj) => this.snapshot(obj));
-  }
-  /** Le groupe à l'échelle `k` de son état de départ, `anchor` (scène) immobile. */
-  apply(k, anchor) {
-    for (const state of this.states) this.scale(state, k, anchor);
-    fitFreeContainer(this.container, this.objects);
-  }
-  snapshot(obj) {
-    const { w, h } = scaledSize(obj);
-    const tl = obj.getPositionByOrigin("left", "top");
-    const state = { obj, box: { left: tl.x, top: tl.y, width: w, height: h } };
-    const layout = obj.get("layout");
-    if (isTextObject(obj)) {
-      const t = obj;
-      state.text = {
-        width: obj.width,
-        fontSize: t.fontSize,
-        fontSizeIntent: t.fontSizeIntent ?? t.fontSize,
-        styles: JSON.stringify(t.styles ?? {}),
-        minSize: layout?.sizing?.minSize
-      };
-    } else if (layout?.container) {
-      state.container = {
-        padding: layout.container.padding,
-        gap: layout.container.gap,
-        minSize: layout.sizing?.minSize
-      };
-    }
-    return state;
-  }
-  scale(state, k, anchor) {
-    const { obj, box } = state;
-    const layout = obj.get("layout");
-    if (state.text) {
-      const t = obj;
-      const styles = JSON.parse(state.text.styles);
-      for (const line of Object.values(styles)) {
-        for (const style of Object.values(line)) if (style.fontSize) style.fontSize *= k;
-      }
-      t.styles = styles;
-      t.fontSizeIntent = state.text.fontSizeIntent * k;
-      t.fontSize = state.text.fontSize * k;
-      t.width = state.text.width * k;
-      if (layout?.sizing) {
-        obj.set("layout", { ...layout, sizing: { ...layout.sizing, minSize: scaleMin(state.text.minSize, k) } });
-      }
-      t.initDimensions();
-      obj.dirty = true;
-    } else if (state.container && layout?.container) {
-      const p = state.container.padding;
-      obj.set("layout", {
-        ...layout,
-        container: {
-          ...layout.container,
-          padding: p && { top: p.top * k, right: p.right * k, bottom: p.bottom * k, left: p.left * k },
-          gap: state.container.gap === void 0 ? void 0 : state.container.gap * k
-        },
-        sizing: layout.sizing && { ...layout.sizing, minSize: scaleMin(state.container.minSize, k) }
-      });
-      setShapeSize(obj, box.width * k, box.height * k);
-    } else {
-      setShapeSize(obj, box.width * k, box.height * k);
-    }
-    placeTopLeft(obj, anchor.x + (box.left - anchor.x) * k, anchor.y + (box.top - anchor.y) * k);
-  }
-};
-function stackParentOf(obj) {
-  const parentId = obj.get("layout")?.child?.parentId;
-  if (!parentId) return void 0;
-  const parent = obj.canvas?.getObjects().find((o) => o.get("layerId") === parentId);
-  const cd = parent?.get("layout")?.container;
-  return cd && cd.arrangement !== "free" ? parent : void 0;
-}
-
 // src/capabilities.ts
 function kindOf(obj) {
   const layerType = obj.layerType;
   if (isTextObject(obj)) return "text";
   if (layerType === "imageFrame") return "imageShape";
-  if (obj instanceof import_fabric8.FabricImage) return "legacyImage";
-  if (layerType === "shape" || obj instanceof import_fabric8.Rect) return "shape";
+  if (obj instanceof import_fabric7.FabricImage) return "legacyImage";
+  if (layerType === "shape" || obj instanceof import_fabric7.Rect) return "shape";
   return "other";
 }
 function rulesOf(obj, { ignoreLock = false } = {}) {
@@ -1972,7 +1847,7 @@ function kindRules(obj, kind) {
     case "shape":
       return {
         kind,
-        onToolboxImage: obj instanceof import_fabric8.Group ? null : "fill",
+        onToolboxImage: obj instanceof import_fabric7.Group ? null : "fill",
         hosts: true,
         options: shapeOptions(obj),
         ...free
@@ -2001,10 +1876,10 @@ function isOutOfPlay(obj) {
 }
 
 // src/shapes/factories.ts
-var import_fabric10 = require("#fabric");
+var import_fabric9 = require("#fabric");
 
 // src/controls/cropControls.ts
-var import_fabric9 = require("#fabric");
+var import_fabric8 = require("#fabric");
 var CROP_CONFIGS = {
   left: {
     dimension: "width",
@@ -2098,7 +1973,7 @@ function addCropControls(obj) {
   sides.forEach((side) => {
     const position = CONTROL_POSITIONS[side];
     const controlName = CONTROL_NAMES[side];
-    obj.controls[controlName] = new import_fabric9.Control({
+    obj.controls[controlName] = new import_fabric8.Control({
       x: position.x,
       y: position.y,
       actionHandler: createCropActionHandler(side),
@@ -2132,7 +2007,7 @@ function createPathShape(shapeId, options) {
   return FabPath.createFromCatalog(shapeId, options);
 }
 async function createImage(url, options) {
-  const img = await import_fabric10.FabricImage.fromURL(url, { crossOrigin: "anonymous" });
+  const img = await import_fabric9.FabricImage.fromURL(url, { crossOrigin: "anonymous" });
   let scale = 1;
   if (img.width > 300 || img.height > 300) {
     scale = Math.min(300 / img.width, 300 / img.height);
@@ -2174,7 +2049,7 @@ function createPathsShape(paths, options = {}) {
     child.setCoords();
     return child;
   });
-  const group = new import_fabric10.Group(children, { originX: "center", originY: "center", ...withoutUndefined({ left, top }) });
+  const group = new import_fabric9.Group(children, { originX: "center", originY: "center", ...withoutUndefined({ left, top }) });
   if (id) group.set({ id });
   const target = targetDims(group.width, group.height, options.width, options.height);
   group.set({ scaleX: target.width / group.width, scaleY: target.height / group.height });
@@ -2272,6 +2147,82 @@ function isValidShape(id) {
 }
 function getAvailableShapes() {
   return shapeIds();
+}
+
+// src/layout/geometry.ts
+var import_fabric10 = require("#fabric");
+function scaledSize(obj) {
+  return {
+    w: obj.width * (obj.scaleX || 1),
+    h: obj.height * (obj.scaleY || 1)
+  };
+}
+function setShapeSize(obj, w, h) {
+  const sized = obj;
+  if (typeof sized.setSize === "function") sized.setSize(w, h);
+  else obj.set({ scaleX: w / (obj.width || 1), scaleY: h / (obj.height || 1) });
+}
+function topLeft(obj) {
+  const { w, h } = scaledSize(obj);
+  const center = obj.getRelativeCenterPoint();
+  return { x: center.x - w / 2, y: center.y - h / 2 };
+}
+function boxOf(obj) {
+  obj.setCoords();
+  const { left, top, width, height } = obj.getBoundingRect();
+  return { left, top, width, height };
+}
+function unionBox(boxes) {
+  const left = Math.min(...boxes.map((b) => b.left));
+  const top = Math.min(...boxes.map((b) => b.top));
+  const right = Math.max(...boxes.map((b) => b.left + b.width));
+  const bottom = Math.max(...boxes.map((b) => b.top + b.height));
+  return { left, top, width: right - left, height: bottom - top };
+}
+function insetBox(box, pad) {
+  return {
+    left: box.left + pad.left,
+    top: box.top + pad.top,
+    width: box.width - pad.left - pad.right,
+    height: box.height - pad.top - pad.bottom
+  };
+}
+function outsetBox(box, pad) {
+  return insetBox(box, { top: -pad.top, right: -pad.right, bottom: -pad.bottom, left: -pad.left });
+}
+function placeTopLeft(obj, x, y) {
+  obj.setPositionByOrigin(new import_fabric10.Point(x, y), "left", "top");
+  obj.setCoords();
+}
+function pointInObject(point, obj, margin = 0) {
+  const tl = topLeft(obj);
+  const { w, h } = scaledSize(obj);
+  return point.x >= tl.x - margin && point.x <= tl.x + w + margin && point.y >= tl.y - margin && point.y <= tl.y + h + margin;
+}
+function clampTopLeft(obj, reference, padding) {
+  const tl = topLeft(obj);
+  const refTl = topLeft(reference);
+  return {
+    x: Math.max(refTl.x + padding, tl.x),
+    y: Math.max(refTl.y + padding, tl.y)
+  };
+}
+function hasExceededOffset(current, origin, offsetX, offsetY, margin) {
+  const dx = current.x - origin.x;
+  const dy = current.y - origin.y;
+  return offsetX > 0 && dx < -(offsetX + margin) || offsetX < 0 && dx > -offsetX + margin || offsetY > 0 && dy < -(offsetY + margin) || offsetY < 0 && dy > -offsetY + margin;
+}
+function syncCoords(container, children) {
+  container.setCoords();
+  for (const { obj } of children) {
+    obj.setCoords();
+  }
+}
+function cornerToAxes(corner) {
+  if (!corner) return { x: true, y: true };
+  const hasX = corner.includes("l") || corner.includes("r");
+  const hasY = corner.includes("t") || corner.includes("b");
+  return { x: hasX, y: hasY };
 }
 
 // src/ImageFrame.ts
@@ -2853,7 +2804,7 @@ var LayerManager = class {
    * Trouve un calque par son ID
    */
   findById(layerId) {
-    return this.canvas.getObjects().find((obj) => obj.get("layerId") === layerId);
+    return findById(this.canvas.getObjects(), layerId);
   }
   /**
    * Charge l'image de fond
@@ -3141,7 +3092,7 @@ var LayerManager = class {
    * son rang dans la pile (sous ses enfants).
    */
   takeOver(previous, next) {
-    const layout = previous.get("layout");
+    const layout = layoutOf(previous);
     if (layout) next.set("layout", JSON.parse(JSON.stringify(layout)));
     const lockMode = getLockMode(previous);
     if (lockMode !== "free") applyLockMode(next, lockMode);
@@ -3194,7 +3145,9 @@ var LayerManager = class {
     return shape;
   }
   /**
-   * Groupe plusieurs objets ensemble
+   * @legacy Fusionne des objets dans un `fabric.Group` (éditeur SAFTI legacy, « fusionner
+   * les calques »). Pour grouper dans l'éditeur : `FabricEditor.groupSelection` (un groupe
+   * libre, ses objets restent des calques).
    */
   groupObjects(objects) {
     const group = new import_fabric12.Group(objects);
@@ -3266,7 +3219,7 @@ var LayerManager = class {
         console.warn(`Type de calque inconnu: ${layer.type}`);
         return null;
     }
-    const migrated = obj && migrateLegacyLayout(obj.get("layout"));
+    const migrated = obj && migrateLegacyLayout(layoutOf(obj));
     if (obj && migrated) obj.set("layout", migrated);
     if (obj && layer.lockMode) {
       const mode = layer.lockMode;
@@ -3375,17 +3328,21 @@ var SelectionManager = class {
     this.isTransforming = false;
     this._silenced = false;
     /**
-     * When set, we are "inside" a layout group: hover and click target
+     * When set, we are "inside" this container: hover and click target
      * children directly instead of redirecting to the container.
      */
-    this._activeGroupId = null;
+    this._enteredId = null;
     /** What was selected before this press — Fabric selects before firing mouse:down. */
     this._selectedBeforePress = null;
     this.setupListeners();
   }
   /** The layerId of the container we're currently editing inside, or null. */
+  get enteredContainerId() {
+    return this._enteredId;
+  }
+  /** @deprecated Use `enteredContainerId` (any container can be entered, not only a group). */
   get activeGroupId() {
-    return this._activeGroupId;
+    return this._enteredId;
   }
   /**
    * L'objet actuellement sélectionné (ou tableau si sélection multiple)
@@ -3455,16 +3412,16 @@ var SelectionManager = class {
   /**
    * Given a Fabric target (the object under the cursor), return the object
    * that should actually be hovered / selected / dragged: a layout child
-   * outside the active group resolves to its container, up the chain (a
+   * outside the entered container resolves to its container, up the chain (a
    * grandchild resolves to the outermost container that isn't the active
-   * group's child).
+   * entered container's child).
    */
   resolveTarget(obj) {
     let current = obj;
     for (; ; ) {
-      const parentId = current.get("layout")?.child?.parentId;
-      if (!parentId || parentId === this._activeGroupId) return current;
-      const parent = this.canvas.getObjects().find((o) => o.get("layerId") === parentId);
+      const parentId = parentIdOf(current);
+      if (!parentId || parentId === this._enteredId) return current;
+      const parent = parentOf(current, this.canvas.getObjects());
       if (!parent) return current;
       current = parent;
     }
@@ -3517,9 +3474,7 @@ var SelectionManager = class {
    * Sélectionne un objet par son layerId
    */
   selectByLayerId(layerId) {
-    const obj = this.canvas.getObjects().find(
-      (o) => o.get("layerId") === layerId
-    );
+    const obj = findById(this.canvas.getObjects(), layerId);
     if (!obj) return false;
     this.select(obj);
     return true;
@@ -3539,17 +3494,17 @@ var SelectionManager = class {
   }
   /**
    * Travaille sur les objets sélectionnés hors de la sélection de Fabric — dedans, leurs
-   * positions sont relatives à elle — puis les resélectionne, dans le même groupe. L'hôte
+   * positions sont relatives à elle — puis les resélectionne, dans le même container entré. L'hôte
    * n'entend que la resélection : la barre se replace sur la nouvelle boîte.
    */
   withSelectionReleased(fn) {
     const objects = this.selected;
-    const groupId = this._activeGroupId;
+    const enteredId = this._enteredId;
     const silenced = this._silenced;
     this._silenced = true;
     this.canvas.discardActiveObject();
     this._silenced = silenced;
-    this._activeGroupId = groupId;
+    this._enteredId = enteredId;
     fn(objects);
     this.selectMany(objects);
   }
@@ -3573,7 +3528,7 @@ var SelectionManager = class {
   /**
    * Fabric picks the target of a press (and of hover) in searchPossibleTargets:
    * redirecting there — not after the selection — makes a press on a child
-   * outside its group a press on its container, so that a click + drag moves
+   * outside its entered container a press on its container, so that a click + drag moves
    * the container right away instead of grabbing the child.
    */
   redirectTargetSearch() {
@@ -3595,48 +3550,48 @@ var SelectionManager = class {
     this._selectedBeforePress = this.current;
   }
   /**
-   * Group exit: a press outside the active group (or on empty canvas) leaves it.
+   * Exit: a press outside the entered container (or on empty canvas) leaves it.
    * Entering is decided on release (see handleMouseUp), so that a drag on a
    * selected container still moves it.
    */
   handleMouseDown(e) {
-    if (!this._activeGroupId) return;
+    if (!this._enteredId) return;
     const target = e.target;
-    const isTheContainer = target?.get("layerId") === this._activeGroupId;
-    const isChildOfGroup = target?.get("layout")?.child?.parentId === this._activeGroupId;
-    if (!target || !isTheContainer && !isChildOfGroup) this._activeGroupId = null;
+    const isTheContainer = target?.get("layerId") === this._enteredId;
+    const isItsChild = parentIdOf(target) === this._enteredId;
+    if (!target || !isTheContainer && !isItsChild) this._enteredId = null;
   }
   /**
-   * Group enter: a click (no drag) on a container that was already selected
+   * Enter: a click (no drag) on a container that was already selected
    * enters it and selects its child under the pointer.
    */
   handleMouseUp(e) {
     const before = this._selectedBeforePress;
     this._selectedBeforePress = null;
     if (!e.isClick || !before || e.target !== before) return;
-    if (!before.get("layout")?.container) return;
-    this.enterGroup(before, this.canvas.getScenePoint(e.e));
+    if (!containerDataOf(before)) return;
+    this.enterContainer(before, this.canvas.getScenePoint(e.e));
   }
-  /** Enter `container`'s group and select its topmost child under `point`. */
-  enterGroup(container, point) {
-    const id = container.get("layerId");
-    this._activeGroupId = id;
+  /** Enter `container` and select its topmost child under `point`. */
+  enterContainer(container, point) {
+    const id = idOf(container);
+    this._enteredId = id;
     const child = this.canvas.getObjects().slice().reverse().find(
-      (o) => o.get("layout")?.child?.parentId === id && o.containsPoint(new import_fabric13.Point(point.x, point.y))
+      (o) => parentIdOf(o) === id && o.containsPoint(new import_fabric13.Point(point.x, point.y))
     );
     if (child) this.canvas.setActiveObject(child);
     this.canvas.requestRenderAll();
   }
   /**
    * Double-click on a text inside a container: its two clicks entered the
-   * group and selected the text (the press targeted the container, so
+   * container and selected the text (the press targeted the container, so
    * Fabric's own double-click editing didn't run) — edit it now, word under
    * the pointer selected, like Fabric does.
    */
   handleDoubleClick(e) {
     const text = this.current;
     if (!text || !isTextObject(text) || text.isEditing || text.editable === false) return;
-    if (text.get("layout")?.child?.parentId !== this._activeGroupId) return;
+    if (parentIdOf(text) !== this._enteredId) return;
     text.enterEditing(e.e);
     text.selectWord(text.getSelectionStartFromPointer(e.e));
     this.canvas.requestRenderAll();
@@ -3711,32 +3666,19 @@ var SelectionManager = class {
     const picked = /* @__PURE__ */ new Set();
     for (const obj of objects) {
       const resolved = this.resolveTarget(obj);
-      if (this._activeGroupId && resolved.get("layerId") === this._activeGroupId) continue;
+      if (this._enteredId && resolved.get("layerId") === this._enteredId) continue;
       if (isPositionLocked(resolved)) continue;
       picked.add(resolved);
     }
     const all = this.canvas.getObjects();
-    const byId = new Map(all.map((o) => [o.get("layerId"), o]));
-    const hasPickedAncestor = (obj) => {
-      const seen = /* @__PURE__ */ new Set();
-      let parentId = obj.get("layout")?.child?.parentId;
-      while (parentId) {
-        const parent = byId.get(parentId);
-        if (!parent || seen.has(parent)) return false;
-        if (picked.has(parent)) return true;
-        seen.add(parent);
-        parentId = parent.get("layout")?.child?.parentId;
-      }
-      return false;
-    };
-    return all.filter((obj) => picked.has(obj) && !hasPickedAncestor(obj));
+    return all.filter((obj) => picked.has(obj) && !ancestorsOf(obj, all).some((a) => picked.has(a)));
   }
   /**
    * Gère la désélection
    */
   handleDeselection() {
     this._current = null;
-    this._activeGroupId = null;
+    this._enteredId = null;
     if (this._silenced) return;
     if (this.callbacks.onDeselect) {
       this.callbacks.onDeselect();
@@ -4279,7 +4221,7 @@ var CanvasGuides = class {
       strokeWidth: 2,
       strokeDashArray: [6, 4]
     });
-    const containerLayout = container.get?.("layout");
+    const containerLayout = layoutOf(container);
     const p = containerLayout?.container?.padding;
     if (!p) return;
     const hatch = this.hatchPattern;
@@ -4778,7 +4720,7 @@ var SnappingManager = class {
 // src/LayoutManager.ts
 var import_fabric17 = require("#fabric");
 
-// src/layout/yoga-engine.ts
+// src/layout/stack/engine.ts
 var yoga = null;
 var yogaConfig = null;
 async function initYoga() {
@@ -4787,9 +4729,6 @@ async function initYoga() {
   yoga = await loadYoga();
   yogaConfig = yoga.Config.create();
   yogaConfig.setPointScaleFactor(0);
-}
-function isYogaReady() {
-  return yoga !== null;
 }
 function getYoga() {
   if (!yoga) throw new Error("Yoga not initialized. Call initYoga() first.");
@@ -4819,7 +4758,7 @@ function yogaLayout(children, containerLeft, containerTop, containerW, container
   return { w, h };
 }
 function applyContainerStyle(node, cd, Y) {
-  const isColumn = (cd.flexDirection ?? "column") === "column";
+  const isColumn = directionOf(cd) === "column";
   node.setFlexDirection(isColumn ? Y.FLEX_DIRECTION_COLUMN : Y.FLEX_DIRECTION_ROW);
   node.setAlignItems(mapAlignItems(cd.alignItems ?? "flex-start", Y));
   node.setJustifyContent(mapJustifyContent(cd.justifyContent ?? "flex-start", Y));
@@ -4841,13 +4780,13 @@ function applyHugFloor(node, sizing) {
 }
 function nestedChildren(obj, allObjects) {
   if (!allObjects || isTextObject(obj) || isFreeContainer(obj)) return null;
-  const layout = obj.get("layout");
+  const layout = layoutOf(obj);
   if (!layout?.container) return null;
-  const children = sortChildrenByOrder(resolveContainerChildren(allObjects, obj));
+  const children = flowChildrenOf(allObjects, obj);
   return children.length > 0 ? children : null;
 }
 function buildChildren(parent, children, cd, sizing, allObjects, Y) {
-  const isColumn = (cd.flexDirection ?? "column") === "column";
+  const isColumn = directionOf(cd) === "column";
   const alignItems = cd.alignItems ?? "flex-start";
   for (const { obj } of children) {
     if (isTextObject(obj)) continue;
@@ -4877,7 +4816,7 @@ function buildChildren(parent, children, cd, sizing, allObjects, Y) {
       setRigidSize(node, obj, { isColumn, willStretch: false, parentSizing: sizing, flexGrow: 0 });
       if (allObjects) entry.followers = descendantsOf(allObjects, [obj]);
     } else if (nested) {
-      const childCd = obj.get("layout").container;
+      const childCd = layoutOf(obj).container;
       const childSizing = sizingOf(obj);
       applyContainerStyle(node, childCd, Y);
       setNestedSize(node, obj, childSizing, { isColumn, willStretch, parentSizing: sizing, flexGrow });
@@ -5005,22 +4944,37 @@ function setupTextMeasure(node, obj, Y) {
   });
 }
 
-// src/layout/reconcile.ts
+// src/layout/free/fit.ts
+function fitFreeContainer(container, objects) {
+  const children = childrenOf(objects, container).map((c) => c.obj);
+  if (children.length === 0) return;
+  for (const child of children) if (isFreeContainer(child)) fitFreeContainer(child, objects);
+  const box = outsetBox(unionBox(children.map(boxOf)), paddingOf(containerDataOf(container)));
+  setShapeSize(container, box.width, box.height);
+  placeTopLeft(container, box.left, box.top);
+}
+function fitFreeAncestors(group, objects) {
+  for (let current = group; current && isFreeContainer(current); current = parentContainerOf(current, objects)) {
+    fitFreeContainer(current, objects);
+  }
+}
+
+// src/layout/run.ts
 function runLayout(objects) {
   for (const obj of objects) {
-    const layout = obj.get("layout");
+    const layout = layoutOf(obj);
     if (!layout?.container) continue;
     if (parentContainerOf(obj, objects)) continue;
     layoutTree(obj, objects);
   }
 }
 function layoutTree(container, objects) {
-  const cd = container.get("layout").container;
-  const children = sortChildrenByOrder(resolveContainerChildren(objects, container));
+  const cd = layoutOf(container).container;
+  const children = flowChildrenOf(objects, container);
   if (children.length === 0) return;
   if (cd.arrangement === "free") {
     for (const { obj } of children) {
-      if (obj.get("layout")?.container) layoutTree(obj, objects);
+      if (containerDataOf(obj)) layoutTree(obj, objects);
     }
     fitFreeContainer(container, objects);
     return;
@@ -5029,32 +4983,19 @@ function layoutTree(container, objects) {
   layoutContainer(container, cd, children, objects);
 }
 function fitGroupsUnder(container, objects) {
-  for (const { obj } of resolveContainerChildren(objects, container)) {
-    if (!obj.get("layout")?.container) continue;
+  for (const { obj } of childrenOf(objects, container)) {
+    if (!containerDataOf(obj)) continue;
     if (isFreeContainer(obj)) layoutTree(obj, objects);
     else fitGroupsUnder(obj, objects);
   }
 }
-function relayoutSingle(container, _cd, allObjects) {
+function layoutSubtree(container, allObjects) {
   layoutTree(container, allObjects);
 }
-function bubbleUpLayout(container, allObjects) {
-  let current = container;
-  for (; ; ) {
-    const parent = parentContainerOf(current, allObjects);
-    if (!parent) return;
-    relayoutSingle(parent, parent.get("layout").container, allObjects);
-    current = parent;
+function relayoutAncestors(obj, allObjects) {
+  for (let parent = parentContainerOf(obj, allObjects); parent; parent = parentContainerOf(parent, allObjects)) {
+    layoutTree(parent, allObjects);
   }
-}
-function parentContainerOf(obj, objects) {
-  const layout = obj.get?.("layout");
-  const parentId = layout?.child?.parentId;
-  if (!parentId) return null;
-  const parent = objects.find((o) => o.get("layerId") === parentId);
-  if (!parent || parent === obj) return null;
-  const pLayout = parent.get?.("layout");
-  return pLayout?.container ? parent : null;
 }
 function layoutContainer(container, cd, children, allObjects) {
   const sizing = sizingOf(container);
@@ -5084,28 +5025,67 @@ function layoutContainer(container, cd, children, allObjects) {
   syncCoords(container, children);
 }
 
-// src/layout/room.ts
+// src/layout/stack/min-size.ts
+function minContentSize(children, cd, objects) {
+  const pad = paddingOf(cd);
+  const gaps = (cd.gap ?? 0) * Math.max(0, children.length - 1);
+  const sizes = children.map(({ obj }) => minSizeOf(obj, objects));
+  const sum = (key) => sizes.reduce((total, s) => total + s[key], 0);
+  const max = (key) => Math.max(0, ...sizes.map((s) => s[key]));
+  const row = cd.flexDirection === "row";
+  return {
+    w: pad.left + pad.right + (row ? sum("w") + gaps : max("w")),
+    h: pad.top + pad.bottom + (row ? max("h") : sum("h") + gaps)
+  };
+}
+function minSizeOf(obj, objects) {
+  if (isTextObject(obj)) return { w: asLayoutText(obj).minContentWidth(), h: 0 };
+  const size = scaledSize(obj);
+  if (isFreeContainer(obj)) return size;
+  const layout = layoutOf(obj);
+  if (!layout?.container) return size;
+  const children = flowChildrenOf(objects, obj);
+  if (children.length === 0) return size;
+  const sizing = sizingOf(obj);
+  const min = minContentSize(children, layout.container, objects);
+  return {
+    w: sizing.x === "hug" ? Math.max(min.w, sizing.minSize?.w ?? 0) : size.w,
+    h: sizing.y === "hug" ? Math.max(min.h, sizing.minSize?.h ?? 0) : size.h
+  };
+}
+
+// src/layout/stack/room.ts
 var UNBOUNDED = { w: Infinity, h: Infinity };
 function availableRoom(obj, objects) {
   const parent = parentContainerOf(obj, objects);
-  if (!parent) return UNBOUNDED;
-  const cd = parent.get("layout").container;
+  if (!parent || isFreeContainer(parent)) return UNBOUNDED;
+  const cd = layoutOf(parent).container;
   const sizing = sizingOf(parent);
   const own = scaledSize(parent);
   const above = availableRoom(parent, objects);
-  const pad = cd.padding ?? { top: 0, right: 0, bottom: 0, left: 0 };
+  const pad = paddingOf(cd);
   let w = (sizing.x === "fixed" ? own.w : above.w) - pad.left - pad.right;
   let h = (sizing.y === "fixed" ? own.h : above.h) - pad.top - pad.bottom;
-  const siblings = resolveContainerChildren(objects, parent).filter((c) => c.obj !== obj);
+  const siblings = childrenOf(objects, parent).filter((c) => c.obj !== obj);
   const gaps = (cd.gap ?? 0) * siblings.length;
   const taken = siblings.map(({ obj: s }) => minSizeOf(s, objects));
   if (cd.flexDirection === "row") w -= taken.reduce((sum, s) => sum + s.w, 0) + gaps;
   else h -= taken.reduce((sum, s) => sum + s.h, 0) + gaps;
   return { w: Math.max(0, w), h: Math.max(0, h) };
 }
+function clampToRoom(obj, transform, objects) {
+  const room = availableRoom(obj, objects);
+  const { w, h } = scaledSize(obj);
+  if (w <= room.w && h <= room.h) return;
+  const originX = transform?.originX ?? "left";
+  const originY = transform?.originY ?? "top";
+  const anchor = obj.getPositionByOrigin(originX, originY);
+  setShapeSize(obj, Math.min(w, room.w), Math.min(h, room.h));
+  obj.setPositionByOrigin(anchor, originX, originY);
+}
 
-// src/layout/resize-session.ts
-var ResizeSession = class {
+// src/layout/stack/resize-session.ts
+var StackResizeSession = class {
   constructor(container, corner) {
     /**
      * Fixed widths of the text children at grab time: the container pushes them
@@ -5118,7 +5098,7 @@ var ResizeSession = class {
     /** Largest box the ancestors allow (computed at grab): the handles stop there too. */
     this.room = null;
     this.container = container;
-    const layout = container.get("layout");
+    const layout = layoutOf(container);
     this.containerData = layout.container;
     this.axes = cornerToAxes(corner);
     this.corner = corner;
@@ -5162,7 +5142,7 @@ var ResizeSession = class {
     const { w: currentW, h: currentH } = scaledSize(container);
     if (axes.x) this.userW = Math.min(currentW, this.room.w);
     if (axes.y) this.userH = Math.min(currentH, this.room.h);
-    const children = sortChildrenByOrder(resolveContainerChildren(objects, container));
+    const children = flowChildrenOf(objects, container);
     if (children.length === 0) {
       this.setSizeKeepingAnchor(this.userW, this.userH);
       this.settle(objects);
@@ -5193,9 +5173,6 @@ var ResizeSession = class {
     syncCoords(container, children);
     this.settle(objects);
   }
-  /** Called on `object:modified`: the floor is already written, nothing left to do. */
-  commit(_objects) {
-  }
   /**
    * On a hug axis the user drags, what they drag is the floor — under the content
    * it's harmless (the box is max(content, floor)). Written on every frame, so the
@@ -5210,7 +5187,7 @@ var ResizeSession = class {
     if (dragsHugX) minSize.w = this.userW;
     if (dragsHugY) minSize.h = this.userH;
     this.sizing = { ...sizing, minSize };
-    const layout = container.get("layout");
+    const layout = layoutOf(container);
     container.set("layout", { ...layout, sizing: this.sizing });
   }
   /** A child container: its ancestors take its new size in, and it sits in its slot. */
@@ -5218,114 +5195,17 @@ var ResizeSession = class {
     this.persistFloor();
     const parent = parentContainerOf(this.container, objects);
     if (!parent) return;
-    relayoutSingle(parent, parent.get("layout").container, objects);
-    bubbleUpLayout(parent, objects);
+    layoutSubtree(parent, objects);
+    relayoutAncestors(parent, objects);
   }
 };
-function minContentSize(children, cd, objects) {
-  const pad = cd.padding ?? { top: 0, right: 0, bottom: 0, left: 0 };
-  const gaps = (cd.gap ?? 0) * Math.max(0, children.length - 1);
-  const sizes = children.map(({ obj }) => minSizeOf(obj, objects));
-  const sum = (key) => sizes.reduce((total, s) => total + s[key], 0);
-  const max = (key) => Math.max(0, ...sizes.map((s) => s[key]));
-  const row = cd.flexDirection === "row";
-  return {
-    w: pad.left + pad.right + (row ? sum("w") + gaps : max("w")),
-    h: pad.top + pad.bottom + (row ? max("h") : sum("h") + gaps)
-  };
-}
-function minSizeOf(obj, objects) {
-  if (isTextObject(obj)) return { w: obj.minContentWidth(), h: 0 };
-  const size = scaledSize(obj);
-  const layout = obj.get("layout");
-  if (!layout?.container) return size;
-  const children = sortChildrenByOrder(resolveContainerChildren(objects, obj));
-  if (children.length === 0) return size;
-  const sizing = sizingOf(obj);
-  const min = minContentSize(children, layout.container, objects);
-  return {
-    w: sizing.x === "hug" ? Math.max(min.w, sizing.minSize?.w ?? 0) : size.w,
-    h: sizing.y === "hug" ? Math.max(min.h, sizing.minSize?.h ?? 0) : size.h
-  };
-}
+var ResizeSession = StackResizeSession;
 
-// src/grouping.ts
-var parentIdOf2 = (obj) => obj.get("layout")?.child?.parentId;
-var idOf = (obj) => obj.get("layerId");
-function groupMembers(objects, selected) {
-  const parentIds = new Set(selected.map(parentIdOf2));
-  if (parentIds.size <= 1) return objects.filter((o) => selected.includes(o));
-  const parents = layoutParents(objects);
-  const rootIds = new Set(selected.map((o) => layoutRoot(parents, idOf(o))));
-  return objects.filter((o) => rootIds.has(idOf(o)));
-}
-function groupObjects(canvas, selected, layerId) {
-  const objects = canvas.getObjects();
-  const members = groupMembers(objects, selected);
-  if (members.length < 2) return null;
-  const parentId = parentIdOf2(members[0]);
-  const orders = members.map((m) => m.get("layout")?.child?.order).filter((o) => o != null);
-  const carrier = new FabRect({
-    layerId,
-    layerType: "shape",
-    originX: "left",
-    originY: "top",
-    left: 0,
-    top: 0,
-    width: 1,
-    height: 1,
-    fill: "transparent",
-    strokeWidth: 0,
-    layout: {
-      container: { arrangement: "free", origin: "group", padding: { top: 0, right: 0, bottom: 0, left: 0 } },
-      ...parentId ? { child: { parentId, ...orders.length ? { order: Math.min(...orders) } : {} } } : {}
-    }
-  });
-  for (const member of members) {
-    const layout = member.get("layout");
-    member.set("layout", { ...layout, child: { parentId: layerId } });
-    if (layout?.child && isTextObject(member)) member.layoutWith(null);
-  }
-  const blocks = members.flatMap((m) => stackBlock(objects, m));
-  const rest = objects.filter((o) => !blocks.includes(o));
-  const topBlock = stackBlock(objects, members[members.length - 1]);
-  const below = rest.filter((o) => objects.indexOf(o) < objects.indexOf(topBlock[0])).length;
-  const order = [...rest.slice(0, below), carrier, ...blocks, ...rest.slice(below)];
-  canvas.add(carrier);
-  order.forEach((obj, index) => canvas.moveObjectTo(obj, index));
-  fitFreeContainer(carrier, canvas.getObjects());
-  return carrier;
-}
-function ungroupObject(canvas, container) {
-  const layout = container.get("layout");
-  if (!layout?.container) return [];
-  const objects = canvas.getObjects();
-  const children = sortChildrenByOrder(resolveContainerChildren(objects, container)).map((c) => c.obj);
-  const parentChild = layout.child;
-  children.forEach((child, i) => {
-    if (parentChild) {
-      const childLayout = child.get("layout");
-      const order = parentChild.order != null ? parentChild.order + i / children.length : void 0;
-      child.set("layout", { ...childLayout, child: { parentId: parentChild.parentId, ...order != null ? { order } : {} } });
-    } else {
-      detachChild(child);
-    }
-  });
-  if (layout.container.origin === "group") {
-    canvas.remove(container);
-  } else {
-    const { container: _container, ...rest } = layout;
-    container.set("layout", Object.keys(rest).length ? rest : void 0);
-  }
-  return children;
-}
+// src/layout/arrangement.ts
 var spread = (values) => Math.max(...values) - Math.min(...values);
 function arrangeAsStack(container, objects) {
-  const layout = container.get("layout");
-  const children = resolveContainerChildren(objects, container).map((c) => {
-    c.obj.setCoords();
-    return { obj: c.obj, box: c.obj.getBoundingRect() };
-  });
+  const layout = layoutOf(container);
+  const children = childrenOf(objects, container).map((c) => ({ obj: c.obj, box: boxOf(c.obj) }));
   if (children.length === 0) return;
   const row = spread(children.map((c) => c.box.left + c.box.width / 2)) > spread(children.map((c) => c.box.top + c.box.height / 2));
   const [start, size, crossStart, crossSize] = row ? ["left", "width", "top", "height"] : ["top", "height", "left", "width"];
@@ -5345,17 +5225,17 @@ function arrangeAsStack(container, objects) {
     container: { ...cd, arrangement: "stack", flexDirection: row ? "row" : "column", gap, alignItems }
   });
   children.forEach(({ obj }, order) => {
-    obj.set("layout", { ...obj.get("layout"), child: { parentId: idOf(container), order } });
+    obj.set("layout", { ...layoutOf(obj), child: { parentId: idOf(container), order } });
   });
 }
 function arrangeFree(container, objects) {
-  const layout = container.get("layout");
-  const children = resolveContainerChildren(objects, container).map((c) => c.obj);
+  const layout = layoutOf(container);
+  const children = childrenOf(objects, container).map((c) => c.obj);
   const widths = new Map(children.map((c) => [c, c.width]));
   const { flexDirection: _d, gap: _g, alignItems: _a, justifyContent: _j, ...cd } = layout.container;
   container.set("layout", { ...layout, container: { ...cd, arrangement: "free" } });
   for (const child of children) {
-    child.set("layout", { ...child.get("layout"), child: { parentId: idOf(container) } });
+    child.set("layout", { ...layoutOf(child), child: { parentId: idOf(container) } });
     if (!isTextObject(child)) continue;
     const text = child;
     text.initDimensions();
@@ -5366,22 +5246,6 @@ function arrangeFree(container, objects) {
       text.initDimensions();
     }
   }
-}
-var GROUP_FILL_PADDING = 24;
-function padGroupOnFirstFill(container, previousFill) {
-  const cd = container.get("layout")?.container;
-  if (cd?.origin !== "group") return false;
-  const wasBare = !previousFill || previousFill === "transparent";
-  const fill = container.fill;
-  const isBare = !fill || fill === "transparent";
-  const p = cd.padding;
-  if (!wasBare || isBare || p && (p.top || p.right || p.bottom || p.left)) return false;
-  const pad = GROUP_FILL_PADDING;
-  container.set("layout", {
-    ...container.get("layout"),
-    container: { ...cd, padding: { top: pad, right: pad, bottom: pad, left: pad } }
-  });
-  return true;
 }
 
 // src/ui/controls.ts
@@ -5642,7 +5506,126 @@ function installHoverBorder(canvas, guideColor, resolveTarget, userSlotLabel) {
   );
 }
 
-// src/layout/containerize-session.ts
+// src/layout/subtree-drag.ts
+var SubtreeDrag = class _SubtreeDrag {
+  constructor(transform, start, followers) {
+    this.transform = transform;
+    this.start = start;
+    this.followers = followers;
+  }
+  /** Au premier pas du geste : la position de départ de `target` et de la descendance. */
+  static begin(target, moved, transform, objects) {
+    return new _SubtreeDrag(
+      transform,
+      { left: transform?.original?.left ?? target.left, top: transform?.original?.top ?? target.top },
+      descendantsOf(objects, moved).map((o) => ({ obj: o, left: o.left, top: o.top }))
+    );
+  }
+  /** La descendance suit la translation de `target` depuis le début. */
+  follow(target) {
+    const dx = target.left - this.start.left;
+    const dy = target.top - this.start.top;
+    for (const f of this.followers) {
+      f.obj.set({ left: f.left + dx, top: f.top + dy });
+      f.obj.setCoords();
+    }
+  }
+};
+
+// src/layout/free/resize-session.ts
+var scaleMin = (minSize, k) => minSize && { w: minSize.w * k, h: minSize.h * k };
+var FreeResizeSession = class _FreeResizeSession {
+  constructor(container, objects, start) {
+    this.container = container;
+    this.objects = objects;
+    this.start = start;
+    this.states = descendantsOf(objects, [container]).map((obj) => this.snapshot(obj));
+  }
+  /** Au début du geste : le groupe tel qu'il est. */
+  static begin(container, objects) {
+    const tl = container.getPositionByOrigin("left", "top");
+    const { w, h } = scaledSize(container);
+    return new _FreeResizeSession(container, objects, { left: tl.x, top: tl.y, width: w, height: h });
+  }
+  /**
+   * Un pas du geste : le facteur est la moyenne des deux axes (uniforme, un texte ne se
+   * déforme pas), le coin opposé à la poignée (l'origine du transform) reste en place ;
+   * les piles du groupe se rangent dans leurs nouvelles dimensions.
+   */
+  step(transform) {
+    const { start, container } = this;
+    const { w, h } = scaledSize(container);
+    const k = Math.max(0.05, (w / start.width + h / start.height) / 2);
+    const fx = transform.originX === "left" ? 0 : transform.originX === "right" ? 1 : 0.5;
+    const fy = transform.originY === "top" ? 0 : transform.originY === "bottom" ? 1 : 0.5;
+    this.apply(k, { x: start.left + start.width * fx, y: start.top + start.height * fy });
+    for (const obj of descendantsOf(this.objects, [container])) {
+      if (isStackContainer(obj)) layoutSubtree(obj, this.objects);
+    }
+    fitFreeContainer(container, this.objects);
+  }
+  /** Le groupe à l'échelle `k` de son état de départ, `anchor` (scène) immobile. */
+  apply(k, anchor) {
+    for (const state of this.states) this.scale(state, k, anchor);
+    fitFreeContainer(this.container, this.objects);
+  }
+  snapshot(obj) {
+    const { w, h } = scaledSize(obj);
+    const tl = obj.getPositionByOrigin("left", "top");
+    const state = { obj, box: { left: tl.x, top: tl.y, width: w, height: h } };
+    const layout = layoutOf(obj);
+    if (isTextObject(obj)) {
+      const t = obj;
+      state.text = {
+        width: obj.width,
+        fontSize: t.fontSize,
+        fontSizeIntent: t.fontSizeIntent ?? t.fontSize,
+        styles: scaleStyleFontSizes(t.styles, 1),
+        minSize: layout?.sizing?.minSize
+      };
+    } else if (layout?.container) {
+      state.container = {
+        padding: layout.container.padding,
+        gap: layout.container.gap,
+        minSize: layout.sizing?.minSize
+      };
+    }
+    return state;
+  }
+  scale(state, k, anchor) {
+    const { obj, box } = state;
+    const layout = layoutOf(obj);
+    if (state.text) {
+      const t = obj;
+      t.styles = scaleStyleFontSizes(state.text.styles, k);
+      t.fontSizeIntent = state.text.fontSizeIntent * k;
+      t.fontSize = state.text.fontSize * k;
+      t.width = state.text.width * k;
+      if (layout?.sizing) {
+        obj.set("layout", { ...layout, sizing: { ...layout.sizing, minSize: scaleMin(state.text.minSize, k) } });
+      }
+      t.initDimensions();
+      obj.dirty = true;
+    } else if (state.container && layout?.container) {
+      const p = state.container.padding;
+      obj.set("layout", {
+        ...layout,
+        container: {
+          ...layout.container,
+          padding: p && { top: p.top * k, right: p.right * k, bottom: p.bottom * k, left: p.left * k },
+          gap: state.container.gap === void 0 ? void 0 : state.container.gap * k
+        },
+        sizing: layout.sizing && { ...layout.sizing, minSize: scaleMin(state.container.minSize, k) }
+      });
+      setShapeSize(obj, box.width * k, box.height * k);
+    } else {
+      setShapeSize(obj, box.width * k, box.height * k);
+    }
+    placeTopLeft(obj, anchor.x + (box.left - anchor.x) * k, anchor.y + (box.top - anchor.y) * k);
+  }
+};
+
+// src/layout/stack/sessions/containerize.ts
 var EXIT_MARGIN = 5;
 var ContainerizeSession = class _ContainerizeSession {
   constructor(canvas, shape, text, cursor) {
@@ -5665,9 +5648,9 @@ var ContainerizeSession = class _ContainerizeSession {
       text.setCoords();
     }
     wrapContainerAroundChild(text, shape);
-    const textLayout = text.get?.("layout");
+    const textLayout = layoutOf(text);
     if (textLayout?.container) {
-      relayoutSingle(text, textLayout.container, canvas.getObjects());
+      layoutSubtree(text, canvas.getObjects());
     }
   }
   /**
@@ -5703,11 +5686,11 @@ var ContainerizeSession = class _ContainerizeSession {
       this.text.setCoords();
     }
     wrapContainerAroundChild(this.text, this.shape);
-    const childLayout = this.text.get?.("layout");
+    const childLayout = layoutOf(this.text);
     if (childLayout?.container) {
-      relayoutSingle(this.text, childLayout.container, this.canvas.getObjects());
+      layoutSubtree(this.text, this.canvas.getObjects());
     }
-    bubbleUpLayout(this.shape, this.canvas.getObjects());
+    relayoutAncestors(this.shape, this.canvas.getObjects());
     return "anchored";
   }
   /**
@@ -5823,18 +5806,18 @@ function applyInitialLayout(shape, child) {
   const padX = Math.max(MIN_PAD, Math.round(cTL.x - sTL.x));
   const padY = Math.max(MIN_PAD, Math.round(cTL.y - sTL.y));
   const containerId = shape.get?.("layerId");
-  const shapeLayout = shape.get?.("layout") ?? {};
+  const shapeLayout = layoutOf(shape) ?? {};
   shape.set("layout", {
     ...shapeLayout,
     sizing: shapeLayout.sizing ?? { x: "hug", y: "hug", minSize: { w: shapeW, h: shapeH } },
     container: { padding: { top: padY, right: padX, bottom: padY, left: padX } }
   });
-  const childLayout = child.get?.("layout") ?? {};
+  const childLayout = layoutOf(child) ?? {};
   child.set("layout", { ...childLayout, child: { parentId: containerId } });
 }
 function wrapContainerAroundChild(child, container) {
-  const childLayout = child.get?.("layout");
-  const containerLayout = container.get?.("layout");
+  const childLayout = layoutOf(child);
+  const containerLayout = layoutOf(container);
   if (!childLayout?.child || !containerLayout?.container) return;
   const cd = containerLayout.container;
   const { w: childW, h: childH } = scaledSize(child);
@@ -5853,7 +5836,7 @@ function wrapContainerAroundChild(child, container) {
   container.setCoords();
 }
 
-// src/layout/layout-animator.ts
+// src/layout/stack/sessions/animator.ts
 function easeOutCubic(t) {
   return 1 - (1 - t) ** 3;
 }
@@ -5969,7 +5952,7 @@ var LayoutAnimator = class {
   }
 };
 
-// src/layout/insert-child-session.ts
+// src/layout/stack/sessions/insert-child.ts
 var EXIT_MARGIN2 = 5;
 var InsertChildSession = class _InsertChildSession {
   constructor(canvas, container, newChild, cursor) {
@@ -5981,8 +5964,6 @@ var InsertChildSession = class _InsertChildSession {
     this._newChildAnchorSize = { w: 0, h: 0 };
     /** Last Yoga-computed position of the dragged child (not the cursor position). */
     this._lastDraggedYogaPos = null;
-    /** Last computed order — for hysteresis. */
-    this._lastOrder = null;
     this.canvas = canvas;
     this._container = container;
     this.newChild = newChild;
@@ -6000,13 +5981,13 @@ var InsertChildSession = class _InsertChildSession {
       childTop: newChild.top,
       childLayout: cloneLayout(newChild)
     };
-    const existing = sortChildrenByOrder(resolveContainerChildren(canvas.getObjects(), container));
-    const cd = container.get?.("layout")?.container;
+    const existing = flowChildrenOf(canvas.getObjects(), container);
+    const cd = containerDataOf(container);
     this._decidingDirection = existing.length === 1 && !cd?.flexDirection;
     for (let i = 0; i < existing.length; i++) {
       if (existing[i].cl.order == null) {
         existing[i].cl.order = i;
-        const childLayout = existing[i].obj.get?.("layout");
+        const childLayout = layoutOf(existing[i].obj);
         if (childLayout?.child) {
           childLayout.child.order = i;
           existing[i].obj.set("layout", { ...childLayout });
@@ -6022,7 +6003,7 @@ var InsertChildSession = class _InsertChildSession {
     const childData = {
       parentId: containerId
     };
-    const existingChildLayout = newChild.get?.("layout") ?? {};
+    const existingChildLayout = layoutOf(newChild) ?? {};
     newChild.set("layout", { ...existingChildLayout, child: childData });
     const tTL = topLeft(newChild);
     newChild.set({ left: tTL.x, top: tTL.y, originX: "left", originY: "top" });
@@ -6041,7 +6022,6 @@ var InsertChildSession = class _InsertChildSession {
     session._newChildAnchorSize = scaledSize(child);
     session._isReattach = true;
     session._currentDirection = null;
-    session._lastOrder = null;
     session._animator = new LayoutAnimator(canvas);
     const { w: cw, h: ch } = scaledSize(container);
     session.snapshot = {
@@ -6054,12 +6034,12 @@ var InsertChildSession = class _InsertChildSession {
       childTop: child.top,
       childLayout: cloneLayout(child)
     };
-    const allChildren = sortChildrenByOrder(resolveContainerChildren(canvas.getObjects(), container));
+    const allChildren = flowChildrenOf(canvas.getObjects(), container);
     session._decidingDirection = allChildren.length <= 2;
     for (let i = 0; i < allChildren.length; i++) {
       if (allChildren[i].cl.order == null) {
         allChildren[i].cl.order = i;
-        const cl = allChildren[i].obj.get?.("layout");
+        const cl = layoutOf(allChildren[i].obj);
         if (cl?.child) {
           cl.child.order = i;
           allChildren[i].obj.set("layout", { ...cl });
@@ -6086,10 +6066,10 @@ var InsertChildSession = class _InsertChildSession {
     return "anchored";
   }
   commit() {
-    const layout = this._container.get?.("layout");
+    const layout = layoutOf(this._container);
     const { w, h } = scaledSize(this._container);
     this._container.set("layout", { ...layout, sizing: { ...sizingOf(this._container), minSize: { w, h } } });
-    const allChildren = resolveContainerChildren(this.canvas.getObjects(), this._container);
+    const allChildren = childrenOf(this.canvas.getObjects(), this._container);
     const positionsBefore = /* @__PURE__ */ new Map();
     for (const { obj } of allChildren) {
       positionsBefore.set(obj, { left: obj.left, top: obj.top });
@@ -6113,9 +6093,9 @@ var InsertChildSession = class _InsertChildSession {
       setShapeSize(this._container, this.snapshot.containerW, this.snapshot.containerH);
       this._container.setCoords();
       this.newChild.setCoords();
-      const remaining = resolveContainerChildren(this.canvas.getObjects(), this._container);
+      const remaining = childrenOf(this.canvas.getObjects(), this._container);
       if (remaining.length <= 1) {
-        const cLayout = this._container.get?.("layout");
+        const cLayout = layoutOf(this._container);
         if (cLayout?.container) {
           delete cLayout.container.flexDirection;
           delete cLayout.container.gap;
@@ -6154,13 +6134,11 @@ var InsertChildSession = class _InsertChildSession {
    */
   updateFromCursor(cursor) {
     this._animator.flushToTargets(this.newChild);
-    const containerLayout = this._container.get?.("layout");
+    const containerLayout = layoutOf(this._container);
     const cd = containerLayout.container;
-    const allChildren = sortChildrenByOrder(
-      resolveContainerChildren(this.canvas.getObjects(), this._container)
-    );
+    const allChildren = flowChildrenOf(this.canvas.getObjects(), this._container);
     const otherChildren = allChildren.filter((c) => c.obj !== this.newChild);
-    const isColumn = (cd.flexDirection ?? "column") === "column";
+    const isColumn = directionOf(cd) === "column";
     if (this._decidingDirection && otherChildren.length === 1) {
       const direction = this.detectDirection(cursor, otherChildren[0]);
       cd.flexDirection = direction;
@@ -6169,14 +6147,14 @@ var InsertChildSession = class _InsertChildSession {
       const gap = this.computeGap(cursor, otherChildren, insertOrder, dirIsColumn);
       cd.gap = Math.min(gap, this.freeMainSpace(otherChildren, dirIsColumn));
       this._container.set("layout", { ...containerLayout });
-      const layout = this.newChild.get?.("layout");
+      const layout = layoutOf(this.newChild);
       if (layout?.child) {
         layout.child.order = insertOrder;
         this.newChild.set("layout", { ...layout });
       }
     } else {
       const insertOrder = this.computeInsertOrder(cursor, otherChildren, isColumn);
-      const layout = this.newChild.get?.("layout");
+      const layout = layoutOf(this.newChild);
       if (layout?.child) {
         layout.child.order = insertOrder;
         this.newChild.set("layout", { ...layout });
@@ -6212,6 +6190,7 @@ var InsertChildSession = class _InsertChildSession {
     }
     return this._currentDirection;
   }
+  /** Last computed order — for hysteresis. */
   /**
    * Compute the insertion order based on cursor position in the main axis.
    * The swap threshold is the **far edge** of each sibling — the dragged
@@ -6252,11 +6231,9 @@ var InsertChildSession = class _InsertChildSession {
     }
     for (let i = slots.length - 1; i >= 0; i--) {
       if (cursorPos >= slots[i].boundary) {
-        this._lastOrder = slots[i].order;
         return slots[i].order;
       }
     }
-    this._lastOrder = slots[0].order;
     return slots[0].order;
   }
   /**
@@ -6267,8 +6244,8 @@ var InsertChildSession = class _InsertChildSession {
   freeMainSpace(existingChildren, isColumn) {
     const sizing = sizingOf(this._container);
     if ((isColumn ? sizing.y : sizing.x) === "hug") return Infinity;
-    const cd = (this._container.get?.("layout")).container;
-    const pad = cd.padding ?? { top: 0, right: 0, bottom: 0, left: 0 };
+    const cd = layoutOf(this._container).container;
+    const pad = paddingOf(cd);
     const { w, h } = scaledSize(this._container);
     const inner = isColumn ? h - pad.top - pad.bottom : w - pad.left - pad.right;
     const main = (size) => isColumn ? size.h : size.w;
@@ -6315,7 +6292,7 @@ var InsertChildSession = class _InsertChildSession {
    * Container grows if needed (never shrinks during session).
    */
   previewLayout(allChildren) {
-    const containerLayout = this._container.get?.("layout");
+    const containerLayout = layoutOf(this._container);
     const cd = containerLayout.container;
     const sizing = sizingOf(this._container);
     const { w: currentW, h: currentH } = scaledSize(this._container);
@@ -6353,7 +6330,7 @@ var InsertChildSession = class _InsertChildSession {
       }
     }
     if (finalW !== currentW || finalH !== currentH) {
-      bubbleUpLayout(this._container, this.canvas.getObjects());
+      relayoutAncestors(this._container, this.canvas.getObjects());
     }
   }
   /** Snapshot all children positions using animator targets when available. */
@@ -6374,6 +6351,11 @@ var InsertChildSession = class _InsertChildSession {
 };
 
 // src/LayoutManager.ts
+var SIZE_PRESETS = {
+  "hug": { x: "hug", y: "hug" },
+  "hug-y": { x: "fixed", y: "hug" },
+  "fixed": { x: "fixed", y: "fixed" }
+};
 var HOVER_DELAY_MS = 700;
 var ANCHOR_DELAY_MS = 500;
 var LayoutManager2 = class {
@@ -6382,7 +6364,7 @@ var LayoutManager2 = class {
     this.resizeSession = null;
     /** Le redimensionnement d'un groupe en cours (ouvert à before:transform). */
     this.freeResize = null;
-    /** Les descendants d'une sélection multiple en cours de déplacement, et leur départ. */
+    /** Les descendants qui suivent les objets déplacés (un groupe, une sélection multiple). */
     this.followers = null;
     // ── Event wiring ──────────────────────────────────────────────────
     this.onMovingBound = (e) => this.onMoving(e);
@@ -6405,6 +6387,23 @@ var LayoutManager2 = class {
     runLayout(this.canvas.getObjects());
     this.canvas.renderAll();
   }
+  /** A layout change: everything settles, then the host hears about it. */
+  changed() {
+    this.relayout();
+    this.callbacks.onLayoutChanged?.();
+  }
+  /** A panel edit on a container's own block (ignored on anything else). */
+  editContainer(obj, patch) {
+    if (!isContainerObject(obj)) return;
+    updateContainer(obj, patch);
+    this.changed();
+  }
+  /** A panel edit on a child's block (ignored outside a container). */
+  editChild(obj, patch) {
+    if (!childDataOf(obj)) return;
+    updateChild(obj, patch);
+    this.changed();
+  }
   /**
    * Set the size mode of a container or a text:
    * - "hug": width and height follow the content
@@ -6414,96 +6413,56 @@ var LayoutManager2 = class {
    * content again, as the mode says.
    */
   setMode(obj, mode) {
-    const layout = obj.get("layout");
     const isText = isTextObject(obj);
-    if (!layout?.container && !isText) return;
+    if (!isContainerObject(obj) && !isText) return;
     const { minSize: _floor, ...current } = sizingOf(obj);
-    const axes = {
-      "hug": { x: "hug", y: "hug" },
-      "hug-y": { x: "fixed", y: "hug" },
-      "fixed": { x: "fixed", y: "fixed" }
-    };
-    const sizing = { ...current, ...axes[mode] };
+    const sizing = { ...current, ...SIZE_PRESETS[mode] };
     if (isText) obj.setSizing(sizing);
-    else obj.set("layout", { ...layout, sizing });
-    this.relayout();
-    this.callbacks.onLayoutChanged?.();
+    else updateLayout(obj, { sizing });
+    this.changed();
   }
   /** What a text does when its box is smaller than its content. */
   setOverflow(obj, overflow) {
     if (!isTextObject(obj)) return;
     obj.setTextOverflow(overflow);
-    this.relayout();
-    this.callbacks.onLayoutChanged?.();
+    this.changed();
   }
-  /** Update padding on a container — one side, or "all" four. */
+  /** Padding of a container — one side, or "all" four. */
   setPadding(obj, side, value) {
-    const layout = obj.get("layout");
-    if (!layout?.container) return;
-    if (!layout.container.padding) layout.container.padding = { top: 0, right: 0, bottom: 0, left: 0 };
     const sides = side === "all" ? ["top", "right", "bottom", "left"] : [side];
-    for (const s of sides) layout.container.padding[s] = value;
-    obj.set("layout", { ...layout });
-    this.relayout();
-    this.callbacks.onLayoutChanged?.();
+    const padding = { ...paddingOf(containerDataOf(obj)) };
+    for (const s of sides) padding[s] = value;
+    this.editContainer(obj, { padding });
   }
-  /**
-   * Un groupe libre ou rangé (une pile) — la bascule ne fait rien sauter (cf. grouping).
-   */
+  /** Un groupe libre ou rangé (une pile) — la bascule ne fait rien sauter (cf. arrangement). */
   setArrangement(obj, arrangement) {
-    const cd = obj.get("layout")?.container;
+    const cd = containerDataOf(obj);
     if (!cd || (cd.arrangement ?? "stack") === arrangement) return;
     const objects = this.canvas.getObjects();
     if (arrangement === "stack") arrangeAsStack(obj, objects);
     else arrangeFree(obj, objects);
     syncGroupControls(obj);
-    this.relayout();
-    this.callbacks.onLayoutChanged?.();
+    this.changed();
   }
-  /** Update alignSelf on a child layout object. */
+  /** Cross-axis alignment of one child in its stack. */
   setAlignSelf(obj, value) {
-    const layout = obj.get("layout");
-    if (!layout?.child) return;
-    layout.child.alignSelf = value;
-    obj.set("layout", { ...layout });
-    this.relayout();
-    this.callbacks.onLayoutChanged?.();
+    this.editChild(obj, { alignSelf: value });
   }
-  /** Update gap on a container. */
+  /** Space between the children of a stack. */
   setGap(obj, value) {
-    const layout = obj.get("layout");
-    if (!layout?.container) return;
-    layout.container.gap = Math.max(0, value);
-    obj.set("layout", { ...layout });
-    this.relayout();
-    this.callbacks.onLayoutChanged?.();
+    this.editContainer(obj, { gap: Math.max(0, value) });
   }
-  /** Update flex direction on a container. */
+  /** Direction of a stack. */
   setFlexDirection(obj, direction) {
-    const layout = obj.get("layout");
-    if (!layout?.container) return;
-    layout.container.flexDirection = direction;
-    obj.set("layout", { ...layout });
-    this.relayout();
-    this.callbacks.onLayoutChanged?.();
+    this.editContainer(obj, { flexDirection: direction });
   }
-  /** Update alignItems on a container. */
+  /** Cross-axis alignment of a stack's children. */
   setAlignItems(obj, value) {
-    const layout = obj.get("layout");
-    if (!layout?.container) return;
-    layout.container.alignItems = value;
-    obj.set("layout", { ...layout });
-    this.relayout();
-    this.callbacks.onLayoutChanged?.();
+    this.editContainer(obj, { alignItems: value });
   }
-  /** Update justifyContent on a container. */
+  /** Main-axis distribution of a stack's children. */
   setJustifyContent(obj, value) {
-    const layout = obj.get("layout");
-    if (!layout?.container) return;
-    layout.container.justifyContent = value;
-    obj.set("layout", { ...layout });
-    this.relayout();
-    this.callbacks.onLayoutChanged?.();
+    this.editContainer(obj, { justifyContent: value });
   }
   // ── External drag API ──────────────────────────────────────────────
   //
@@ -6593,33 +6552,31 @@ var LayoutManager2 = class {
       this.moveFollowers(obj, obj.getObjects(), e.transform);
       return;
     }
-    const layout = obj.get?.("layout");
+    const layout = layoutOf(obj);
     if (layout?.container) {
       const isSessionChild = this.dtl.phase === "anchored" && this.dtl.session.child === obj;
       if (isFreeContainer(obj)) {
         this.moveFollowers(obj, [obj], e.transform);
       } else if (!isSessionChild) {
-        relayoutSingle(obj, layout.container, this.canvas.getObjects());
+        layoutSubtree(obj, this.canvas.getObjects());
         this.canvas.renderAll();
       }
     }
     if (layout?.child && this.dtl.phase !== "anchored") {
       const parent = this.findParentContainer(obj);
       if (parent && isFreeContainer(parent)) {
-        this.fitGroupChain(parent);
+        fitFreeAncestors(parent, this.canvas.getObjects());
         this.canvas.renderAll();
         return;
       }
     }
     if (layout?.child && this.dtl.phase !== "anchored") {
-      const activeGroup = this.callbacks.getActiveGroupId?.();
-      if (activeGroup === layout.child.parentId) {
-        const container = this.canvas.getObjects().find(
-          (o) => o.get("layerId") === layout.child.parentId
-        );
+      const entered = this.callbacks.getEnteredContainerId?.();
+      if (entered === layout.child.parentId) {
+        const container = findById(this.canvas.getObjects(), entered);
         if (container) {
           const cursor2 = this.canvas.getScenePoint(e.e);
-          const siblings = resolveContainerChildren(this.canvas.getObjects(), container).filter((c) => c.obj !== obj);
+          const siblings = childrenOf(this.canvas.getObjects(), container).filter((c) => c.obj !== obj);
           let session;
           if (siblings.length > 0) {
             session = InsertChildSession.reattach(this.canvas, container, obj, cursor2);
@@ -6657,48 +6614,23 @@ var LayoutManager2 = class {
    * containers sont relatives à elle.
    */
   moveFollowers(target, moved, transform) {
-    let start = this.followers;
-    if (!start || start.transform !== transform) {
-      start = this.followers = {
-        transform,
-        left: transform?.original?.left ?? target.left,
-        top: transform?.original?.top ?? target.top,
-        objects: descendantsOf(this.canvas.getObjects(), moved).map((o) => ({ obj: o, left: o.left, top: o.top }))
-      };
+    if (!this.followers || this.followers.transform !== transform) {
+      this.followers = SubtreeDrag.begin(target, moved, transform, this.canvas.getObjects());
     }
-    const dx = target.left - start.left;
-    const dy = target.top - start.top;
-    for (const f of start.objects) {
-      f.obj.set({ left: f.left + dx, top: f.top + dy });
-      f.obj.setCoords();
-    }
-  }
-  /**
-   * La boîte d'un groupe suit ses enfants, et celle des groupes qui le contiennent — pas
-   * au-delà d'une pile pendant le geste (elle déplacerait le groupe, donc l'objet tenu) :
-   * la pile se recale à la fin (relayout).
-   */
-  fitGroupChain(group) {
-    const objects = this.canvas.getObjects();
-    for (let current = group; current && isFreeContainer(current); current = this.findParentContainer(current)) {
-      fitFreeContainer(current, objects);
-    }
+    this.followers.follow(target);
   }
   /** Le début d'une transformation : un groupe qu'on redimensionne garde son état de départ. */
   onBeforeTransform(e) {
     const target = e.transform?.target;
     this.freeResize = null;
     if (!target || !isFreeContainer(target) || e.transform.action !== "resizing") return;
-    const tl = target.getPositionByOrigin("left", "top");
-    const { w, h } = scaledSize(target);
-    this.freeResize = new FreeResizeSession(target, this.canvas.getObjects(), { left: tl.x, top: tl.y, width: w, height: h });
+    this.freeResize = FreeResizeSession.begin(target, this.canvas.getObjects());
   }
   /** A text inside a container was edited → its ancestors adapt. */
   onTextChanged(e) {
-    const layout = e.target?.get?.("layout");
+    const layout = layoutOf(e.target);
     if (!layout?.child) return;
-    this.relayout();
-    this.callbacks.onLayoutChanged?.();
+    this.changed();
   }
   onModified(e) {
     const obj = e.target;
@@ -6715,24 +6647,18 @@ var LayoutManager2 = class {
     const resizedGroup = this.freeResize;
     this.freeResize = null;
     if (this.dtl.phase === "idle" && (resizedGroup || parent && isFreeContainer(parent))) {
-      this.relayout();
-      this.callbacks.onLayoutChanged?.();
+      this.changed();
       return;
     }
-    const childLayout = obj?.get?.("layout");
+    const childLayout = layoutOf(obj);
     if (childLayout?.child && isTextObject(obj) && this.dtl.phase === "idle" && e.transform?.action === "resizing") {
-      this.relayout();
-      this.callbacks.onLayoutChanged?.();
+      this.changed();
       return;
     }
-    const layout = obj.get?.("layout");
+    const layout = layoutOf(obj);
     if (layout?.container) {
-      if (this.resizeSession) {
-        this.resizeSession.commit(this.canvas.getObjects());
-        this.resizeSession = null;
-      }
-      this.relayout();
-      this.callbacks.onLayoutChanged?.();
+      this.resizeSession = null;
+      this.changed();
       if (this.dtl.phase !== "anchored" && this.dtl.phase !== "pending") return;
     }
     if (this.dtl.phase === "anchored") {
@@ -6754,20 +6680,20 @@ var LayoutManager2 = class {
   }
   onResizing(e) {
     const target = e.target;
-    const layout = target?.get?.("layout");
+    const layout = layoutOf(target);
     if (layout?.child && !layout.container) {
       const objects = this.canvas.getObjects();
       const parent = this.findParentContainer(target);
       if (parent && isFreeContainer(parent)) {
-        this.fitGroupChain(parent);
+        fitFreeAncestors(parent, this.canvas.getObjects());
         this.canvas.renderAll();
         return;
       }
       if (!isTextObject(target)) clampToRoom(target, e.transform, objects);
-      const pLayout = parent?.get?.("layout");
+      const pLayout = layoutOf(parent);
       if (parent && pLayout?.container) {
-        relayoutSingle(parent, pLayout.container, objects);
-        bubbleUpLayout(parent, objects);
+        layoutSubtree(parent, objects);
+        relayoutAncestors(parent, objects);
         this.canvas.renderAll();
       }
       return;
@@ -6775,11 +6701,12 @@ var LayoutManager2 = class {
     if (!layout?.container) return;
     const groupResize = this.freeResize;
     if (groupResize && groupResize.container === target) {
-      this.resizeGroup(groupResize, e.transform);
+      groupResize.step(e.transform);
+      this.canvas.renderAll();
       return;
     }
     if (!this.resizeSession) {
-      this.resizeSession = new ResizeSession(target, e.transform?.corner);
+      this.resizeSession = new StackResizeSession(target, e.transform?.corner);
     }
     this.resizeSession.handleResizing(this.canvas.getObjects());
     this.canvas.renderAll();
@@ -6900,9 +6827,9 @@ var LayoutManager2 = class {
    * that can host (see rulesOf) — it would become a sub-container.
    */
   findChildDropTarget(cursor, container, exclude) {
-    const layout = container.get?.("layout");
+    const layout = layoutOf(container);
     if (!layout?.container) return null;
-    const children = resolveContainerChildren(this.canvas.getObjects(), container);
+    const children = childrenOf(this.canvas.getObjects(), container);
     for (const { obj } of children) {
       if (obj === exclude) continue;
       if (!rulesOf(obj).hosts) continue;
@@ -6910,13 +6837,9 @@ var LayoutManager2 = class {
     }
     return null;
   }
-  /** Find the parent container of `obj` by looking up its `child.parentId`. */
+  /** The container `obj` is a child of. */
   findParentContainer(obj) {
-    const layout = obj.get?.("layout");
-    if (!layout?.child) return null;
-    return this.canvas.getObjects().find(
-      (o) => o.get("layerId") === layout.child.parentId
-    ) ?? null;
+    return parentContainerOf(obj, this.canvas.getObjects());
   }
   /** Transition to ANCHORED: create a session on the target and go live. */
   anchorOn(target, child, cursor, root = null) {
@@ -6942,29 +6865,11 @@ var LayoutManager2 = class {
       root
     };
   }
-  /**
-   * Un pas du redimensionnement d'un groupe : le facteur est la moyenne des deux axes
-   * (uniforme, un texte ne se déforme pas), le coin opposé à la poignée reste en place.
-   */
-  resizeGroup(session, transform) {
-    const { start, container } = session;
-    const { w, h } = scaledSize(container);
-    const k = Math.max(0.05, (w / start.width + h / start.height) / 2);
-    const fx = transform.originX === "left" ? 0 : transform.originX === "right" ? 1 : 0.5;
-    const fy = transform.originY === "top" ? 0 : transform.originY === "bottom" ? 1 : 0.5;
-    session.apply(k, { x: start.left + start.width * fx, y: start.top + start.height * fy });
-    for (const obj of descendantsOf(this.canvas.getObjects(), [container])) {
-      const cd = obj.get("layout")?.container;
-      if (cd && cd.arrangement !== "free") relayoutSingle(obj, cd, this.canvas.getObjects());
-    }
-    fitFreeContainer(container, this.canvas.getObjects());
-    this.canvas.renderAll();
-  }
   /** Create the appropriate session type for a target container. */
   createSession(target, child, cursor) {
-    const targetLayout = target.get?.("layout");
+    const targetLayout = layoutOf(target);
     const alreadyContainer = targetLayout?.container != null;
-    const existingChildren = alreadyContainer ? resolveContainerChildren(this.canvas.getObjects(), target) : [];
+    const existingChildren = alreadyContainer ? childrenOf(this.canvas.getObjects(), target) : [];
     if (alreadyContainer && existingChildren.length > 0) {
       return new InsertChildSession(this.canvas, target, child, cursor);
     }
@@ -6991,10 +6896,10 @@ var LayoutManager2 = class {
   // ── Guide rendering ───────────────────────────────────────────────
   showSessionGuides(session) {
     if (session instanceof InsertChildSession) {
-      const allChildren = resolveContainerChildren(this.canvas.getObjects(), session.container);
+      const allChildren = childrenOf(this.canvas.getObjects(), session.container);
       const childObjs = allChildren.map((c) => c.obj);
-      const layout = session.container.get?.("layout");
-      const direction = layout?.container?.flexDirection ?? "column";
+      const layout = layoutOf(session.container);
+      const direction = directionOf(layout?.container);
       this.guides.showInsertGuides(session.container, childObjs, direction);
     } else {
       this.guides.showLayoutGuides(session.container, session.child);
@@ -7003,29 +6908,25 @@ var LayoutManager2 = class {
   // ── Shape hit-testing ─────────────────────────────────────────────
   findShapeUnderPoint(point, exclude) {
     const objects = this.canvas.getObjects().slice().reverse();
-    const activeGroup = this.callbacks.getActiveGroupId?.();
+    const entered = this.callbacks.getEnteredContainerId?.();
     for (const obj of objects) {
       if (obj === exclude) continue;
       if (!rulesOf(obj).hosts) continue;
-      const layout = obj.get?.("layout");
+      const layout = layoutOf(obj);
       if (layout?.child) {
-        if (!activeGroup || layout.child.parentId !== activeGroup) continue;
+        if (!entered || layout.child.parentId !== entered) continue;
       }
       if (pointInObject(point, obj)) return obj;
     }
     return null;
   }
 };
-function clampToRoom(obj, transform, objects) {
-  const room = availableRoom(obj, objects);
-  const { w, h } = scaledSize(obj);
-  if (w <= room.w && h <= room.h) return;
-  const originX = transform?.originX ?? "left";
-  const originY = transform?.originY ?? "top";
-  const anchor = obj.getPositionByOrigin(originX, originY);
-  setShapeSize(obj, Math.min(w, room.w), Math.min(h, room.h));
-  obj.setPositionByOrigin(anchor, originX, originY);
-}
+
+// src/types.ts
+var DRAG_PREVIEW_KEY = "dragPreview";
+
+// src/editor/style-commands.ts
+var import_fabric18 = require("#fabric");
 
 // src/clipping/antiScale.ts
 function antiScale(obj) {
@@ -7108,19 +7009,451 @@ function applyClip(obj, shapeType) {
   }
 }
 
-// src/types.ts
-var DRAG_PREVIEW_KEY = "dragPreview";
+// src/layout/tree.ts
+function layoutParents(layers) {
+  const all = Array.from(layers);
+  const ids = new Set(all.map((l) => l.layerId).filter(Boolean));
+  const parents = /* @__PURE__ */ new Map();
+  for (const layer of all) {
+    const parentId = layer.layout?.child?.parentId;
+    if (layer.layerId && parentId && parentId !== layer.layerId && ids.has(parentId)) {
+      parents.set(layer.layerId, parentId);
+    }
+  }
+  return parents;
+}
+function layoutRoot(parents, id) {
+  const seen = /* @__PURE__ */ new Set();
+  while (parents.has(id) && !seen.has(id)) {
+    seen.add(id);
+    id = parents.get(id);
+  }
+  return id;
+}
+function layoutChildren(parents, id) {
+  const children = [];
+  for (const [child, parent] of parents) if (parent === id && child !== id) children.push(child);
+  return children;
+}
+function layoutDescendants(parents, ids) {
+  const roots = new Set(ids);
+  const descendants = /* @__PURE__ */ new Set();
+  let grew = true;
+  while (grew) {
+    grew = false;
+    for (const [child, parent] of parents) {
+      if (descendants.has(child) || roots.has(child)) continue;
+      if (roots.has(parent) || descendants.has(parent)) {
+        descendants.add(child);
+        grew = true;
+      }
+    }
+  }
+  return descendants;
+}
 
-// src/arrange.ts
+// src/layout/grouping.ts
+function groupMembers(objects, selected) {
+  const parentIds = new Set(selected.map(parentIdOf));
+  if (parentIds.size <= 1) return objects.filter((o) => selected.includes(o));
+  const parents = layoutParents(objects);
+  const rootIds = new Set(selected.map((o) => layoutRoot(parents, idOf(o))));
+  return objects.filter((o) => rootIds.has(idOf(o)));
+}
+function groupObjects(canvas, selected, layerId) {
+  const objects = canvas.getObjects();
+  const members = groupMembers(objects, selected);
+  if (members.length < 2) return null;
+  const parentId = parentIdOf(members[0]);
+  const orders = members.map((m) => childDataOf(m)?.order).filter((o) => o != null);
+  const carrier = new FabRect({
+    layerId,
+    layerType: "shape",
+    originX: "left",
+    originY: "top",
+    left: 0,
+    top: 0,
+    width: 1,
+    height: 1,
+    fill: "transparent",
+    strokeWidth: 0,
+    layout: {
+      container: { arrangement: "free", origin: "group", padding: { ...ZERO_PADDING } },
+      ...parentId ? { child: { parentId, ...orders.length ? { order: Math.min(...orders) } : {} } } : {}
+    }
+  });
+  for (const member of members) {
+    const layout = layoutOf(member);
+    member.set("layout", { ...layout, child: { parentId: layerId } });
+    if (layout?.child && isTextObject(member)) member.layoutWith(null);
+  }
+  const blocks = members.flatMap((m) => stackBlock(objects, m));
+  const rest = objects.filter((o) => !blocks.includes(o));
+  const topBlock = stackBlock(objects, members[members.length - 1]);
+  const below = rest.filter((o) => objects.indexOf(o) < objects.indexOf(topBlock[0])).length;
+  const order = [...rest.slice(0, below), carrier, ...blocks, ...rest.slice(below)];
+  canvas.add(carrier);
+  order.forEach((obj, index) => canvas.moveObjectTo(obj, index));
+  fitFreeContainer(carrier, canvas.getObjects());
+  return carrier;
+}
+function ungroupObject(canvas, container) {
+  const layout = layoutOf(container);
+  if (!layout?.container) return [];
+  const objects = canvas.getObjects();
+  const children = flowChildrenOf(objects, container).map((c) => c.obj);
+  const parentChild = layout.child;
+  children.forEach((child, i) => {
+    if (parentChild) {
+      const childLayout = layoutOf(child);
+      const order = parentChild.order != null ? parentChild.order + i / children.length : void 0;
+      child.set("layout", { ...childLayout, child: { parentId: parentChild.parentId, ...order != null ? { order } : {} } });
+    } else {
+      detachChild(child);
+    }
+  });
+  if (layout.container.origin === "group") {
+    canvas.remove(container);
+  } else {
+    const { container: _container, ...rest } = layout;
+    container.set("layout", Object.keys(rest).length ? rest : void 0);
+  }
+  return children;
+}
+var GROUP_FILL_PADDING = 24;
+function padGroupOnFirstFill(container, previousFill) {
+  const cd = containerDataOf(container);
+  if (cd?.origin !== "group") return false;
+  const wasBare = !previousFill || previousFill === "transparent";
+  const fill = container.fill;
+  const isBare = !fill || fill === "transparent";
+  const p = cd.padding;
+  if (!wasBare || isBare || p && (p.top || p.right || p.bottom || p.left)) return false;
+  const pad = GROUP_FILL_PADDING;
+  container.set("layout", {
+    ...layoutOf(container),
+    container: { ...cd, padding: { top: pad, right: pad, bottom: pad, left: pad } }
+  });
+  return true;
+}
+
+// src/editor/style-commands.ts
+var StyleCommands = class {
+  constructor(editor) {
+    this.editor = editor;
+  }
+  /**
+   * @legacy Use ImageFrame.nextClipShape() directly.
+   */
+  switchClip() {
+    const obj = this.editor.selection.current;
+    if (!obj) return;
+    if (obj instanceof ImageFrame) {
+      obj.nextClipShape();
+      obj.dirty = true;
+      this.editor.canvas.requestRenderAll();
+    } else if (obj instanceof import_fabric18.FabricImage) {
+      switchClip(obj);
+      obj.dirty = true;
+      this.editor.canvas.remove(obj);
+      this.editor.layers.add(obj);
+    }
+  }
+  /**
+   * @legacy Shape switching is no longer supported.
+   */
+  switchShape() {
+    const obj = this.editor.selection.current;
+    if (!obj || obj instanceof import_fabric18.FabricImage) return;
+    const currentShapeId = obj.id;
+    const nextShapeType = nextShape(currentShapeId);
+    this.changeShape(nextShapeType);
+  }
+  /**
+   * @legacy Shape switching is no longer supported.
+   */
+  changeShape(shapeType) {
+    const obj = this.editor.selection.current;
+    if (!obj) return;
+    if (obj instanceof ImageFrame) {
+      obj.applyClipShape(shapeType);
+      obj.dirty = true;
+      this.editor.canvas.requestRenderAll();
+    } else if (!(obj instanceof import_fabric18.FabricImage)) {
+      const newObj = switchShape(obj, shapeType);
+      const layerId = obj.get("layerId");
+      const layerType = obj.get("layerType");
+      if (layerId) newObj.set("layerId", layerId);
+      if (layerType) newObj.set("layerType", layerType);
+      this.editor.selection.silenceCallbacks();
+      const objects = this.editor.canvas.getObjects();
+      const zIndex = objects.indexOf(obj);
+      this.editor.canvas.remove(obj);
+      this.editor.canvas.add(newObj);
+      if (zIndex >= 0 && zIndex < this.editor.canvas.getObjects().length) {
+        this.editor.canvas.moveObjectTo(newObj, zIndex);
+      }
+      this.editor.canvas.setActiveObject(newObj);
+      this.editor.canvas.requestRenderAll();
+      this.editor.selection.restoreCallbacks();
+    }
+  }
+  /**
+   * Bascule entre remplissage et contour pour l'objet sélectionné
+   */
+  toggleOutline() {
+    const obj = this.editor.selection.current;
+    if (!obj) return;
+    const { stroke, fill } = obj;
+    obj.set({ fill: stroke, stroke: fill });
+    obj.strokeWidth = obj.stroke ? 4 : 0;
+    this.editor.canvas.renderAll();
+  }
+  /**
+   * Change la couleur de l'objet sélectionné
+   */
+  changeColor(color) {
+    const obj = this.editor.selection.current;
+    if (!obj) return;
+    if (isTextObject(obj)) {
+      obj.set("fill", color);
+    } else {
+      const property = obj.stroke ? "stroke" : "fill";
+      obj.set(property, color);
+    }
+    this.editor.canvas.renderAll();
+  }
+  /**
+   * Change l'opacité de l'objet sélectionné
+   */
+  changeOpacity(opacity) {
+    const obj = this.editor.selection.current;
+    if (!obj) return;
+    obj.set({ opacity: opacity / 100 });
+    this.editor.canvas.renderAll();
+  }
+  // ==================== Stroke controls ====================
+  /**
+   * Enable or disable stroke on the selected object.
+   * When enabling, restores previous stroke color or defaults to black.
+   */
+  setStrokeEnabled(enabled) {
+    const obj = this.editor.selection.current;
+    if (!obj) return;
+    if (enabled) {
+      obj.set({ stroke: obj.stroke || "#000000", strokeWidth: obj.strokeWidth || 4 });
+    } else {
+      obj.set({ stroke: null, strokeWidth: 0 });
+    }
+    this.editor.canvas.renderAll();
+  }
+  /**
+   * Set stroke width on the selected object.
+   */
+  setStrokeWidth(width) {
+    const obj = this.editor.selection.current;
+    if (!obj) return;
+    obj.set({ strokeWidth: width });
+    if (width > 0 && !obj.stroke) {
+      obj.set({ stroke: "#000000" });
+    }
+    this.editor.canvas.renderAll();
+  }
+  /**
+   * Set stroke color on the selected object. Accepts any CSS color (hex, rgba).
+   * Resets global opacity to 1 so per-channel rgba alpha is authoritative.
+   */
+  setStrokeColor(color) {
+    const obj = this.editor.selection.current;
+    if (!obj) return;
+    obj.set({ stroke: color, opacity: 1 });
+    if (!obj.strokeWidth) {
+      obj.set({ strokeWidth: 4 });
+    }
+    this.editor.canvas.renderAll();
+  }
+  // ==================== Fill controls ====================
+  /**
+   * Set fill color (solid) on the selected object.
+   * Unlike changeColor(), always sets fill regardless of stroke state.
+   * Resets global opacity to 1 so per-channel rgba alpha is authoritative.
+   */
+  setFillColor(color) {
+    const obj = this.editor.selection.current;
+    if (!obj) return;
+    const previous = obj.fill;
+    obj.set({ fill: color, opacity: 1 });
+    if (padGroupOnFirstFill(obj, previous)) this.editor.layout.relayout();
+    this.editor.canvas.renderAll();
+  }
+  /**
+   * Set a linear gradient fill on the selected object.
+   */
+  setFillGradient(color1, color2, angleDeg) {
+    const obj = this.editor.selection.current;
+    if (!obj) return;
+    const rad = angleDeg * Math.PI / 180;
+    const cos = Math.cos(rad);
+    const sin = Math.sin(rad);
+    const gradient = new import_fabric18.Gradient({
+      type: "linear",
+      gradientUnits: "percentage",
+      coords: {
+        x1: 0.5 - cos / 2,
+        y1: 0.5 - sin / 2,
+        x2: 0.5 + cos / 2,
+        y2: 0.5 + sin / 2
+      },
+      colorStops: [
+        { offset: 0, color: color1 },
+        { offset: 1, color: color2 }
+      ]
+    });
+    const previous = obj.fill;
+    obj.set({ fill: gradient, opacity: 1 });
+    if (padGroupOnFirstFill(obj, previous)) this.editor.layout.relayout();
+    this.editor.canvas.renderAll();
+  }
+  /**
+   * Change la police de l'objet texte sélectionné
+   */
+  changeFont(fontFamily, fontWeight) {
+    const obj = this.editor.selection.current;
+    if (!obj || !isTextObject(obj)) return;
+    obj.set({ fontFamily, fontWeight: fontWeight || "normal" });
+    this.editor.layout.relayout();
+    this.editor.canvas.requestRenderAll();
+  }
+  /**
+   * Change la taille de police de l'objet texte sélectionné
+   */
+  setFontSize(size) {
+    const obj = this.editor.selection.current;
+    if (!obj || !isTextObject(obj) || !Number.isFinite(size) || size <= 0) return;
+    obj.set({ fontSize: size });
+    this.editor.layout.relayout();
+    this.editor.canvas.requestRenderAll();
+  }
+  /**
+   * Justification de l'objet texte sélectionné, dans sa boîte.
+   */
+  setTextAlign(align) {
+    const obj = this.editor.selection.current;
+    if (!obj || !isTextObject(obj)) return;
+    obj.set({ textAlign: align });
+    this.editor.layout.relayout();
+    this.editor.canvas.requestRenderAll();
+  }
+  /**
+   * Bascule un style sur l'objet texte sélectionné (gras, italique, souligné).
+   * "bold" alterne fontWeight normal/bold (un poids numérique >= 600 compte
+   * comme gras).
+   */
+  toggleTextStyle(style) {
+    const obj = this.editor.selection.current;
+    if (!obj || !isTextObject(obj)) return;
+    switch (style) {
+      case "bold": {
+        const isBold = obj.fontWeight === "bold" || Number(obj.fontWeight) >= 600;
+        obj.set({ fontWeight: isBold ? "normal" : "bold" });
+        break;
+      }
+      case "italic":
+        obj.set({ fontStyle: obj.fontStyle === "italic" ? "normal" : "italic" });
+        break;
+      case "underline":
+        obj.set({ underline: !obj.underline });
+        break;
+    }
+    this.editor.layout.relayout();
+    this.editor.canvas.requestRenderAll();
+  }
+  // ── Shadow ────────────────────────────────────────────────────────
+  setShadow(opts) {
+    const obj = this.editor.selection.current;
+    if (!obj) return;
+    const existing = obj.shadow;
+    const shadow = new import_fabric18.Shadow({
+      color: opts.color ?? existing?.color ?? "rgba(0,0,0,0.5)",
+      blur: opts.blur ?? existing?.blur ?? 10,
+      offsetX: opts.offsetX ?? existing?.offsetX ?? 5,
+      offsetY: opts.offsetY ?? existing?.offsetY ?? 5
+    });
+    obj.set("shadow", shadow);
+    this.editor.canvas.requestRenderAll();
+  }
+  removeShadow() {
+    const obj = this.editor.selection.current;
+    if (!obj) return;
+    obj.set("shadow", null);
+    this.editor.canvas.requestRenderAll();
+  }
+};
+
+// src/editor/clipboard.ts
+var Clipboard = class {
+  constructor(editor) {
+    this.editor = editor;
+    // ── Clipboard (copy / paste) ──────────────────────────────────────
+    this._clipboard = null;
+  }
+  /**
+   * Copy the current selection to an internal clipboard, with every descendant of the
+   * selected containers, in stack order.
+   */
+  copySelection() {
+    const selected = this.editor.selection.selected;
+    if (selected.length === 0) return;
+    const toCopy = subtreeOf(this.editor.canvas.getObjects(), selected);
+    this._clipboard = toCopy.map(
+      (obj) => obj.toObject(["layerId", "lockMode", "lockContent", "layout", "bindings"])
+    );
+  }
+  /**
+   * Paste clipboard contents onto the canvas.
+   * Generates fresh layerIds and remaps parent/child references.
+   * Offsets pasted objects by 20px so they don't overlap the originals.
+   */
+  async pasteClipboard() {
+    if (!this._clipboard?.length) return [];
+    const OFFSET = 20;
+    const idMap = /* @__PURE__ */ new Map();
+    this._clipboard.forEach((data, i) => {
+      if (data.layerId) {
+        idMap.set(data.layerId, `layer_${Date.now()}_${i}_${Math.floor(Math.random() * 1e3)}`);
+      }
+    });
+    const cloned = this._clipboard.map((data) => {
+      const copy = JSON.parse(JSON.stringify(data));
+      if (copy.layerId && idMap.has(copy.layerId)) {
+        copy.layerId = idMap.get(copy.layerId);
+      }
+      if (copy.layout?.child?.parentId) {
+        const newParent = idMap.get(copy.layout.child.parentId);
+        if (newParent) copy.layout.child.parentId = newParent;
+      }
+      if (typeof copy.left === "number") copy.left += OFFSET;
+      if (typeof copy.top === "number") copy.top += OFFSET;
+      delete copy.lockMode;
+      return copy;
+    });
+    const objects = [];
+    for (const data of cloned) {
+      const obj = await this.editor.layers.deserialize(data);
+      if (obj) {
+        this.editor.layers.add(obj);
+        objects.push(obj);
+      }
+    }
+    this.editor.selection.selectMany(objects);
+    this.editor.canvas.renderAll();
+    return objects;
+  }
+};
+
+// src/align.ts
 function alignAxis(edge) {
   return edge === "left" || edge === "center" || edge === "right" ? "x" : "y";
-}
-function unionBox(boxes) {
-  const left = Math.min(...boxes.map((b) => b.left));
-  const top = Math.min(...boxes.map((b) => b.top));
-  const right = Math.max(...boxes.map((b) => b.left + b.width));
-  const bottom = Math.max(...boxes.map((b) => b.top + b.height));
-  return { left, top, width: right - left, height: bottom - top };
 }
 function alignDelta(box, ref, edge) {
   switch (edge) {
@@ -7158,6 +7491,114 @@ function distributeDeltas(boxes, axis) {
   return deltas;
 }
 
+// src/editor/selection-commands.ts
+var SelectionCommands = class {
+  constructor(editor) {
+    this.editor = editor;
+  }
+  // ── Grouper, dégrouper ────────────────────────────────────────────
+  /**
+   * Groupe la sélection (au moins deux objets) dans un groupe libre — rien ne bouge. La
+   * resélection de ses membres remonte au groupe : c'est lui qui est sélectionné. Rend le
+   * groupe, ou null.
+   */
+  groupSelection() {
+    const selected = this.editor.selection.selected;
+    if (selected.length < 2) return null;
+    let group = null;
+    this.editor.selection.withSelectionReleased(() => {
+      group = groupObjects(this.editor.canvas, selected, `layer_${Date.now()}_${Math.floor(Math.random() * 1e3)}`);
+      if (group) this.editor.layout.relayout();
+    });
+    return group;
+  }
+  /**
+   * Dégroupe le container sélectionné : ses enfants restent à leur place, sélectionnés.
+   * Rend les enfants (vide : rien à dégrouper).
+   */
+  ungroupSelection() {
+    const container = this.editor.selection.current;
+    if (!container || !containerDataOf(container)) return [];
+    this.editor.canvas.discardActiveObject();
+    const children = ungroupObject(this.editor.canvas, container);
+    this.editor.layout.relayout();
+    this.editor.selection.selectMany(children);
+    return children;
+  }
+  // ── Aligner, répartir ─────────────────────────────────────────────
+  /**
+   * Aligne la sélection. Plusieurs objets s'alignent sur leur boîte commune ; un objet
+   * seul, sur l'intérieur de son container, ou sur l'artboard. Un objet bouge avec sa
+   * descendance. Un enfant de pile ne bouge pas : il s'aligne dans la pile (alignSelf),
+   * sur l'axe qu'elle laisse libre — l'autre est le sien.
+   */
+  alignSelection(edge) {
+    if (!this.editor.selection.hasSelection) return;
+    this.editor.selection.withSelectionReleased((selected) => {
+      const objects = this.editor.canvas.getObjects();
+      const ref = selected.length > 1 ? unionBox(selected.map(boxOf)) : this.alignReference(selected[0], objects);
+      let relayout = false;
+      for (const obj of selected) {
+        const parent = stackParentOf(obj);
+        if (parent) {
+          relayout = this.alignInStack(obj, parent, edge) || relayout;
+          continue;
+        }
+        const { dx, dy } = alignDelta(boxOf(obj), ref, edge);
+        translateSubtree(objects, [obj], dx, dy);
+      }
+      if (relayout) this.editor.layout.relayout();
+    });
+    this.editor.canvas.renderAll();
+  }
+  /**
+   * Répartit la sélection à espace égal sur un axe : les deux extrêmes restent en place.
+   * Seulement les objets libres (un enfant de pile a la place que la pile lui donne), et
+   * à partir de trois.
+   */
+  distributeSelection(axis) {
+    const objects = this.editor.canvas.getObjects();
+    const free = this.editor.selection.selected.filter((obj) => !stackParentOf(obj));
+    if (free.length < 3) return;
+    this.editor.selection.withSelectionReleased(() => {
+      const deltas = distributeDeltas(free.map(boxOf), axis);
+      free.forEach((obj, i) => translateSubtree(objects, [obj], deltas[i].dx, deltas[i].dy));
+    });
+    this.editor.canvas.renderAll();
+  }
+  /** Aligne un enfant dans sa pile, sur l'axe qu'elle laisse libre. Vrai s'il a changé. */
+  alignInStack(obj, parent, edge) {
+    const direction = directionOf(containerDataOf(parent));
+    if (alignAxis(edge) !== (direction === "column" ? "x" : "y")) return false;
+    const layout = layoutOf(obj);
+    const alignSelf = edge === "left" || edge === "top" ? "flex-start" : edge === "right" || edge === "bottom" ? "flex-end" : "center";
+    if (layout.child.alignSelf === alignSelf) return false;
+    obj.set("layout", { ...layout, child: { ...layout.child, alignSelf } });
+    return true;
+  }
+  /** La référence d'un objet seul : l'intérieur de son container, sinon l'artboard. */
+  alignReference(obj, objects) {
+    const parent = parentOf(obj, objects);
+    if (!parent) return { left: 0, top: 0, width: this.editor.width, height: this.editor.height };
+    return insetBox(boxOf(parent), paddingOf(containerDataOf(parent)));
+  }
+  /**
+   * Supprime l'objet ou les objets sélectionnés
+   * Les objets verrouillés (position ou full) ne peuvent pas être supprimés ; un container
+   * emporte sa descendance.
+   */
+  deleteSelection() {
+    const selected = this.editor.selection.selected;
+    if (selected.length === 0) return;
+    const deletable = selected.filter((obj) => rulesOf(obj).deletes);
+    if (deletable.length === 0) return;
+    const doomed = subtreeOf(this.editor.canvas.getObjects(), deletable);
+    this.editor.canvas.discardActiveObject();
+    this.editor.layers.removeMany(doomed);
+    this.editor.canvas.renderAll();
+  }
+};
+
 // src/FabricEditor.ts
 var _FabricEditor = class _FabricEditor {
   constructor(canvasElement, config) {
@@ -7165,10 +7606,11 @@ var _FabricEditor = class _FabricEditor {
     this._userZoom = 1;
     this._resizeObserver = null;
     this._resizeCallbacks = [];
+    this.styles = new StyleCommands(this);
+    this.clipboard = new Clipboard(this);
+    this.commands = new SelectionCommands(this);
     this._initialized = false;
     this._replaceToken = {};
-    // ── Clipboard (copy / paste) ──────────────────────────────────────
-    this._clipboard = null;
     this.config = config;
     if (config.shapes) registerShapes(config.shapes);
     const gc = config.guideColor ?? "#d946ef";
@@ -7192,7 +7634,7 @@ var _FabricEditor = class _FabricEditor {
     this.snapping = new SnappingManager(this.canvas, {}, config.guideColor);
     this.layout = new LayoutManager2(
       this.canvas,
-      { getActiveGroupId: () => this.selection.activeGroupId },
+      { getEnteredContainerId: () => this.selection.enteredContainerId },
       config.guideColor
     );
     this.canvas.originalFabricCanvas.snappingManager = this.snapping;
@@ -7558,12 +8000,8 @@ var _FabricEditor = class _FabricEditor {
    * When disabled, discards selection and marks the canvas as non-interactive.
    * When enabled, discards selection (clean state) and optionally syncs visibility.
    */
-  setInteractive(enabled) {
-    if (enabled) {
-      this.canvas.discardActiveObject();
-    } else {
-      this.canvas.discardActiveObject();
-    }
+  setInteractive(_enabled) {
+    this.canvas.discardActiveObject();
     this.canvas.renderAll();
   }
   /**
@@ -7601,310 +8039,64 @@ var _FabricEditor = class _FabricEditor {
       if (r.status === "fulfilled") document?.fonts?.add(r.value);
     });
   }
-  /**
-   * @legacy Use ImageFrame.nextClipShape() directly.
-   */
+  // ── Style de la sélection (editor/style-commands) ───────────────
   switchClip() {
-    const obj = this.selection.current;
-    if (!obj) return;
-    if (obj instanceof ImageFrame) {
-      obj.nextClipShape();
-      obj.dirty = true;
-      this.canvas.requestRenderAll();
-    } else if (obj instanceof import_fabric18.FabricImage) {
-      switchClip(obj);
-      obj.dirty = true;
-      this.canvas.remove(obj);
-      this.layers.add(obj);
-    }
+    this.styles.switchClip();
   }
-  /**
-   * @legacy Shape switching is no longer supported.
-   */
   switchShape() {
-    const obj = this.selection.current;
-    if (!obj || obj instanceof import_fabric18.FabricImage) return;
-    const currentShapeId = obj.id;
-    const nextShapeType = nextShape(currentShapeId);
-    this.changeShape(nextShapeType);
+    this.styles.switchShape();
   }
-  /**
-   * @legacy Shape switching is no longer supported.
-   */
   changeShape(shapeType) {
-    const obj = this.selection.current;
-    if (!obj) return;
-    if (obj instanceof ImageFrame) {
-      obj.applyClipShape(shapeType);
-      obj.dirty = true;
-      this.canvas.requestRenderAll();
-    } else if (!(obj instanceof import_fabric18.FabricImage)) {
-      const newObj = switchShape(obj, shapeType);
-      const layerId = obj.get("layerId");
-      const layerType = obj.get("layerType");
-      if (layerId) newObj.set("layerId", layerId);
-      if (layerType) newObj.set("layerType", layerType);
-      this.selection.silenceCallbacks();
-      const objects = this.canvas.getObjects();
-      const zIndex = objects.indexOf(obj);
-      this.canvas.remove(obj);
-      this.canvas.add(newObj);
-      if (zIndex >= 0 && zIndex < this.canvas.getObjects().length) {
-        this.canvas.moveObjectTo(newObj, zIndex);
-      }
-      this.canvas.setActiveObject(newObj);
-      this.canvas.requestRenderAll();
-      this.selection.restoreCallbacks();
-    }
+    this.styles.changeShape(shapeType);
   }
-  /**
-   * Bascule entre remplissage et contour pour l'objet sélectionné
-   */
   toggleOutline() {
-    const obj = this.selection.current;
-    if (!obj) return;
-    const { stroke, fill } = obj;
-    obj.set({ fill: stroke, stroke: fill });
-    obj.strokeWidth = obj.stroke ? 4 : 0;
-    this.canvas.renderAll();
+    this.styles.toggleOutline();
   }
-  /**
-   * Change la couleur de l'objet sélectionné
-   */
   changeColor(color) {
-    const obj = this.selection.current;
-    if (!obj) return;
-    if (isTextObject(obj)) {
-      obj.set("fill", color);
-    } else {
-      const property = obj.stroke ? "stroke" : "fill";
-      obj.set(property, color);
-    }
-    this.canvas.renderAll();
+    this.styles.changeColor(color);
   }
-  /**
-   * Change l'opacité de l'objet sélectionné
-   */
   changeOpacity(opacity) {
-    const obj = this.selection.current;
-    if (!obj) return;
-    obj.set({ opacity: opacity / 100 });
-    this.canvas.renderAll();
+    this.styles.changeOpacity(opacity);
   }
-  // ==================== Stroke controls ====================
-  /**
-   * Enable or disable stroke on the selected object.
-   * When enabling, restores previous stroke color or defaults to black.
-   */
   setStrokeEnabled(enabled) {
-    const obj = this.selection.current;
-    if (!obj) return;
-    if (enabled) {
-      obj.set({ stroke: obj.stroke || "#000000", strokeWidth: obj.strokeWidth || 4 });
-    } else {
-      obj.set({ stroke: null, strokeWidth: 0 });
-    }
-    this.canvas.renderAll();
+    this.styles.setStrokeEnabled(enabled);
   }
-  /**
-   * Set stroke width on the selected object.
-   */
   setStrokeWidth(width) {
-    const obj = this.selection.current;
-    if (!obj) return;
-    obj.set({ strokeWidth: width });
-    if (width > 0 && !obj.stroke) {
-      obj.set({ stroke: "#000000" });
-    }
-    this.canvas.renderAll();
+    this.styles.setStrokeWidth(width);
   }
-  /**
-   * Set stroke color on the selected object. Accepts any CSS color (hex, rgba).
-   * Resets global opacity to 1 so per-channel rgba alpha is authoritative.
-   */
   setStrokeColor(color) {
-    const obj = this.selection.current;
-    if (!obj) return;
-    obj.set({ stroke: color, opacity: 1 });
-    if (!obj.strokeWidth) {
-      obj.set({ strokeWidth: 4 });
-    }
-    this.canvas.renderAll();
+    this.styles.setStrokeColor(color);
   }
-  // ==================== Fill controls ====================
-  /**
-   * Set fill color (solid) on the selected object.
-   * Unlike changeColor(), always sets fill regardless of stroke state.
-   * Resets global opacity to 1 so per-channel rgba alpha is authoritative.
-   */
   setFillColor(color) {
-    const obj = this.selection.current;
-    if (!obj) return;
-    const previous = obj.fill;
-    obj.set({ fill: color, opacity: 1 });
-    if (padGroupOnFirstFill(obj, previous)) this.layout.relayout();
-    this.canvas.renderAll();
+    this.styles.setFillColor(color);
   }
-  /**
-   * Set a linear gradient fill on the selected object.
-   */
   setFillGradient(color1, color2, angleDeg) {
-    const obj = this.selection.current;
-    if (!obj) return;
-    const rad = angleDeg * Math.PI / 180;
-    const cos = Math.cos(rad);
-    const sin = Math.sin(rad);
-    const gradient = new import_fabric18.Gradient({
-      type: "linear",
-      gradientUnits: "percentage",
-      coords: {
-        x1: 0.5 - cos / 2,
-        y1: 0.5 - sin / 2,
-        x2: 0.5 + cos / 2,
-        y2: 0.5 + sin / 2
-      },
-      colorStops: [
-        { offset: 0, color: color1 },
-        { offset: 1, color: color2 }
-      ]
-    });
-    const previous = obj.fill;
-    obj.set({ fill: gradient, opacity: 1 });
-    if (padGroupOnFirstFill(obj, previous)) this.layout.relayout();
-    this.canvas.renderAll();
+    this.styles.setFillGradient(color1, color2, angleDeg);
   }
-  /**
-   * Change la police de l'objet texte sélectionné
-   */
   changeFont(fontFamily, fontWeight) {
-    const obj = this.selection.current;
-    if (!obj || !isTextObject(obj)) return;
-    obj.set({ fontFamily, fontWeight: fontWeight || "normal" });
-    this.layout.relayout();
-    this.canvas.requestRenderAll();
+    this.styles.changeFont(fontFamily, fontWeight);
   }
-  /**
-   * Change la taille de police de l'objet texte sélectionné
-   */
   setFontSize(size) {
-    const obj = this.selection.current;
-    if (!obj || !isTextObject(obj) || !Number.isFinite(size) || size <= 0) return;
-    obj.set({ fontSize: size });
-    this.layout.relayout();
-    this.canvas.requestRenderAll();
+    this.styles.setFontSize(size);
   }
-  /**
-   * Justification de l'objet texte sélectionné, dans sa boîte.
-   */
   setTextAlign(align) {
-    const obj = this.selection.current;
-    if (!obj || !isTextObject(obj)) return;
-    obj.set({ textAlign: align });
-    this.layout.relayout();
-    this.canvas.requestRenderAll();
+    this.styles.setTextAlign(align);
   }
-  /**
-   * Bascule un style sur l'objet texte sélectionné (gras, italique, souligné).
-   * "bold" alterne fontWeight normal/bold (un poids numérique >= 600 compte
-   * comme gras).
-   */
   toggleTextStyle(style) {
-    const obj = this.selection.current;
-    if (!obj || !isTextObject(obj)) return;
-    switch (style) {
-      case "bold": {
-        const isBold = obj.fontWeight === "bold" || Number(obj.fontWeight) >= 600;
-        obj.set({ fontWeight: isBold ? "normal" : "bold" });
-        break;
-      }
-      case "italic":
-        obj.set({ fontStyle: obj.fontStyle === "italic" ? "normal" : "italic" });
-        break;
-      case "underline":
-        obj.set({ underline: !obj.underline });
-        break;
-    }
-    this.layout.relayout();
-    this.canvas.requestRenderAll();
+    this.styles.toggleTextStyle(style);
   }
-  // ── Shadow ────────────────────────────────────────────────────────
   setShadow(opts) {
-    const obj = this.selection.current;
-    if (!obj) return;
-    const existing = obj.shadow;
-    const shadow = new import_fabric18.Shadow({
-      color: opts.color ?? existing?.color ?? "rgba(0,0,0,0.5)",
-      blur: opts.blur ?? existing?.blur ?? 10,
-      offsetX: opts.offsetX ?? existing?.offsetX ?? 5,
-      offsetY: opts.offsetY ?? existing?.offsetY ?? 5
-    });
-    obj.set("shadow", shadow);
-    this.canvas.requestRenderAll();
+    this.styles.setShadow(opts);
   }
   removeShadow() {
-    const obj = this.selection.current;
-    if (!obj) return;
-    obj.set("shadow", null);
-    this.canvas.requestRenderAll();
+    this.styles.removeShadow();
   }
-  /**
-   * Copy the current selection to an internal clipboard, with every descendant of the
-   * selected containers, in stack order.
-   */
+  // ── Presse-papier (editor/clipboard) ────────────────────────────
   copySelection() {
-    const selected = this.selection.selected;
-    if (selected.length === 0) return;
-    const allObjects = this.canvas.getObjects();
-    const descendants = layoutDescendants(
-      layoutParents(allObjects),
-      selected.map((obj) => obj.get("layerId"))
-    );
-    const toCopy = allObjects.filter(
-      (obj) => selected.includes(obj) || descendants.has(obj.get("layerId"))
-    );
-    this._clipboard = toCopy.map(
-      (obj) => obj.toObject(["layerId", "lockMode", "lockContent", "layout", "bindings"])
-    );
+    this.clipboard.copySelection();
   }
-  /**
-   * Paste clipboard contents onto the canvas.
-   * Generates fresh layerIds and remaps parent/child references.
-   * Offsets pasted objects by 20px so they don't overlap the originals.
-   */
-  async pasteClipboard() {
-    if (!this._clipboard?.length) return [];
-    const OFFSET = 20;
-    const idMap = /* @__PURE__ */ new Map();
-    this._clipboard.forEach((data, i) => {
-      if (data.layerId) {
-        idMap.set(data.layerId, `layer_${Date.now()}_${i}_${Math.floor(Math.random() * 1e3)}`);
-      }
-    });
-    const cloned = this._clipboard.map((data) => {
-      const copy = JSON.parse(JSON.stringify(data));
-      if (copy.layerId && idMap.has(copy.layerId)) {
-        copy.layerId = idMap.get(copy.layerId);
-      }
-      if (copy.layout?.child?.parentId) {
-        const newParent = idMap.get(copy.layout.child.parentId);
-        if (newParent) copy.layout.child.parentId = newParent;
-      }
-      if (typeof copy.left === "number") copy.left += OFFSET;
-      if (typeof copy.top === "number") copy.top += OFFSET;
-      delete copy.lockMode;
-      return copy;
-    });
-    const objects = [];
-    for (const data of cloned) {
-      const obj = await this.layers.deserialize(data);
-      if (obj) {
-        this.layers.add(obj);
-        objects.push(obj);
-      }
-    }
-    this.selection.selectMany(objects);
-    this.canvas.renderAll();
-    return objects;
+  pasteClipboard() {
+    return this.clipboard.pasteClipboard();
   }
   /** Les images à fournir de la page (userSlots), boîtes en coordonnées scène. */
   userSlots() {
@@ -7944,131 +8136,21 @@ var _FabricEditor = class _FabricEditor {
       this._resizeCallbacks = this._resizeCallbacks.filter((cb) => cb !== check);
     };
   }
-  // ── Grouper, dégrouper ────────────────────────────────────────────
-  /**
-   * Groupe la sélection (au moins deux objets) dans un groupe libre — rien ne bouge. La
-   * resélection de ses membres remonte au groupe : c'est lui qui est sélectionné. Rend le
-   * groupe, ou null.
-   */
+  // ── Commandes de sélection (editor/selection-commands) ──────────
   groupSelection() {
-    const selected = this.selection.selected;
-    if (selected.length < 2) return null;
-    let group = null;
-    this.selection.withSelectionReleased(() => {
-      group = groupObjects(this.canvas, selected, `layer_${Date.now()}_${Math.floor(Math.random() * 1e3)}`);
-      if (group) this.layout.relayout();
-    });
-    return group;
+    return this.commands.groupSelection();
   }
-  /**
-   * Dégroupe le container sélectionné : ses enfants restent à leur place, sélectionnés.
-   * Rend les enfants (vide : rien à dégrouper).
-   */
   ungroupSelection() {
-    const container = this.selection.current;
-    if (!container || !container.get("layout")?.container) return [];
-    this.canvas.discardActiveObject();
-    const children = ungroupObject(this.canvas, container);
-    this.layout.relayout();
-    this.selection.selectMany(children);
-    return children;
+    return this.commands.ungroupSelection();
   }
-  // ── Aligner, répartir ─────────────────────────────────────────────
-  /**
-   * Aligne la sélection. Plusieurs objets s'alignent sur leur boîte commune ; un objet
-   * seul, sur l'intérieur de son container, ou sur l'artboard. Un objet bouge avec sa
-   * descendance. Un enfant de pile ne bouge pas : il s'aligne dans la pile (alignSelf),
-   * sur l'axe qu'elle laisse libre — l'autre est le sien.
-   */
   alignSelection(edge) {
-    if (!this.selection.hasSelection) return;
-    this.selection.withSelectionReleased((selected) => {
-      const objects = this.canvas.getObjects();
-      const ref = selected.length > 1 ? unionBox(selected.map((obj) => obj.getBoundingRect())) : this.alignReference(selected[0], objects);
-      let relayout = false;
-      for (const obj of selected) {
-        const parent = stackParentOf(obj);
-        if (parent) {
-          relayout = this.alignInStack(obj, parent, edge) || relayout;
-          continue;
-        }
-        const { dx, dy } = alignDelta(obj.getBoundingRect(), ref, edge);
-        this.moveWithDescendants(obj, dx, dy, objects);
-      }
-      if (relayout) this.layout.relayout();
-    });
-    this.canvas.renderAll();
+    this.commands.alignSelection(edge);
   }
-  /**
-   * Répartit la sélection à espace égal sur un axe : les deux extrêmes restent en place.
-   * Seulement les objets libres (un enfant de pile a la place que la pile lui donne), et
-   * à partir de trois.
-   */
   distributeSelection(axis) {
-    const objects = this.canvas.getObjects();
-    const free = this.selection.selected.filter((obj) => !stackParentOf(obj));
-    if (free.length < 3) return;
-    this.selection.withSelectionReleased(() => {
-      const deltas = distributeDeltas(free.map((obj) => obj.getBoundingRect()), axis);
-      free.forEach((obj, i) => this.moveWithDescendants(obj, deltas[i].dx, deltas[i].dy, objects));
-    });
-    this.canvas.renderAll();
+    this.commands.distributeSelection(axis);
   }
-  /** Aligne un enfant dans sa pile, sur l'axe qu'elle laisse libre. Vrai s'il a changé. */
-  alignInStack(obj, parent, edge) {
-    const direction = parent.get("layout").container?.flexDirection ?? "column";
-    if (alignAxis(edge) !== (direction === "column" ? "x" : "y")) return false;
-    const layout = obj.get("layout");
-    const alignSelf = edge === "left" || edge === "top" ? "flex-start" : edge === "right" || edge === "bottom" ? "flex-end" : "center";
-    if (layout.child.alignSelf === alignSelf) return false;
-    obj.set("layout", { ...layout, child: { ...layout.child, alignSelf } });
-    return true;
-  }
-  /** La référence d'un objet seul : l'intérieur de son container, sinon l'artboard. */
-  alignReference(obj, objects) {
-    const parentId = obj.get("layout")?.child?.parentId;
-    const parent = parentId ? objects.find((o) => o.get("layerId") === parentId) : void 0;
-    if (!parent) return { left: 0, top: 0, width: this.width, height: this.height };
-    const box = parent.getBoundingRect();
-    const pad = parent.get("layout")?.container?.padding;
-    if (!pad) return box;
-    return {
-      left: box.left + pad.left,
-      top: box.top + pad.top,
-      width: box.width - pad.left - pad.right,
-      height: box.height - pad.top - pad.bottom
-    };
-  }
-  /** Déplace un objet et toute sa descendance (positions absolues). */
-  moveWithDescendants(obj, dx, dy, objects) {
-    if (!dx && !dy) return;
-    const ids = layoutDescendants(layoutParents(objects), [obj.get("layerId")]);
-    for (const o of objects) {
-      if (o !== obj && !ids.has(o.get("layerId"))) continue;
-      o.set({ left: o.left + dx, top: o.top + dy });
-      o.setCoords();
-    }
-  }
-  /**
-   * Supprime l'objet ou les objets sélectionnés
-   * Les objets verrouillés (position ou full) ne peuvent pas être supprimés ; un container
-   * emporte sa descendance.
-   */
   deleteSelection() {
-    const selected = this.selection.selected;
-    if (selected.length === 0) return;
-    const deletable = selected.filter((obj) => rulesOf(obj).deletes);
-    if (deletable.length === 0) return;
-    const objects = this.canvas.getObjects();
-    const descendants = layoutDescendants(
-      layoutParents(objects),
-      deletable.map((obj) => obj.get("layerId"))
-    );
-    this.canvas.discardActiveObject();
-    this.layers.removeMany(objects.filter(
-      (obj) => deletable.includes(obj) || descendants.has(obj.get("layerId"))
-    ));
-    this.canvas.renderAll();
+    this.commands.deleteSelection();
   }
   /**
    * Trouve l'image ou ImageFrame situé sous un point donné (coordonnées canvas)
@@ -8086,7 +8168,7 @@ var _FabricEditor = class _FabricEditor {
    * remplacement, et l'image est ajoutée.
    */
   findDropTargetAtPoint(x, y) {
-    const point = new import_fabric18.Point(x, y);
+    const point = new import_fabric19.Point(x, y);
     const objects = this.canvas.getObjects().slice().reverse();
     for (const obj of objects) {
       if (obj.get(DRAG_PREVIEW_KEY)) continue;
@@ -8110,13 +8192,13 @@ var _FabricEditor = class _FabricEditor {
   extendFabricObject() {
     if (_FabricEditor._toObjectExtended) return;
     _FabricEditor._toObjectExtended = true;
-    const originalToObject = import_fabric18.FabricObject.prototype.toObject;
-    import_fabric18.FabricObject.prototype.toObject = function(propertiesToInclude) {
+    const originalToObject = import_fabric19.FabricObject.prototype.toObject;
+    import_fabric19.FabricObject.prototype.toObject = function(propertiesToInclude) {
       const data = originalToObject.call(
         this,
         ["layerId", "layout", "bindings"].concat(propertiesToInclude || [])
       );
-      if (this.group instanceof import_fabric18.ActiveSelection) {
+      if (this.group instanceof import_fabric19.ActiveSelection) {
         const { x, y } = this.getXY();
         Object.assign(data, { left: x, top: y });
       }
@@ -8131,8 +8213,8 @@ _FabricEditor._toObjectExtended = false;
 var FabricEditor = _FabricEditor;
 
 // src/PreviewCanvas.ts
-var import_fabric19 = require("#fabric");
-var PreviewCanvas = class extends import_fabric19.StaticCanvas {
+var import_fabric20 = require("#fabric");
+var PreviewCanvas = class extends import_fabric20.StaticCanvas {
   constructor(el, opts) {
     const { width, height, ...canvasOpts } = opts;
     super(el, {
@@ -8192,7 +8274,7 @@ var PreviewCanvas = class extends import_fabric19.StaticCanvas {
 };
 
 // src/DropHandler.ts
-var import_fabric20 = require("#fabric");
+var import_fabric21 = require("#fabric");
 var HIGHLIGHT_COLOR = "#3b82f6";
 var KIND_CAPABILITIES = {
   image: { layout: false, replaceTarget: true },
@@ -8363,7 +8445,7 @@ var DropHandler = class {
       if (!committed && object) {
         if (e) {
           const pointer = this.editor.canvas.getScenePoint(e);
-          object.setPositionByOrigin(new import_fabric20.Point(pointer.x, pointer.y), "center", "center");
+          object.setPositionByOrigin(new import_fabric21.Point(pointer.x, pointer.y), "center", "center");
           object.setCoords();
         }
         if (!this.editor.canvas.getObjects().includes(object)) {
@@ -8439,7 +8521,7 @@ var DropHandler = class {
         this.editor.layout.tickExternalDrag(object, pointer);
         return;
       }
-      object.setPositionByOrigin(new import_fabric20.Point(pointer.x, pointer.y), "center", "center");
+      object.setPositionByOrigin(new import_fabric21.Point(pointer.x, pointer.y), "center", "center");
       object.setCoords();
       this.editor.canvas.requestRenderAll();
     }
@@ -8568,7 +8650,7 @@ var DropHandler = class {
       height = target.height;
       clipPath = target.clipPath;
     }
-    const fabricOverlay = new import_fabric20.Rect({
+    const fabricOverlay = new import_fabric21.Rect({
       left: target.left,
       top: target.top,
       width,
@@ -8661,7 +8743,7 @@ var DropHandler = class {
    * drop-target detection.
    */
   async createImagePreview(url) {
-    const img = await import_fabric20.FabricImage.fromURL(url, { crossOrigin: "anonymous" });
+    const img = await import_fabric21.FabricImage.fromURL(url, { crossOrigin: "anonymous" });
     let scale = 1;
     if (img.width > 300 || img.height > 300) {
       scale = Math.min(300 / img.width, 300 / img.height);
@@ -8696,7 +8778,7 @@ var DropHandler = class {
     if (e && !this.intersectsCanvas(e, null)) return null;
     const pointer = e ? this.editor.canvas.getScenePoint(e) : null;
     const object = this.editor.layers.createUserSlot(opts);
-    if (pointer) object.setPositionByOrigin(new import_fabric20.Point(pointer.x, pointer.y), "center", "center");
+    if (pointer) object.setPositionByOrigin(new import_fabric21.Point(pointer.x, pointer.y), "center", "center");
     this.editor.layers.add(object);
     this.editor.canvas.setActiveObject(object);
     this.editor.canvas.renderAll();
@@ -9234,6 +9316,7 @@ function layerToHtmlStandalone(layer, zIndex) {
   FabPath,
   FabRect,
   FabricEditor,
+  FreeResizeSession,
   HEART_PATH,
   HEXAGON_PATH,
   HistoryManager,
@@ -9249,6 +9332,7 @@ function layerToHtmlStandalone(layer, zIndex) {
   ResizeSession,
   SelectionManager,
   SnappingManager,
+  StackResizeSession,
   USER_SCOPE,
   USER_SLOT_FIELD,
   addCircleClip,
@@ -9286,10 +9370,6 @@ function layerToHtmlStandalone(layer, zIndex) {
   hasExceededOffset,
   hasPendingBindings,
   initYoga,
-  isChild,
-  isChildLayout,
-  isContainer,
-  isContainerLayout,
   isContentLocked,
   isFreeContainer,
   isMonoPath,
@@ -9297,7 +9377,6 @@ function layerToHtmlStandalone(layer, zIndex) {
   isStyleLocked,
   isUserSlot,
   isValidShape,
-  isYogaReady,
   kindOf,
   layerToHtmlStandalone,
   layoutChildren,
