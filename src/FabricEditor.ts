@@ -1,32 +1,26 @@
-import { ActiveSelection, FabricObject, FabricImage, Point, Gradient, Shadow } from "#fabric";
+import { ActiveSelection, FabricObject, FabricImage, Point } from "#fabric";
 import { DesignCanvas, type FrameRect } from "./DesignCanvas";
 import { LayerManager } from "./LayerManager";
 import { SelectionManager } from "./SelectionManager";
 import { MaskManager } from "./MaskManager";
 import { PersistenceManager } from "./PersistenceManager";
 import { HistoryManager } from "./HistoryManager";
-import { SnappingManager, type SnappingConfig } from "./SnappingManager";
-import { LayoutManager, type LayoutManagerCallbacks } from "./LayoutManager";
-import { switchClip } from "./clipping";
-import { switchShape, nextShape, registerShapes } from "./shapes";
+import { SnappingManager } from "./SnappingManager";
+import { LayoutManager } from "./LayoutManager";
+import { registerShapes } from "./shapes";
 import { ImageFrame } from "./ImageFrame";
 import { applyControlStyle } from "./ui/controls";
 import { hexAlpha } from "./ui/color";
 import { DRAG_PREVIEW_KEY } from "./types";
 import type { EditorConfig, LayerData, FontsConfig, ShapeType } from "./types";
 import { initYoga } from "./layout/stack/engine";
+import { StyleCommands } from "./editor/style-commands";
+import { Clipboard } from "./editor/clipboard";
+import { SelectionCommands } from "./editor/selection-commands";
 
-import { groupObjects, padGroupOnFirstFill, ungroupObject } from "./layout/grouping";
-import { parentOf, stackParentOf, subtreeOf, translateSubtree } from "./layout/hierarchy";
-import { boxOf, insetBox } from "./layout/geometry";
-import {
-  alignAxis, alignDelta, distributeDeltas, unionBox,
-  type AlignEdge, type Box, type DistributeAxis,
-} from "./align";
+import { type AlignEdge, type DistributeAxis } from "./align";
 import { rulesOf } from "./capabilities";
 import { collectUserSlots, USER_SLOT_STYLE_KEY, type UserSlot, type UserSlotStyle } from "./userSlots";
-import { layoutOf, idOf, parentIdOf, containerDataOf, directionOf, paddingOf } from "./layout/model";
-import { isTextObject } from "./layout/text";
 
 /**
  * Éditeur d'images basé sur Fabric.js
@@ -49,6 +43,9 @@ export class FabricEditor {
   private _userZoom = 1;
   private _resizeObserver: ResizeObserver | null = null;
   private _resizeCallbacks: Array<() => void> = [];
+  private readonly styles = new StyleCommands(this);
+  private readonly clipboard = new Clipboard(this);
+  private readonly commands = new SelectionCommands(this);
 
   /** Largeur de l'artboard en coordonnées scène. */
   get width(): number {
@@ -589,373 +586,30 @@ export class FabricEditor {
     });
   }
 
-  /**
-   * @legacy Use ImageFrame.nextClipShape() directly.
-   */
-  switchClip(): void {
-    const obj = this.selection.current;
-    if (!obj) return;
+  // ── Style de la sélection (editor/style-commands) ───────────────
 
-    if (obj instanceof ImageFrame) {
-      // Pour ImageFrame, utiliser la méthode nextClipShape
-      obj.nextClipShape();
-      obj.dirty = true;
-      this.canvas.requestRenderAll();
-    } else if (obj instanceof FabricImage) {
-      // Legacy: images sans frame
-      switchClip(obj);
-      obj.dirty = true;
-      this.canvas.remove(obj);
-      this.layers.add(obj);
-    }
-  }
+  switchClip(): void { this.styles.switchClip(); }
+  switchShape(): void { this.styles.switchShape(); }
+  changeShape(shapeType: ShapeType): void { this.styles.changeShape(shapeType); }
+  toggleOutline(): void { this.styles.toggleOutline(); }
+  changeColor(color: string): void { this.styles.changeColor(color); }
+  changeOpacity(opacity: number): void { this.styles.changeOpacity(opacity); }
+  setStrokeEnabled(enabled: boolean): void { this.styles.setStrokeEnabled(enabled); }
+  setStrokeWidth(width: number): void { this.styles.setStrokeWidth(width); }
+  setStrokeColor(color: string): void { this.styles.setStrokeColor(color); }
+  setFillColor(color: string): void { this.styles.setFillColor(color); }
+  setFillGradient(color1: string, color2: string, angleDeg: number): void { this.styles.setFillGradient(color1, color2, angleDeg); }
+  changeFont(fontFamily: string, fontWeight?: string): void { this.styles.changeFont(fontFamily, fontWeight); }
+  setFontSize(size: number): void { this.styles.setFontSize(size); }
+  setTextAlign(align: "left" | "center" | "right" | "justify"): void { this.styles.setTextAlign(align); }
+  toggleTextStyle(style: "bold" | "italic" | "underline"): void { this.styles.toggleTextStyle(style); }
+  setShadow(opts: { color?: string; blur?: number; offsetX?: number; offsetY?: number }): void { this.styles.setShadow(opts); }
+  removeShadow(): void { this.styles.removeShadow(); }
 
-  /**
-   * @legacy Shape switching is no longer supported.
-   */
-  switchShape(): void {
-    const obj = this.selection.current;
-    if (!obj || obj instanceof FabricImage) return;
+  // ── Presse-papier (editor/clipboard) ────────────────────────────
 
-    const currentShapeId = (obj as FabricObject & { id?: string }).id as ShapeType | undefined;
-    const nextShapeType = nextShape(currentShapeId);
-    this.changeShape(nextShapeType);
-  }
-
-  /**
-   * @legacy Shape switching is no longer supported.
-   */
-  changeShape(shapeType: ShapeType): void {
-    const obj = this.selection.current;
-    if (!obj) return;
-
-    if (obj instanceof ImageFrame) {
-      obj.applyClipShape(shapeType);
-      obj.dirty = true;
-      this.canvas.requestRenderAll();
-    } else if (!(obj instanceof FabricImage)) {
-      const newObj = switchShape(obj, shapeType);
-      // Préserver le layerId et layerType
-      const layerId = obj.get("layerId");
-      const layerType = obj.get("layerType");
-      if (layerId) newObj.set("layerId", layerId);
-      if (layerType) newObj.set("layerType", layerType);
-
-      // Le remove+add déclenche des événements de sélection parasites.
-      // On mute les callbacks le temps du swap.
-      this.selection.silenceCallbacks();
-
-      const objects = this.canvas.getObjects();
-      const zIndex = objects.indexOf(obj);
-      this.canvas.remove(obj);
-      this.canvas.add(newObj);
-      if (zIndex >= 0 && zIndex < this.canvas.getObjects().length) {
-        this.canvas.moveObjectTo(newObj, zIndex);
-      }
-      this.canvas.setActiveObject(newObj);
-      this.canvas.requestRenderAll();
-
-      this.selection.restoreCallbacks();
-    }
-  }
-
-  /**
-   * Bascule entre remplissage et contour pour l'objet sélectionné
-   */
-  toggleOutline(): void {
-    const obj = this.selection.current;
-    if (!obj) return;
-
-    const { stroke, fill } = obj;
-    obj.set({ fill: stroke, stroke: fill });
-    obj.strokeWidth = obj.stroke ? 4 : 0;
-    this.canvas.renderAll();
-  }
-
-  /**
-   * Change la couleur de l'objet sélectionné
-   */
-  changeColor(color: string): void {
-    const obj = this.selection.current;
-    if (!obj) return;
-
-    if (isTextObject(obj)) {
-      obj.set("fill", color);
-    } else {
-      const property = obj.stroke ? "stroke" : "fill";
-      obj.set(property, color);
-    }
-
-    this.canvas.renderAll();
-  }
-
-  /**
-   * Change l'opacité de l'objet sélectionné
-   */
-  changeOpacity(opacity: number): void {
-    const obj = this.selection.current;
-    if (!obj) return;
-
-    obj.set({ opacity: opacity / 100 });
-    this.canvas.renderAll();
-  }
-
-  // ==================== Stroke controls ====================
-
-  /**
-   * Enable or disable stroke on the selected object.
-   * When enabling, restores previous stroke color or defaults to black.
-   */
-  setStrokeEnabled(enabled: boolean): void {
-    const obj = this.selection.current;
-    if (!obj) return;
-    if (enabled) {
-      obj.set({ stroke: obj.stroke || "#000000", strokeWidth: obj.strokeWidth || 4 });
-    } else {
-      obj.set({ stroke: null, strokeWidth: 0 });
-    }
-    this.canvas.renderAll();
-  }
-
-  /**
-   * Set stroke width on the selected object.
-   */
-  setStrokeWidth(width: number): void {
-    const obj = this.selection.current;
-    if (!obj) return;
-    obj.set({ strokeWidth: width });
-    if (width > 0 && !obj.stroke) {
-      obj.set({ stroke: "#000000" });
-    }
-    this.canvas.renderAll();
-  }
-
-  /**
-   * Set stroke color on the selected object. Accepts any CSS color (hex, rgba).
-   * Resets global opacity to 1 so per-channel rgba alpha is authoritative.
-   */
-  setStrokeColor(color: string): void {
-    const obj = this.selection.current;
-    if (!obj) return;
-    obj.set({ stroke: color, opacity: 1 });
-    if (!obj.strokeWidth) {
-      obj.set({ strokeWidth: 4 });
-    }
-    this.canvas.renderAll();
-  }
-
-  // ==================== Fill controls ====================
-
-  /**
-   * Set fill color (solid) on the selected object.
-   * Unlike changeColor(), always sets fill regardless of stroke state.
-   * Resets global opacity to 1 so per-channel rgba alpha is authoritative.
-   */
-  setFillColor(color: string): void {
-    const obj = this.selection.current;
-    if (!obj) return;
-    const previous = obj.fill;
-    obj.set({ fill: color, opacity: 1 });
-    if (padGroupOnFirstFill(obj, previous)) this.layout.relayout();
-    this.canvas.renderAll();
-  }
-
-  /**
-   * Set a linear gradient fill on the selected object.
-   */
-  setFillGradient(color1: string, color2: string, angleDeg: number): void {
-    const obj = this.selection.current;
-    if (!obj) return;
-    const rad = (angleDeg * Math.PI) / 180;
-    const cos = Math.cos(rad);
-    const sin = Math.sin(rad);
-    const gradient = new Gradient({
-      type: "linear",
-      gradientUnits: "percentage",
-      coords: {
-        x1: 0.5 - cos / 2,
-        y1: 0.5 - sin / 2,
-        x2: 0.5 + cos / 2,
-        y2: 0.5 + sin / 2,
-      },
-      colorStops: [
-        { offset: 0, color: color1 },
-        { offset: 1, color: color2 },
-      ],
-    });
-    const previous = obj.fill;
-    obj.set({ fill: gradient, opacity: 1 });
-    if (padGroupOnFirstFill(obj, previous)) this.layout.relayout();
-    this.canvas.renderAll();
-  }
-
-  /**
-   * Change la police de l'objet texte sélectionné
-   */
-  changeFont(fontFamily: string, fontWeight?: string): void {
-    const obj = this.selection.current;
-    if (!obj || !isTextObject(obj)) return;
-
-    obj.set({ fontFamily, fontWeight: fontWeight || "normal" });
-    this.layout.relayout();
-    this.canvas.requestRenderAll();
-  }
-
-  /**
-   * Change la taille de police de l'objet texte sélectionné
-   */
-  setFontSize(size: number): void {
-    const obj = this.selection.current;
-    if (!obj || !isTextObject(obj) || !Number.isFinite(size) || size <= 0) return;
-
-    obj.set({ fontSize: size });
-    this.layout.relayout();
-    this.canvas.requestRenderAll();
-  }
-
-  /**
-   * Justification de l'objet texte sélectionné, dans sa boîte.
-   */
-  setTextAlign(align: "left" | "center" | "right" | "justify"): void {
-    const obj = this.selection.current;
-    if (!obj || !isTextObject(obj)) return;
-
-    obj.set({ textAlign: align } as Partial<FabricObject>);
-    this.layout.relayout();
-    this.canvas.requestRenderAll();
-  }
-
-  /**
-   * Bascule un style sur l'objet texte sélectionné (gras, italique, souligné).
-   * "bold" alterne fontWeight normal/bold (un poids numérique >= 600 compte
-   * comme gras).
-   */
-  toggleTextStyle(style: "bold" | "italic" | "underline"): void {
-    const obj = this.selection.current as (typeof this.selection.current) & {
-      fontWeight?: string | number;
-      fontStyle?: string;
-      underline?: boolean;
-    };
-    if (!obj || !isTextObject(obj)) return;
-
-    switch (style) {
-      case "bold": {
-        const isBold = obj.fontWeight === "bold" || Number(obj.fontWeight) >= 600;
-        obj.set({ fontWeight: isBold ? "normal" : "bold" });
-        break;
-      }
-      case "italic":
-        obj.set({ fontStyle: obj.fontStyle === "italic" ? "normal" : "italic" });
-        break;
-      case "underline":
-        obj.set({ underline: !obj.underline });
-        break;
-    }
-    this.layout.relayout();
-    this.canvas.requestRenderAll();
-  }
-
-  // ── Shadow ────────────────────────────────────────────────────────
-
-  setShadow(opts: { color?: string; blur?: number; offsetX?: number; offsetY?: number }): void {
-    const obj = this.selection.current;
-    if (!obj) return;
-
-    const existing = obj.shadow as Shadow | null;
-    const shadow = new Shadow({
-      color: opts.color ?? existing?.color ?? "rgba(0,0,0,0.5)",
-      blur: opts.blur ?? existing?.blur ?? 10,
-      offsetX: opts.offsetX ?? existing?.offsetX ?? 5,
-      offsetY: opts.offsetY ?? existing?.offsetY ?? 5,
-    });
-    obj.set("shadow", shadow);
-    this.canvas.requestRenderAll();
-  }
-
-  removeShadow(): void {
-    const obj = this.selection.current;
-    if (!obj) return;
-    obj.set("shadow", null);
-    this.canvas.requestRenderAll();
-  }
-
-  // ── Clipboard (copy / paste) ──────────────────────────────────────
-
-  private _clipboard: any[] | null = null;
-
-  /**
-   * Copy the current selection to an internal clipboard, with every descendant of the
-   * selected containers, in stack order.
-   */
-  copySelection(): void {
-    const selected = this.selection.selected;
-    if (selected.length === 0) return;
-
-    const toCopy = subtreeOf(this.canvas.getObjects(), selected);
-
-    this._clipboard = toCopy.map((obj) =>
-      obj.toObject(["layerId", "lockMode", "lockContent", "layout", "bindings"])
-    );
-  }
-
-  /**
-   * Paste clipboard contents onto the canvas.
-   * Generates fresh layerIds and remaps parent/child references.
-   * Offsets pasted objects by 20px so they don't overlap the originals.
-   */
-  async pasteClipboard(): Promise<FabricObject[]> {
-    if (!this._clipboard?.length) return [];
-
-    const OFFSET = 20;
-
-    // Build an ID remapping table: old layerId → new layerId
-    const idMap = new Map<string, string>();
-    this._clipboard.forEach((data, i) => {
-      if (data.layerId) {
-        idMap.set(data.layerId, `layer_${Date.now()}_${i}_${Math.floor(Math.random() * 1000)}`);
-      }
-    });
-
-    // Deep-clone each layer, assign new IDs, remap layout references, offset position
-    const cloned: any[] = this._clipboard.map((data) => {
-      const copy = JSON.parse(JSON.stringify(data));
-
-      // Assign new layerId
-      if (copy.layerId && idMap.has(copy.layerId)) {
-        copy.layerId = idMap.get(copy.layerId);
-      }
-
-      // Remap layout.child.parentId
-      if (copy.layout?.child?.parentId) {
-        const newParent = idMap.get(copy.layout.child.parentId);
-        if (newParent) copy.layout.child.parentId = newParent;
-      }
-
-      // Offset position
-      if (typeof copy.left === "number") copy.left += OFFSET;
-      if (typeof copy.top === "number") copy.top += OFFSET;
-
-      // Clear lock so pasted objects are freely editable
-      delete copy.lockMode;
-
-      return copy;
-    });
-
-    // Deserialize and add each object
-    const objects: FabricObject[] = [];
-    for (const data of cloned) {
-      const obj = await this.layers.deserialize(data);
-      if (obj) {
-        this.layers.add(obj);
-        objects.push(obj);
-      }
-    }
-
-    // Select the pasted objects (their roots: children follow their container)
-    this.selection.selectMany(objects);
-    this.canvas.renderAll();
-    return objects;
-  }
+  copySelection(): void { this.clipboard.copySelection(); }
+  pasteClipboard(): Promise<FabricObject[]> { return this.clipboard.pasteClipboard(); }
 
   /** Les images à fournir de la page (userSlots), boîtes en coordonnées scène. */
   userSlots(): UserSlot[] {
@@ -995,130 +649,13 @@ export class FabricEditor {
     };
   }
 
-  // ── Grouper, dégrouper ────────────────────────────────────────────
+  // ── Commandes de sélection (editor/selection-commands) ──────────
 
-  /**
-   * Groupe la sélection (au moins deux objets) dans un groupe libre — rien ne bouge. La
-   * resélection de ses membres remonte au groupe : c'est lui qui est sélectionné. Rend le
-   * groupe, ou null.
-   */
-  groupSelection(): FabricObject | null {
-    const selected = this.selection.selected;
-    if (selected.length < 2) return null;
-
-    let group: FabricObject | null = null;
-    this.selection.withSelectionReleased(() => {
-      group = groupObjects(this.canvas, selected, `layer_${Date.now()}_${Math.floor(Math.random() * 1000)}`);
-      if (group) this.layout.relayout();
-    });
-    return group;
-  }
-
-  /**
-   * Dégroupe le container sélectionné : ses enfants restent à leur place, sélectionnés.
-   * Rend les enfants (vide : rien à dégrouper).
-   */
-  ungroupSelection(): FabricObject[] {
-    const container = this.selection.current;
-    if (!container || !containerDataOf(container)) return [];
-
-    this.canvas.discardActiveObject();
-    const children = ungroupObject(this.canvas, container);
-    this.layout.relayout();
-    this.selection.selectMany(children);
-    return children;
-  }
-
-  // ── Aligner, répartir ─────────────────────────────────────────────
-
-  /**
-   * Aligne la sélection. Plusieurs objets s'alignent sur leur boîte commune ; un objet
-   * seul, sur l'intérieur de son container, ou sur l'artboard. Un objet bouge avec sa
-   * descendance. Un enfant de pile ne bouge pas : il s'aligne dans la pile (alignSelf),
-   * sur l'axe qu'elle laisse libre — l'autre est le sien.
-   */
-  alignSelection(edge: AlignEdge): void {
-    if (!this.selection.hasSelection) return;
-
-    this.selection.withSelectionReleased((selected) => {
-      const objects = this.canvas.getObjects();
-      const ref = selected.length > 1
-        ? unionBox(selected.map(boxOf))
-        : this.alignReference(selected[0], objects);
-
-      let relayout = false;
-      for (const obj of selected) {
-        const parent = stackParentOf(obj);
-        if (parent) {
-          relayout = this.alignInStack(obj, parent, edge) || relayout;
-          continue;
-        }
-        const { dx, dy } = alignDelta(boxOf(obj), ref, edge);
-        translateSubtree(objects, [obj], dx, dy);
-      }
-      if (relayout) this.layout.relayout();
-    });
-    this.canvas.renderAll();
-  }
-
-  /**
-   * Répartit la sélection à espace égal sur un axe : les deux extrêmes restent en place.
-   * Seulement les objets libres (un enfant de pile a la place que la pile lui donne), et
-   * à partir de trois.
-   */
-  distributeSelection(axis: DistributeAxis): void {
-    const objects = this.canvas.getObjects();
-    const free = this.selection.selected.filter((obj) => !stackParentOf(obj));
-    if (free.length < 3) return;
-
-    this.selection.withSelectionReleased(() => {
-      const deltas = distributeDeltas(free.map(boxOf), axis);
-      free.forEach((obj, i) => translateSubtree(objects, [obj], deltas[i].dx, deltas[i].dy));
-    });
-    this.canvas.renderAll();
-  }
-
-  /** Aligne un enfant dans sa pile, sur l'axe qu'elle laisse libre. Vrai s'il a changé. */
-  private alignInStack(obj: FabricObject, parent: FabricObject, edge: AlignEdge): boolean {
-    const direction = directionOf(containerDataOf(parent));
-    if (alignAxis(edge) !== (direction === "column" ? "x" : "y")) return false;
-
-    const layout = layoutOf(obj)!;
-    const alignSelf = edge === "left" || edge === "top" ? "flex-start"
-      : edge === "right" || edge === "bottom" ? "flex-end"
-      : "center";
-    if (layout.child!.alignSelf === alignSelf) return false;
-    obj.set("layout", { ...layout, child: { ...layout.child!, alignSelf } });
-    return true;
-  }
-
-  /** La référence d'un objet seul : l'intérieur de son container, sinon l'artboard. */
-  private alignReference(obj: FabricObject, objects: FabricObject[]): Box {
-    const parent = parentOf(obj, objects);
-    if (!parent) return { left: 0, top: 0, width: this.width, height: this.height };
-
-    return insetBox(boxOf(parent), paddingOf(containerDataOf(parent)));
-  }
-
-  /**
-   * Supprime l'objet ou les objets sélectionnés
-   * Les objets verrouillés (position ou full) ne peuvent pas être supprimés ; un container
-   * emporte sa descendance.
-   */
-  deleteSelection(): void {
-    const selected = this.selection.selected;
-    if (selected.length === 0) return;
-
-    // Filtrer les objets verrouillés (ne supprimer que les objets non verrouillés)
-    const deletable = selected.filter((obj) => rulesOf(obj).deletes);
-    if (deletable.length === 0) return;
-
-    // Un container emporte toute sa descendance
-    const doomed = subtreeOf(this.canvas.getObjects(), deletable);
-    this.canvas.discardActiveObject();
-    this.layers.removeMany(doomed);
-    this.canvas.renderAll();
-  }
+  groupSelection(): FabricObject | null { return this.commands.groupSelection(); }
+  ungroupSelection(): FabricObject[] { return this.commands.ungroupSelection(); }
+  alignSelection(edge: AlignEdge): void { this.commands.alignSelection(edge); }
+  distributeSelection(axis: DistributeAxis): void { this.commands.distributeSelection(axis); }
+  deleteSelection(): void { this.commands.deleteSelection(); }
 
   /**
    * Trouve l'image ou ImageFrame situé sous un point donné (coordonnées canvas)
