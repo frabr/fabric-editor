@@ -9,10 +9,10 @@
  * a nested container at its own minimum) — and the gaps too.
  */
 import type { FabricObject } from "#fabric";
-import { scaledSize } from "./geometry";
+import { scaledSize } from "../geometry";
 import { minSizeOf } from "./resize-session";
-import { layoutOf, sizingOf, paddingOf } from "./model";
-import { childrenOf, parentContainerOf } from "./hierarchy";
+import { layoutOf, sizingOf, paddingOf } from "../model";
+import { childrenOf, parentContainerOf } from "../hierarchy";
 
 export interface Room {
   w: number;

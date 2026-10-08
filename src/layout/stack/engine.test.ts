@@ -10,8 +10,8 @@
  * Default alignItems is "flex-start" (children keep their size).
  */
 import { describe, it, expect, beforeAll } from "vitest";
-import type { ResolvedChild, ChildData, ContainerData, SizingData } from "./types";
-import { initYoga, yogaLayout } from "./yoga-engine";
+import type { ResolvedChild, ChildData, ContainerData, SizingData } from "../types";
+import { initYoga, yogaLayout } from "./engine";
 
 // ── Setup ─────────────────────────────────────────────────────────
 

@@ -1,7 +1,7 @@
 import { StaticCanvas } from "#fabric";
 import { LayerManager } from "./LayerManager";
-import { runLayout } from "./layout/reconcile";
-import { initYoga } from "./layout/yoga-engine";
+import { runLayout } from "./layout/run";
+import { initYoga } from "./layout/stack/engine";
 import type { DesignCanvas } from "./DesignCanvas";
 import type { LayerData } from "./types";
 

@@ -5,8 +5,8 @@
  */
 import { describe, it, expect, beforeAll } from "vitest";
 import { FabRect } from "../shapes/FabRect";
-import { initYoga } from "./yoga-engine";
-import { runLayout } from "./reconcile";
+import { initYoga } from "./stack/engine";
+import { runLayout } from "./run";
 import { type LayoutData } from "./types";
 import { scaledSize } from "./geometry";
 import { LayoutManager } from "../LayoutManager";

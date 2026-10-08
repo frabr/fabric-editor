@@ -22,17 +22,17 @@
  * keep their place and its box follows them (see free.ts). Its child containers are
  * laid out as roots; inside a stack, a group is a rigid block (see yoga-engine).
  *
- * Note: user-initiated resize is handled by ResizeSession, not here.
+ * Note: user-initiated resize is handled by StackResizeSession / FreeResizeSession, not here.
  * This module only handles programmatic relayout (content changes, mode
  * changes, move, etc.).
  */
 import type { FabricObject } from "#fabric";
 import { type ContainerData, type ChildData } from "./types";
 import { scaledSize, setShapeSize, syncCoords, topLeft } from "./geometry";
-import { yogaLayout } from "./yoga-engine";
+import { yogaLayout } from "./stack/engine";
 
 export { parentContainerOf } from "./hierarchy";
-import { fitFreeContainer } from "./free";
+import { fitFreeContainer } from "./free/fit";
 import { layoutOf, containerDataOf, isFreeContainer, sizingOf } from "./model";
 import { childrenOf, flowChildrenOf, parentContainerOf } from "./hierarchy";
 

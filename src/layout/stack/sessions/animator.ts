@@ -12,7 +12,7 @@
  */
 
 import type { FabricObject } from "#fabric";
-import type { DesignCanvas } from "../DesignCanvas";
+import type { DesignCanvas } from "../../../DesignCanvas";
 
 // ── Types ──────────────────────────────────────────────────────────
 

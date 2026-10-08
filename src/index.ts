@@ -90,7 +90,7 @@ export { addCropControls, removeCropControls, CustomTextbox } from "./controls";
 
 // Layout
 export { runLayout } from "./layout";
-export { ResizeSession } from "./layout";
+export { ResizeSession, StackResizeSession, FreeResizeSession } from "./layout";
 export type { LayoutData, SizingData, TextOverflow, ContainerData, ChildData, ContainerLayout, ChildLayout, SizeMode, AlignSelf, AlignItems, JustifyContent, FlexDirection, AttachSnapshot, LayoutSession } from "./layout";
 export { isContainer, isChild, isContainerLayout, isChildLayout, MIN_PAD } from "./layout";
 // Les groupes (containers libres) : leur boîte suit leurs enfants
@@ -104,8 +104,8 @@ export { ContainerizeSession, InsertChildSession, wrapContainerAroundChild } fro
 export { initYoga, isYogaReady, yogaLayout } from "./layout";
 
 // Aligner, répartir
-export { alignAxis, alignDelta, distributeDeltas, unionBox } from "./arrange";
-export type { AlignEdge, DistributeAxis, Box, Delta } from "./arrange";
+export { alignAxis, alignDelta, distributeDeltas, unionBox } from "./align";
+export type { AlignEdge, DistributeAxis, Box, Delta } from "./align";
 
 // HTML Renderer
 export { fabricToHtml, layerToHtmlStandalone } from "./html";

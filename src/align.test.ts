@@ -2,7 +2,7 @@
  * Aligner et répartir : la géométrie seule.
  */
 import { describe, it, expect } from "vitest";
-import { alignDelta, distributeDeltas, unionBox } from "./arrange";
+import { alignDelta, distributeDeltas, unionBox } from "./align";
 
 const box = (left: number, top: number, width: number, height: number) => ({ left, top, width, height });
 

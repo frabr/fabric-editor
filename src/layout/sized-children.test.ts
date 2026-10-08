@@ -5,8 +5,8 @@
 import { describe, it, expect, beforeAll } from "vitest";
 import { FabricImage, Group, Rect } from "#fabric";
 import { createCanvas } from "canvas";
-import { initYoga } from "./yoga-engine";
-import { runLayout } from "./reconcile";
+import { initYoga } from "./stack/engine";
+import { runLayout } from "./run";
 import { FabRect } from "../shapes/FabRect";
 import { ImageFrame } from "../ImageFrame";
 import type { LayoutData } from "./types";

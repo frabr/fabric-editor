@@ -634,7 +634,7 @@ export class ImageFrame extends Group {
         target.setPositionByOrigin(transform._anchor!, anchorX, anchorY);
         target.setCoords();
 
-        // Même événement que les poignées des formes : le layout (ResizeSession) suit
+        // Même événement que les poignées des formes : le layout (StackResizeSession) suit
         target.fire("resizing" as any);
         (canvas as any).fire?.("object:resizing", { target, e: eventData, transform, pointer });
         canvas.requestRenderAll();

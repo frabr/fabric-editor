@@ -6,16 +6,18 @@
  */
 import { describe, it, expect, beforeAll } from "vitest";
 import { StaticCanvas, type FabricObject } from "#fabric";
-import { CustomTextbox } from "../controls/CustomTextbox";
-import { FabRect } from "../shapes/FabRect";
-import { initYoga } from "./yoga-engine";
-import { runLayout } from "./reconcile";
-import { fitFreeContainer, FreeResizeSession } from "./free";
-import { stackParentOf } from "./hierarchy";
-import { arrangeAsStack, arrangeFree, groupObjects, padGroupOnFirstFill, ungroupObject } from "../grouping";
-import type { LayoutData } from "./types";
-import { topLeft, scaledSize } from "./geometry";
-import { layoutOf, containerDataOf, childDataOf } from "./model";
+import { CustomTextbox } from "../../controls/CustomTextbox";
+import { FabRect } from "../../shapes/FabRect";
+import { initYoga } from "../stack/engine";
+import { runLayout } from "../run";
+import { fitFreeContainer } from "./fit";
+import { FreeResizeSession } from "./resize-session";
+import { stackParentOf } from "../hierarchy";
+import { groupObjects, padGroupOnFirstFill, ungroupObject } from "../grouping";
+import { arrangeAsStack, arrangeFree } from "../arrangement";
+import type { LayoutData } from "../types";
+import { topLeft, scaledSize } from "../geometry";
+import { layoutOf, containerDataOf, childDataOf } from "../model";
 
 beforeAll(async () => {
   await initYoga();

@@ -10,7 +10,7 @@ import {
 import type { DesignCanvas } from "./DesignCanvas";
 import { CustomTextbox } from "./controls/CustomTextbox";
 import { migrateLegacyLayout } from "./layout/legacy";
-import { bringBlocksForward, sendBlocksBackward } from "./layout/stacking";
+import { bringBlocksForward, sendBlocksBackward } from "./layout/z-order";
 import { kindOf, rulesOf } from "./capabilities";
 import { createShape as createShapeObject, createPathsShape, createImage } from "./shapes/factories";
 import { FabRect } from "./shapes/FabRect";

@@ -14,15 +14,15 @@ import { applyControlStyle } from "./ui/controls";
 import { hexAlpha } from "./ui/color";
 import { DRAG_PREVIEW_KEY } from "./types";
 import type { EditorConfig, LayerData, FontsConfig, ShapeType } from "./types";
-import { initYoga } from "./layout/yoga-engine";
+import { initYoga } from "./layout/stack/engine";
 
-import { groupObjects, padGroupOnFirstFill, ungroupObject } from "./grouping";
+import { groupObjects, padGroupOnFirstFill, ungroupObject } from "./layout/grouping";
 import { parentOf, stackParentOf, subtreeOf, translateSubtree } from "./layout/hierarchy";
 import { boxOf, insetBox } from "./layout/geometry";
 import {
   alignAxis, alignDelta, distributeDeltas, unionBox,
   type AlignEdge, type Box, type DistributeAxis,
-} from "./arrange";
+} from "./align";
 import { rulesOf } from "./capabilities";
 import { collectUserSlots, USER_SLOT_STYLE_KEY, type UserSlot, type UserSlotStyle } from "./userSlots";
 import { layoutOf, idOf, parentIdOf, containerDataOf, directionOf, paddingOf } from "./layout/model";

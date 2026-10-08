@@ -21,15 +21,15 @@
  * determines insertion order (before/after existing children).
  */
 import type { FabricObject } from "#fabric";
-import type { DesignCanvas } from "../DesignCanvas";
-import { type LayoutSession, type LayoutData, type ChildData, type FlexDirection } from "./types";
-import { scaledSize, setShapeSize, topLeft, syncCoords, pointInObject } from "./geometry";
+import type { DesignCanvas } from "../../../DesignCanvas";
+import { type LayoutSession, type LayoutData, type ChildData, type FlexDirection } from "../../types";
+import { scaledSize, setShapeSize, topLeft, syncCoords, pointInObject } from "../../geometry";
 
-import { yogaLayout } from "./yoga-engine";
-import { runLayout, relayoutAncestors } from "./reconcile";
-import { LayoutAnimator } from "./layout-animator";
-import { layoutOf, containerDataOf, sizingOf, directionOf, paddingOf, cloneLayout, detachChild } from "./model";
-import { childrenOf, flowChildrenOf } from "./hierarchy";
+import { yogaLayout } from "../engine";
+import { runLayout, relayoutAncestors } from "../../run";
+import { LayoutAnimator } from "./animator";
+import { layoutOf, containerDataOf, sizingOf, directionOf, paddingOf, cloneLayout, detachChild } from "../../model";
+import { childrenOf, flowChildrenOf } from "../../hierarchy";
 
 // ── Constants ────────────────────────────────────────────────────────
 

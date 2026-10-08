@@ -24,11 +24,11 @@
  *   before the pass (see reconcile) — and its descendants follow when Yoga moves it.
  */
 import type { FabricObject } from "#fabric";
-import { type ResolvedChild, type ContainerData, type SizingData } from "./types";
-import { scaledSize, setShapeSize, topLeft } from "./geometry";
-import { layoutOf, isFreeContainer, sizingOf, directionOf } from "./model";
-import { flowChildrenOf, descendantsOf, translateObjects } from "./hierarchy";
-import { isTextObject, type LayoutText } from "./text";
+import { type ResolvedChild, type ContainerData, type SizingData } from "../types";
+import { scaledSize, setShapeSize, topLeft } from "../geometry";
+import { layoutOf, isFreeContainer, sizingOf, directionOf } from "../model";
+import { flowChildrenOf, descendantsOf, translateObjects } from "../hierarchy";
+import { isTextObject, type LayoutText } from "../text";
 
 // ── Yoga singleton ─────────────────────────────────────────────────
 

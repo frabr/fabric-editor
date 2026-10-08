@@ -7,12 +7,12 @@
  * Created by the LayoutManager, destroyed after commit or rollback.
  */
 import type { FabricObject } from "#fabric";
-import type { DesignCanvas } from "../DesignCanvas";
-import { type AttachSnapshot, MIN_PAD } from "./types";
-import { scaledSize, setShapeSize, topLeft, clampTopLeft, hasExceededOffset, pointInObject } from "./geometry";
-import { runLayout, layoutSubtree, relayoutAncestors } from "./reconcile";
-import { layoutOf, sizingOf, cloneLayout, detachChild } from "./model";
-import { isTextObject, type LayoutText } from "./text";
+import type { DesignCanvas } from "../../../DesignCanvas";
+import { type AttachSnapshot, MIN_PAD } from "../../types";
+import { scaledSize, setShapeSize, topLeft, clampTopLeft, hasExceededOffset, pointInObject } from "../../geometry";
+import { runLayout, layoutSubtree, relayoutAncestors } from "../../run";
+import { layoutOf, sizingOf, cloneLayout, detachChild } from "../../model";
+import { isTextObject, type LayoutText } from "../../text";
 
 // ── Constants ────────────────────────────────────────────────────────
 

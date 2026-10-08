@@ -7,12 +7,12 @@
 import { describe, it, expect, beforeAll } from "vitest";
 import { CustomTextbox } from "../controls/CustomTextbox";
 import { FabRect } from "../shapes/FabRect";
-import { initYoga } from "./yoga-engine";
-import { runLayout, layoutSubtree, relayoutAncestors } from "./reconcile";
-import { ResizeSession } from "./resize-session";
+import { initYoga } from "./stack/engine";
+import { runLayout, layoutSubtree, relayoutAncestors } from "./run";
+import { StackResizeSession } from "./stack/resize-session";
 import { setTextContent } from "../bindings";
 import { type LayoutData } from "./types";
-import { availableRoom } from "./room";
+import { availableRoom } from "./stack/room";
 import type { FabricObject } from "#fabric";
 import { topLeft, scaledSize } from "./geometry";
 import { layoutOf, sizingOf } from "./model";
@@ -201,7 +201,7 @@ describe("container imbriqué, hors runLayout", () => {
     const objects = [parent, child, t];
     runLayout(objects);
 
-    const session = new ResizeSession(parent, "mr");
+    const session = new StackResizeSession(parent, "mr");
     parent.set({ width: 50 });
     session.handleResizing(objects);
     expect(parent.width).toBeCloseTo(40 + t.minContentWidth(), 0);
@@ -212,8 +212,8 @@ describe("container imbriqué, hors runLayout", () => {
 });
 
 describe("les poignées d'un enfant s'arrêtent à la place du parent", () => {
-  function drag(obj: FabRect, corner: string, size: { width?: number; height?: number }, objects: FabricObject[]): ResizeSession {
-    const session = new ResizeSession(obj, corner);
+  function drag(obj: FabRect, corner: string, size: { width?: number; height?: number }, objects: FabricObject[]): StackResizeSession {
+    const session = new StackResizeSession(obj, corner);
     obj.set(size);
     session.handleResizing(objects);
     return session;

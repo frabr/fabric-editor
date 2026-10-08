@@ -5,10 +5,10 @@
 import { describe, it, expect, beforeAll } from "vitest";
 import { CustomTextbox } from "./CustomTextbox";
 import { FabRect } from "../shapes/FabRect";
-import { initYoga } from "../layout/yoga-engine";
-import { runLayout } from "../layout/reconcile";
+import { initYoga } from "../layout/stack/engine";
+import { runLayout } from "../layout/run";
 import { migrateLegacyLayout } from "../layout/legacy";
-import { ResizeSession } from "../layout/resize-session";
+import { StackResizeSession } from "../layout/stack/resize-session";
 import type { LayoutData } from "../layout/types";
 import { detachChild } from "../layout/model";
 
@@ -289,17 +289,17 @@ describe("Texte dans un container", () => {
   });
 });
 
-describe("ResizeSession — poignées des containers", () => {
+describe("StackResizeSession — poignées des containers", () => {
   it("tirer un bord gauche/droit fixe la largeur", () => {
     const c = container("c", 100, 50, { sizing: { x: "hug", y: "hug" }, container: { padding: PAD } });
-    new ResizeSession(c, "mr");
+    new StackResizeSession(c, "mr");
     expect(layoutOf(c).sizing!.x).toBe("fixed");
     expect(layoutOf(c).sizing!.y).toBe("hug");
   });
 
   it("tirer le bas d'une hauteur contenu pose un minimum, le mode ne change pas", () => {
     const c = container("c", 100, 50, { sizing: { x: "hug", y: "hug" }, container: { padding: PAD } });
-    const session = new ResizeSession(c, "mb");
+    const session = new StackResizeSession(c, "mb");
     c.set({ height: 300 });
     session.handleResizing([c]);
     session.commit([c]);
@@ -356,7 +356,7 @@ describe("CustomTextbox — poignées", () => {
   });
 });
 
-describe("ResizeSession — le contenu arrête la poignée", () => {
+describe("StackResizeSession — le contenu arrête la poignée", () => {
   function rect(id: string, w: number, order: number): FabRect {
     const r = new FabRect({ width: w, height: 40, originX: "left", originY: "top" });
     r.set({ layerId: id, layout: { child: { parentId: "c", order } } } as any);
@@ -371,7 +371,7 @@ describe("ResizeSession — le contenu arrête la poignée", () => {
     const c = row(400);
     const objects = [c, rect("a", 100, 0), rect("b", 100, 1)];
     runLayout(objects);
-    const session = new ResizeSession(c, "mr");
+    const session = new StackResizeSession(c, "mr");
     c.set({ width: 100 });
     session.handleResizing(objects);
     expect(c.width).toBe(230);
@@ -382,7 +382,7 @@ describe("ResizeSession — le contenu arrête la poignée", () => {
     const t = text("court motextrêmementlong", { layout: { child: { parentId: "c", order: 1 } } });
     const objects = [c, rect("a", 100, 0), t];
     runLayout(objects);
-    const session = new ResizeSession(c, "mr");
+    const session = new StackResizeSession(c, "mr");
     c.set({ width: 100 });
     session.handleResizing(objects);
     expect(c.width).toBe(20 + 100 + 10 + t.minContentWidth());
@@ -393,7 +393,7 @@ describe("ResizeSession — le contenu arrête la poignée", () => {
     const c = row(400);
     const objects = [c, rect("a", 100, 0), rect("b", 100, 1)];
     runLayout(objects);
-    const session = new ResizeSession(c, "ml");
+    const session = new StackResizeSession(c, "ml");
     c.set({ width: 100, left: 300 });
     session.handleResizing(objects);
     expect(c.width).toBe(230);
@@ -407,7 +407,7 @@ describe("ResizeSession — le contenu arrête la poignée", () => {
     });
     const objects = [c, rect("a", 100, 0), rect("b", 100, 1)];
     runLayout(objects);
-    const session = new ResizeSession(c, "mb");
+    const session = new StackResizeSession(c, "mb");
     c.set({ height: 200 });
     session.handleResizing(objects);
     expect(c.height).toBe(200);

@@ -1,36 +1,16 @@
 /**
- * Le container libre (un groupe) : ses enfants restent où on les a posés, sa boîte les
- * suit — leur union, plus la marge (`padding`). Rien n'est calculé par Yoga dedans ; dans
- * une pile, un groupe est un bloc rigide (cf. yoga-engine), que ses enfants suivent quand
- * la pile le déplace.
- *
- * Le redimensionner ne pose jamais de `scale` : chaque descendant absorbe l'agrandissement
- * dans ses propres dimensions (une forme sa taille, un texte sa largeur et sa police, une
- * pile ses marges et son espacement), au prorata, autour du coin qui ne bouge pas.
+ * Redimensionner un groupe ne pose jamais de `scale` : chaque descendant absorbe
+ * l'agrandissement dans ses propres dimensions (une forme sa taille, un texte sa largeur
+ * et sa police, une pile ses marges et son espacement), au prorata, autour du coin qui ne
+ * bouge pas.
  */
 import type { FabricObject } from "#fabric";
-import { type ContainerData, type SizingData } from "./types";
-import { boxOf, outsetBox, placeTopLeft, scaledSize, setShapeSize, unionBox, type Box } from "./geometry";
-import { layoutOf, containerDataOf, isFreeContainer, paddingOf } from "./model";
-import { childrenOf, descendantsOf } from "./hierarchy";
-import { isTextObject, scaleStyleFontSizes, type TextStyles } from "./text";
-
-
-/**
- * La boîte d'un groupe se recale sur ses enfants : leur union, plus la marge. Sans
- * enfant, rien ne bouge. Les groupes imbriqués d'abord (leur boîte compte dans la sienne).
- */
-export function fitFreeContainer(container: FabricObject, objects: FabricObject[]): void {
-  const children = childrenOf(objects, container).map((c) => c.obj);
-  if (children.length === 0) return;
-  for (const child of children) if (isFreeContainer(child)) fitFreeContainer(child, objects);
-
-  const box = outsetBox(unionBox(children.map(boxOf)), paddingOf(containerDataOf(container)));
-  setShapeSize(container, box.width, box.height);
-  placeTopLeft(container, box.left, box.top);
-}
-
-// ── Redimensionner un groupe ────────────────────────────────────────
+import type { ContainerData, SizingData } from "../types";
+import { placeTopLeft, scaledSize, setShapeSize, type Box } from "../geometry";
+import { layoutOf } from "../model";
+import { descendantsOf } from "../hierarchy";
+import { isTextObject, scaleStyleFontSizes, type TextStyles } from "../text";
+import { fitFreeContainer } from "./fit";
 
 /** Ce qu'il faut d'un descendant pour le remettre à l'échelle depuis le début du geste. */
 interface ScaledState {

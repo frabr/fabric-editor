@@ -17,7 +17,7 @@ import { LayerManager } from "./LayerManager";
 import { PersistenceManager } from "./PersistenceManager";
 import { HistoryManager } from "./HistoryManager";
 import type { LayerData, FontConfig } from "./types";
-import { initYoga } from "./layout/yoga-engine";
+import { initYoga } from "./layout/stack/engine";
 
 /**
  * Configuration pour l'éditeur Node.js

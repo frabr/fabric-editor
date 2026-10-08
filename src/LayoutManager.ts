@@ -1,10 +1,10 @@
 import { ActiveSelection, FabricObject, Point } from "#fabric";
 import type { DesignCanvas } from "./DesignCanvas";
 import { CanvasGuides } from "./ui/guides";
-import { runLayout, layoutSubtree, relayoutAncestors } from "./layout/reconcile";
-import { ResizeSession } from "./layout/resize-session";
+import { runLayout, layoutSubtree, relayoutAncestors } from "./layout/run";
+import { StackResizeSession } from "./layout/stack/resize-session";
 import { type LayoutSession, type SizingData, type TextOverflow, type Arrangement } from "./layout/types";
-import { arrangeAsStack, arrangeFree } from "./grouping";
+import { arrangeAsStack, arrangeFree } from "./layout/arrangement";
 import { syncGroupControls } from "./ui/controls";
 import { pointInObject } from "./layout/geometry";
 import type { CustomTextbox } from "./controls/CustomTextbox";
@@ -13,11 +13,12 @@ import { rulesOf } from "./capabilities";
 /** Size presets of the UI (same vocabulary for containers and texts). */
 export type SizePreset = "hug" | "hug-y" | "fixed";
 import { scaledSize, setShapeSize } from "./layout/geometry";
-import { availableRoom } from "./layout/room";
-import { placeBlockAbove } from "./layout/stacking";
-import { fitFreeContainer, FreeResizeSession } from "./layout/free";
-import { ContainerizeSession } from "./layout/containerize-session";
-import { InsertChildSession } from "./layout/insert-child-session";
+import { availableRoom } from "./layout/stack/room";
+import { placeBlockAbove } from "./layout/z-order";
+import { fitFreeContainer } from "./layout/free/fit";
+import { FreeResizeSession } from "./layout/free/resize-session";
+import { ContainerizeSession } from "./layout/stack/sessions/containerize";
+import { InsertChildSession } from "./layout/stack/sessions/insert-child";
 import { layoutOf, containerDataOf, isFreeContainer, sizingOf, ZERO_PADDING, isStackContainer, directionOf } from "./layout/model";
 import { childrenOf, parentContainerOf, descendantsOf, findById } from "./layout/hierarchy";
 import { isTextObject } from "./layout/text";
@@ -135,7 +136,7 @@ export class LayoutManager {
   private callbacks: LayoutManagerCallbacks;
   private guides: CanvasGuides;
   private dtl: DtlState = { phase: "idle", cooldownUntil: 0 };
-  private resizeSession: ResizeSession | null = null;
+  private resizeSession: StackResizeSession | null = null;
   /** Le redimensionnement d'un groupe en cours (ouvert à before:transform). */
   private freeResize: FreeResizeSession | null = null;
   /** Les descendants d'une sélection multiple en cours de déplacement, et leur départ. */
@@ -633,7 +634,7 @@ export class LayoutManager {
 
     // Create session on first resizing frame
     if (!this.resizeSession) {
-      this.resizeSession = new ResizeSession(target, e.transform?.corner);
+      this.resizeSession = new StackResizeSession(target, e.transform?.corner);
     }
 
     this.resizeSession.handleResizing(this.canvas.getObjects());

@@ -4,7 +4,7 @@
  */
 import { describe, it, expect } from "vitest";
 import type { FabricObject } from "#fabric";
-import { bringBlockForward, bringBlocksForward, placeBlockAbove, sendBlockBackward, sendBlocksBackward, stackBlock } from "./stacking";
+import { bringBlockForward, bringBlocksForward, placeBlockAbove, sendBlockBackward, sendBlocksBackward, stackBlock } from "./z-order";
 
 function obj(id: string, parentId?: string): FabricObject {
   const layout = parentId ? { child: { parentId } } : undefined;

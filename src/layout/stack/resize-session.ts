@@ -1,5 +1,6 @@
 /**
- * ResizeSession — encapsulates one user-initiated resize interaction.
+ * StackResizeSession — one user-initiated resize of a stack container (a group: see
+ * free/resize-session).
  *
  * Created by the LayoutManager on the first `object:resizing` event,
  * fed with each subsequent scaling frame, and committed on `object:modified`.
@@ -8,16 +9,16 @@
  * the programmatic layout reconciliation that runs on every frame.
  */
 import type { FabricObject } from "#fabric";
-import { type ContainerData, type ResolvedChild, type SizingData } from "./types";
-import { scaledSize, setShapeSize, syncCoords, topLeft, cornerToAxes, type ResizeAxes } from "./geometry";
-import { yogaLayout } from "./yoga-engine";
+import { type ContainerData, type ResolvedChild, type SizingData } from "../types";
+import { scaledSize, setShapeSize, syncCoords, topLeft, cornerToAxes, type ResizeAxes } from "../geometry";
+import { yogaLayout } from "./engine";
 import { availableRoom, type Room } from "./room";
-import { layoutSubtree, relayoutAncestors } from "./reconcile";
-import { layoutOf, sizingOf, paddingOf } from "./model";
-import { flowChildrenOf, parentContainerOf } from "./hierarchy";
-import { isTextObject, type LayoutText } from "./text";
+import { layoutSubtree, relayoutAncestors } from "../run";
+import { layoutOf, sizingOf, paddingOf } from "../model";
+import { flowChildrenOf, parentContainerOf } from "../hierarchy";
+import { isTextObject, type LayoutText } from "../text";
 
-// ── ResizeSession ───────────────────────────────────────────────────
+// ── StackResizeSession ───────────────────────────────────────────────────
 
 /**
  * Handle rules (same as texts, see CustomTextbox):
@@ -29,7 +30,7 @@ import { isTextObject, type LayoutText } from "./text";
  *   out (see room.ts): a child never grows out of its container, and its
  *   ancestors follow on every frame (it stays in its flex slot, siblings move).
  */
-export class ResizeSession {
+export class StackResizeSession {
   private container: FabricObject;
   private containerData: ContainerData;
   private sizing: SizingData;
@@ -222,3 +223,6 @@ export function minSizeOf(obj: FabricObject, objects: FabricObject[]): { w: numb
     h: sizing.y === "hug" ? Math.max(min.h, sizing.minSize?.h ?? 0) : size.h,
   };
 }
+
+/** @deprecated Use `StackResizeSession`. */
+export const ResizeSession = StackResizeSession;
