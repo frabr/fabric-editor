@@ -14,9 +14,10 @@ import { scaledSize, setShapeSize, syncCoords, topLeft, cornerToAxes, type Resiz
 import { yogaLayout } from "./engine";
 import { availableRoom, type Room } from "./room";
 import { layoutSubtree, relayoutAncestors } from "../run";
-import { layoutOf, sizingOf, paddingOf } from "../model";
-import { flowChildrenOf, parentContainerOf } from "../hierarchy";
+import { layoutOf, sizingOf } from "../model";
 import { isTextObject, type LayoutText } from "../text";
+import { flowChildrenOf, parentContainerOf } from "../hierarchy";
+import { minContentSize } from "./min-size";
 
 // ── StackResizeSession ───────────────────────────────────────────────────
 
@@ -177,48 +178,6 @@ export class StackResizeSession {
     layoutSubtree(parent, objects);
     relayoutAncestors(parent, objects);
   }
-}
-
-/**
- * Smallest container box its children fit in, without squeezing anything:
- * padding, gaps, rigid children at their size, texts at their longest word
- * (they can wrap) and at no height (they can autofit or clip), nested
- * containers at their own minimum on a hug axis (floored by their minSize)
- * and at their size on a fixed one.
- */
-function minContentSize(
-  children: ResolvedChild[],
-  cd: ContainerData,
-  objects: FabricObject[],
-): { w: number; h: number } {
-  const pad = paddingOf(cd);
-  const gaps = (cd.gap ?? 0) * Math.max(0, children.length - 1);
-  const sizes = children.map(({ obj }) => minSizeOf(obj, objects));
-  const sum = (key: "w" | "h") => sizes.reduce((total, s) => total + s[key], 0);
-  const max = (key: "w" | "h") => Math.max(0, ...sizes.map((s) => s[key]));
-
-  const row = cd.flexDirection === "row";
-  return {
-    w: pad.left + pad.right + (row ? sum("w") + gaps : max("w")),
-    h: pad.top + pad.bottom + (row ? max("h") : sum("h") + gaps),
-  };
-}
-
-/** What an object takes at the very least: its minimum content (see minContentSize), or its size. */
-export function minSizeOf(obj: FabricObject, objects: FabricObject[]): { w: number; h: number } {
-  if (isTextObject(obj)) return { w: (obj as unknown as LayoutText).minContentWidth(), h: 0 };
-  const size = scaledSize(obj);
-  const layout = layoutOf(obj);
-  if (!layout?.container) return size;
-  const children = flowChildrenOf(objects, obj);
-  if (children.length === 0) return size;
-
-  const sizing = sizingOf(obj);
-  const min = minContentSize(children, layout.container, objects);
-  return {
-    w: sizing.x === "hug" ? Math.max(min.w, sizing.minSize?.w ?? 0) : size.w,
-    h: sizing.y === "hug" ? Math.max(min.h, sizing.minSize?.h ?? 0) : size.h,
-  };
 }
 
 /** @deprecated Use `StackResizeSession`. */

@@ -18,8 +18,8 @@ const SIZE_PRESETS: Record<SizePreset, Pick<SizingData, "x" | "y">> = {
   "hug-y": { x: "fixed", y: "hug" },
   "fixed": { x: "fixed", y: "fixed" },
 };
-import { scaledSize, setShapeSize } from "./layout/geometry";
-import { availableRoom } from "./layout/stack/room";
+import { scaledSize } from "./layout/geometry";
+import { clampToRoom } from "./layout/stack/room";
 import { placeBlockAbove } from "./layout/z-order";
 import { fitFreeContainer } from "./layout/free/fit";
 import { FreeResizeSession } from "./layout/free/resize-session";
@@ -922,14 +922,3 @@ export class LayoutManager {
   }
 }
 
-/** A child's handles stop at the room its ancestors give (the grabbed edge moves, not the other). */
-function clampToRoom(obj: FabricObject, transform: any, objects: FabricObject[]): void {
-  const room = availableRoom(obj, objects);
-  const { w, h } = scaledSize(obj);
-  if (w <= room.w && h <= room.h) return;
-  const originX = transform?.originX ?? "left";
-  const originY = transform?.originY ?? "top";
-  const anchor = obj.getPositionByOrigin(originX, originY);
-  setShapeSize(obj, Math.min(w, room.w), Math.min(h, room.h));
-  obj.setPositionByOrigin(anchor, originX, originY);
-}

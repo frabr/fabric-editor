@@ -1,6 +1,7 @@
 export { runLayout, layoutSubtree, relayoutAncestors, relayoutSingle, bubbleUpLayout } from "./run";
 export { StackResizeSession, ResizeSession } from "./stack/resize-session";
-export { availableRoom } from "./stack/room";
+export { availableRoom, clampToRoom } from "./stack/room";
+export { minSizeOf, minContentSize } from "./stack/min-size";
 export type { Room } from "./stack/room";
 export type { LayoutData, SizingData, TextOverflow, ContainerData, ChildData, SizeMode, AlignSelf, AlignItems, JustifyContent, FlexDirection, AttachSnapshot, ResolvedChild, LayoutSession } from "./types";
 export { MIN_PAD, MIN_FONT_SIZE } from "./types";

@@ -6,12 +6,13 @@
  * itself grow to (unbounded at the top of the tree). On the parent's main axis
  * the siblings keep their place — at their minimum, the same one that stops the
  * parent's own handles (a text at its longest word, a rigid shape at its size,
- * a nested container at its own minimum) — and the gaps too.
+ * a nested container at its own minimum) — and the gaps too. In a group (free
+ * container) nothing is laid out: siblings take no room, the group follows.
  */
 import type { FabricObject } from "#fabric";
-import { scaledSize } from "../geometry";
-import { minSizeOf } from "./resize-session";
-import { layoutOf, sizingOf, paddingOf } from "../model";
+import { scaledSize, setShapeSize } from "../geometry";
+import { minSizeOf } from "./min-size";
+import { layoutOf, sizingOf, paddingOf, isFreeContainer } from "../model";
 import { childrenOf, parentContainerOf } from "../hierarchy";
 
 export interface Room {
@@ -24,7 +25,7 @@ export const UNBOUNDED: Room = { w: Infinity, h: Infinity };
 /** The largest box `obj` may take without overflowing its ancestors. */
 export function availableRoom(obj: FabricObject, objects: FabricObject[]): Room {
   const parent = parentContainerOf(obj, objects);
-  if (!parent) return UNBOUNDED;
+  if (!parent || isFreeContainer(parent)) return UNBOUNDED;
 
   const cd = layoutOf(parent)!.container!;
   const sizing = sizingOf(parent);
@@ -42,4 +43,19 @@ export function availableRoom(obj: FabricObject, objects: FabricObject[]): Room 
   else h -= taken.reduce((sum, s) => sum + s.h, 0) + gaps;
 
   return { w: Math.max(0, w), h: Math.max(0, h) };
+}
+
+/**
+ * A child's handles stop at the room its ancestors give: the grabbed edge moves, the
+ * opposite one stays.
+ */
+export function clampToRoom(obj: FabricObject, transform: { originX?: string; originY?: string } | undefined, objects: FabricObject[]): void {
+  const room = availableRoom(obj, objects);
+  const { w, h } = scaledSize(obj);
+  if (w <= room.w && h <= room.h) return;
+  const originX = (transform?.originX ?? "left") as "left";
+  const originY = (transform?.originY ?? "top") as "top";
+  const anchor = obj.getPositionByOrigin(originX, originY);
+  setShapeSize(obj, Math.min(w, room.w), Math.min(h, room.h));
+  obj.setPositionByOrigin(anchor, originX, originY);
 }

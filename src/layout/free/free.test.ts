@@ -13,6 +13,8 @@ import { runLayout } from "../run";
 import { fitFreeContainer } from "./fit";
 import { FreeResizeSession } from "./resize-session";
 import { stackParentOf } from "../hierarchy";
+import { minSizeOf } from "../stack/min-size";
+import { availableRoom } from "../stack/room";
 import { groupObjects, padGroupOnFirstFill, ungroupObject } from "../grouping";
 import { arrangeAsStack, arrangeFree } from "../arrangement";
 import type { LayoutData } from "../types";
@@ -279,5 +281,29 @@ describe("libre ↔ rangé", () => {
     // Un deuxième fond ne repose rien
     expect(padGroupOnFirstFill(bare, "#00ff00")).toBe(false);
     expect(canvas).toBeTruthy();
+  });
+});
+
+describe("un groupe parmi les piles", () => {
+  it("sa taille minimale est sa taille : il est rigide, pas une pile (B1)", () => {
+    const g = group("g");
+    const a = rect("a", 0, 0, 50, 50, { child: { parentId: "g" } });
+    const b = rect("b", 0, 0, 50, 50, { child: { parentId: "g" } });
+    runLayout([g, a, b]);
+
+    expect(minSizeOf(g, [g, a, b])).toEqual({ w: 50, h: 50 });
+  });
+
+  it("dans un groupe, un élément n'est pas bridé par ses frères (B2)", () => {
+    // Le groupe est dans une pile de taille fixe : ses frères ne se rangent pas, ils ne
+    // prennent pas de place à l'élément
+    const stack = rect("s", 0, 0, 300, 300, { sizing: { x: "fixed", y: "fixed" }, container: { padding: ZERO } });
+    const g = group("g", ZERO, { parentId: "s" });
+    const a = rect("a", 0, 0, 50, 280, { child: { parentId: "g" } });
+    const b = rect("b", 100, 0, 50, 50, { child: { parentId: "g" } });
+    const objects = [stack, g, a, b];
+    runLayout(objects);
+
+    expect(availableRoom(b, objects)).toEqual({ w: Infinity, h: Infinity });
   });
 });
