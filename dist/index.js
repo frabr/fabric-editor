@@ -6595,16 +6595,21 @@ var LayoutManager2 = class {
     this.changed();
   }
   /**
-   * Une forme devient un bloc : un container vide, à sa taille, en colonne — les objets
-   * qu'on y glisse s'y rangent. Glisser un objet sur une forme simple ne la change plus
-   * en container : c'est ce geste-ci, ou grouper puis ranger. Dégrouper la rend simple.
+   * Une forme devient un bloc : un container, même vide, en colonne — les objets qu'on y
+   * glisse s'y rangent. Il épouse son contenu sans jamais descendre sous sa taille actuelle
+   * (hug, plancher minSize). Glisser un objet sur une forme simple ne la change plus en
+   * container : c'est ce geste-ci, ou grouper puis ranger. Dégrouper la rend simple.
    */
   makeContainer(obj) {
     if (isContainerObject(obj) || !rulesOf(obj).hosts) return;
     const tl = topLeft(obj);
+    const { w, h } = scaledSize(obj);
     obj.set({ originX: "left", originY: "top" });
     placeTopLeft(obj, tl.x, tl.y);
-    updateLayout(obj, { sizing: { x: "fixed", y: "fixed" }, container: { padding: uniformPadding(MIN_PAD) } });
+    updateLayout(obj, {
+      sizing: { x: "hug", y: "hug", minSize: { w, h } },
+      container: { padding: uniformPadding(MIN_PAD) }
+    });
     this.changed();
   }
   /** Cross-axis alignment of one child in its stack. */
@@ -8694,7 +8699,7 @@ init_PendingUploadsManager();
 // src/tools.ts
 var ORDER = {
   text: ["fill", "font", "animations", "effects", "variables", "layout", "lock", "forward", "backward"],
-  shape: ["fill", "clip", "outline", "animations", "effects", "layout", "lock", "forward", "backward"],
+  shape: ["fill", "clip", "outline", "animations", "effects", "layout", "containerize", "lock", "forward", "backward"],
   image: [
     "image",
     "promoteBackground",
@@ -8703,6 +8708,7 @@ var ORDER = {
     "outline",
     "effects",
     "layout",
+    "containerize",
     "lock",
     "forward",
     "backward"
@@ -8783,6 +8789,9 @@ function oneAllows(obj, kind) {
         return rules.restyles;
       case "ungroup":
         return rules.deletes && isContainerObject(obj);
+      // Une forme (ou une image) simple devient un bloc : elle accueille, et n'en est pas un
+      case "containerize":
+        return rules.restyles && rules.hosts && !isContainerObject(obj);
       case "lock":
         return true;
       case "forward":

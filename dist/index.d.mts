@@ -2048,9 +2048,10 @@ declare class LayoutManager {
     /** Un groupe libre ou rangé (une pile) — la bascule ne fait rien sauter (cf. arrangement). */
     setArrangement(obj: FabricObject, arrangement: Arrangement): void;
     /**
-     * Une forme devient un bloc : un container vide, à sa taille, en colonne — les objets
-     * qu'on y glisse s'y rangent. Glisser un objet sur une forme simple ne la change plus
-     * en container : c'est ce geste-ci, ou grouper puis ranger. Dégrouper la rend simple.
+     * Une forme devient un bloc : un container, même vide, en colonne — les objets qu'on y
+     * glisse s'y rangent. Il épouse son contenu sans jamais descendre sous sa taille actuelle
+     * (hug, plancher minSize). Glisser un objet sur une forme simple ne la change plus en
+     * container : c'est ce geste-ci, ou grouper puis ranger. Dégrouper la rend simple.
      */
     makeContainer(obj: FabricObject): void;
     /** Cross-axis alignment of one child in its stack. */
@@ -3043,7 +3044,7 @@ declare function rulesOf(obj: FabricObject, { ignoreLock }?: RulesQuery): Object
  * Supprimer toujours en dernier. En multi-sélection, Grouper d'abord.
  */
 
-type ToolId = "group" | "align" | "distribute" | "arrangement" | "ungroup" | "fill" | "font" | "variables" | "image" | "promoteBackground" | "clip" | "outline" | "effects" | "layout" | "animations" | "lock" | "forward" | "backward" | "delete";
+type ToolId = "group" | "align" | "distribute" | "arrangement" | "ungroup" | "fill" | "font" | "variables" | "image" | "promoteBackground" | "clip" | "outline" | "effects" | "layout" | "containerize" | "animations" | "lock" | "forward" | "backward" | "delete";
 /**
  * - `text`, `shape`, `image` : un objet seul, d'après sa sorte ;
  * - `block` : une forme qui porte des éléments ;
