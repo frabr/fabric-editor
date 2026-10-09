@@ -1,4 +1,4 @@
-import { FabricImage, FabricObject, Group, Path, util } from "#fabric";
+import { FabricImage, FabricObject, Group, Path, Point, util } from "#fabric";
 import type { DesignCanvas } from "./DesignCanvas";
 import { CustomTextbox } from "./controls/CustomTextbox";
 import { migrateLegacyLayout } from "./layout/legacy";
@@ -10,7 +10,7 @@ import { FabCircle } from "./shapes/FabCircle";
 import { FabPath } from "./shapes/FabPath";
 import { isValidShape } from "./shapes";
 import { clipDataFor, type ClipData } from "./shapes/registry";
-import { scaledSize } from "./layout/geometry";
+import { scaledSize, setShapeSize } from "./layout/geometry";
 import { applyLockMode, getLockMode, type LockMode } from "./locking";
 import { ImageFrame, type ImageFrameData, type ImageMeta } from "./ImageFrame";
 import type { LayerData, TextLayerOptions, ImageLayerOptions, ShapeLayerOptions, ShapeType } from "./types";
@@ -20,6 +20,9 @@ import { layoutOf } from "./layout/model";
 import { findById } from "./layout/hierarchy";
 
 const BACKGROUND_LAYER_ID = "originalImage";
+
+/** Le fill d'une forme posée sans couleur : le gris placeholder, qui se lit « à remplacer ». */
+export const DEFAULT_SHAPE_FILL = "#d9d9d9";
 
 /**
  * Gère les calques (layers) du canvas Fabric.js
@@ -120,6 +123,33 @@ export class LayerManager {
     return obj;
   }
 
+  /** Le centre du document. */
+  private get center(): Point {
+    return new Point(this.canvas.width / 2, this.canvas.height / 2);
+  }
+
+  /**
+   * La boîte d'un calque neuf : la moitié du document dans chaque sens, un quart de sa
+   * surface. Un calque y entre en gardant ses proportions.
+   */
+  private get newLayerBox(): { w: number; h: number } {
+    return { w: this.canvas.width / 2, h: this.canvas.height / 2 };
+  }
+
+  private fitNewLayerBox(obj: FabricObject): void {
+    const { w, h } = scaledSize(obj);
+    const box = this.newLayerBox;
+    const scale = Math.min(box.w / w, box.h / h);
+    setShapeSize(obj, w * scale, h * scale);
+  }
+
+  /** Un calque ajouté sans position (un clic, pas un lâcher) se pose au centre du document. */
+  private centerUnplaced(obj: FabricObject, options: { left?: number; top?: number }): void {
+    if (options.left != null || options.top != null) return;
+    obj.setPositionByOrigin(this.center, "center", "center");
+    obj.setCoords();
+  }
+
   /**
    * Supprime un objet du canvas
    */
@@ -194,6 +224,7 @@ export class LayerManager {
 
   addText(options: TextLayerOptions = {}): CustomTextbox {
     const textObj = this.createText(options);
+    this.centerUnplaced(textObj, options);
     this.add(textObj);
     return textObj;
   }
@@ -202,16 +233,14 @@ export class LayerManager {
    * Crée et ajoute un calque image dans un ImageFrame
    */
   async addImage(url: string, options: ImageLayerOptions = {}): Promise<ImageFrame> {
-    const { left = 100, top = 100, layerId = this.generateId(), imageMeta } = options;
+    const center = this.center;
+    const { left = center.x, top = center.y, layerId = this.generateId(), imageMeta } = options;
 
     const img = await FabricImage.fromURL(url, { crossOrigin: "anonymous" });
 
-    // Calculer le scale pour limiter à 300px max
-    // Ce scale sera appliqué au frame, pas à l'image
-    let frameScale = 1;
-    if (img.width > 300 || img.height > 300) {
-      frameScale = Math.min(300 / img.width, 300 / img.height);
-    }
+    // Appliqué au frame, pas à l'image
+    const box = this.newLayerBox;
+    const frameScale = Math.min(box.w / img.width, box.h / img.height);
 
     const frame = new ImageFrame(img, { left, top, layerId, frameScale, imageMeta });
     this.add(frame);
@@ -455,7 +484,7 @@ export class LayerManager {
     const {
       left = 100,
       top = 100,
-      fill = "#ffffff",
+      fill = DEFAULT_SHAPE_FILL,
       stroke,
       shapeType = "rect",
       layerId = this.generateId(),
@@ -469,6 +498,7 @@ export class LayerManager {
       ? createPathsShape(options.paths, { id: shapeType, ...common })
       : createShapeObject(shapeType, common);
     shape.set({ layerId, layerType: "shape" });
+    if (options.width == null && options.height == null) this.fitNewLayerBox(shape);
     return shape;
   }
 
@@ -482,12 +512,14 @@ export class LayerManager {
 
   addUserSlot(options: ShapeLayerOptions & { hint?: string } = {}): FabricObject {
     const shape = this.createUserSlot(options);
+    this.centerUnplaced(shape, options);
     this.add(shape);
     return shape;
   }
 
   addShape(options: ShapeLayerOptions = {}): FabricObject {
     const shape = this.createShape(options);
+    this.centerUnplaced(shape, options);
     this.add(shape);
     return shape;
   }

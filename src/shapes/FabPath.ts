@@ -89,7 +89,7 @@ export class FabPath extends Path implements Lockable {
   /**
    * Create a FabPath from raw path data (normalized `d` + optional authored fill).
    * The authored fill wins over options.fill: callers pass their GENERIC default
-   * there (LayerManager's "#ffffff") — a colorless path takes it, an authored one
+   * there (LayerManager's DEFAULT_SHAPE_FILL) — a colorless path takes it, an authored one
    * keeps its charte color. Recoloring happens on the object afterwards, never here.
    *
    * Dimension logic:
