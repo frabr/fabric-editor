@@ -754,6 +754,16 @@ declare class LayerManager {
      * Ajoute un objet au canvas et le sélectionne (si interactif)
      */
     add(obj: FabricObject): FabricObject;
+    /** Le centre du document. */
+    private get center();
+    /**
+     * La boîte d'un calque neuf : la moitié du document dans chaque sens, un quart de sa
+     * surface. Un calque y entre en gardant ses proportions.
+     */
+    private get newLayerBox();
+    private fitNewLayerBox;
+    /** Un calque ajouté sans position (un clic, pas un lâcher) se pose au centre du document. */
+    private centerUnplaced;
     /**
      * Supprime un objet du canvas
      */

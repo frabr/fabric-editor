@@ -115,7 +115,7 @@ var init_PendingUploadsManager = __esm({
 });
 
 // src/FabricEditor.ts
-import { ActiveSelection as ActiveSelection4, FabricObject as FabricObject9, Point as Point6 } from "#fabric";
+import { ActiveSelection as ActiveSelection4, FabricObject as FabricObject9, Point as Point7 } from "#fabric";
 
 // src/DesignCanvas.ts
 import { Canvas, Point } from "#fabric";
@@ -427,7 +427,7 @@ var DesignCanvas = class {
 };
 
 // src/LayerManager.ts
-import { FabricImage as FabricImage5, Group as Group4, util as util2 } from "#fabric";
+import { FabricImage as FabricImage5, Group as Group4, Point as Point4, util as util2 } from "#fabric";
 
 // src/controls/CustomTextbox.ts
 import { Textbox, Point as Point2, controlsUtils } from "#fabric";
@@ -1607,7 +1607,7 @@ var _FabPath = class _FabPath extends Path {
   /**
    * Create a FabPath from raw path data (normalized `d` + optional authored fill).
    * The authored fill wins over options.fill: callers pass their GENERIC default
-   * there (LayerManager's "#ffffff") — a colorless path takes it, an authored one
+   * there (LayerManager's DEFAULT_SHAPE_FILL) — a colorless path takes it, an authored one
    * keeps its charte color. Recoloring happens on the object afterwards, never here.
    *
    * Dimension logic:
@@ -2673,6 +2673,7 @@ classRegistry4.setClass(ImageFrame, "ImageFrame");
 
 // src/LayerManager.ts
 var BACKGROUND_LAYER_ID = "originalImage";
+var DEFAULT_SHAPE_FILL = "#d9d9d9";
 var LayerManager = class {
   constructor(canvas) {
     this.canvas = canvas;
@@ -2752,6 +2753,29 @@ var LayerManager = class {
     }
     return obj;
   }
+  /** Le centre du document. */
+  get center() {
+    return new Point4(this.canvas.width / 2, this.canvas.height / 2);
+  }
+  /**
+   * La boîte d'un calque neuf : la moitié du document dans chaque sens, un quart de sa
+   * surface. Un calque y entre en gardant ses proportions.
+   */
+  get newLayerBox() {
+    return { w: this.canvas.width / 2, h: this.canvas.height / 2 };
+  }
+  fitNewLayerBox(obj) {
+    const { w, h } = scaledSize(obj);
+    const box = this.newLayerBox;
+    const scale = Math.min(box.w / w, box.h / h);
+    setShapeSize(obj, w * scale, h * scale);
+  }
+  /** Un calque ajouté sans position (un clic, pas un lâcher) se pose au centre du document. */
+  centerUnplaced(obj, options) {
+    if (options.left != null || options.top != null) return;
+    obj.setPositionByOrigin(this.center, "center", "center");
+    obj.setCoords();
+  }
   /**
    * Supprime un objet du canvas
    */
@@ -2819,6 +2843,7 @@ var LayerManager = class {
   }
   addText(options = {}) {
     const textObj = this.createText(options);
+    this.centerUnplaced(textObj, options);
     this.add(textObj);
     return textObj;
   }
@@ -2826,12 +2851,11 @@ var LayerManager = class {
    * Crée et ajoute un calque image dans un ImageFrame
    */
   async addImage(url, options = {}) {
-    const { left = 100, top = 100, layerId = this.generateId(), imageMeta } = options;
+    const center = this.center;
+    const { left = center.x, top = center.y, layerId = this.generateId(), imageMeta } = options;
     const img = await FabricImage5.fromURL(url, { crossOrigin: "anonymous" });
-    let frameScale = 1;
-    if (img.width > 300 || img.height > 300) {
-      frameScale = Math.min(300 / img.width, 300 / img.height);
-    }
+    const box = this.newLayerBox;
+    const frameScale = Math.min(box.w / img.width, box.h / img.height);
     const frame = new ImageFrame(img, { left, top, layerId, frameScale, imageMeta });
     this.add(frame);
     return frame;
@@ -3006,7 +3030,7 @@ var LayerManager = class {
     const {
       left = 100,
       top = 100,
-      fill = "#ffffff",
+      fill = DEFAULT_SHAPE_FILL,
       stroke,
       shapeType = "rect",
       layerId = this.generateId()
@@ -3014,6 +3038,7 @@ var LayerManager = class {
     const common = { fill, stroke, left, top, width: options.width, height: options.height };
     const shape = options.paths?.length ? createPathsShape(options.paths, { id: shapeType, ...common }) : createShape(shapeType, common);
     shape.set({ layerId, layerType: "shape" });
+    if (options.width == null && options.height == null) this.fitNewLayerBox(shape);
     return shape;
   }
   /** Crée un cadre à fournir (un rect lié, cf. userSlots) sans l'ajouter au canvas. */
@@ -3025,11 +3050,13 @@ var LayerManager = class {
   }
   addUserSlot(options = {}) {
     const shape = this.createUserSlot(options);
+    this.centerUnplaced(shape, options);
     this.add(shape);
     return shape;
   }
   addShape(options = {}) {
     const shape = this.createShape(options);
+    this.centerUnplaced(shape, options);
     this.add(shape);
     return shape;
   }
@@ -3208,7 +3235,7 @@ function clipOfShape(shape) {
 }
 
 // src/SelectionManager.ts
-import { ActiveSelection, Point as Point4 } from "#fabric";
+import { ActiveSelection, Point as Point5 } from "#fabric";
 var SelectionManager = class {
   constructor(canvas) {
     this.canvas = canvas;
@@ -3466,7 +3493,7 @@ var SelectionManager = class {
     const id = idOf(container);
     this._enteredId = id;
     const child = this.canvas.getObjects().slice().reverse().find(
-      (o) => parentIdOf(o) === id && o.containsPoint(new Point4(point.x, point.y))
+      (o) => parentIdOf(o) === id && o.containsPoint(new Point5(point.x, point.y))
     );
     if (child) this.canvas.setActiveObject(child);
     this.canvas.requestRenderAll();
@@ -4573,7 +4600,7 @@ function isSnapTarget(obj) {
 import { ActiveSelection as ActiveSelection3 } from "#fabric";
 
 // src/DragToLayout.ts
-import { Point as Point5 } from "#fabric";
+import { Point as Point6 } from "#fabric";
 
 // src/layout/stack/engine.ts
 var yoga = null;
@@ -5558,7 +5585,7 @@ var DragToLayout = class {
    * need to be on the canvas yet — it is added when the session anchors.
    */
   tick(source, cursor) {
-    source.setPositionByOrigin(new Point5(cursor.x, cursor.y), "center", "center");
+    source.setPositionByOrigin(new Point6(cursor.x, cursor.y), "center", "center");
     source.setCoords();
     this.move(source, cursor);
     if (this.canvas.getObjects().includes(source)) this.canvas.requestRenderAll();
@@ -7947,7 +7974,7 @@ var _FabricEditor = class _FabricEditor {
    * remplacement, et l'image est ajoutée.
    */
   findDropTargetAtPoint(x, y) {
-    const point = new Point6(x, y);
+    const point = new Point7(x, y);
     const objects = this.canvas.getObjects().slice().reverse();
     for (const obj of objects) {
       if (obj.get(DRAG_PREVIEW_KEY)) continue;
@@ -8053,7 +8080,7 @@ var PreviewCanvas = class extends StaticCanvas {
 };
 
 // src/DropHandler.ts
-import { FabricImage as FabricImage9, Point as Point7, Rect as Rect5 } from "#fabric";
+import { FabricImage as FabricImage9, Point as Point8, Rect as Rect5 } from "#fabric";
 var HIGHLIGHT_COLOR = "#3b82f6";
 var KIND_CAPABILITIES = {
   image: { layout: false, replaceTarget: true },
@@ -8224,7 +8251,7 @@ var DropHandler = class {
       if (!committed && object) {
         if (e) {
           const pointer = this.editor.canvas.getScenePoint(e);
-          object.setPositionByOrigin(new Point7(pointer.x, pointer.y), "center", "center");
+          object.setPositionByOrigin(new Point8(pointer.x, pointer.y), "center", "center");
           object.setCoords();
         }
         if (!this.editor.canvas.getObjects().includes(object)) {
@@ -8300,7 +8327,7 @@ var DropHandler = class {
         this.editor.layout.tickExternalDrag(object, pointer);
         return;
       }
-      object.setPositionByOrigin(new Point7(pointer.x, pointer.y), "center", "center");
+      object.setPositionByOrigin(new Point8(pointer.x, pointer.y), "center", "center");
       object.setCoords();
       this.editor.canvas.requestRenderAll();
     }
@@ -8557,7 +8584,7 @@ var DropHandler = class {
     if (e && !this.intersectsCanvas(e, null)) return null;
     const pointer = e ? this.editor.canvas.getScenePoint(e) : null;
     const object = this.editor.layers.createUserSlot(opts);
-    if (pointer) object.setPositionByOrigin(new Point7(pointer.x, pointer.y), "center", "center");
+    if (pointer) object.setPositionByOrigin(new Point8(pointer.x, pointer.y), "center", "center");
     this.editor.layers.add(object);
     this.editor.canvas.setActiveObject(object);
     this.editor.canvas.renderAll();

@@ -119,7 +119,7 @@ import { createRequire } from "module";
 import { StaticCanvas, FabricObject as FabricObject4 } from "#fabric";
 
 // src/LayerManager.ts
-import { FabricImage as FabricImage5, Group as Group4, util as util2 } from "#fabric";
+import { FabricImage as FabricImage5, Group as Group4, Point as Point3, util as util2 } from "#fabric";
 
 // src/controls/CustomTextbox.ts
 import { Textbox, Point, controlsUtils } from "#fabric";
@@ -1095,7 +1095,7 @@ var _FabPath = class _FabPath extends Path {
   /**
    * Create a FabPath from raw path data (normalized `d` + optional authored fill).
    * The authored fill wins over options.fill: callers pass their GENERIC default
-   * there (LayerManager's "#ffffff") — a colorless path takes it, an authored one
+   * there (LayerManager's DEFAULT_SHAPE_FILL) — a colorless path takes it, an authored one
    * keeps its charte color. Recoloring happens on the object afterwards, never here.
    *
    * Dimension logic:
@@ -1475,6 +1475,11 @@ function scaledSize(obj) {
     w: obj.width * (obj.scaleX || 1),
     h: obj.height * (obj.scaleY || 1)
   };
+}
+function setShapeSize(obj, w, h) {
+  const sized = obj;
+  if (typeof sized.setSize === "function") sized.setSize(w, h);
+  else obj.set({ scaleX: w / (obj.width || 1), scaleY: h / (obj.height || 1) });
 }
 
 // src/ImageFrame.ts
@@ -2042,6 +2047,7 @@ classRegistry4.setClass(ImageFrame, "ImageFrame");
 
 // src/LayerManager.ts
 var BACKGROUND_LAYER_ID = "originalImage";
+var DEFAULT_SHAPE_FILL = "#d9d9d9";
 var LayerManager = class {
   constructor(canvas) {
     this.canvas = canvas;
@@ -2121,6 +2127,29 @@ var LayerManager = class {
     }
     return obj;
   }
+  /** Le centre du document. */
+  get center() {
+    return new Point3(this.canvas.width / 2, this.canvas.height / 2);
+  }
+  /**
+   * La boîte d'un calque neuf : la moitié du document dans chaque sens, un quart de sa
+   * surface. Un calque y entre en gardant ses proportions.
+   */
+  get newLayerBox() {
+    return { w: this.canvas.width / 2, h: this.canvas.height / 2 };
+  }
+  fitNewLayerBox(obj) {
+    const { w, h } = scaledSize(obj);
+    const box = this.newLayerBox;
+    const scale = Math.min(box.w / w, box.h / h);
+    setShapeSize(obj, w * scale, h * scale);
+  }
+  /** Un calque ajouté sans position (un clic, pas un lâcher) se pose au centre du document. */
+  centerUnplaced(obj, options) {
+    if (options.left != null || options.top != null) return;
+    obj.setPositionByOrigin(this.center, "center", "center");
+    obj.setCoords();
+  }
   /**
    * Supprime un objet du canvas
    */
@@ -2188,6 +2217,7 @@ var LayerManager = class {
   }
   addText(options = {}) {
     const textObj = this.createText(options);
+    this.centerUnplaced(textObj, options);
     this.add(textObj);
     return textObj;
   }
@@ -2195,12 +2225,11 @@ var LayerManager = class {
    * Crée et ajoute un calque image dans un ImageFrame
    */
   async addImage(url, options = {}) {
-    const { left = 100, top = 100, layerId = this.generateId(), imageMeta } = options;
+    const center = this.center;
+    const { left = center.x, top = center.y, layerId = this.generateId(), imageMeta } = options;
     const img = await FabricImage5.fromURL(url, { crossOrigin: "anonymous" });
-    let frameScale = 1;
-    if (img.width > 300 || img.height > 300) {
-      frameScale = Math.min(300 / img.width, 300 / img.height);
-    }
+    const box = this.newLayerBox;
+    const frameScale = Math.min(box.w / img.width, box.h / img.height);
     const frame = new ImageFrame(img, { left, top, layerId, frameScale, imageMeta });
     this.add(frame);
     return frame;
@@ -2375,7 +2404,7 @@ var LayerManager = class {
     const {
       left = 100,
       top = 100,
-      fill = "#ffffff",
+      fill = DEFAULT_SHAPE_FILL,
       stroke,
       shapeType = "rect",
       layerId = this.generateId()
@@ -2383,6 +2412,7 @@ var LayerManager = class {
     const common = { fill, stroke, left, top, width: options.width, height: options.height };
     const shape = options.paths?.length ? createPathsShape(options.paths, { id: shapeType, ...common }) : createShape(shapeType, common);
     shape.set({ layerId, layerType: "shape" });
+    if (options.width == null && options.height == null) this.fitNewLayerBox(shape);
     return shape;
   }
   /** Crée un cadre à fournir (un rect lié, cf. userSlots) sans l'ajouter au canvas. */
@@ -2394,11 +2424,13 @@ var LayerManager = class {
   }
   addUserSlot(options = {}) {
     const shape = this.createUserSlot(options);
+    this.centerUnplaced(shape, options);
     this.add(shape);
     return shape;
   }
   addShape(options = {}) {
     const shape = this.createShape(options);
+    this.centerUnplaced(shape, options);
     this.add(shape);
     return shape;
   }
