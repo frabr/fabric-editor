@@ -1898,14 +1898,14 @@ declare class HistoryManager {
 }
 
 interface SnappingConfig {
-    /** Distance en pixels pour déclencher le snap (défaut: 10) */
+    /** Distance en pixels ÉCRAN pour déclencher le snap (défaut: 8) — divisée par le zoom */
     threshold?: number;
     /** Activer le snap au centre du canvas (défaut: true) */
     snapToCenter?: boolean;
     /** Activer le snap aux bords du canvas (défaut: true) */
     snapToEdges?: boolean;
 }
-interface SnapGuide {
+interface SnapGuide$1 {
     orientation: "horizontal" | "vertical";
     position: number;
 }
@@ -1915,21 +1915,24 @@ interface ResizeSnapResult {
     /** Nouvelle hauteur ajustée (ou null si pas de snap vertical) */
     height: number | null;
     /** Guides actifs à afficher */
-    guides: SnapGuide[];
+    guides: SnapGuide$1[];
 }
 /**
  * Gère le snapping (aimantage) des objets sur le canvas.
  *
- * Permet aux objets de s'aligner automatiquement sur :
- * - Le centre horizontal/vertical du canvas
- * - Les bords du canvas
+ * Déplacement : guides façon Figma/Canva (src/snap.ts) — les bords et centres de l'objet
+ * s'aimantent sur ceux de la page et des autres objets, sans état (l'objet suit le pointeur
+ * dès qu'il sort du seuil), un guide joint l'objet et sa cible.
+ *
+ * Redimensionnement d'une image (ImageFrame) : bords et centre de la page.
  */
 declare class SnappingManager {
     private canvas;
     private config;
     private guides;
     private enabled;
-    private snapState;
+    /** Les guides actifs du déplacement en cours (préférés tant qu'ils restent dans le seuil) */
+    private kept;
     private resizeSnapState;
     /** Multiplicateur pour le seuil de sortie du snap (défaut: 2x le seuil d'entrée) */
     private exitMultiplier;
@@ -1946,7 +1949,16 @@ declare class SnappingManager {
      * Met à jour la configuration
      */
     updateConfig(config: Partial<SnappingConfig>): void;
+    private readonly onMoving;
+    private readonly onResizing;
+    private readonly onSettled;
     private setupEventListeners;
+    /**
+     * Un objet (ou une sélection) se déplace : il s'aimante sur les bords et centres de la
+     * page et des autres objets, dans le seuil (pixels écran). Un enfant de pile n'est pas
+     * aimanté — la pile le place. Ni l'objet, ni sa descendance, ni ses ancêtres ne sont des
+     * cibles : un groupe suit son enfant, s'y caler ferait boucle.
+     */
     private handleObjectMoving;
     private handleObjectScaling;
     private updateGuides;
@@ -2454,6 +2466,15 @@ declare class PreviewCanvas extends StaticCanvas {
     private _showToken;
 }
 
+/** Un guide : un trait sur l'axe `axis` (x : vertical, y : horizontal) à la coordonnée
+ *  `at`, de `from` à `to` sur l'autre axe. */
+interface SnapGuide {
+    axis: "x" | "y";
+    at: number;
+    from: number;
+    to: number;
+}
+
 /**
  * Manages ephemeral visual guides (overlays) on a Fabric canvas.
  *
@@ -2540,6 +2561,12 @@ declare class CanvasGuides {
     /**
      * Show snap alignment lines (horizontal/vertical) spanning the full canvas.
      */
+    /**
+     * Les guides de l'aimant d'un déplacement (SnappingManager, src/snap.ts) : un pointillé
+     * fin à l'écran quel que soit le zoom, qui joint l'objet et sa cible et dépasse un peu
+     * de chaque côté.
+     */
+    showSnapGuides(guides: SnapGuide[], zoom: number): void;
     showSnapLines(guides: Array<{
         orientation: "horizontal" | "vertical";
         position: number;

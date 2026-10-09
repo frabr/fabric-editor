@@ -243,7 +243,7 @@ __export(index_exports, {
 module.exports = __toCommonJS(index_exports);
 
 // src/FabricEditor.ts
-var import_fabric20 = require("#fabric");
+var import_fabric21 = require("#fabric");
 
 // src/DesignCanvas.ts
 var import_fabric = require("#fabric");
@@ -4075,6 +4075,9 @@ var HistoryManager = class {
   }
 };
 
+// src/SnappingManager.ts
+var import_fabric16 = require("#fabric");
+
 // src/ui/guides.ts
 var import_fabric15 = require("#fabric");
 
@@ -4342,12 +4345,27 @@ var CanvasGuides = class {
   /**
    * Show snap alignment lines (horizontal/vertical) spanning the full canvas.
    */
+  /**
+   * Les guides de l'aimant d'un déplacement (SnappingManager, src/snap.ts) : un pointillé
+   * fin à l'écran quel que soit le zoom, qui joint l'objet et sa cible et dépasse un peu
+   * de chaque côté.
+   */
+  showSnapGuides(guides, zoom) {
+    this.clear();
+    const overshoot = 8 / zoom;
+    for (const guide2 of guides) {
+      const from = guide2.from - overshoot;
+      const to = guide2.to + overshoot;
+      const coords = guide2.axis === "x" ? [guide2.at, from, guide2.at, to] : [from, guide2.at, to, guide2.at];
+      this.addLine(coords, { strokeWidth: 1 / zoom, strokeDashArray: [4 / zoom, 4 / zoom] });
+    }
+  }
   showSnapLines(guides) {
     this.clear();
     const canvasW = this.canvas.width;
     const canvasH = this.canvas.height;
-    for (const guide of guides) {
-      const coords = guide.orientation === "vertical" ? [guide.position, 0, guide.position, canvasH] : [0, guide.position, canvasW, guide.position];
+    for (const guide2 of guides) {
+      const coords = guide2.orientation === "vertical" ? [guide2.position, 0, guide2.position, canvasH] : [0, guide2.position, canvasW, guide2.position];
       this.addLine(coords, { strokeDashArray: [5, 5] });
     }
   }
@@ -4371,17 +4389,65 @@ function createHatchPattern(hex) {
   return new import_fabric15.Pattern({ source: canvas, repeat: "repeat" });
 }
 
+// src/snap.ts
+var marks = (start, size) => [
+  { at: start, center: false },
+  { at: start + size / 2, center: true },
+  { at: start + size, center: false }
+];
+function snapMove(moving, targets, threshold, keep = {}) {
+  let bestX = null;
+  let bestY = null;
+  for (const target of targets) {
+    bestX = closest(bestX, marks(moving.left, moving.width), marks(target.left, target.width), threshold, target, keep.x);
+    bestY = closest(bestY, marks(moving.top, moving.height), marks(target.top, target.height), threshold, target, keep.y);
+  }
+  const dx = bestX?.delta ?? 0;
+  const dy = bestY?.delta ?? 0;
+  const placed = { ...moving, left: moving.left + dx, top: moving.top + dy };
+  const guides = [];
+  if (bestX) guides.push(guide("x", bestX.at, placed.top, placed.height, bestX.target.top, bestX.target.height));
+  if (bestY) guides.push(guide("y", bestY.at, placed.left, placed.width, bestY.target.left, bestY.target.width));
+  return { dx, dy, guides };
+}
+function closest(best, own, theirs, threshold, target, kept) {
+  for (const a of own) {
+    for (const b of theirs) {
+      if (a.center !== b.center) continue;
+      const delta = b.at - a.at;
+      if (Math.abs(delta) > threshold) continue;
+      if (!best || better(b.at, delta, best, kept)) best = { at: b.at, delta, target };
+    }
+  }
+  return best;
+}
+function better(at, delta, best, kept) {
+  if (best.at === kept) return false;
+  if (at === kept) return true;
+  return Math.abs(delta) < Math.abs(best.delta);
+}
+function guide(axis, at, start, size, targetStart, targetSize) {
+  return { axis, at, from: Math.min(start, targetStart), to: Math.max(start + size, targetStart + targetSize) };
+}
+
 // src/SnappingManager.ts
 var SnappingManager = class {
   constructor(canvas, config = {}, guideColor) {
     this.enabled = true;
-    this.snapState = null;
+    /** Les guides actifs du déplacement en cours (préférés tant qu'ils restent dans le seuil) */
+    this.kept = {};
     this.resizeSnapState = null;
     /** Multiplicateur pour le seuil de sortie du snap (défaut: 2x le seuil d'entrée) */
     this.exitMultiplier = 2;
+    this.onMoving = (e) => this.handleObjectMoving(e.target);
+    this.onResizing = (e) => this.handleObjectScaling(e.target);
+    this.onSettled = () => {
+      this.kept = {};
+      this.guides.clearAndRender();
+    };
     this.canvas = canvas;
     this.config = {
-      threshold: config.threshold ?? 10,
+      threshold: config.threshold ?? 8,
       snapToCenter: config.snapToCenter ?? true,
       snapToEdges: config.snapToEdges ?? true
     };
@@ -4410,153 +4476,46 @@ var SnappingManager = class {
     Object.assign(this.config, config);
   }
   setupEventListeners() {
-    this.canvas.on("object:moving", (e) => this.handleObjectMoving(e));
-    this.canvas.on("object:resizing", (e) => this.handleObjectScaling(e.target));
-    this.canvas.on("object:modified", () => {
-      this.guides.clearAndRender();
-      this.snapState = null;
-    });
-    this.canvas.on("selection:cleared", () => {
-      this.guides.clearAndRender();
-      this.snapState = null;
-    });
-    this.canvas.on("mouse:down", () => {
-      this.snapState = null;
-    });
+    this.canvas.on("object:moving", this.onMoving);
+    this.canvas.on("object:resizing", this.onResizing);
+    this.canvas.on("object:modified", this.onSettled);
+    this.canvas.on("selection:cleared", this.onSettled);
+    this.canvas.on("mouse:up", this.onSettled);
   }
-  handleObjectMoving(e) {
-    const obj = e.target;
+  /**
+   * Un objet (ou une sélection) se déplace : il s'aimante sur les bords et centres de la
+   * page et des autres objets, dans le seuil (pixels écran). Un enfant de pile n'est pas
+   * aimanté — la pile le place. Ni l'objet, ni sa descendance, ni ses ancêtres ne sont des
+   * cibles : un groupe suit son enfant, s'y caler ferait boucle.
+   */
+  handleObjectMoving(obj) {
     if (!obj || !this.enabled) return;
     if (obj.get("layerId") === "originalImage") return;
-    const activeGuides = [];
-    const bound = obj.getBoundingRect();
-    const pointer = e.pointer || { x: obj.left || 0, y: obj.top || 0 };
-    const objCenterX = bound.left + bound.width / 2;
-    const objCenterY = bound.top + bound.height / 2;
-    const canvasCenterX = this.canvas.width / 2;
-    const canvasCenterY = this.canvas.height / 2;
-    if (!this.snapState) {
-      this.snapState = {
-        snappedX: null,
-        snappedY: null,
-        lastPointerX: pointer.x,
-        lastPointerY: pointer.y
-      };
+    const moving = obj instanceof import_fabric16.ActiveSelection ? obj.getObjects() : [obj];
+    const objects = this.canvas.getObjects();
+    if (!(obj instanceof import_fabric16.ActiveSelection) && stackParentOf(obj, objects)) {
+      this.guides.clearAndRender();
+      return;
     }
-    const pointerDeltaX = pointer.x - this.snapState.lastPointerX;
-    const pointerDeltaY = pointer.y - this.snapState.lastPointerY;
-    const enterThreshold = this.config.threshold;
-    const exitThreshold = this.config.threshold * this.exitMultiplier;
-    let snapX = null;
-    let snapY = null;
-    let newSnappedX = null;
-    let newSnappedY = null;
-    if (this.config.snapToCenter) {
-      const distToCenter = Math.abs(objCenterX - canvasCenterX);
-      const wasSnappedToCenter = this.snapState.snappedX === "center";
-      if (wasSnappedToCenter) {
-        if (Math.abs(pointerDeltaX) < exitThreshold) {
-          snapX = canvasCenterX - bound.width / 2;
-          newSnappedX = "center";
-          activeGuides.push({ orientation: "vertical", position: canvasCenterX });
-        }
-      } else if (distToCenter < enterThreshold) {
-        snapX = canvasCenterX - bound.width / 2;
-        newSnappedX = "center";
-        activeGuides.push({ orientation: "vertical", position: canvasCenterX });
-        this.snapState.lastPointerX = pointer.x;
-      }
+    const excluded = /* @__PURE__ */ new Set([
+      ...subtreeOf(objects, moving),
+      ...moving.flatMap((member) => ancestorsOf(member, objects))
+    ]);
+    const targets = objects.filter((other) => !excluded.has(other) && isSnapTarget(other)).map((other) => other.getBoundingRect());
+    targets.push({ left: 0, top: 0, width: this.canvas.width, height: this.canvas.height });
+    const zoom = this.canvas.getZoom() || 1;
+    obj.setCoords();
+    const { dx, dy, guides } = snapMove(obj.getBoundingRect(), targets, this.config.threshold / zoom, this.kept);
+    this.kept = {
+      x: guides.find((guide2) => guide2.axis === "x")?.at,
+      y: guides.find((guide2) => guide2.axis === "y")?.at
+    };
+    if (dx || dy) {
+      obj.set({ left: (obj.left ?? 0) + dx, top: (obj.top ?? 0) + dy });
+      obj.setCoords();
     }
-    if (this.config.snapToEdges && newSnappedX === null) {
-      const distToLeft = Math.abs(bound.left);
-      const distToRight = Math.abs(bound.left + bound.width - this.canvas.width);
-      const wasSnappedToLeft = this.snapState.snappedX === "left";
-      const wasSnappedToRight = this.snapState.snappedX === "right";
-      if (wasSnappedToLeft) {
-        if (Math.abs(pointerDeltaX) < exitThreshold) {
-          snapX = 0;
-          newSnappedX = "left";
-          activeGuides.push({ orientation: "vertical", position: 0 });
-        }
-      } else if (wasSnappedToRight) {
-        if (Math.abs(pointerDeltaX) < exitThreshold) {
-          snapX = this.canvas.width - bound.width;
-          newSnappedX = "right";
-          activeGuides.push({ orientation: "vertical", position: this.canvas.width });
-        }
-      } else if (distToLeft < enterThreshold) {
-        snapX = 0;
-        newSnappedX = "left";
-        activeGuides.push({ orientation: "vertical", position: 0 });
-        this.snapState.lastPointerX = pointer.x;
-      } else if (distToRight < enterThreshold) {
-        snapX = this.canvas.width - bound.width;
-        newSnappedX = "right";
-        activeGuides.push({ orientation: "vertical", position: this.canvas.width });
-        this.snapState.lastPointerX = pointer.x;
-      }
-    }
-    if (this.config.snapToCenter) {
-      const distToCenter = Math.abs(objCenterY - canvasCenterY);
-      const wasSnappedToCenter = this.snapState.snappedY === "center";
-      if (wasSnappedToCenter) {
-        if (Math.abs(pointerDeltaY) < exitThreshold) {
-          snapY = canvasCenterY - bound.height / 2;
-          newSnappedY = "center";
-          activeGuides.push({ orientation: "horizontal", position: canvasCenterY });
-        }
-      } else if (distToCenter < enterThreshold) {
-        snapY = canvasCenterY - bound.height / 2;
-        newSnappedY = "center";
-        activeGuides.push({ orientation: "horizontal", position: canvasCenterY });
-        this.snapState.lastPointerY = pointer.y;
-      }
-    }
-    if (this.config.snapToEdges && newSnappedY === null) {
-      const distToTop = Math.abs(bound.top);
-      const distToBottom = Math.abs(bound.top + bound.height - this.canvas.height);
-      const wasSnappedToTop = this.snapState.snappedY === "top";
-      const wasSnappedToBottom = this.snapState.snappedY === "bottom";
-      if (wasSnappedToTop) {
-        if (Math.abs(pointerDeltaY) < exitThreshold) {
-          snapY = 0;
-          newSnappedY = "top";
-          activeGuides.push({ orientation: "horizontal", position: 0 });
-        }
-      } else if (wasSnappedToBottom) {
-        if (Math.abs(pointerDeltaY) < exitThreshold) {
-          snapY = this.canvas.height - bound.height;
-          newSnappedY = "bottom";
-          activeGuides.push({ orientation: "horizontal", position: this.canvas.height });
-        }
-      } else if (distToTop < enterThreshold) {
-        snapY = 0;
-        newSnappedY = "top";
-        activeGuides.push({ orientation: "horizontal", position: 0 });
-        this.snapState.lastPointerY = pointer.y;
-      } else if (distToBottom < enterThreshold) {
-        snapY = this.canvas.height - bound.height;
-        newSnappedY = "bottom";
-        activeGuides.push({ orientation: "horizontal", position: this.canvas.height });
-        this.snapState.lastPointerY = pointer.y;
-      }
-    }
-    this.snapState.snappedX = newSnappedX;
-    this.snapState.snappedY = newSnappedY;
-    if (snapX !== null || snapY !== null) {
-      if (obj.originX === "center" && obj.originY === "center") {
-        obj.set({
-          left: snapX !== null ? snapX + bound.width / 2 : obj.left,
-          top: snapY !== null ? snapY + bound.height / 2 : obj.top
-        });
-      } else {
-        obj.set({
-          left: snapX ?? obj.left,
-          top: snapY ?? obj.top
-        });
-      }
-    }
-    this.updateGuides(activeGuides);
+    this.guides.showSnapGuides(guides, zoom);
+    this.canvas.requestRenderAll();
   }
   handleObjectScaling(obj) {
     if (!obj || !this.enabled) return;
@@ -4716,18 +4675,22 @@ var SnappingManager = class {
    */
   dispose() {
     this.guides.clear();
-    this.canvas.off("object:moving");
-    this.canvas.off("object:resizing");
-    this.canvas.off("object:modified");
-    this.canvas.off("selection:cleared");
+    this.canvas.off("object:moving", this.onMoving);
+    this.canvas.off("object:resizing", this.onResizing);
+    this.canvas.off("object:modified", this.onSettled);
+    this.canvas.off("selection:cleared", this.onSettled);
+    this.canvas.off("mouse:up", this.onSettled);
   }
 };
+function isSnapTarget(obj) {
+  return obj.visible !== false && !obj.excludeFromExport && obj.evented !== false;
+}
 
 // src/LayoutManager.ts
-var import_fabric18 = require("#fabric");
+var import_fabric19 = require("#fabric");
 
 // src/DragToLayout.ts
-var import_fabric16 = require("#fabric");
+var import_fabric17 = require("#fabric");
 
 // src/layout/stack/engine.ts
 var yoga = null;
@@ -5712,7 +5675,7 @@ var DragToLayout = class {
    * need to be on the canvas yet — it is added when the session anchors.
    */
   tick(source, cursor) {
-    source.setPositionByOrigin(new import_fabric16.Point(cursor.x, cursor.y), "center", "center");
+    source.setPositionByOrigin(new import_fabric17.Point(cursor.x, cursor.y), "center", "center");
     source.setCoords();
     this.move(source, cursor);
     if (this.canvas.getObjects().includes(source)) this.canvas.requestRenderAll();
@@ -6163,16 +6126,16 @@ function arrangeFree(container, objects) {
 }
 
 // src/ui/controls.ts
-var import_fabric17 = require("#fabric");
+var import_fabric18 = require("#fabric");
 function applyControlStyle(canvas, guideColor, resolveTarget, userSlotLabel) {
   const gc = guideColor;
-  import_fabric17.FabricObject.ownDefaults.borderColor = gc;
-  import_fabric17.FabricObject.ownDefaults.borderScaleFactor = 2;
-  import_fabric17.FabricObject.ownDefaults.borderOpacityWhenMoving = 1;
-  import_fabric17.FabricObject.ownDefaults.cornerColor = "#ffffff";
-  import_fabric17.FabricObject.ownDefaults.cornerStrokeColor = "#000000";
-  import_fabric17.FabricObject.ownDefaults.transparentCorners = false;
-  import_fabric17.FabricObject.ownDefaults.cornerSize = 16;
+  import_fabric18.FabricObject.ownDefaults.borderColor = gc;
+  import_fabric18.FabricObject.ownDefaults.borderScaleFactor = 2;
+  import_fabric18.FabricObject.ownDefaults.borderOpacityWhenMoving = 1;
+  import_fabric18.FabricObject.ownDefaults.cornerColor = "#ffffff";
+  import_fabric18.FabricObject.ownDefaults.cornerStrokeColor = "#000000";
+  import_fabric18.FabricObject.ownDefaults.transparentCorners = false;
+  import_fabric18.FabricObject.ownDefaults.cornerSize = 16;
   const hoverProgress = /* @__PURE__ */ new WeakMap();
   installControlRenderer(gc, hoverProgress);
   installControlHitAreas(canvas);
@@ -6187,7 +6150,7 @@ var ANIM_SPEED = 10;
 function installControlRenderer(gc, hoverProgress) {
   const [activeR, activeG, activeB] = parseHex(gc);
   const hoverStart = /* @__PURE__ */ new WeakMap();
-  import_fabric17.Control.prototype.render = function(ctx, left, top, styleOverride, fabricObject) {
+  import_fabric18.Control.prototype.render = function(ctx, left, top, styleOverride, fabricObject) {
     if (fabricObject.isMoving) return;
     const baseColor = styleOverride?.cornerColor ?? fabricObject.cornerColor;
     const isDefault = baseColor === DEFAULT_COLOR2;
@@ -6277,13 +6240,13 @@ var resizeEdge = (eventData, transform, x, y) => {
   return changed;
 };
 function installControlHitAreas(canvas) {
-  const createSideRotationControl = () => new import_fabric17.Control({
+  const createSideRotationControl = () => new import_fabric18.Control({
     x: 0.5,
     y: 0,
     offsetX: 30,
     offsetY: 0,
-    actionHandler: import_fabric17.controlsUtils.rotationWithSnapping,
-    cursorStyleHandler: import_fabric17.controlsUtils.rotationStyleHandler,
+    actionHandler: import_fabric18.controlsUtils.rotationWithSnapping,
+    cursorStyleHandler: import_fabric18.controlsUtils.rotationStyleHandler,
     withConnection: true,
     actionName: "rotate"
   });
@@ -6722,7 +6685,7 @@ var LayoutManager2 = class {
   // ── Canvas event handlers ─────────────────────────────────────────
   onMoving(e) {
     const obj = e.target;
-    if (obj instanceof import_fabric18.ActiveSelection) {
+    if (obj instanceof import_fabric19.ActiveSelection) {
       this.moveFollowers(obj, obj.getObjects(), e.transform);
       return;
     }
@@ -6786,11 +6749,11 @@ var LayoutManager2 = class {
   onModified(e) {
     const obj = e.target;
     if (this.followers) {
-      const moved = obj instanceof import_fabric18.ActiveSelection ? obj.getObjects() : [obj];
+      const moved = obj instanceof import_fabric19.ActiveSelection ? obj.getObjects() : [obj];
       this.moveFollowers(obj, moved, this.followers.transform);
     }
     this.followers = null;
-    if (obj instanceof import_fabric18.ActiveSelection) {
+    if (obj instanceof import_fabric19.ActiveSelection) {
       this.drag.reset();
       return;
     }
@@ -6853,7 +6816,7 @@ var LayoutManager2 = class {
 var DRAG_PREVIEW_KEY = "dragPreview";
 
 // src/editor/style-commands.ts
-var import_fabric19 = require("#fabric");
+var import_fabric20 = require("#fabric");
 
 // src/clipping/antiScale.ts
 function antiScale(obj) {
@@ -7079,7 +7042,7 @@ var StyleCommands = class {
       obj.nextClipShape();
       obj.dirty = true;
       this.editor.canvas.requestRenderAll();
-    } else if (obj instanceof import_fabric19.FabricImage) {
+    } else if (obj instanceof import_fabric20.FabricImage) {
       switchClip(obj);
       obj.dirty = true;
       this.editor.canvas.remove(obj);
@@ -7091,7 +7054,7 @@ var StyleCommands = class {
    */
   switchShape() {
     const obj = this.editor.selection.current;
-    if (!obj || obj instanceof import_fabric19.FabricImage) return;
+    if (!obj || obj instanceof import_fabric20.FabricImage) return;
     const currentShapeId = obj.id;
     const nextShapeType = nextShape(currentShapeId);
     this.changeShape(nextShapeType);
@@ -7106,7 +7069,7 @@ var StyleCommands = class {
       obj.applyClipShape(shapeType);
       obj.dirty = true;
       this.editor.canvas.requestRenderAll();
-    } else if (!(obj instanceof import_fabric19.FabricImage)) {
+    } else if (!(obj instanceof import_fabric20.FabricImage)) {
       const newObj = switchShape(obj, shapeType);
       const layerId = obj.get("layerId");
       const layerType = obj.get("layerType");
@@ -7222,7 +7185,7 @@ var StyleCommands = class {
     const rad = angleDeg * Math.PI / 180;
     const cos = Math.cos(rad);
     const sin = Math.sin(rad);
-    const gradient = new import_fabric19.Gradient({
+    const gradient = new import_fabric20.Gradient({
       type: "linear",
       gradientUnits: "percentage",
       coords: {
@@ -7300,7 +7263,7 @@ var StyleCommands = class {
     const obj = this.editor.selection.current;
     if (!obj) return;
     const existing = obj.shadow;
-    const shadow = new import_fabric19.Shadow({
+    const shadow = new import_fabric20.Shadow({
       color: opts.color ?? existing?.color ?? "rgba(0,0,0,0.5)",
       blur: opts.blur ?? existing?.blur ?? 10,
       offsetX: opts.offsetX ?? existing?.offsetX ?? 5,
@@ -8096,7 +8059,7 @@ var _FabricEditor = class _FabricEditor {
    * remplacement, et l'image est ajoutée.
    */
   findDropTargetAtPoint(x, y) {
-    const point = new import_fabric20.Point(x, y);
+    const point = new import_fabric21.Point(x, y);
     const objects = this.canvas.getObjects().slice().reverse();
     for (const obj of objects) {
       if (obj.get(DRAG_PREVIEW_KEY)) continue;
@@ -8120,13 +8083,13 @@ var _FabricEditor = class _FabricEditor {
   extendFabricObject() {
     if (_FabricEditor._toObjectExtended) return;
     _FabricEditor._toObjectExtended = true;
-    const originalToObject = import_fabric20.FabricObject.prototype.toObject;
-    import_fabric20.FabricObject.prototype.toObject = function(propertiesToInclude) {
+    const originalToObject = import_fabric21.FabricObject.prototype.toObject;
+    import_fabric21.FabricObject.prototype.toObject = function(propertiesToInclude) {
       const data = originalToObject.call(
         this,
         ["layerId", "layout", "bindings"].concat(propertiesToInclude || [])
       );
-      if (this.group instanceof import_fabric20.ActiveSelection) {
+      if (this.group instanceof import_fabric21.ActiveSelection) {
         const { x, y } = this.getXY();
         Object.assign(data, { left: x, top: y });
       }
@@ -8141,8 +8104,8 @@ _FabricEditor._toObjectExtended = false;
 var FabricEditor = _FabricEditor;
 
 // src/PreviewCanvas.ts
-var import_fabric21 = require("#fabric");
-var PreviewCanvas = class extends import_fabric21.StaticCanvas {
+var import_fabric22 = require("#fabric");
+var PreviewCanvas = class extends import_fabric22.StaticCanvas {
   constructor(el, opts) {
     const { width, height, ...canvasOpts } = opts;
     super(el, {
@@ -8202,7 +8165,7 @@ var PreviewCanvas = class extends import_fabric21.StaticCanvas {
 };
 
 // src/DropHandler.ts
-var import_fabric22 = require("#fabric");
+var import_fabric23 = require("#fabric");
 var HIGHLIGHT_COLOR = "#3b82f6";
 var KIND_CAPABILITIES = {
   image: { layout: false, replaceTarget: true },
@@ -8373,7 +8336,7 @@ var DropHandler = class {
       if (!committed && object) {
         if (e) {
           const pointer = this.editor.canvas.getScenePoint(e);
-          object.setPositionByOrigin(new import_fabric22.Point(pointer.x, pointer.y), "center", "center");
+          object.setPositionByOrigin(new import_fabric23.Point(pointer.x, pointer.y), "center", "center");
           object.setCoords();
         }
         if (!this.editor.canvas.getObjects().includes(object)) {
@@ -8449,7 +8412,7 @@ var DropHandler = class {
         this.editor.layout.tickExternalDrag(object, pointer);
         return;
       }
-      object.setPositionByOrigin(new import_fabric22.Point(pointer.x, pointer.y), "center", "center");
+      object.setPositionByOrigin(new import_fabric23.Point(pointer.x, pointer.y), "center", "center");
       object.setCoords();
       this.editor.canvas.requestRenderAll();
     }
@@ -8578,7 +8541,7 @@ var DropHandler = class {
       height = target.height;
       clipPath = target.clipPath;
     }
-    const fabricOverlay = new import_fabric22.Rect({
+    const fabricOverlay = new import_fabric23.Rect({
       left: target.left,
       top: target.top,
       width,
@@ -8671,7 +8634,7 @@ var DropHandler = class {
    * drop-target detection.
    */
   async createImagePreview(url) {
-    const img = await import_fabric22.FabricImage.fromURL(url, { crossOrigin: "anonymous" });
+    const img = await import_fabric23.FabricImage.fromURL(url, { crossOrigin: "anonymous" });
     let scale = 1;
     if (img.width > 300 || img.height > 300) {
       scale = Math.min(300 / img.width, 300 / img.height);
@@ -8706,7 +8669,7 @@ var DropHandler = class {
     if (e && !this.intersectsCanvas(e, null)) return null;
     const pointer = e ? this.editor.canvas.getScenePoint(e) : null;
     const object = this.editor.layers.createUserSlot(opts);
-    if (pointer) object.setPositionByOrigin(new import_fabric22.Point(pointer.x, pointer.y), "center", "center");
+    if (pointer) object.setPositionByOrigin(new import_fabric23.Point(pointer.x, pointer.y), "center", "center");
     this.editor.layers.add(object);
     this.editor.canvas.setActiveObject(object);
     this.editor.canvas.renderAll();
