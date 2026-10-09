@@ -14,7 +14,7 @@ import type { LayoutData } from "./layout/types";
 
 const ALL: ToolId[] = [
   "group", "align", "distribute", "arrangement", "ungroup", "fill", "font", "variables", "image",
-  "promoteBackground", "clip", "outline", "effects", "layout", "animations", "lock", "forward",
+  "promoteBackground", "clip", "outline", "effects", "layout", "containerize", "animations", "lock", "forward",
   "backward", "delete",
 ];
 
@@ -66,17 +66,18 @@ describe("toolsFor", () => {
 
   it("forme libre : pas de disposition ; enfant d'un bloc : disposition, mais pas de plans", () => {
     expect(toolsFor([rect("s")], ALL)).toEqual([
-      "fill", "clip", "outline", "animations", "effects", "lock", "forward", "backward", "delete",
+      "fill", "clip", "outline", "animations", "effects", "containerize", "lock", "forward", "backward", "delete",
     ]);
     const [, child] = onCanvas(rect("b", { container: {} }), rect("c", { child: { parentId: "b" } }));
     expect(toolsFor([child], ALL)).toEqual([
-      "fill", "clip", "outline", "animations", "effects", "layout", "lock", "delete",
+      "fill", "clip", "outline", "animations", "effects", "layout", "containerize", "lock", "delete",
     ]);
   });
 
   it("image : remplacer et passer en fond d'abord, pas de couleur", () => {
     expect(toolsFor([imageFrame("i")], ALL)).toEqual([
-      "image", "promoteBackground", "clip", "animations", "outline", "effects", "lock", "forward", "backward", "delete",
+      "image", "promoteBackground", "clip", "animations", "outline", "effects", "containerize", "lock", "forward",
+      "backward", "delete",
     ]);
   });
 

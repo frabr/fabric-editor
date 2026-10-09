@@ -20,7 +20,7 @@ import { containerDataOf, isContainerObject, parentIdOf } from "./layout/model";
 export type ToolId =
   | "group" | "align" | "distribute" | "arrangement" | "ungroup"
   | "fill" | "font" | "variables" | "image" | "promoteBackground" | "clip" | "outline"
-  | "effects" | "layout" | "animations" | "lock" | "forward" | "backward" | "delete";
+  | "effects" | "layout" | "containerize" | "animations" | "lock" | "forward" | "backward" | "delete";
 
 /**
  * - `text`, `shape`, `image` : un objet seul, d'après sa sorte ;
@@ -33,9 +33,9 @@ export type SelectionKind = "text" | "shape" | "image" | "block" | "group" | "ma
 /** L'ordre des outils, par sorte de sélection (Supprimer s'ajoute à la fin). */
 const ORDER: Record<SelectionKind, ToolId[]> = {
   text: ["fill", "font", "animations", "effects", "variables", "layout", "lock", "forward", "backward"],
-  shape: ["fill", "clip", "outline", "animations", "effects", "layout", "lock", "forward", "backward"],
+  shape: ["fill", "clip", "outline", "animations", "effects", "layout", "containerize", "lock", "forward", "backward"],
   image: [
-    "image", "promoteBackground", "clip", "animations", "outline", "effects", "layout",
+    "image", "promoteBackground", "clip", "animations", "outline", "effects", "layout", "containerize",
     "lock", "forward", "backward",
   ],
   block: [
@@ -96,6 +96,8 @@ function oneAllows(obj: FabricObject, kind: SelectionKind): (tool: ToolId) => bo
       case "animations":
       case "arrangement": return rules.restyles;
       case "ungroup": return rules.deletes && isContainerObject(obj);
+      // Une forme (ou une image) simple devient un bloc : elle accueille, et n'en est pas un
+      case "containerize": return rules.restyles && rules.hosts && !isContainerObject(obj);
       case "lock": return true;
       case "forward":
       case "backward": return rules.restacks;

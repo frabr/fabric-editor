@@ -7,7 +7,7 @@ import { StackResizeSession } from "./layout/stack/resize-session";
 import { MIN_PAD, type AlignItems, type AlignSelf, type Arrangement, type ChildData, type ContainerData, type JustifyContent, type SizingData, type TextOverflow } from "./layout/types";
 import { arrangeAsStack, arrangeFree } from "./layout/arrangement";
 import { syncGroupControls } from "./ui/controls";
-import { placeTopLeft, topLeft } from "./layout/geometry";
+import { placeTopLeft, scaledSize, topLeft } from "./layout/geometry";
 import type { CustomTextbox } from "./controls/CustomTextbox";
 import { rulesOf } from "./capabilities";
 
@@ -153,16 +153,21 @@ export class LayoutManager {
   }
 
   /**
-   * Une forme devient un bloc : un container vide, à sa taille, en colonne — les objets
-   * qu'on y glisse s'y rangent. Glisser un objet sur une forme simple ne la change plus
-   * en container : c'est ce geste-ci, ou grouper puis ranger. Dégrouper la rend simple.
+   * Une forme devient un bloc : un container, même vide, en colonne — les objets qu'on y
+   * glisse s'y rangent. Il épouse son contenu sans jamais descendre sous sa taille actuelle
+   * (hug, plancher minSize). Glisser un objet sur une forme simple ne la change plus en
+   * container : c'est ce geste-ci, ou grouper puis ranger. Dégrouper la rend simple.
    */
   makeContainer(obj: FabricObject): void {
     if (isContainerObject(obj) || !rulesOf(obj).hosts) return;
     const tl = topLeft(obj);
+    const { w, h } = scaledSize(obj);
     obj.set({ originX: "left", originY: "top" });
     placeTopLeft(obj, tl.x, tl.y);
-    updateLayout(obj, { sizing: { x: "fixed", y: "fixed" }, container: { padding: uniformPadding(MIN_PAD) } });
+    updateLayout(obj, {
+      sizing: { x: "hug", y: "hug", minSize: { w, h } },
+      container: { padding: uniformPadding(MIN_PAD) },
+    });
     this.changed();
   }
 
