@@ -3,6 +3,7 @@ import type { DesignCanvas } from "../DesignCanvas";
 import { scaledSize, topLeft } from "../layout/geometry";
 import { hexAlpha } from "./color";
 import { layoutOf } from "../layout/model";
+import type { SnapGuide } from "../snap";
 
 /**
  * Manages ephemeral visual guides (overlays) on a Fabric canvas.
@@ -318,6 +319,23 @@ export class CanvasGuides {
   /**
    * Show snap alignment lines (horizontal/vertical) spanning the full canvas.
    */
+  /**
+   * Les guides de l'aimant d'un déplacement (SnappingManager, src/snap.ts) : un pointillé
+   * fin à l'écran quel que soit le zoom, qui joint l'objet et sa cible et dépasse un peu
+   * de chaque côté.
+   */
+  showSnapGuides(guides: SnapGuide[], zoom: number): void {
+    this.clear();
+    const overshoot = 8 / zoom;
+    for (const guide of guides) {
+      const from = guide.from - overshoot;
+      const to = guide.to + overshoot;
+      const coords: [number, number, number, number] =
+        guide.axis === "x" ? [guide.at, from, guide.at, to] : [from, guide.at, to, guide.at];
+      this.addLine(coords, { strokeWidth: 1 / zoom, strokeDashArray: [4 / zoom, 4 / zoom] });
+    }
+  }
+
   showSnapLines(
     guides: Array<{ orientation: "horizontal" | "vertical"; position: number }>,
   ): void {
