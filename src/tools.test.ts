@@ -58,6 +58,17 @@ describe("selectionKindOf", () => {
 });
 
 describe("toolsFor", () => {
+  it("condition : proposée par l'éditeur de template, sur tout calque seul, verrou compris", () => {
+    const offered: ToolId[] = [...ALL, "condition"];
+    expect(toolsFor([text("t")], offered)).toContain("condition");
+    expect(toolsFor([imageFrame("i")], offered)).toContain("condition");
+    const locked = rect("l");
+    applyLockMode(locked, "full");
+    expect(toolsFor([locked], offered)).toEqual(["condition", "lock"]);
+    expect(toolsFor([rect("a"), rect("b")], offered)).not.toContain("condition");
+    expect(toolsFor([text("t")], ALL)).not.toContain("condition");
+  });
+
   it("texte : couleur et police d'abord, Supprimer en dernier", () => {
     expect(toolsFor([text("t")], ALL)).toEqual([
       "fill", "font", "animations", "effects", "variables", "layout", "lock", "forward", "backward", "delete",

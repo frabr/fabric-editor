@@ -138,6 +138,8 @@ export {
   pendingBindings, hasPendingBindings, lockBoundText, setTextContent, drawBindingBadge, bindingBadgeLabel,
 } from "./bindings";
 export { drawFrameBadge, badgeLabel, type BadgeLabeler } from "./ui/badges";
+export { isGhost, setGhost, GHOST_OPACITY } from "./ghost";
+export { displayFill, setDisplayFill } from "./displayStyle";
 export type { Bindings, BindingSpec } from "./bindings";
 export {
   isUserSlot, userSlotHint, userSlotBinding, collectUserSlots, USER_SCOPE, USER_SLOT_FIELD,

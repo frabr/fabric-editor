@@ -21,6 +21,8 @@ import { SelectionCommands } from "./editor/selection-commands";
 import { type AlignEdge, type DistributeAxis } from "./align";
 import { rulesOf } from "./capabilities";
 import { collectUserSlots, USER_SLOT_STYLE_KEY, type UserSlot, type UserSlotStyle } from "./userSlots";
+import { installGhostRendering } from "./ghost";
+import { installDisplayStyleRendering } from "./displayStyle";
 
 /**
  * Éditeur d'images basé sur Fabric.js
@@ -712,6 +714,8 @@ export class FabricEditor {
   private extendFabricObject(): void {
     if (FabricEditor._toObjectExtended) return;
     FabricEditor._toObjectExtended = true;
+    installGhostRendering(FabricObject.prototype);
+    installDisplayStyleRendering(FabricObject.prototype);
 
     // Dans une sélection multiple, Fabric donne des positions relatives à la sélection :
     // un calque exporté (historique, copie, overlays de l'hôte) garde sa place sur le canvas.

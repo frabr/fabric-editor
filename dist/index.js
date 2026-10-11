@@ -149,6 +149,7 @@ __export(index_exports, {
   FabRect: () => FabRect,
   FabricEditor: () => FabricEditor,
   FreeResizeSession: () => FreeResizeSession,
+  GHOST_OPACITY: () => GHOST_OPACITY,
   HEART_PATH: () => HEART_PATH,
   HEXAGON_PATH: () => HEXAGON_PATH,
   HistoryManager: () => HistoryManager,
@@ -190,6 +191,7 @@ __export(index_exports, {
   createPathsShape: () => createPathsShape,
   createRect: () => createRect,
   createShape: () => createShape,
+  displayFill: () => displayFill,
   distributeDeltas: () => distributeDeltas,
   drawBindingBadge: () => drawBindingBadge,
   drawFrameBadge: () => drawFrameBadge,
@@ -205,6 +207,7 @@ __export(index_exports, {
   initYoga: () => initYoga,
   isContentLocked: () => isContentLocked,
   isFreeContainer: () => isFreeContainer,
+  isGhost: () => isGhost,
   isMonoPath: () => isMonoPath,
   isPositionLocked: () => isPositionLocked,
   isStyleLocked: () => isStyleLocked,
@@ -227,6 +230,8 @@ __export(index_exports, {
   runLayout: () => runLayout,
   scaledSize: () => scaledSize,
   selectionKindOf: () => selectionKindOf,
+  setDisplayFill: () => setDisplayFill,
+  setGhost: () => setGhost,
   setTextContent: () => setTextContent,
   stackBlock: () => stackBlock,
   stackParentOf: () => stackParentOf,
@@ -7522,6 +7527,57 @@ var SelectionCommands = class {
   }
 };
 
+// src/ghost.ts
+var GHOST_OPACITY = 0.22;
+function isGhost(obj) {
+  return obj.ghost === true;
+}
+function setGhost(obj, ghost) {
+  if (isGhost(obj) === ghost) return false;
+  obj.ghost = ghost || void 0;
+  return true;
+}
+function installGhostRendering(target) {
+  const proto = target;
+  const original = proto.render;
+  proto.render = function(ctx) {
+    if (!isGhost(this)) return original.call(this, ctx);
+    ctx.save();
+    ctx.globalAlpha *= GHOST_OPACITY;
+    try {
+      original.call(this, ctx);
+    } finally {
+      ctx.restore();
+    }
+  };
+}
+
+// src/displayStyle.ts
+function displayFill(obj) {
+  return obj.displayFill ?? null;
+}
+function setDisplayFill(obj, fill) {
+  if (displayFill(obj) === (fill || null)) return false;
+  obj.displayFill = fill || void 0;
+  obj.dirty = true;
+  return true;
+}
+function installDisplayStyleRendering(target) {
+  const proto = target;
+  const original = proto.drawObject;
+  proto.drawObject = function(ctx, forClipping, context) {
+    const fill = displayFill(this);
+    if (!fill || forClipping) return original.call(this, ctx, forClipping, context);
+    const stored = this.fill;
+    this.fill = fill;
+    try {
+      original.call(this, ctx, forClipping, context);
+    } finally {
+      this.fill = stored;
+    }
+  };
+}
+
 // src/FabricEditor.ts
 var _FabricEditor = class _FabricEditor {
   constructor(canvasElement, config) {
@@ -8115,6 +8171,8 @@ var _FabricEditor = class _FabricEditor {
   extendFabricObject() {
     if (_FabricEditor._toObjectExtended) return;
     _FabricEditor._toObjectExtended = true;
+    installGhostRendering(import_fabric21.FabricObject.prototype);
+    installDisplayStyleRendering(import_fabric21.FabricObject.prototype);
     const originalToObject = import_fabric21.FabricObject.prototype.toObject;
     import_fabric21.FabricObject.prototype.toObject = function(propertiesToInclude) {
       const data = originalToObject.call(
@@ -8725,8 +8783,20 @@ init_PendingUploadsManager();
 
 // src/tools.ts
 var ORDER = {
-  text: ["fill", "font", "animations", "effects", "variables", "layout", "lock", "forward", "backward"],
-  shape: ["fill", "clip", "outline", "animations", "effects", "layout", "containerize", "lock", "forward", "backward"],
+  text: ["fill", "font", "animations", "effects", "variables", "layout", "condition", "lock", "forward", "backward"],
+  shape: [
+    "fill",
+    "clip",
+    "outline",
+    "animations",
+    "effects",
+    "layout",
+    "containerize",
+    "condition",
+    "lock",
+    "forward",
+    "backward"
+  ],
   image: [
     "image",
     "promoteBackground",
@@ -8736,6 +8806,7 @@ var ORDER = {
     "effects",
     "layout",
     "containerize",
+    "condition",
     "lock",
     "forward",
     "backward"
@@ -8748,6 +8819,7 @@ var ORDER = {
     "outline",
     "effects",
     "ungroup",
+    "condition",
     "lock",
     "forward",
     "backward"
@@ -8759,6 +8831,7 @@ var ORDER = {
     "animations",
     "ungroup",
     "effects",
+    "condition",
     "lock",
     "forward",
     "backward"
@@ -8819,6 +8892,9 @@ function oneAllows(obj, kind) {
       // Une forme (ou une image) simple devient un bloc : elle accueille, et n'en est pas un
       case "containerize":
         return rules.restyles && rules.hosts && !isContainerObject(obj);
+      // Une condition de visibilité se pose sur tout calque sélectionnable, verrou compris :
+      // c'est un réglage d'auteur, pas de style
+      case "condition":
       case "lock":
         return true;
       case "forward":
@@ -9368,6 +9444,7 @@ function layerToHtmlStandalone(layer, zIndex) {
   FabRect,
   FabricEditor,
   FreeResizeSession,
+  GHOST_OPACITY,
   HEART_PATH,
   HEXAGON_PATH,
   HistoryManager,
@@ -9409,6 +9486,7 @@ function layerToHtmlStandalone(layer, zIndex) {
   createPathsShape,
   createRect,
   createShape,
+  displayFill,
   distributeDeltas,
   drawBindingBadge,
   drawFrameBadge,
@@ -9424,6 +9502,7 @@ function layerToHtmlStandalone(layer, zIndex) {
   initYoga,
   isContentLocked,
   isFreeContainer,
+  isGhost,
   isMonoPath,
   isPositionLocked,
   isStyleLocked,
@@ -9446,6 +9525,8 @@ function layerToHtmlStandalone(layer, zIndex) {
   runLayout,
   scaledSize,
   selectionKindOf,
+  setDisplayFill,
+  setGhost,
   setTextContent,
   stackBlock,
   stackParentOf,

@@ -20,7 +20,7 @@ import { containerDataOf, isContainerObject, parentIdOf } from "./layout/model";
 export type ToolId =
   | "group" | "align" | "distribute" | "arrangement" | "ungroup"
   | "fill" | "font" | "variables" | "image" | "promoteBackground" | "clip" | "outline"
-  | "effects" | "layout" | "containerize" | "animations" | "lock" | "forward" | "backward" | "delete";
+  | "effects" | "layout" | "containerize" | "animations" | "condition" | "lock" | "forward" | "backward" | "delete";
 
 /**
  * - `text`, `shape`, `image` : un objet seul, d'après sa sorte ;
@@ -32,18 +32,21 @@ export type SelectionKind = "text" | "shape" | "image" | "block" | "group" | "ma
 
 /** L'ordre des outils, par sorte de sélection (Supprimer s'ajoute à la fin). */
 const ORDER: Record<SelectionKind, ToolId[]> = {
-  text: ["fill", "font", "animations", "effects", "variables", "layout", "lock", "forward", "backward"],
-  shape: ["fill", "clip", "outline", "animations", "effects", "layout", "containerize", "lock", "forward", "backward"],
+  text: ["fill", "font", "animations", "effects", "variables", "layout", "condition", "lock", "forward", "backward"],
+  shape: [
+    "fill", "clip", "outline", "animations", "effects", "layout", "containerize", "condition", "lock", "forward",
+    "backward",
+  ],
   image: [
     "image", "promoteBackground", "clip", "animations", "outline", "effects", "layout", "containerize",
-    "lock", "forward", "backward",
+    "condition", "lock", "forward", "backward",
   ],
   block: [
-    "fill", "image", "layout", "animations", "outline", "effects", "ungroup",
+    "fill", "image", "layout", "animations", "outline", "effects", "ungroup", "condition",
     "lock", "forward", "backward",
   ],
   group: [
-    "arrangement", "fill", "layout", "animations", "ungroup", "effects",
+    "arrangement", "fill", "layout", "animations", "ungroup", "effects", "condition",
     "lock", "forward", "backward",
   ],
   many: ["group", "align", "distribute", "forward", "backward"],
@@ -98,6 +101,9 @@ function oneAllows(obj: FabricObject, kind: SelectionKind): (tool: ToolId) => bo
       case "ungroup": return rules.deletes && isContainerObject(obj);
       // Une forme (ou une image) simple devient un bloc : elle accueille, et n'en est pas un
       case "containerize": return rules.restyles && rules.hosts && !isContainerObject(obj);
+      // Une condition de visibilité se pose sur tout calque sélectionnable, verrou compris :
+      // c'est un réglage d'auteur, pas de style
+      case "condition":
       case "lock": return true;
       case "forward":
       case "backward": return rules.restacks;
