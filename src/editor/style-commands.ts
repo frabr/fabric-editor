@@ -245,6 +245,13 @@ export class StyleCommands {
   setFillColor(color: string): void {
     const obj = this.editor.selection.current;
     if (!obj) return;
+    if (isTextObject(obj)) {
+      // Un texte : la plage sélectionnée en édition, sinon le texte entier — dont l'opacité
+      // revient à 1, la couleur la porte (le panneau compose les deux)
+      if (!this.textTarget()?.range) obj.set({ opacity: 1 });
+      this.applyTextStyle({ fill: color });
+      return;
+    }
     const previous = obj.fill;
     obj.set({ fill: color, opacity: 1 });
     if (padGroupOnFirstFill(obj, previous)) this.editor.layout.relayout();

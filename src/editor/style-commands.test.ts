@@ -89,6 +89,21 @@ describe("StyleCommands — plage sélectionnée", () => {
     expect(text.getSelectionStyles(0, 7, true).every((s) => s.fontWeight === "normal")).toBe(true);
   });
 
+  it("le remplissage du panneau suit la plage aussi, et ne touche pas l'opacité du texte", () => {
+    const { text, commands } = setup("Bonjour", { opacity: 0.5 });
+    select(text, 0, 3);
+    commands.setFillColor("rgba(255,0,0,0.5)");
+    expect(text.fill).toBe("#000");
+    expect(text.opacity).toBe(0.5);
+    expect(text.getSelectionStyles(0, 3, true).every((s) => s.fill === "rgba(255,0,0,0.5)")).toBe(true);
+
+    text.isEditing = false;
+    commands.setFillColor("#00f");
+    expect(text.fill).toBe("#00f");
+    expect(text.opacity).toBe(1);
+    expect(text.styles).toEqual({});
+  });
+
   it("la couleur d'un texte suit la plage", () => {
     const { text, commands } = setup();
     select(text, 8, 10);
