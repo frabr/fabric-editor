@@ -14,7 +14,7 @@
  * (sessions de resize).
  */
 import { Point, util, type FabricObject } from "#fabric";
-import { descendantsOf, subtreeOf } from "./hierarchy";
+import { ancestorsOf, descendantsOf, subtreeOf } from "./hierarchy";
 
 /** Tourne `obj` de `delta` degrés autour de `pivot` : son centre, et son angle. */
 export function rotateAbout(obj: FabricObject, pivot: Point, delta: number): void {
@@ -43,6 +43,17 @@ export function inLocalFrame<T>(root: FabricObject, objects: FabricObject[], fn:
   } finally {
     for (const obj of subtree) rotateAbout(obj, pivot, angle);
   }
+}
+
+/**
+ * Comme `inLocalFrame`, autour de la racine de `obj` (son plus haut ancêtre, ou lui) : tout
+ * l'arbre est droit le temps de `fn` — les sessions de resize y font leurs calculs, et les
+ * relayouts d'ancêtres qu'elles déclenchent voient des containers à 0°.
+ */
+export function inRootFrame<T>(obj: FabricObject, objects: FabricObject[], fn: () => T): T {
+  const ancestors = ancestorsOf(obj, objects);
+  const root = ancestors[ancestors.length - 1] ?? obj;
+  return inLocalFrame(root, objects, fn);
 }
 
 /**

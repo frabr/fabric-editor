@@ -10,7 +10,7 @@ export type { Padding } from "./model";
 export type { Arrangement } from "./types";
 export { fitFreeContainer, fitFreeAncestors } from "./free/fit";
 export { SubtreeDrag } from "./subtree-drag";
-export { SubtreeRotate, inLocalFrame, rotateAbout } from "./rotation";
+export { SubtreeRotate, inLocalFrame, inRootFrame, rotateAbout } from "./rotation";
 export { FreeResizeSession } from "./free/resize-session";
 export { arrangeAsStack, arrangeFree } from "./arrangement";
 export { groupMembers, groupObjects, ungroupObject, padGroupOnFirstFill, GROUP_FILL_PADDING } from "./grouping";

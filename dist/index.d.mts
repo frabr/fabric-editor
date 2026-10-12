@@ -357,6 +357,12 @@ declare class CustomTextbox extends Textbox {
      */
     minContentWidth(): number;
     /**
+     * Pas de glisser-déposer du texte sélectionné (Fabric) : presser sur une plage sélectionnée
+     * et tirer re-sélectionne, comme dans un champ de texte — le glisser-déposer emportait le
+     * texte quand on voulait étendre la sélection.
+     */
+    initBehavior(): void;
+    /**
      * Une passe de layout : calcule la boîte sous la contrainte du container et la
      * retient. `null` : le texte a quitté son container.
      */
@@ -568,8 +574,11 @@ declare class StackResizeSession {
     /**
      * Called on each `object:resizing` frame.
      * Controls already set width/height directly (no scale involved).
+     * A rotated container (or one inside a rotated ancestor) is handled straight, in its
+     * root's frame — the room, the anchors and the Yoga pass all read axis-aligned boxes.
      */
     handleResizing(objects: FabricObject[]): void;
+    private handleResizingLocal;
     /**
      * On a hug axis the user drags, what they drag is the floor — under the content
      * it's harmless (the box is max(content, floor)). Written on every frame, so the
@@ -684,6 +693,8 @@ declare class FreeResizeSession {
     readonly start: Box;
     private readonly states;
     constructor(container: FabricObject, objects: FabricObject[], start: Box);
+    /** L'angle du groupe : ses coins tournent avec lui, l'ancre aussi. */
+    private readonly angle;
     /** Au début du geste : le groupe tel qu'il est. */
     static begin(container: FabricObject, objects: FabricObject[]): FreeResizeSession;
     /**
@@ -3218,7 +3229,11 @@ type ToolId = "group" | "align" | "distribute" | "arrangement" | "ungroup" | "fi
 type SelectionKind = "text" | "shape" | "image" | "block" | "group" | "many";
 /** La sorte d'une sélection, ou null si elle est vide. */
 declare function selectionKindOf(selected: FabricObject[]): SelectionKind | null;
-/** Les outils de la sélection que l'éditeur propose, dans l'ordre de la barre. */
+/**
+ * Les outils de la sélection que l'éditeur propose, dans l'ordre de la barre. Un texte en
+ * édition ne montre que ce qui se règle sur une plage (couleur, police) : la barre reste
+ * sous le texte pendant qu'on y sélectionne des mots.
+ */
 declare function toolsFor(selected: FabricObject[], offered: Iterable<ToolId>): ToolId[];
 
 /**

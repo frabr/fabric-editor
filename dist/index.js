@@ -262,7 +262,7 @@ __export(index_exports, {
 module.exports = __toCommonJS(index_exports);
 
 // src/FabricEditor.ts
-var import_fabric23 = require("#fabric");
+var import_fabric24 = require("#fabric");
 
 // src/DesignCanvas.ts
 var import_fabric = require("#fabric");
@@ -835,6 +835,15 @@ var CustomTextbox = class extends import_fabric2.Textbox {
     this._wrapAt(width);
     this.height = height;
     return min;
+  }
+  /**
+   * Pas de glisser-déposer du texte sélectionné (Fabric) : presser sur une plage sélectionnée
+   * et tirer re-sélectionne, comme dans un champ de texte — le glisser-déposer emportait le
+   * texte quand on voulait étendre la sélection.
+   */
+  initBehavior() {
+    super.initBehavior();
+    this.draggableTextDelegate.start = () => false;
   }
   /**
    * Une passe de layout : calcule la boîte sous la contrainte du container et la
@@ -4772,7 +4781,7 @@ function isSnapTarget(obj) {
 }
 
 // src/LayoutManager.ts
-var import_fabric20 = require("#fabric");
+var import_fabric21 = require("#fabric");
 
 // src/DragToLayout.ts
 var import_fabric18 = require("#fabric");
@@ -5021,6 +5030,11 @@ function inLocalFrame(root, objects, fn) {
   } finally {
     for (const obj of subtree) rotateAbout(obj, pivot, angle);
   }
+}
+function inRootFrame(obj, objects, fn) {
+  const ancestors = ancestorsOf(obj, objects);
+  const root = ancestors[ancestors.length - 1] ?? obj;
+  return inLocalFrame(root, objects, fn);
 }
 var SubtreeRotate = class _SubtreeRotate {
   constructor(transform, pivot, startAngle, followers) {
@@ -6151,8 +6165,13 @@ var StackResizeSession = class {
   /**
    * Called on each `object:resizing` frame.
    * Controls already set width/height directly (no scale involved).
+   * A rotated container (or one inside a rotated ancestor) is handled straight, in its
+   * root's frame — the room, the anchors and the Yoga pass all read axis-aligned boxes.
    */
   handleResizing(objects) {
+    inRootFrame(this.container, objects, () => this.handleResizingLocal(objects));
+  }
+  handleResizingLocal(objects) {
     const { container, containerData: cd, sizing, axes } = this;
     this.room ?? (this.room = availableRoom(container, objects));
     const { w: currentW, h: currentH } = scaledSize(container);
@@ -6548,6 +6567,7 @@ var SubtreeDrag = class _SubtreeDrag {
 };
 
 // src/layout/free/resize-session.ts
+var import_fabric20 = require("#fabric");
 var scaleMin = (minSize, k) => minSize && { w: minSize.w * k, h: minSize.h * k };
 var FreeResizeSession = class _FreeResizeSession {
   constructor(container, objects, start) {
@@ -6555,6 +6575,7 @@ var FreeResizeSession = class _FreeResizeSession {
     this.objects = objects;
     this.start = start;
     this.states = descendantsOf(objects, [container]).map((obj) => this.snapshot(obj));
+    this.angle = container.angle || 0;
   }
   /** Au début du geste : le groupe tel qu'il est. */
   static begin(container, objects) {
@@ -6573,7 +6594,8 @@ var FreeResizeSession = class _FreeResizeSession {
     const k = Math.max(0.05, (w / start.width + h / start.height) / 2);
     const fx = transform.originX === "left" ? 0 : transform.originX === "right" ? 1 : 0.5;
     const fy = transform.originY === "top" ? 0 : transform.originY === "bottom" ? 1 : 0.5;
-    this.apply(k, { x: start.left + start.width * fx, y: start.top + start.height * fy });
+    const corner = new import_fabric20.Point(start.width * fx, start.height * fy).rotate(import_fabric20.util.degreesToRadians(this.angle)).add(new import_fabric20.Point(start.left, start.top));
+    this.apply(k, corner);
     for (const obj of descendantsOf(this.objects, [container])) {
       if (isStackContainer(obj)) layoutSubtree(obj, this.objects);
     }
@@ -6833,7 +6855,7 @@ var LayoutManager2 = class {
   // ── Canvas event handlers ─────────────────────────────────────────
   onMoving(e) {
     const obj = e.target;
-    if (obj instanceof import_fabric20.ActiveSelection) {
+    if (obj instanceof import_fabric21.ActiveSelection) {
       this.moveFollowers(obj, obj.getObjects(), e.transform);
       return;
     }
@@ -6885,7 +6907,7 @@ var LayoutManager2 = class {
    *  comme un bloc — autour du centre de départ, depuis le début du geste. */
   onRotating(e) {
     const obj = e.target;
-    const moved = obj instanceof import_fabric20.ActiveSelection ? obj.getObjects() : [obj];
+    const moved = obj instanceof import_fabric21.ActiveSelection ? obj.getObjects() : [obj];
     this.rotateFollowers(obj, moved, e.transform);
   }
   rotateFollowers(target, moved, transform) {
@@ -6910,16 +6932,16 @@ var LayoutManager2 = class {
   onModified(e) {
     const obj = e.target;
     if (this.followers) {
-      const moved = obj instanceof import_fabric20.ActiveSelection ? obj.getObjects() : [obj];
+      const moved = obj instanceof import_fabric21.ActiveSelection ? obj.getObjects() : [obj];
       this.moveFollowers(obj, moved, this.followers.transform);
     }
     this.followers = null;
     if (this.rotation) {
-      const moved = obj instanceof import_fabric20.ActiveSelection ? obj.getObjects() : [obj];
+      const moved = obj instanceof import_fabric21.ActiveSelection ? obj.getObjects() : [obj];
       this.rotateFollowers(obj, moved, this.rotation.transform);
     }
     this.rotation = null;
-    if (obj instanceof import_fabric20.ActiveSelection) {
+    if (obj instanceof import_fabric21.ActiveSelection) {
       this.drag.reset();
       return;
     }
@@ -6948,19 +6970,20 @@ var LayoutManager2 = class {
     const layout = layoutOf(target);
     if (layout?.child && !layout.container) {
       const objects = this.canvas.getObjects();
-      const parent = parentContainerOf(target, this.canvas.getObjects());
-      if (parent && isFreeContainer(parent)) {
-        fitFreeAncestors(parent, this.canvas.getObjects());
-        this.canvas.renderAll();
-        return;
-      }
-      if (!isTextObject(target)) clampToRoom(target, e.transform, objects);
-      const pLayout = layoutOf(parent);
-      if (parent && pLayout?.container) {
-        layoutSubtree(parent, objects);
-        relayoutAncestors(parent, objects);
-        this.canvas.renderAll();
-      }
+      inRootFrame(target, objects, () => {
+        const parent = parentContainerOf(target, objects);
+        if (parent && isFreeContainer(parent)) {
+          fitFreeAncestors(parent, objects);
+          return;
+        }
+        if (!isTextObject(target)) clampToRoom(target, e.transform, objects);
+        const pLayout = layoutOf(parent);
+        if (parent && pLayout?.container) {
+          layoutSubtree(parent, objects);
+          relayoutAncestors(parent, objects);
+        }
+      });
+      this.canvas.renderAll();
       return;
     }
     if (!layout?.container) return;
@@ -6982,7 +7005,7 @@ var LayoutManager2 = class {
 var DRAG_PREVIEW_KEY = "dragPreview";
 
 // src/editor/style-commands.ts
-var import_fabric21 = require("#fabric");
+var import_fabric22 = require("#fabric");
 
 // src/clipping/antiScale.ts
 function antiScale(obj) {
@@ -7303,7 +7326,7 @@ var StyleCommands = class {
       obj.nextClipShape();
       obj.dirty = true;
       this.editor.canvas.requestRenderAll();
-    } else if (obj instanceof import_fabric21.FabricImage) {
+    } else if (obj instanceof import_fabric22.FabricImage) {
       switchClip(obj);
       obj.dirty = true;
       this.editor.canvas.remove(obj);
@@ -7315,7 +7338,7 @@ var StyleCommands = class {
    */
   switchShape() {
     const obj = this.editor.selection.current;
-    if (!obj || obj instanceof import_fabric21.FabricImage) return;
+    if (!obj || obj instanceof import_fabric22.FabricImage) return;
     const currentShapeId = obj.id;
     const nextShapeType = nextShape(currentShapeId);
     this.changeShape(nextShapeType);
@@ -7330,7 +7353,7 @@ var StyleCommands = class {
       obj.applyClipShape(shapeType);
       obj.dirty = true;
       this.editor.canvas.requestRenderAll();
-    } else if (!(obj instanceof import_fabric21.FabricImage)) {
+    } else if (!(obj instanceof import_fabric22.FabricImage)) {
       const newObj = switchShape(obj, shapeType);
       const layerId = obj.get("layerId");
       const layerType = obj.get("layerType");
@@ -7445,7 +7468,7 @@ var StyleCommands = class {
     const rad = angleDeg * Math.PI / 180;
     const cos = Math.cos(rad);
     const sin = Math.sin(rad);
-    const gradient = new import_fabric21.Gradient({
+    const gradient = new import_fabric22.Gradient({
       type: "linear",
       gradientUnits: "percentage",
       coords: {
@@ -7517,7 +7540,7 @@ var StyleCommands = class {
     const obj = this.editor.selection.current;
     if (!obj) return;
     const existing = obj.shadow;
-    const shadow = new import_fabric21.Shadow({
+    const shadow = new import_fabric22.Shadow({
       color: opts.color ?? existing?.color ?? "rgba(0,0,0,0.5)",
       blur: opts.blur ?? existing?.blur ?? 10,
       offsetX: opts.offsetX ?? existing?.offsetX ?? 5,
@@ -7796,7 +7819,7 @@ function installDisplayStyleRendering(target) {
 }
 
 // src/CropMode.ts
-var import_fabric22 = require("#fabric");
+var import_fabric23 = require("#fabric");
 var HANDLE_RADIUS = 6;
 var HANDLE_GRAB = 12;
 var FALLBACK_VEIL = "#f3f4f6";
@@ -7901,13 +7924,13 @@ var CropMode = class {
   /** Le point de la scène dans le repère du cadre. */
   toFrame(scene) {
     const frame = this.frame;
-    const local = scene.transform(import_fabric22.util.invertTransform(frame.calcTransformMatrix()));
+    const local = scene.transform(import_fabric23.util.invertTransform(frame.calcTransformMatrix()));
     return { x: local.x + frame.frameWidth / 2, y: local.y + frame.frameHeight / 2 };
   }
   /** Le point du cadre à l'écran (pixels CSS du canvas). */
   toScreen(x, y) {
     const frame = this.frame;
-    return new import_fabric22.Point(x - frame.frameWidth / 2, y - frame.frameHeight / 2).transform(frame.calcTransformMatrix()).transform(this.fc.viewportTransform);
+    return new import_fabric23.Point(x - frame.frameWidth / 2, y - frame.frameHeight / 2).transform(frame.calcTransformMatrix()).transform(this.fc.viewportTransform);
   }
   /** Une unité d'écran en unités de cadre. */
   frameUnit() {
@@ -8636,7 +8659,7 @@ var _FabricEditor = class _FabricEditor {
    * remplacement, et l'image est ajoutée.
    */
   findDropTargetAtPoint(x, y) {
-    const point = new import_fabric23.Point(x, y);
+    const point = new import_fabric24.Point(x, y);
     const objects = this.canvas.getObjects().slice().reverse();
     for (const obj of objects) {
       if (obj.get(DRAG_PREVIEW_KEY)) continue;
@@ -8661,15 +8684,15 @@ var _FabricEditor = class _FabricEditor {
   extendFabricObject() {
     if (_FabricEditor._toObjectExtended) return;
     _FabricEditor._toObjectExtended = true;
-    installGhostRendering(import_fabric23.FabricObject.prototype);
-    installDisplayStyleRendering(import_fabric23.FabricObject.prototype);
-    const originalToObject = import_fabric23.FabricObject.prototype.toObject;
-    import_fabric23.FabricObject.prototype.toObject = function(propertiesToInclude) {
+    installGhostRendering(import_fabric24.FabricObject.prototype);
+    installDisplayStyleRendering(import_fabric24.FabricObject.prototype);
+    const originalToObject = import_fabric24.FabricObject.prototype.toObject;
+    import_fabric24.FabricObject.prototype.toObject = function(propertiesToInclude) {
       const data = originalToObject.call(
         this,
         ["layerId", "layout", "bindings"].concat(propertiesToInclude || [])
       );
-      if (this.group instanceof import_fabric23.ActiveSelection) {
+      if (this.group instanceof import_fabric24.ActiveSelection) {
         const { x, y } = this.getXY();
         Object.assign(data, { left: x, top: y });
       }
@@ -8684,8 +8707,8 @@ _FabricEditor._toObjectExtended = false;
 var FabricEditor = _FabricEditor;
 
 // src/PreviewCanvas.ts
-var import_fabric24 = require("#fabric");
-var PreviewCanvas = class extends import_fabric24.StaticCanvas {
+var import_fabric25 = require("#fabric");
+var PreviewCanvas = class extends import_fabric25.StaticCanvas {
   constructor(el, opts) {
     const { width, height, ...canvasOpts } = opts;
     super(el, {
@@ -8745,7 +8768,7 @@ var PreviewCanvas = class extends import_fabric24.StaticCanvas {
 };
 
 // src/DropHandler.ts
-var import_fabric25 = require("#fabric");
+var import_fabric26 = require("#fabric");
 var HIGHLIGHT_COLOR = "#3b82f6";
 var KIND_CAPABILITIES = {
   image: { layout: false, replaceTarget: true },
@@ -8916,7 +8939,7 @@ var DropHandler = class {
       if (!committed && object) {
         if (e) {
           const pointer = this.editor.canvas.getScenePoint(e);
-          object.setPositionByOrigin(new import_fabric25.Point(pointer.x, pointer.y), "center", "center");
+          object.setPositionByOrigin(new import_fabric26.Point(pointer.x, pointer.y), "center", "center");
           object.setCoords();
         }
         if (!this.editor.canvas.getObjects().includes(object)) {
@@ -8992,7 +9015,7 @@ var DropHandler = class {
         this.editor.layout.tickExternalDrag(object, pointer);
         return;
       }
-      object.setPositionByOrigin(new import_fabric25.Point(pointer.x, pointer.y), "center", "center");
+      object.setPositionByOrigin(new import_fabric26.Point(pointer.x, pointer.y), "center", "center");
       object.setCoords();
       this.editor.canvas.requestRenderAll();
     }
@@ -9121,7 +9144,7 @@ var DropHandler = class {
       height = target.height;
       clipPath = target.clipPath;
     }
-    const fabricOverlay = new import_fabric25.Rect({
+    const fabricOverlay = new import_fabric26.Rect({
       left: target.left,
       top: target.top,
       width,
@@ -9214,7 +9237,7 @@ var DropHandler = class {
    * drop-target detection.
    */
   async createImagePreview(url) {
-    const img = await import_fabric25.FabricImage.fromURL(url, { crossOrigin: "anonymous" });
+    const img = await import_fabric26.FabricImage.fromURL(url, { crossOrigin: "anonymous" });
     let scale = 1;
     if (img.width > 300 || img.height > 300) {
       scale = Math.min(300 / img.width, 300 / img.height);
@@ -9249,7 +9272,7 @@ var DropHandler = class {
     if (e && !this.intersectsCanvas(e, null)) return null;
     const pointer = e ? this.editor.canvas.getScenePoint(e) : null;
     const object = this.editor.layers.createUserSlot(opts);
-    if (pointer) object.setPositionByOrigin(new import_fabric25.Point(pointer.x, pointer.y), "center", "center");
+    if (pointer) object.setPositionByOrigin(new import_fabric26.Point(pointer.x, pointer.y), "center", "center");
     this.editor.layers.add(object);
     this.editor.canvas.setActiveObject(object);
     this.editor.canvas.renderAll();
@@ -9345,12 +9368,17 @@ function selectionKindOf(selected) {
       return "shape";
   }
 }
+var EDITING_TOOLS = ["fill", "font"];
 function toolsFor(selected, offered) {
   const kind = selectionKindOf(selected);
   if (!kind) return [];
   const available = new Set(offered);
   const allows = kind === "many" ? manyAllows(selected) : oneAllows(selected[0], kind);
-  return [...ORDER[kind], "delete"].filter((tool) => available.has(tool) && allows(tool));
+  const order = isEditing(selected[0]) ? EDITING_TOOLS : [...ORDER[kind], "delete"];
+  return order.filter((tool) => available.has(tool) && allows(tool));
+}
+function isEditing(obj) {
+  return obj.isEditing === true;
 }
 function oneAllows(obj, kind) {
   const rules = rulesOf(obj);

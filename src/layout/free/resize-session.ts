@@ -4,7 +4,7 @@
  * et sa police, une pile ses marges et son espacement), au prorata, autour du coin qui ne
  * bouge pas.
  */
-import type { FabricObject } from "#fabric";
+import { Point, util, type FabricObject } from "#fabric";
 import type { ContainerData, SizingData } from "../types";
 import { placeTopLeft, scaledSize, setShapeSize, type Box } from "../geometry";
 import { isStackContainer, layoutOf } from "../model";
@@ -35,7 +35,11 @@ export class FreeResizeSession {
 
   constructor(readonly container: FabricObject, private readonly objects: FabricObject[], readonly start: Box) {
     this.states = descendantsOf(objects, [container]).map((obj) => this.snapshot(obj));
+    this.angle = container.angle || 0;
   }
+
+  /** L'angle du groupe : ses coins tournent avec lui, l'ancre aussi. */
+  private readonly angle: number;
 
   /** Au début du geste : le groupe tel qu'il est. */
   static begin(container: FabricObject, objects: FabricObject[]): FreeResizeSession {
@@ -56,7 +60,12 @@ export class FreeResizeSession {
     const fx = transform.originX === "left" ? 0 : transform.originX === "right" ? 1 : 0.5;
     const fy = transform.originY === "top" ? 0 : transform.originY === "bottom" ? 1 : 0.5;
 
-    this.apply(k, { x: start.left + start.width * fx, y: start.top + start.height * fy });
+    // Le coin de départ, dans le repère du groupe (tourné) : une homothétie autour d'un
+    // point commute avec la rotation, le reste du pas ne change pas
+    const corner = new Point(start.width * fx, start.height * fy)
+      .rotate(util.degreesToRadians(this.angle))
+      .add(new Point(start.left, start.top));
+    this.apply(k, corner);
     for (const obj of descendantsOf(this.objects, [container])) {
       if (isStackContainer(obj)) layoutSubtree(obj, this.objects);
     }

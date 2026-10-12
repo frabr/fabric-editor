@@ -18,6 +18,7 @@ import { layoutOf, sizingOf } from "../model";
 import { isTextObject, type LayoutText } from "../text";
 import { flowChildrenOf, parentContainerOf } from "../hierarchy";
 import { minContentSize } from "./min-size";
+import { inRootFrame } from "../rotation";
 
 // ── StackResizeSession ───────────────────────────────────────────────────
 
@@ -102,8 +103,14 @@ export class StackResizeSession {
   /**
    * Called on each `object:resizing` frame.
    * Controls already set width/height directly (no scale involved).
+   * A rotated container (or one inside a rotated ancestor) is handled straight, in its
+   * root's frame — the room, the anchors and the Yoga pass all read axis-aligned boxes.
    */
   handleResizing(objects: FabricObject[]): void {
+    inRootFrame(this.container, objects, () => this.handleResizingLocal(objects));
+  }
+
+  private handleResizingLocal(objects: FabricObject[]): void {
     const { container, containerData: cd, sizing, axes } = this;
 
     this.room ??= availableRoom(container, objects);

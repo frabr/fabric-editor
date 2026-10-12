@@ -9,6 +9,9 @@ import { initYoga } from "./stack/engine";
 import { runLayout } from "./run";
 import { fitFreeContainer } from "./free/fit";
 import { SubtreeRotate, inLocalFrame } from "./rotation";
+import { StackResizeSession } from "./stack/resize-session";
+import { FreeResizeSession } from "./free/resize-session";
+import { scaledSize, setShapeSize } from "./geometry";
 import type { LayoutData } from "./types";
 
 beforeAll(async () => {
@@ -125,5 +128,56 @@ describe("layout d'un container tourné", () => {
     expect(() => inLocalFrame(stack, [stack, a], () => { throw new Error("boom"); })).toThrow("boom");
 
     expect({ stack: center(stack), a: center(a), angle: a.angle }).toEqual(before);
+  });
+});
+
+describe("redimensionner un container tourné", () => {
+  it("une pile tournée élargie range ses enfants le long de son axe tourné", () => {
+    const stack = rect("s", 100, 100, 200, 100, {
+      sizing: { x: "fixed", y: "fixed" },
+      container: { arrangement: "stack", flexDirection: "row", gap: 0, padding: ZERO },
+    });
+    const a = rect("a", 0, 0, 50, 50, { child: { parentId: "s", order: 0 } });
+    const b = rect("b", 0, 0, 50, 50, { child: { parentId: "s", order: 1 } });
+    const objects = [stack, a, b];
+    canvasWith(...objects);
+    runLayout(objects);
+    const session = SubtreeRotate.begin(stack, [stack], { original: { angle: 0 } }, objects);
+    stack.rotate(90);
+    session.follow(stack);
+
+    // La poignée droite (fabric a déjà posé la largeur) : la session range les enfants
+    stack.set({ width: 300 });
+    new StackResizeSession(stack, "mr").handleResizing(objects);
+
+    expect(stack.angle).toBe(90);
+    expect(Math.round(stack.width)).toBe(300);
+    expect([a.angle, b.angle]).toEqual([90, 90]);
+    // La rangée suit l'axe tourné : même x, b 50 px sous a
+    expect(center(a).x).toBe(center(b).x);
+    expect(center(b).y - center(a).y).toBe(50);
+  });
+
+  it("un groupe tourné grandit autour de son coin tourné, son contenu avec lui", () => {
+    const group = rect("g", 0, 0, 1, 1, { container: { arrangement: "free", origin: "group", padding: ZERO } });
+    const a = rect("a", 100, 100, 100, 40, { child: { parentId: "g" } });
+    const objects = [group, a];
+    canvasWith(...objects);
+    fitFreeContainer(group, objects);
+    const session = SubtreeRotate.begin(group, [group], { original: { angle: 0 } }, objects);
+    group.rotate(30);
+    session.follow(group);
+    const corner = group.getPositionByOrigin("left", "top");
+
+    const resize = FreeResizeSession.begin(group, objects);
+    setShapeSize(group, 200, 80);
+    resize.step({ originX: "left", originY: "top" });
+
+    expect(a.angle).toBe(30);
+    expect(scaledSize(a)).toEqual({ w: 200, h: 80 });
+    const tl = a.getPositionByOrigin("left", "top");
+    expect([Math.round(tl.x), Math.round(tl.y)]).toEqual([Math.round(corner.x), Math.round(corner.y)]);
+    expect(group.angle).toBe(30);
+    expect([Math.round(group.width), Math.round(group.height)]).toEqual([200, 80]);
   });
 });

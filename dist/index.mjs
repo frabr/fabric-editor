@@ -115,7 +115,7 @@ var init_PendingUploadsManager = __esm({
 });
 
 // src/FabricEditor.ts
-import { ActiveSelection as ActiveSelection4, FabricObject as FabricObject9, Point as Point9 } from "#fabric";
+import { ActiveSelection as ActiveSelection4, FabricObject as FabricObject9, Point as Point10 } from "#fabric";
 
 // src/DesignCanvas.ts
 import { Canvas, Point } from "#fabric";
@@ -688,6 +688,15 @@ var CustomTextbox = class extends Textbox {
     this._wrapAt(width);
     this.height = height;
     return min;
+  }
+  /**
+   * Pas de glisser-déposer du texte sélectionné (Fabric) : presser sur une plage sélectionnée
+   * et tirer re-sélectionne, comme dans un champ de texte — le glisser-déposer emportait le
+   * texte quand on voulait étendre la sélection.
+   */
+  initBehavior() {
+    super.initBehavior();
+    this.draggableTextDelegate.start = () => false;
   }
   /**
    * Une passe de layout : calcule la boîte sous la contrainte du container et la
@@ -4886,6 +4895,11 @@ function inLocalFrame(root, objects, fn) {
     for (const obj of subtree) rotateAbout(obj, pivot, angle);
   }
 }
+function inRootFrame(obj, objects, fn) {
+  const ancestors = ancestorsOf(obj, objects);
+  const root = ancestors[ancestors.length - 1] ?? obj;
+  return inLocalFrame(root, objects, fn);
+}
 var SubtreeRotate = class _SubtreeRotate {
   constructor(transform, pivot, startAngle, followers) {
     this.transform = transform;
@@ -6015,8 +6029,13 @@ var StackResizeSession = class {
   /**
    * Called on each `object:resizing` frame.
    * Controls already set width/height directly (no scale involved).
+   * A rotated container (or one inside a rotated ancestor) is handled straight, in its
+   * root's frame — the room, the anchors and the Yoga pass all read axis-aligned boxes.
    */
   handleResizing(objects) {
+    inRootFrame(this.container, objects, () => this.handleResizingLocal(objects));
+  }
+  handleResizingLocal(objects) {
     const { container, containerData: cd, sizing, axes } = this;
     this.room ?? (this.room = availableRoom(container, objects));
     const { w: currentW, h: currentH } = scaledSize(container);
@@ -6412,6 +6431,7 @@ var SubtreeDrag = class _SubtreeDrag {
 };
 
 // src/layout/free/resize-session.ts
+import { Point as Point8, util as util4 } from "#fabric";
 var scaleMin = (minSize, k) => minSize && { w: minSize.w * k, h: minSize.h * k };
 var FreeResizeSession = class _FreeResizeSession {
   constructor(container, objects, start) {
@@ -6419,6 +6439,7 @@ var FreeResizeSession = class _FreeResizeSession {
     this.objects = objects;
     this.start = start;
     this.states = descendantsOf(objects, [container]).map((obj) => this.snapshot(obj));
+    this.angle = container.angle || 0;
   }
   /** Au début du geste : le groupe tel qu'il est. */
   static begin(container, objects) {
@@ -6437,7 +6458,8 @@ var FreeResizeSession = class _FreeResizeSession {
     const k = Math.max(0.05, (w / start.width + h / start.height) / 2);
     const fx = transform.originX === "left" ? 0 : transform.originX === "right" ? 1 : 0.5;
     const fy = transform.originY === "top" ? 0 : transform.originY === "bottom" ? 1 : 0.5;
-    this.apply(k, { x: start.left + start.width * fx, y: start.top + start.height * fy });
+    const corner = new Point8(start.width * fx, start.height * fy).rotate(util4.degreesToRadians(this.angle)).add(new Point8(start.left, start.top));
+    this.apply(k, corner);
     for (const obj of descendantsOf(this.objects, [container])) {
       if (isStackContainer(obj)) layoutSubtree(obj, this.objects);
     }
@@ -6812,19 +6834,20 @@ var LayoutManager2 = class {
     const layout = layoutOf(target);
     if (layout?.child && !layout.container) {
       const objects = this.canvas.getObjects();
-      const parent = parentContainerOf(target, this.canvas.getObjects());
-      if (parent && isFreeContainer(parent)) {
-        fitFreeAncestors(parent, this.canvas.getObjects());
-        this.canvas.renderAll();
-        return;
-      }
-      if (!isTextObject(target)) clampToRoom(target, e.transform, objects);
-      const pLayout = layoutOf(parent);
-      if (parent && pLayout?.container) {
-        layoutSubtree(parent, objects);
-        relayoutAncestors(parent, objects);
-        this.canvas.renderAll();
-      }
+      inRootFrame(target, objects, () => {
+        const parent = parentContainerOf(target, objects);
+        if (parent && isFreeContainer(parent)) {
+          fitFreeAncestors(parent, objects);
+          return;
+        }
+        if (!isTextObject(target)) clampToRoom(target, e.transform, objects);
+        const pLayout = layoutOf(parent);
+        if (parent && pLayout?.container) {
+          layoutSubtree(parent, objects);
+          relayoutAncestors(parent, objects);
+        }
+      });
+      this.canvas.renderAll();
       return;
     }
     if (!layout?.container) return;
@@ -7660,7 +7683,7 @@ function installDisplayStyleRendering(target) {
 }
 
 // src/CropMode.ts
-import { Point as Point8, util as util4 } from "#fabric";
+import { Point as Point9, util as util5 } from "#fabric";
 var HANDLE_RADIUS = 6;
 var HANDLE_GRAB = 12;
 var FALLBACK_VEIL = "#f3f4f6";
@@ -7765,13 +7788,13 @@ var CropMode = class {
   /** Le point de la scène dans le repère du cadre. */
   toFrame(scene) {
     const frame = this.frame;
-    const local = scene.transform(util4.invertTransform(frame.calcTransformMatrix()));
+    const local = scene.transform(util5.invertTransform(frame.calcTransformMatrix()));
     return { x: local.x + frame.frameWidth / 2, y: local.y + frame.frameHeight / 2 };
   }
   /** Le point du cadre à l'écran (pixels CSS du canvas). */
   toScreen(x, y) {
     const frame = this.frame;
-    return new Point8(x - frame.frameWidth / 2, y - frame.frameHeight / 2).transform(frame.calcTransformMatrix()).transform(this.fc.viewportTransform);
+    return new Point9(x - frame.frameWidth / 2, y - frame.frameHeight / 2).transform(frame.calcTransformMatrix()).transform(this.fc.viewportTransform);
   }
   /** Une unité d'écran en unités de cadre. */
   frameUnit() {
@@ -8500,7 +8523,7 @@ var _FabricEditor = class _FabricEditor {
    * remplacement, et l'image est ajoutée.
    */
   findDropTargetAtPoint(x, y) {
-    const point = new Point9(x, y);
+    const point = new Point10(x, y);
     const objects = this.canvas.getObjects().slice().reverse();
     for (const obj of objects) {
       if (obj.get(DRAG_PREVIEW_KEY)) continue;
@@ -8609,7 +8632,7 @@ var PreviewCanvas = class extends StaticCanvas {
 };
 
 // src/DropHandler.ts
-import { FabricImage as FabricImage9, Point as Point10, Rect as Rect5 } from "#fabric";
+import { FabricImage as FabricImage9, Point as Point11, Rect as Rect5 } from "#fabric";
 var HIGHLIGHT_COLOR = "#3b82f6";
 var KIND_CAPABILITIES = {
   image: { layout: false, replaceTarget: true },
@@ -8780,7 +8803,7 @@ var DropHandler = class {
       if (!committed && object) {
         if (e) {
           const pointer = this.editor.canvas.getScenePoint(e);
-          object.setPositionByOrigin(new Point10(pointer.x, pointer.y), "center", "center");
+          object.setPositionByOrigin(new Point11(pointer.x, pointer.y), "center", "center");
           object.setCoords();
         }
         if (!this.editor.canvas.getObjects().includes(object)) {
@@ -8856,7 +8879,7 @@ var DropHandler = class {
         this.editor.layout.tickExternalDrag(object, pointer);
         return;
       }
-      object.setPositionByOrigin(new Point10(pointer.x, pointer.y), "center", "center");
+      object.setPositionByOrigin(new Point11(pointer.x, pointer.y), "center", "center");
       object.setCoords();
       this.editor.canvas.requestRenderAll();
     }
@@ -9113,7 +9136,7 @@ var DropHandler = class {
     if (e && !this.intersectsCanvas(e, null)) return null;
     const pointer = e ? this.editor.canvas.getScenePoint(e) : null;
     const object = this.editor.layers.createUserSlot(opts);
-    if (pointer) object.setPositionByOrigin(new Point10(pointer.x, pointer.y), "center", "center");
+    if (pointer) object.setPositionByOrigin(new Point11(pointer.x, pointer.y), "center", "center");
     this.editor.layers.add(object);
     this.editor.canvas.setActiveObject(object);
     this.editor.canvas.renderAll();
@@ -9209,12 +9232,17 @@ function selectionKindOf(selected) {
       return "shape";
   }
 }
+var EDITING_TOOLS = ["fill", "font"];
 function toolsFor(selected, offered) {
   const kind = selectionKindOf(selected);
   if (!kind) return [];
   const available = new Set(offered);
   const allows = kind === "many" ? manyAllows(selected) : oneAllows(selected[0], kind);
-  return [...ORDER[kind], "delete"].filter((tool) => available.has(tool) && allows(tool));
+  const order = isEditing(selected[0]) ? EDITING_TOOLS : [...ORDER[kind], "delete"];
+  return order.filter((tool) => available.has(tool) && allows(tool));
+}
+function isEditing(obj) {
+  return obj.isEditing === true;
 }
 function oneAllows(obj, kind) {
   const rules = rulesOf(obj);

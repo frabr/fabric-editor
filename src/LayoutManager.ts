@@ -22,7 +22,7 @@ const SIZE_PRESETS: Record<SizePreset, Pick<SizingData, "x" | "y">> = {
 import { clampToRoom } from "./layout/stack/room";
 import { fitFreeAncestors } from "./layout/free/fit";
 import { SubtreeDrag } from "./layout/subtree-drag";
-import { SubtreeRotate } from "./layout/rotation";
+import { SubtreeRotate, inRootFrame } from "./layout/rotation";
 import { FreeResizeSession } from "./layout/free/resize-session";
 import { layoutOf, containerDataOf, childDataOf, isContainerObject, isFreeContainer, sizingOf, paddingOf, updateContainer, updateChild, updateLayout, uniformPadding } from "./layout/model";
 import { parentContainerOf, findById } from "./layout/hierarchy";
@@ -428,23 +428,25 @@ export class LayoutManager {
     const layout = layoutOf(target);
 
     // Text, shape or image child resized live → the room stops it (a text is
-    // pushed by the layout itself), and its container chain follows
+    // pushed by the layout itself), and its container chain follows — straight, in the
+    // frame of its root (a rotated ancestor)
     if (layout?.child && !layout.container) {
       const objects = this.canvas.getObjects();
-      const parent = parentContainerOf(target, this.canvas.getObjects());
-      // In a group, there is no room to respect: the group follows
-      if (parent && isFreeContainer(parent)) {
-        fitFreeAncestors(parent, this.canvas.getObjects());
-        this.canvas.renderAll();
-        return;
-      }
-      if (!isTextObject(target)) clampToRoom(target, e.transform, objects);
-      const pLayout = layoutOf(parent);
-      if (parent && pLayout?.container) {
-        layoutSubtree(parent, objects);
-        relayoutAncestors(parent, objects);
-        this.canvas.renderAll();
-      }
+      inRootFrame(target, objects, () => {
+        const parent = parentContainerOf(target, objects);
+        // In a group, there is no room to respect: the group follows
+        if (parent && isFreeContainer(parent)) {
+          fitFreeAncestors(parent, objects);
+          return;
+        }
+        if (!isTextObject(target)) clampToRoom(target, e.transform, objects);
+        const pLayout = layoutOf(parent);
+        if (parent && pLayout?.container) {
+          layoutSubtree(parent, objects);
+          relayoutAncestors(parent, objects);
+        }
+      });
+      this.canvas.renderAll();
       return;
     }
 
