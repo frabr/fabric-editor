@@ -141,6 +141,8 @@ export {
   pendingBindings, hasPendingBindings, lockBoundText, setTextContent, drawBindingBadge, bindingBadgeLabel,
 } from "./bindings";
 export { drawFrameBadge, badgeLabel, type BadgeLabeler } from "./ui/badges";
+export { fontFamiliesOf, isBold, summarizeStyles, summarizeObject, MIXED, TEXT_STYLE_KEYS } from "./text-styles";
+export type { TextStyleState, TextStyleKey, TextStyleValue } from "./text-styles";
 export { isGhost, setGhost, GHOST_OPACITY } from "./ghost";
 export { displayFill, setDisplayFill } from "./displayStyle";
 export type { Bindings, BindingSpec } from "./bindings";

@@ -9,10 +9,78 @@ import { ImageFrame } from "../ImageFrame";
 import type { ShapeType } from "../types";
 import { padGroupOnFirstFill } from "../layout/grouping";
 import { isTextObject } from "../layout/text";
+import {
+  isBold, summarizeStyles, summarizeObject, MIXED,
+  type CharStyles, type StyleDeclaration, type TextStyleState,
+} from "../text-styles";
 import type { FabricEditor } from "../FabricEditor";
+
+/** Un texte Fabric vu par les commandes de style : son édition, sa sélection, ses styles. */
+type StyledText = FabricObject & StyleDeclaration & {
+  text: string;
+  isEditing?: boolean;
+  selectionStart: number;
+  selectionEnd: number;
+  styles: CharStyles;
+  setSelectionStyles(styles: object, start?: number, end?: number): void;
+  getSelectionStyles(start?: number, end?: number, complete?: boolean): StyleDeclaration[];
+  cleanStyle(property: string): void;
+  removeStyle(property: string): void;
+};
 
 export class StyleCommands {
   constructor(private readonly editor: FabricEditor) {}
+
+  // ── Texte : la plage sélectionnée, ou le texte entier ──────────────
+
+  /**
+   * Le style du texte sélectionné, là où un réglage s'appliquerait : la plage sélectionnée
+   * en édition ; au curseur, le caractère qui le précède (ce dont hérite la frappe) ; hors
+   * édition, les propriétés du texte, "mixed" là où des caractères en dévient.
+   */
+  textStyle(): TextStyleState | null {
+    const target = this.textTarget();
+    if (!target) return null;
+
+    const { obj, range } = target;
+    if (range) return summarizeStyles(obj.getSelectionStyles(range[0], range[1], true));
+    if (obj.isEditing && obj.text.length > 0) {
+      const at = Math.max(obj.selectionStart - 1, 0);
+      return summarizeStyles(obj.getSelectionStyles(at, at + 1, true));
+    }
+    return summarizeObject(obj, obj.styles);
+  }
+
+  private textTarget(): { obj: StyledText; range: [number, number] | null } | null {
+    const obj = this.editor.selection.current as StyledText | null;
+    if (!obj || !isTextObject(obj)) return null;
+
+    const ranged = obj.isEditing && obj.selectionStart !== obj.selectionEnd;
+    return { obj, range: ranged ? [obj.selectionStart, obj.selectionEnd] : null };
+  }
+
+  /**
+   * Pose des propriétés de texte : sur la plage sélectionnée en édition, sinon sur le texte
+   * entier — et alors les surcharges par caractère de ces propriétés s'effacent (ce qu'on
+   * règle « sur le texte » vaut pour tout le texte). Une plage qui finit par couvrir tout
+   * le texte remonte sur l'objet : le document reste propre.
+   */
+  private applyTextStyle(props: StyleDeclaration): void {
+    const target = this.textTarget();
+    if (!target) return;
+
+    const { obj, range } = target;
+    if (range) {
+      obj.setSelectionStyles(props, range[0], range[1]);
+      for (const key of Object.keys(props)) obj.cleanStyle(key);
+    } else {
+      obj.set(props);
+      for (const key of Object.keys(props)) obj.removeStyle(key);
+    }
+    obj.dirty = true;
+    this.editor.layout.relayout();
+    this.editor.canvas.requestRenderAll();
+  }
 
   /**
    * @legacy Use ImageFrame.nextClipShape() directly.
@@ -105,12 +173,10 @@ export class StyleCommands {
     if (!obj) return;
 
     if (isTextObject(obj)) {
-      obj.set("fill", color);
-    } else {
-      const property = obj.stroke ? "stroke" : "fill";
-      obj.set(property, color);
+      this.applyTextStyle({ fill: color });
+      return;
     }
-
+    obj.set(obj.stroke ? "stroke" : "fill", color);
     this.editor.canvas.renderAll();
   }
 
@@ -214,26 +280,21 @@ export class StyleCommands {
     this.editor.canvas.renderAll();
   }
 
-  /**
-   * Change la police de l'objet texte sélectionné
-   */
+  /** La police (famille et graisse) de la plage sélectionnée, ou du texte entier. */
   changeFont(fontFamily: string, fontWeight?: string): void {
-    const obj = this.editor.selection.current;
-    if (!obj || !isTextObject(obj)) return;
-
-    obj.set({ fontFamily, fontWeight: fontWeight || "normal" });
-    this.editor.layout.relayout();
-    this.editor.canvas.requestRenderAll();
+    this.applyTextStyle({ fontFamily, fontWeight: fontWeight || "normal" });
   }
 
   /**
-   * Change la taille de police de l'objet texte sélectionné
+   * La taille du texte sélectionné : toujours le texte entier (une taille par texte, que
+   * l'autofit pilote) — des tailles par caractère héritées d'un vieux document s'effacent.
    */
   setFontSize(size: number): void {
-    const obj = this.editor.selection.current;
+    const obj = this.editor.selection.current as StyledText | null;
     if (!obj || !isTextObject(obj) || !Number.isFinite(size) || size <= 0) return;
 
     obj.set({ fontSize: size });
+    obj.removeStyle("fontSize");
     this.editor.layout.relayout();
     this.editor.canvas.requestRenderAll();
   }
@@ -251,33 +312,27 @@ export class StyleCommands {
   }
 
   /**
-   * Bascule un style sur l'objet texte sélectionné (gras, italique, souligné).
-   * "bold" alterne fontWeight normal/bold (un poids numérique >= 600 compte
-   * comme gras).
+   * Bascule un style (gras, italique, souligné) sur la plage sélectionnée, ou le texte
+   * entier. Une plage mixte passe au style (tout en gras), comme dans un traitement de
+   * texte. "bold" alterne un poids normal/bold ; un poids numérique >= 600 compte comme gras.
    */
   toggleTextStyle(style: "bold" | "italic" | "underline"): void {
-    const obj = this.editor.selection.current as (typeof this.editor.selection.current) & {
-      fontWeight?: string | number;
-      fontStyle?: string;
-      underline?: boolean;
-    };
-    if (!obj || !isTextObject(obj)) return;
+    const state = this.textStyle();
+    if (!state) return;
 
     switch (style) {
       case "bold": {
-        const isBold = obj.fontWeight === "bold" || Number(obj.fontWeight) >= 600;
-        obj.set({ fontWeight: isBold ? "normal" : "bold" });
+        const on = state.fontWeight !== MIXED && isBold(state.fontWeight);
+        this.applyTextStyle({ fontWeight: on ? "normal" : "bold" });
         break;
       }
       case "italic":
-        obj.set({ fontStyle: obj.fontStyle === "italic" ? "normal" : "italic" });
+        this.applyTextStyle({ fontStyle: state.fontStyle === "italic" ? "normal" : "italic" });
         break;
       case "underline":
-        obj.set({ underline: !obj.underline });
+        this.applyTextStyle({ underline: state.underline !== true });
         break;
     }
-    this.editor.layout.relayout();
-    this.editor.canvas.requestRenderAll();
   }
 
   // ── Shadow ────────────────────────────────────────────────────────

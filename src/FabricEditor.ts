@@ -13,6 +13,7 @@ import { applyControlStyle } from "./ui/controls";
 import { hexAlpha } from "./ui/color";
 import { DRAG_PREVIEW_KEY } from "./types";
 import type { EditorConfig, LayerData, FontsConfig, ShapeType } from "./types";
+import type { TextStyleState } from "./text-styles";
 import { initYoga } from "./layout/stack/engine";
 import { StyleCommands } from "./editor/style-commands";
 import { Clipboard } from "./editor/clipboard";
@@ -627,6 +628,8 @@ export class FabricEditor {
   setFontSize(size: number): void { this.styles.setFontSize(size); }
   setTextAlign(align: "left" | "center" | "right" | "justify"): void { this.styles.setTextAlign(align); }
   toggleTextStyle(style: "bold" | "italic" | "underline"): void { this.styles.toggleTextStyle(style); }
+  /** Le style du texte sélectionné là où un réglage s'appliquerait (plage, curseur, texte). */
+  textStyle(): TextStyleState | null { return this.styles.textStyle(); }
   setShadow(opts: { color?: string; blur?: number; offsetX?: number; offsetY?: number }): void { this.styles.setShadow(opts); }
   removeShadow(): void { this.styles.removeShadow(); }
 

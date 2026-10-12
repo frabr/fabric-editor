@@ -34,6 +34,17 @@ function container(id: string, w: number, h: number, layout: LayoutData): FabRec
 
 const PAD = { top: 10, right: 10, bottom: 10, left: 10 };
 
+describe("CustomTextbox — édition", () => {
+  it("pas de glisser-déposer du texte sélectionné : presser sur la plage ne bloque pas le clic", () => {
+    const t = text("Bonjour le monde");
+    t.isEditing = true;
+    t.selectionStart = 0;
+    t.selectionEnd = 7;
+    expect(t.draggableTextDelegate.start({} as MouseEvent)).toBe(false);
+    expect(t.shouldStartDragging()).toBe(false);
+  });
+});
+
 describe("CustomTextbox — modes de taille", () => {
   it("un nouveau texte est en largeur et hauteur contenu, sur une ligne", () => {
     const t = text("Bonjour");

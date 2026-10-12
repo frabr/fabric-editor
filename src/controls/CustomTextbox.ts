@@ -123,6 +123,16 @@ export class CustomTextbox extends Textbox {
   }
 
   /**
+   * Pas de glisser-déposer du texte sélectionné (Fabric) : presser sur une plage sélectionnée
+   * et tirer re-sélectionne, comme dans un champ de texte — le glisser-déposer emportait le
+   * texte quand on voulait étendre la sélection.
+   */
+  initBehavior(): void {
+    super.initBehavior();
+    this.draggableTextDelegate.start = () => false;
+  }
+
+  /**
    * Une passe de layout : calcule la boîte sous la contrainte du container et la
    * retient. `null` : le texte a quitté son container.
    */

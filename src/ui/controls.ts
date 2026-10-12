@@ -352,10 +352,14 @@ function installHoverBorder(
     const ctx = (canvas.originalFabricCanvas as any).contextTop as CanvasRenderingContext2D;
     if (!ctx) return;
 
+    // Un texte en édition peint son curseur et sa sélection sur ce même calque, pendant le
+    // rendu : l'effacement vient de les emporter, on les repeint (rien hors édition)
+    const active = canvas.getActiveObject();
+    (active as { renderCursorOrSelection?: () => void } | undefined)?.renderCursorOrSelection?.();
+
     // Les médias dynamiques portent un liseré PERMANENT : l'aperçu montre la vraie image
     // d'exemple, le pointillé dit « remplie à la publication ». L'objet visé (survol,
     // sélection) s'en passe : son cadre plein le remplace, le badge nomme le lien.
-    const active = canvas.getActiveObject();
     canvas.getObjects().forEach((obj) => {
       if (obj === active || obj === hoveredObj) return;
 

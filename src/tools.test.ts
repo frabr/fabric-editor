@@ -75,6 +75,13 @@ describe("toolsFor", () => {
     ]);
   });
 
+  it("texte en édition : seulement ce qui se règle sur une plage", () => {
+    const t = text("t");
+    t.isEditing = true;
+    expect(toolsFor([t], ALL)).toEqual(["fill", "font"]);
+    expect(toolsFor([t], ["font", "delete"])).toEqual(["font"]);
+  });
+
   it("forme libre : pas de disposition ; enfant d'un bloc : disposition, mais pas de plans", () => {
     expect(toolsFor([rect("s")], ALL)).toEqual([
       "fill", "clip", "outline", "animations", "effects", "containerize", "lock", "forward", "backward", "delete",

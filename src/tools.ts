@@ -69,14 +69,26 @@ export function selectionKindOf(selected: FabricObject[]): SelectionKind | null 
   }
 }
 
-/** Les outils de la sélection que l'éditeur propose, dans l'ordre de la barre. */
+/** Les outils d'un texte en édition : ce qui s'applique à la plage sélectionnée. */
+const EDITING_TOOLS: ToolId[] = ["fill", "font"];
+
+/**
+ * Les outils de la sélection que l'éditeur propose, dans l'ordre de la barre. Un texte en
+ * édition ne montre que ce qui se règle sur une plage (couleur, police) : la barre reste
+ * sous le texte pendant qu'on y sélectionne des mots.
+ */
 export function toolsFor(selected: FabricObject[], offered: Iterable<ToolId>): ToolId[] {
   const kind = selectionKindOf(selected);
   if (!kind) return [];
 
   const available = new Set(offered);
   const allows = kind === "many" ? manyAllows(selected) : oneAllows(selected[0], kind);
-  return [...ORDER[kind], "delete" as const].filter((tool) => available.has(tool) && allows(tool));
+  const order = isEditing(selected[0]) ? EDITING_TOOLS : [...ORDER[kind], "delete" as const];
+  return order.filter((tool) => available.has(tool) && allows(tool));
+}
+
+function isEditing(obj: FabricObject): boolean {
+  return (obj as FabricObject & { isEditing?: boolean }).isEditing === true;
 }
 
 /** Ce qu'un objet seul permet. */
