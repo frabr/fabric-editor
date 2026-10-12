@@ -6522,6 +6522,7 @@ function installHoverBorder(canvas, guideColor, resolveTarget, userSlotLabel) {
     const ctx = canvas.originalFabricCanvas.contextTop;
     if (!ctx) return;
     const active = canvas.getActiveObject();
+    active?.renderCursorOrSelection?.();
     canvas.getObjects().forEach((obj) => {
       if (obj === active || obj === hoveredObj) return;
       drawDynamicMediaOutline(ctx, obj, guideColor);
@@ -7454,6 +7455,11 @@ var StyleCommands = class {
   setFillColor(color) {
     const obj = this.editor.selection.current;
     if (!obj) return;
+    if (isTextObject(obj)) {
+      if (!this.textTarget()?.range) obj.set({ opacity: 1 });
+      this.applyTextStyle({ fill: color });
+      return;
+    }
     const previous = obj.fill;
     obj.set({ fill: color, opacity: 1 });
     if (padGroupOnFirstFill(obj, previous)) this.editor.layout.relayout();
