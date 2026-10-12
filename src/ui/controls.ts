@@ -147,15 +147,14 @@ function installControlRenderer(
 
 /**
  * Un groupe ne se redimensionne que par les coins (uniforme : son contenu absorbe
- * l'agrandissement sans se déformer) et ne tourne pas. À rappeler quand un objet
+ * l'agrandissement sans se déformer). Il tourne comme un bloc, avec son contenu
+ * (layout/rotation.ts) ; la rotation reste celle du verrou. À rappeler quand un objet
  * devient ou cesse d'être un groupe.
  */
 export function syncGroupControls(obj: FabricObject): void {
   const group = isFreeContainer(obj);
-  obj.setControlsVisibility({ ml: !group, mr: !group, mt: !group, mb: !group, mtr: !group });
-  // Hors groupe, la rotation reste celle du verrou
-  if (group) obj.lockRotation = true;
-  else if (getLockMode(obj) === "free") obj.lockRotation = false;
+  obj.setControlsVisibility({ ml: !group, mr: !group, mt: !group, mb: !group });
+  if (getLockMode(obj) === "free") obj.lockRotation = false;
 }
 
 // ── Edge hit areas + rotation control ──────────────────────────────

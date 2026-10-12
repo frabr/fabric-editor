@@ -22,6 +22,7 @@ const SIZE_PRESETS: Record<SizePreset, Pick<SizingData, "x" | "y">> = {
 import { clampToRoom } from "./layout/stack/room";
 import { fitFreeAncestors } from "./layout/free/fit";
 import { SubtreeDrag } from "./layout/subtree-drag";
+import { SubtreeRotate } from "./layout/rotation";
 import { FreeResizeSession } from "./layout/free/resize-session";
 import { layoutOf, containerDataOf, childDataOf, isContainerObject, isFreeContainer, sizingOf, paddingOf, updateContainer, updateChild, updateLayout, uniformPadding } from "./layout/model";
 import { parentContainerOf, findById } from "./layout/hierarchy";
@@ -63,6 +64,8 @@ export class LayoutManager {
   private freeResize: FreeResizeSession | null = null;
   /** Les descendants qui suivent les objets déplacés (un groupe, une sélection multiple). */
   private followers: SubtreeDrag | null = null;
+  /** Les descendants qui suivent les objets tournés (un container, une sélection multiple). */
+  private rotation: SubtreeRotate | null = null;
 
   constructor(canvas: DesignCanvas, callbacks: LayoutManagerCallbacks = {}, guideColor?: string) {
     this.canvas = canvas;
@@ -244,6 +247,7 @@ export class LayoutManager {
   dispose(): void {
     this.drag.reset();
     this.canvas.off("object:moving", this.onMovingBound);
+    this.canvas.off("object:rotating", this.onRotatingBound);
     this.canvas.off("object:modified", this.onModifiedBound);
     this.canvas.off("object:resizing", this.onResizingBound);
     this.canvas.off("text:changed", this.onTextChangedBound);
@@ -253,6 +257,7 @@ export class LayoutManager {
   // ── Event wiring ──────────────────────────────────────────────────
 
   private onMovingBound = (e: any) => this.onMoving(e);
+  private onRotatingBound = (e: any) => this.onRotating(e);
   private onModifiedBound = (e: any) => this.onModified(e);
   private onResizingBound = (e: any) => this.onResizing(e);
   private onTextChangedBound = (e: any) => this.onTextChanged(e);
@@ -260,6 +265,7 @@ export class LayoutManager {
 
   private setupEventListeners(): void {
     this.canvas.on("object:moving", this.onMovingBound);
+    this.canvas.on("object:rotating", this.onRotatingBound);
     this.canvas.on("object:modified", this.onModifiedBound);
     this.canvas.on("object:resizing", this.onResizingBound);
     this.canvas.on("text:changed", this.onTextChangedBound);
@@ -337,6 +343,21 @@ export class LayoutManager {
     this.followers.follow(target);
   }
 
+  /** Un container (bloc, groupe) ou une sélection qu'on tourne : la descendance tourne avec,
+   *  comme un bloc — autour du centre de départ, depuis le début du geste. */
+  private onRotating(e: any): void {
+    const obj = e.target;
+    const moved = obj instanceof ActiveSelection ? obj.getObjects() : [obj];
+    this.rotateFollowers(obj, moved, e.transform);
+  }
+
+  private rotateFollowers(target: FabricObject, moved: FabricObject[], transform: any): void {
+    if (!this.rotation || this.rotation.transform !== transform) {
+      this.rotation = SubtreeRotate.begin(target, moved, transform, this.canvas.getObjects());
+    }
+    this.rotation.follow(target);
+  }
+
   /** Le début d'une transformation : un groupe qu'on redimensionne garde son état de départ. */
   private onBeforeTransform(e: any): void {
     const target = e.transform?.target;
@@ -361,6 +382,12 @@ export class LayoutManager {
       this.moveFollowers(obj, moved, this.followers.transform);
     }
     this.followers = null;
+    // L'angle a pu s'aimanter après le dernier object:rotating
+    if (this.rotation) {
+      const moved = obj instanceof ActiveSelection ? obj.getObjects() : [obj];
+      this.rotateFollowers(obj, moved, this.rotation.transform);
+    }
+    this.rotation = null;
 
     if (obj instanceof ActiveSelection) {
       this.drag.reset();

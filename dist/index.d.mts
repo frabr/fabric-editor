@@ -2088,6 +2088,8 @@ declare class LayoutManager {
     private freeResize;
     /** Les descendants qui suivent les objets déplacés (un groupe, une sélection multiple). */
     private followers;
+    /** Les descendants qui suivent les objets tournés (un container, une sélection multiple). */
+    private rotation;
     constructor(canvas: DesignCanvas, callbacks?: LayoutManagerCallbacks, guideColor?: string);
     /** Set or update callbacks after construction (merges with existing). */
     setCallbacks(callbacks: LayoutManagerCallbacks): void;
@@ -2162,6 +2164,7 @@ declare class LayoutManager {
     /** Clean up event listeners. */
     dispose(): void;
     private onMovingBound;
+    private onRotatingBound;
     private onModifiedBound;
     private onResizingBound;
     private onTextChangedBound;
@@ -2175,6 +2178,10 @@ declare class LayoutManager {
      * containers sont relatives à elle.
      */
     private moveFollowers;
+    /** Un container (bloc, groupe) ou une sélection qu'on tourne : la descendance tourne avec,
+     *  comme un bloc — autour du centre de départ, depuis le début du geste. */
+    private onRotating;
+    private rotateFollowers;
     /** Le début d'une transformation : un groupe qu'on redimensionne garde son état de départ. */
     private onBeforeTransform;
     /** A text inside a container was edited → its ancestors adapt. */
@@ -2182,6 +2189,44 @@ declare class LayoutManager {
     private onModified;
     private onResizing;
 }
+
+/**
+ * Les styles mixtes d'un texte : ce qu'un texte porte par plage de caractères (`styles`
+ * de Fabric) en plus de ses propriétés d'objet — police, graisse, italique, souligné,
+ * couleur. La taille reste une propriété du texte entier (l'autofit la pilote).
+ *
+ * Un état de style résume une plage : chaque clé vaut la valeur commune, ou "mixed" quand
+ * la plage n'est pas homogène. Les helpers ici sont purs ; les commandes (StyleCommands)
+ * décident où un réglage s'applique (la plage sélectionnée, ou le texte entier).
+ */
+/** Les propriétés qu'une plage de caractères peut porter. */
+declare const TEXT_STYLE_KEYS: readonly ["fontFamily", "fontWeight", "fontStyle", "underline", "fill"];
+type TextStyleKey = (typeof TEXT_STYLE_KEYS)[number];
+type TextStyleValue = string | number | boolean | undefined;
+declare const MIXED = "mixed";
+/** Le style d'une plage (ou du texte) : une valeur par clé, ou "mixed". */
+type TextStyleState = Record<TextStyleKey, TextStyleValue | typeof MIXED>;
+type StyleDeclaration = Partial<Record<TextStyleKey, TextStyleValue>>;
+/** Le `styles` de Fabric à l'exécution (ligne → caractère → déclaration), ou sérialisé
+ *  (plages `{ start, end, style }`). */
+type CharStyles = Record<string, Record<string, StyleDeclaration>>;
+/** Un poids compte comme gras à partir de 600. */
+declare function isBold(weight: TextStyleValue | typeof MIXED): boolean;
+/**
+ * Résume des déclarations complètes (objet + caractère) en un état : la valeur commune
+ * par clé, "mixed" sinon. Sans déclaration, chaque clé est `undefined`.
+ */
+declare function summarizeStyles(declarations: StyleDeclaration[]): TextStyleState;
+/**
+ * L'état d'un texte hors édition : ses propriétés d'objet, "mixed" là où des caractères
+ * en dévient.
+ */
+declare function summarizeObject(object: StyleDeclaration, styles: CharStyles | undefined): TextStyleState;
+/**
+ * Les familles de police qu'utilisent ces calques, styles par caractère compris — ce
+ * qu'il faut charger avant de les rendre. Descend dans les groupes.
+ */
+declare function fontFamiliesOf(layers: object[]): string[];
 
 /**
  * Aligner et répartir : la géométrie, en fonctions pures sur des boîtes (coordonnées scène,
@@ -2500,6 +2545,8 @@ declare class FabricEditor {
     setFontSize(size: number): void;
     setTextAlign(align: "left" | "center" | "right" | "justify"): void;
     toggleTextStyle(style: "bold" | "italic" | "underline"): void;
+    /** Le style du texte sélectionné là où un réglage s'appliquerait (plage, curseur, texte). */
+    textStyle(): TextStyleState | null;
     setShadow(opts: {
         color?: string;
         blur?: number;
@@ -3314,4 +3361,4 @@ declare function displayFill(obj: FabricObject): string | null;
 /** Pose ou retire la couleur d'affichage ; rend true si elle a changé (à l'hôte de redessiner). */
 declare function setDisplayFill(obj: FabricObject, fill: string | null): boolean;
 
-export { type AlignEdge, type AlignItems, type AlignSelf, type Arrangement, type BadgeLabeler, type BindingSpec, type Bindings, type Box, CanvasGuides, type CatalogShape, type CatalogShapeInput, type ChildData, type ClipData, type ContainerData, ContainerizeSession, type ControlOption, type Crop, CropMode, CustomTextbox, type Delta, DesignCanvas, type DistributeAxis, type DragPayload, DropHandler, type DropHandlerConfig, type DropResult, type EditorConfig, FabCircle, FabPath, FabRect, FabricEditor, type FlexDirection, type FontConfig, type FontsConfig, type FrameRect, FreeResizeSession, GHOST_OPACITY, HEART_PATH, HEXAGON_PATH, type HistoryCallbacks, HistoryManager, type HistoryState, type HtmlLayerOutput, type HtmlRenderOptions, ImageFrame, type ImageLayerOptions, InsertChildSession, type JustifyContent, type LayerData, LayerManager, type LayoutData, LayoutManager, type LayoutManagerCallbacks, type LayoutParents, type LayoutSession, type LockMode$1 as LockMode, type Lockable, MAX_CROP_SCALE, MIN_PAD, MaskManager, NO_CROP, type ObjectControlsConfig, type ObjectKind, type ObjectRules, PendingUploadsManager, PersistenceManager, PreviewCanvas, ResizeSession, type ResizeSnapResult, type SaveOptions, type SaveResult, type SelectionCallbacks, type SelectionKind, SelectionManager, type ShapeCatalogEntry, type ShapeLayerOptions, type ShapePathData, type ShapeType, type SizeMode, type SizePreset, type SizingData, type SnappingConfig, SnappingManager, StackResizeSession, type TextLayerOptions, type TextOverflow, type ToolId, type ToolboxImageReaction, type TreeLayer, USER_SCOPE, USER_SLOT_FIELD, type UserSlot, type WorkspaceOptions, addCircleClip, addCropControls, addHeartClip, addHexagonClip, alignAxis, alignDelta, antiScale, applyClip, applyLockMode, badgeLabel, bindingBadgeLabel, clampTopLeft, clipDataFor, collectUserSlots, createCircle, createDropSession, createHeart, createHexagon, createImage, createPathShape, createPathsShape, createRect, createShape, cropFromRect, displayFill, distributeDeltas, drawBindingBadge, drawFrameBadge, fabricToHtml, fitFreeContainer, getAvailableShapes, getCatalogShape, getLockMode, getNextLockMode, getShapeCatalog, hasExceededOffset, hasPendingBindings, initYoga, isContentLocked, isCropped, isFreeContainer, isGhost, isMonoPath, isPositionLocked, isStyleLocked, isUserSlot, isValidShape, kindOf, layerToHtmlStandalone, layoutChildren, layoutDescendants, layoutParents, layoutRoot, lockBoundText, nextShape, panCrop, pendingBindings, photoRect, pointInObject, registerShapes, registeredShapes, removeCropControls, rulesOf, runLayout, scaledSize, selectionKindOf, setDisplayFill, setGhost, setTextContent, stackBlock, stackParentOf, switchClip, switchShape, toolsFor, topLeft, unionBox, userSlotBinding, userSlotHint, wrapContainerAroundChild, yogaLayout, zoomCrop };
+export { type AlignEdge, type AlignItems, type AlignSelf, type Arrangement, type BadgeLabeler, type BindingSpec, type Bindings, type Box, CanvasGuides, type CatalogShape, type CatalogShapeInput, type ChildData, type ClipData, type ContainerData, ContainerizeSession, type ControlOption, type Crop, CropMode, CustomTextbox, type Delta, DesignCanvas, type DistributeAxis, type DragPayload, DropHandler, type DropHandlerConfig, type DropResult, type EditorConfig, FabCircle, FabPath, FabRect, FabricEditor, type FlexDirection, type FontConfig, type FontsConfig, type FrameRect, FreeResizeSession, GHOST_OPACITY, HEART_PATH, HEXAGON_PATH, type HistoryCallbacks, HistoryManager, type HistoryState, type HtmlLayerOutput, type HtmlRenderOptions, ImageFrame, type ImageLayerOptions, InsertChildSession, type JustifyContent, type LayerData, LayerManager, type LayoutData, LayoutManager, type LayoutManagerCallbacks, type LayoutParents, type LayoutSession, type LockMode$1 as LockMode, type Lockable, MAX_CROP_SCALE, MIN_PAD, MIXED, MaskManager, NO_CROP, type ObjectControlsConfig, type ObjectKind, type ObjectRules, PendingUploadsManager, PersistenceManager, PreviewCanvas, ResizeSession, type ResizeSnapResult, type SaveOptions, type SaveResult, type SelectionCallbacks, type SelectionKind, SelectionManager, type ShapeCatalogEntry, type ShapeLayerOptions, type ShapePathData, type ShapeType, type SizeMode, type SizePreset, type SizingData, type SnappingConfig, SnappingManager, StackResizeSession, TEXT_STYLE_KEYS, type TextLayerOptions, type TextOverflow, type TextStyleKey, type TextStyleState, type TextStyleValue, type ToolId, type ToolboxImageReaction, type TreeLayer, USER_SCOPE, USER_SLOT_FIELD, type UserSlot, type WorkspaceOptions, addCircleClip, addCropControls, addHeartClip, addHexagonClip, alignAxis, alignDelta, antiScale, applyClip, applyLockMode, badgeLabel, bindingBadgeLabel, clampTopLeft, clipDataFor, collectUserSlots, createCircle, createDropSession, createHeart, createHexagon, createImage, createPathShape, createPathsShape, createRect, createShape, cropFromRect, displayFill, distributeDeltas, drawBindingBadge, drawFrameBadge, fabricToHtml, fitFreeContainer, fontFamiliesOf, getAvailableShapes, getCatalogShape, getLockMode, getNextLockMode, getShapeCatalog, hasExceededOffset, hasPendingBindings, initYoga, isBold, isContentLocked, isCropped, isFreeContainer, isGhost, isMonoPath, isPositionLocked, isStyleLocked, isUserSlot, isValidShape, kindOf, layerToHtmlStandalone, layoutChildren, layoutDescendants, layoutParents, layoutRoot, lockBoundText, nextShape, panCrop, pendingBindings, photoRect, pointInObject, registerShapes, registeredShapes, removeCropControls, rulesOf, runLayout, scaledSize, selectionKindOf, setDisplayFill, setGhost, setTextContent, stackBlock, stackParentOf, summarizeObject, summarizeStyles, switchClip, switchShape, toolsFor, topLeft, unionBox, userSlotBinding, userSlotHint, wrapContainerAroundChild, yogaLayout, zoomCrop };

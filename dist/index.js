@@ -160,6 +160,7 @@ __export(index_exports, {
   LayoutManager: () => LayoutManager2,
   MAX_CROP_SCALE: () => MAX_CROP_SCALE,
   MIN_PAD: () => MIN_PAD,
+  MIXED: () => MIXED,
   MaskManager: () => MaskManager,
   NO_CROP: () => NO_CROP,
   PendingUploadsManager: () => PendingUploadsManager,
@@ -169,6 +170,7 @@ __export(index_exports, {
   SelectionManager: () => SelectionManager,
   SnappingManager: () => SnappingManager,
   StackResizeSession: () => StackResizeSession,
+  TEXT_STYLE_KEYS: () => TEXT_STYLE_KEYS,
   USER_SCOPE: () => USER_SCOPE,
   USER_SLOT_FIELD: () => USER_SLOT_FIELD,
   addCircleClip: () => addCircleClip,
@@ -201,6 +203,7 @@ __export(index_exports, {
   drawFrameBadge: () => drawFrameBadge,
   fabricToHtml: () => fabricToHtml,
   fitFreeContainer: () => fitFreeContainer,
+  fontFamiliesOf: () => fontFamiliesOf,
   getAvailableShapes: () => getAvailableShapes,
   getCatalogShape: () => getCatalogShape,
   getLockMode: () => getLockMode,
@@ -209,6 +212,7 @@ __export(index_exports, {
   hasExceededOffset: () => hasExceededOffset,
   hasPendingBindings: () => hasPendingBindings,
   initYoga: () => initYoga,
+  isBold: () => isBold,
   isContentLocked: () => isContentLocked,
   isCropped: () => isCropped,
   isFreeContainer: () => isFreeContainer,
@@ -242,6 +246,8 @@ __export(index_exports, {
   setTextContent: () => setTextContent,
   stackBlock: () => stackBlock,
   stackParentOf: () => stackParentOf,
+  summarizeObject: () => summarizeObject,
+  summarizeStyles: () => summarizeStyles,
   switchClip: () => switchClip,
   switchShape: () => switchShape,
   toolsFor: () => toolsFor,
@@ -256,7 +262,7 @@ __export(index_exports, {
 module.exports = __toCommonJS(index_exports);
 
 // src/FabricEditor.ts
-var import_fabric22 = require("#fabric");
+var import_fabric23 = require("#fabric");
 
 // src/DesignCanvas.ts
 var import_fabric = require("#fabric");
@@ -4766,10 +4772,10 @@ function isSnapTarget(obj) {
 }
 
 // src/LayoutManager.ts
-var import_fabric19 = require("#fabric");
+var import_fabric20 = require("#fabric");
 
 // src/DragToLayout.ts
-var import_fabric17 = require("#fabric");
+var import_fabric18 = require("#fabric");
 
 // src/layout/stack/engine.ts
 var yoga = null;
@@ -4995,8 +5001,59 @@ function setupTextMeasure(node, obj, Y) {
   });
 }
 
+// src/layout/rotation.ts
+var import_fabric17 = require("#fabric");
+function rotateAbout(obj, pivot, delta) {
+  if (!delta) return;
+  const center = obj.getCenterPoint().rotate(import_fabric17.util.degreesToRadians(delta), pivot);
+  obj.set({ angle: (obj.angle || 0) + delta });
+  obj.setPositionByOrigin(center, "center", "center");
+  obj.setCoords();
+}
+function inLocalFrame(root, objects, fn) {
+  const angle = root.angle || 0;
+  if (Math.abs(angle) < 1e-6) return fn();
+  const pivot = root.getCenterPoint();
+  const subtree = subtreeOf(objects, [root]);
+  for (const obj of subtree) rotateAbout(obj, pivot, -angle);
+  try {
+    return fn();
+  } finally {
+    for (const obj of subtree) rotateAbout(obj, pivot, angle);
+  }
+}
+var SubtreeRotate = class _SubtreeRotate {
+  constructor(transform, pivot, startAngle, followers) {
+    this.transform = transform;
+    this.pivot = pivot;
+    this.startAngle = startAngle;
+    this.followers = followers;
+  }
+  static begin(target, moved, transform, objects) {
+    return new _SubtreeRotate(
+      transform,
+      target.getCenterPoint(),
+      transform?.original?.angle ?? target.angle ?? 0,
+      descendantsOf(objects, moved).map((o) => ({ obj: o, center: o.getCenterPoint(), angle: o.angle || 0 }))
+    );
+  }
+  /** La descendance suit la rotation de `target` depuis le début. */
+  follow(target) {
+    const delta = (target.angle || 0) - this.startAngle;
+    const rad = import_fabric17.util.degreesToRadians(delta);
+    for (const f of this.followers) {
+      f.obj.set({ angle: f.angle + delta });
+      f.obj.setPositionByOrigin(f.center.rotate(rad, this.pivot), "center", "center");
+      f.obj.setCoords();
+    }
+  }
+};
+
 // src/layout/free/fit.ts
 function fitFreeContainer(container, objects) {
+  inLocalFrame(container, objects, () => fitFreeContainerLocal(container, objects));
+}
+function fitFreeContainerLocal(container, objects) {
   const children = childrenOf(objects, container).map((c) => c.obj);
   if (children.length === 0) return;
   for (const child of children) if (isFreeContainer(child)) fitFreeContainer(child, objects);
@@ -5020,6 +5077,9 @@ function runLayout(objects) {
   }
 }
 function layoutTree(container, objects) {
+  inLocalFrame(container, objects, () => layoutTreeLocal(container, objects));
+}
+function layoutTreeLocal(container, objects) {
   const cd = layoutOf(container).container;
   const children = flowChildrenOf(objects, container);
   if (children.length === 0) return;
@@ -5754,7 +5814,7 @@ var DragToLayout = class {
    * need to be on the canvas yet — it is added when the session anchors.
    */
   tick(source, cursor) {
-    source.setPositionByOrigin(new import_fabric17.Point(cursor.x, cursor.y), "center", "center");
+    source.setPositionByOrigin(new import_fabric18.Point(cursor.x, cursor.y), "center", "center");
     source.setCoords();
     this.move(source, cursor);
     if (this.canvas.getObjects().includes(source)) this.canvas.requestRenderAll();
@@ -6205,16 +6265,16 @@ function arrangeFree(container, objects) {
 }
 
 // src/ui/controls.ts
-var import_fabric18 = require("#fabric");
+var import_fabric19 = require("#fabric");
 function applyControlStyle(canvas, guideColor, resolveTarget, userSlotLabel) {
   const gc = guideColor;
-  import_fabric18.FabricObject.ownDefaults.borderColor = gc;
-  import_fabric18.FabricObject.ownDefaults.borderScaleFactor = 2;
-  import_fabric18.FabricObject.ownDefaults.borderOpacityWhenMoving = 1;
-  import_fabric18.FabricObject.ownDefaults.cornerColor = "#ffffff";
-  import_fabric18.FabricObject.ownDefaults.cornerStrokeColor = "#000000";
-  import_fabric18.FabricObject.ownDefaults.transparentCorners = false;
-  import_fabric18.FabricObject.ownDefaults.cornerSize = 16;
+  import_fabric19.FabricObject.ownDefaults.borderColor = gc;
+  import_fabric19.FabricObject.ownDefaults.borderScaleFactor = 2;
+  import_fabric19.FabricObject.ownDefaults.borderOpacityWhenMoving = 1;
+  import_fabric19.FabricObject.ownDefaults.cornerColor = "#ffffff";
+  import_fabric19.FabricObject.ownDefaults.cornerStrokeColor = "#000000";
+  import_fabric19.FabricObject.ownDefaults.transparentCorners = false;
+  import_fabric19.FabricObject.ownDefaults.cornerSize = 16;
   const hoverProgress = /* @__PURE__ */ new WeakMap();
   installControlRenderer(gc, hoverProgress);
   installControlHitAreas(canvas);
@@ -6229,7 +6289,7 @@ var ANIM_SPEED = 10;
 function installControlRenderer(gc, hoverProgress) {
   const [activeR, activeG, activeB] = parseHex(gc);
   const hoverStart = /* @__PURE__ */ new WeakMap();
-  import_fabric18.Control.prototype.render = function(ctx, left, top, styleOverride, fabricObject) {
+  import_fabric19.Control.prototype.render = function(ctx, left, top, styleOverride, fabricObject) {
     if (fabricObject.isMoving) return;
     const baseColor = styleOverride?.cornerColor ?? fabricObject.cornerColor;
     const isDefault = baseColor === DEFAULT_COLOR2;
@@ -6295,9 +6355,8 @@ function installControlRenderer(gc, hoverProgress) {
 }
 function syncGroupControls(obj) {
   const group = isFreeContainer(obj);
-  obj.setControlsVisibility({ ml: !group, mr: !group, mt: !group, mb: !group, mtr: !group });
-  if (group) obj.lockRotation = true;
-  else if (getLockMode(obj) === "free") obj.lockRotation = false;
+  obj.setControlsVisibility({ ml: !group, mr: !group, mt: !group, mb: !group });
+  if (getLockMode(obj) === "free") obj.lockRotation = false;
 }
 var HIT_DEPTH = 14;
 var CORNER_INSET = 20;
@@ -6319,13 +6378,13 @@ var resizeEdge = (eventData, transform, x, y) => {
   return changed;
 };
 function installControlHitAreas(canvas) {
-  const createSideRotationControl = () => new import_fabric18.Control({
+  const createSideRotationControl = () => new import_fabric19.Control({
     x: 0.5,
     y: 0,
     offsetX: 30,
     offsetY: 0,
-    actionHandler: import_fabric18.controlsUtils.rotationWithSnapping,
-    cursorStyleHandler: import_fabric18.controlsUtils.rotationStyleHandler,
+    actionHandler: import_fabric19.controlsUtils.rotationWithSnapping,
+    cursorStyleHandler: import_fabric19.controlsUtils.rotationStyleHandler,
     withConnection: true,
     actionName: "rotate"
   });
@@ -6594,8 +6653,11 @@ var LayoutManager2 = class {
     this.freeResize = null;
     /** Les descendants qui suivent les objets déplacés (un groupe, une sélection multiple). */
     this.followers = null;
+    /** Les descendants qui suivent les objets tournés (un container, une sélection multiple). */
+    this.rotation = null;
     // ── Event wiring ──────────────────────────────────────────────────
     this.onMovingBound = (e) => this.onMoving(e);
+    this.onRotatingBound = (e) => this.onRotating(e);
     this.onModifiedBound = (e) => this.onModified(e);
     this.onResizingBound = (e) => this.onResizing(e);
     this.onTextChangedBound = (e) => this.onTextChanged(e);
@@ -6754,6 +6816,7 @@ var LayoutManager2 = class {
   dispose() {
     this.drag.reset();
     this.canvas.off("object:moving", this.onMovingBound);
+    this.canvas.off("object:rotating", this.onRotatingBound);
     this.canvas.off("object:modified", this.onModifiedBound);
     this.canvas.off("object:resizing", this.onResizingBound);
     this.canvas.off("text:changed", this.onTextChangedBound);
@@ -6761,6 +6824,7 @@ var LayoutManager2 = class {
   }
   setupEventListeners() {
     this.canvas.on("object:moving", this.onMovingBound);
+    this.canvas.on("object:rotating", this.onRotatingBound);
     this.canvas.on("object:modified", this.onModifiedBound);
     this.canvas.on("object:resizing", this.onResizingBound);
     this.canvas.on("text:changed", this.onTextChangedBound);
@@ -6769,7 +6833,7 @@ var LayoutManager2 = class {
   // ── Canvas event handlers ─────────────────────────────────────────
   onMoving(e) {
     const obj = e.target;
-    if (obj instanceof import_fabric19.ActiveSelection) {
+    if (obj instanceof import_fabric20.ActiveSelection) {
       this.moveFollowers(obj, obj.getObjects(), e.transform);
       return;
     }
@@ -6817,6 +6881,19 @@ var LayoutManager2 = class {
     }
     this.followers.follow(target);
   }
+  /** Un container (bloc, groupe) ou une sélection qu'on tourne : la descendance tourne avec,
+   *  comme un bloc — autour du centre de départ, depuis le début du geste. */
+  onRotating(e) {
+    const obj = e.target;
+    const moved = obj instanceof import_fabric20.ActiveSelection ? obj.getObjects() : [obj];
+    this.rotateFollowers(obj, moved, e.transform);
+  }
+  rotateFollowers(target, moved, transform) {
+    if (!this.rotation || this.rotation.transform !== transform) {
+      this.rotation = SubtreeRotate.begin(target, moved, transform, this.canvas.getObjects());
+    }
+    this.rotation.follow(target);
+  }
   /** Le début d'une transformation : un groupe qu'on redimensionne garde son état de départ. */
   onBeforeTransform(e) {
     const target = e.transform?.target;
@@ -6833,11 +6910,16 @@ var LayoutManager2 = class {
   onModified(e) {
     const obj = e.target;
     if (this.followers) {
-      const moved = obj instanceof import_fabric19.ActiveSelection ? obj.getObjects() : [obj];
+      const moved = obj instanceof import_fabric20.ActiveSelection ? obj.getObjects() : [obj];
       this.moveFollowers(obj, moved, this.followers.transform);
     }
     this.followers = null;
-    if (obj instanceof import_fabric19.ActiveSelection) {
+    if (this.rotation) {
+      const moved = obj instanceof import_fabric20.ActiveSelection ? obj.getObjects() : [obj];
+      this.rotateFollowers(obj, moved, this.rotation.transform);
+    }
+    this.rotation = null;
+    if (obj instanceof import_fabric20.ActiveSelection) {
       this.drag.reset();
       return;
     }
@@ -6900,7 +6982,7 @@ var LayoutManager2 = class {
 var DRAG_PREVIEW_KEY = "dragPreview";
 
 // src/editor/style-commands.ts
-var import_fabric20 = require("#fabric");
+var import_fabric21 = require("#fabric");
 
 // src/clipping/antiScale.ts
 function antiScale(obj) {
@@ -7111,10 +7193,105 @@ function padGroupOnFirstFill(container, previousFill) {
   return true;
 }
 
+// src/text-styles.ts
+var TEXT_STYLE_KEYS = ["fontFamily", "fontWeight", "fontStyle", "underline", "fill"];
+var MIXED = "mixed";
+function isBold(weight) {
+  return weight === "bold" || Number(weight) >= 600;
+}
+function summarizeStyles(declarations) {
+  const state = {};
+  for (const key of TEXT_STYLE_KEYS) {
+    const values = new Set(declarations.map((d) => normalize(key, d[key])));
+    state[key] = values.size > 1 ? MIXED : [...values][0];
+  }
+  return state;
+}
+function summarizeObject(object, styles) {
+  const state = {};
+  for (const key of TEXT_STYLE_KEYS) {
+    const base = normalize(key, object[key]);
+    const deviates = eachDeclaration(styles).some((d) => key in d && normalize(key, d[key]) !== base);
+    state[key] = deviates ? MIXED : base;
+  }
+  return state;
+}
+function fontFamiliesOf(layers) {
+  const families = /* @__PURE__ */ new Set();
+  const visit = (node) => {
+    if (!node || typeof node !== "object") return;
+    const layer = node;
+    if (typeof layer.fontFamily === "string") families.add(layer.fontFamily);
+    for (const d of eachDeclaration(layer.styles)) {
+      if (typeof d.fontFamily === "string") families.add(d.fontFamily);
+    }
+    if (Array.isArray(layer.objects)) layer.objects.forEach(visit);
+  };
+  layers.forEach(visit);
+  return [...families];
+}
+function eachDeclaration(styles) {
+  if (!styles || typeof styles !== "object") return [];
+  if (Array.isArray(styles)) {
+    return styles.map((range) => range.style).filter((s) => !!s && typeof s === "object");
+  }
+  return Object.values(styles).flatMap((line) => Object.values(line ?? {}));
+}
+function normalize(key, value) {
+  if (key === "fontWeight") return value === void 0 ? "normal" : String(value);
+  if (key === "fontStyle") return value ?? "normal";
+  if (key === "underline") return value === true;
+  return value;
+}
+
 // src/editor/style-commands.ts
 var StyleCommands = class {
   constructor(editor) {
     this.editor = editor;
+  }
+  // ── Texte : la plage sélectionnée, ou le texte entier ──────────────
+  /**
+   * Le style du texte sélectionné, là où un réglage s'appliquerait : la plage sélectionnée
+   * en édition ; au curseur, le caractère qui le précède (ce dont hérite la frappe) ; hors
+   * édition, les propriétés du texte, "mixed" là où des caractères en dévient.
+   */
+  textStyle() {
+    const target = this.textTarget();
+    if (!target) return null;
+    const { obj, range } = target;
+    if (range) return summarizeStyles(obj.getSelectionStyles(range[0], range[1], true));
+    if (obj.isEditing && obj.text.length > 0) {
+      const at = Math.max(obj.selectionStart - 1, 0);
+      return summarizeStyles(obj.getSelectionStyles(at, at + 1, true));
+    }
+    return summarizeObject(obj, obj.styles);
+  }
+  textTarget() {
+    const obj = this.editor.selection.current;
+    if (!obj || !isTextObject(obj)) return null;
+    const ranged = obj.isEditing && obj.selectionStart !== obj.selectionEnd;
+    return { obj, range: ranged ? [obj.selectionStart, obj.selectionEnd] : null };
+  }
+  /**
+   * Pose des propriétés de texte : sur la plage sélectionnée en édition, sinon sur le texte
+   * entier — et alors les surcharges par caractère de ces propriétés s'effacent (ce qu'on
+   * règle « sur le texte » vaut pour tout le texte). Une plage qui finit par couvrir tout
+   * le texte remonte sur l'objet : le document reste propre.
+   */
+  applyTextStyle(props) {
+    const target = this.textTarget();
+    if (!target) return;
+    const { obj, range } = target;
+    if (range) {
+      obj.setSelectionStyles(props, range[0], range[1]);
+      for (const key of Object.keys(props)) obj.cleanStyle(key);
+    } else {
+      obj.set(props);
+      for (const key of Object.keys(props)) obj.removeStyle(key);
+    }
+    obj.dirty = true;
+    this.editor.layout.relayout();
+    this.editor.canvas.requestRenderAll();
   }
   /**
    * @legacy Use ImageFrame.nextClipShape() directly.
@@ -7126,7 +7303,7 @@ var StyleCommands = class {
       obj.nextClipShape();
       obj.dirty = true;
       this.editor.canvas.requestRenderAll();
-    } else if (obj instanceof import_fabric20.FabricImage) {
+    } else if (obj instanceof import_fabric21.FabricImage) {
       switchClip(obj);
       obj.dirty = true;
       this.editor.canvas.remove(obj);
@@ -7138,7 +7315,7 @@ var StyleCommands = class {
    */
   switchShape() {
     const obj = this.editor.selection.current;
-    if (!obj || obj instanceof import_fabric20.FabricImage) return;
+    if (!obj || obj instanceof import_fabric21.FabricImage) return;
     const currentShapeId = obj.id;
     const nextShapeType = nextShape(currentShapeId);
     this.changeShape(nextShapeType);
@@ -7153,7 +7330,7 @@ var StyleCommands = class {
       obj.applyClipShape(shapeType);
       obj.dirty = true;
       this.editor.canvas.requestRenderAll();
-    } else if (!(obj instanceof import_fabric20.FabricImage)) {
+    } else if (!(obj instanceof import_fabric21.FabricImage)) {
       const newObj = switchShape(obj, shapeType);
       const layerId = obj.get("layerId");
       const layerType = obj.get("layerType");
@@ -7190,11 +7367,10 @@ var StyleCommands = class {
     const obj = this.editor.selection.current;
     if (!obj) return;
     if (isTextObject(obj)) {
-      obj.set("fill", color);
-    } else {
-      const property = obj.stroke ? "stroke" : "fill";
-      obj.set(property, color);
+      this.applyTextStyle({ fill: color });
+      return;
     }
+    obj.set(obj.stroke ? "stroke" : "fill", color);
     this.editor.canvas.renderAll();
   }
   /**
@@ -7269,7 +7445,7 @@ var StyleCommands = class {
     const rad = angleDeg * Math.PI / 180;
     const cos = Math.cos(rad);
     const sin = Math.sin(rad);
-    const gradient = new import_fabric20.Gradient({
+    const gradient = new import_fabric21.Gradient({
       type: "linear",
       gradientUnits: "percentage",
       coords: {
@@ -7288,23 +7464,19 @@ var StyleCommands = class {
     if (padGroupOnFirstFill(obj, previous)) this.editor.layout.relayout();
     this.editor.canvas.renderAll();
   }
-  /**
-   * Change la police de l'objet texte sélectionné
-   */
+  /** La police (famille et graisse) de la plage sélectionnée, ou du texte entier. */
   changeFont(fontFamily, fontWeight) {
-    const obj = this.editor.selection.current;
-    if (!obj || !isTextObject(obj)) return;
-    obj.set({ fontFamily, fontWeight: fontWeight || "normal" });
-    this.editor.layout.relayout();
-    this.editor.canvas.requestRenderAll();
+    this.applyTextStyle({ fontFamily, fontWeight: fontWeight || "normal" });
   }
   /**
-   * Change la taille de police de l'objet texte sélectionné
+   * La taille du texte sélectionné : toujours le texte entier (une taille par texte, que
+   * l'autofit pilote) — des tailles par caractère héritées d'un vieux document s'effacent.
    */
   setFontSize(size) {
     const obj = this.editor.selection.current;
     if (!obj || !isTextObject(obj) || !Number.isFinite(size) || size <= 0) return;
     obj.set({ fontSize: size });
+    obj.removeStyle("fontSize");
     this.editor.layout.relayout();
     this.editor.canvas.requestRenderAll();
   }
@@ -7319,35 +7491,33 @@ var StyleCommands = class {
     this.editor.canvas.requestRenderAll();
   }
   /**
-   * Bascule un style sur l'objet texte sélectionné (gras, italique, souligné).
-   * "bold" alterne fontWeight normal/bold (un poids numérique >= 600 compte
-   * comme gras).
+   * Bascule un style (gras, italique, souligné) sur la plage sélectionnée, ou le texte
+   * entier. Une plage mixte passe au style (tout en gras), comme dans un traitement de
+   * texte. "bold" alterne un poids normal/bold ; un poids numérique >= 600 compte comme gras.
    */
   toggleTextStyle(style) {
-    const obj = this.editor.selection.current;
-    if (!obj || !isTextObject(obj)) return;
+    const state = this.textStyle();
+    if (!state) return;
     switch (style) {
       case "bold": {
-        const isBold = obj.fontWeight === "bold" || Number(obj.fontWeight) >= 600;
-        obj.set({ fontWeight: isBold ? "normal" : "bold" });
+        const on = state.fontWeight !== MIXED && isBold(state.fontWeight);
+        this.applyTextStyle({ fontWeight: on ? "normal" : "bold" });
         break;
       }
       case "italic":
-        obj.set({ fontStyle: obj.fontStyle === "italic" ? "normal" : "italic" });
+        this.applyTextStyle({ fontStyle: state.fontStyle === "italic" ? "normal" : "italic" });
         break;
       case "underline":
-        obj.set({ underline: !obj.underline });
+        this.applyTextStyle({ underline: state.underline !== true });
         break;
     }
-    this.editor.layout.relayout();
-    this.editor.canvas.requestRenderAll();
   }
   // ── Shadow ────────────────────────────────────────────────────────
   setShadow(opts) {
     const obj = this.editor.selection.current;
     if (!obj) return;
     const existing = obj.shadow;
-    const shadow = new import_fabric20.Shadow({
+    const shadow = new import_fabric21.Shadow({
       color: opts.color ?? existing?.color ?? "rgba(0,0,0,0.5)",
       blur: opts.blur ?? existing?.blur ?? 10,
       offsetX: opts.offsetX ?? existing?.offsetX ?? 5,
@@ -7626,7 +7796,7 @@ function installDisplayStyleRendering(target) {
 }
 
 // src/CropMode.ts
-var import_fabric21 = require("#fabric");
+var import_fabric22 = require("#fabric");
 var HANDLE_RADIUS = 6;
 var HANDLE_GRAB = 12;
 var FALLBACK_VEIL = "#f3f4f6";
@@ -7731,13 +7901,13 @@ var CropMode = class {
   /** Le point de la scène dans le repère du cadre. */
   toFrame(scene) {
     const frame = this.frame;
-    const local = scene.transform(import_fabric21.util.invertTransform(frame.calcTransformMatrix()));
+    const local = scene.transform(import_fabric22.util.invertTransform(frame.calcTransformMatrix()));
     return { x: local.x + frame.frameWidth / 2, y: local.y + frame.frameHeight / 2 };
   }
   /** Le point du cadre à l'écran (pixels CSS du canvas). */
   toScreen(x, y) {
     const frame = this.frame;
-    return new import_fabric21.Point(x - frame.frameWidth / 2, y - frame.frameHeight / 2).transform(frame.calcTransformMatrix()).transform(this.fc.viewportTransform);
+    return new import_fabric22.Point(x - frame.frameWidth / 2, y - frame.frameHeight / 2).transform(frame.calcTransformMatrix()).transform(this.fc.viewportTransform);
   }
   /** Une unité d'écran en unités de cadre. */
   frameUnit() {
@@ -8379,6 +8549,10 @@ var _FabricEditor = class _FabricEditor {
   toggleTextStyle(style) {
     this.styles.toggleTextStyle(style);
   }
+  /** Le style du texte sélectionné là où un réglage s'appliquerait (plage, curseur, texte). */
+  textStyle() {
+    return this.styles.textStyle();
+  }
   setShadow(opts) {
     this.styles.setShadow(opts);
   }
@@ -8462,7 +8636,7 @@ var _FabricEditor = class _FabricEditor {
    * remplacement, et l'image est ajoutée.
    */
   findDropTargetAtPoint(x, y) {
-    const point = new import_fabric22.Point(x, y);
+    const point = new import_fabric23.Point(x, y);
     const objects = this.canvas.getObjects().slice().reverse();
     for (const obj of objects) {
       if (obj.get(DRAG_PREVIEW_KEY)) continue;
@@ -8487,15 +8661,15 @@ var _FabricEditor = class _FabricEditor {
   extendFabricObject() {
     if (_FabricEditor._toObjectExtended) return;
     _FabricEditor._toObjectExtended = true;
-    installGhostRendering(import_fabric22.FabricObject.prototype);
-    installDisplayStyleRendering(import_fabric22.FabricObject.prototype);
-    const originalToObject = import_fabric22.FabricObject.prototype.toObject;
-    import_fabric22.FabricObject.prototype.toObject = function(propertiesToInclude) {
+    installGhostRendering(import_fabric23.FabricObject.prototype);
+    installDisplayStyleRendering(import_fabric23.FabricObject.prototype);
+    const originalToObject = import_fabric23.FabricObject.prototype.toObject;
+    import_fabric23.FabricObject.prototype.toObject = function(propertiesToInclude) {
       const data = originalToObject.call(
         this,
         ["layerId", "layout", "bindings"].concat(propertiesToInclude || [])
       );
-      if (this.group instanceof import_fabric22.ActiveSelection) {
+      if (this.group instanceof import_fabric23.ActiveSelection) {
         const { x, y } = this.getXY();
         Object.assign(data, { left: x, top: y });
       }
@@ -8510,8 +8684,8 @@ _FabricEditor._toObjectExtended = false;
 var FabricEditor = _FabricEditor;
 
 // src/PreviewCanvas.ts
-var import_fabric23 = require("#fabric");
-var PreviewCanvas = class extends import_fabric23.StaticCanvas {
+var import_fabric24 = require("#fabric");
+var PreviewCanvas = class extends import_fabric24.StaticCanvas {
   constructor(el, opts) {
     const { width, height, ...canvasOpts } = opts;
     super(el, {
@@ -8571,7 +8745,7 @@ var PreviewCanvas = class extends import_fabric23.StaticCanvas {
 };
 
 // src/DropHandler.ts
-var import_fabric24 = require("#fabric");
+var import_fabric25 = require("#fabric");
 var HIGHLIGHT_COLOR = "#3b82f6";
 var KIND_CAPABILITIES = {
   image: { layout: false, replaceTarget: true },
@@ -8742,7 +8916,7 @@ var DropHandler = class {
       if (!committed && object) {
         if (e) {
           const pointer = this.editor.canvas.getScenePoint(e);
-          object.setPositionByOrigin(new import_fabric24.Point(pointer.x, pointer.y), "center", "center");
+          object.setPositionByOrigin(new import_fabric25.Point(pointer.x, pointer.y), "center", "center");
           object.setCoords();
         }
         if (!this.editor.canvas.getObjects().includes(object)) {
@@ -8818,7 +8992,7 @@ var DropHandler = class {
         this.editor.layout.tickExternalDrag(object, pointer);
         return;
       }
-      object.setPositionByOrigin(new import_fabric24.Point(pointer.x, pointer.y), "center", "center");
+      object.setPositionByOrigin(new import_fabric25.Point(pointer.x, pointer.y), "center", "center");
       object.setCoords();
       this.editor.canvas.requestRenderAll();
     }
@@ -8947,7 +9121,7 @@ var DropHandler = class {
       height = target.height;
       clipPath = target.clipPath;
     }
-    const fabricOverlay = new import_fabric24.Rect({
+    const fabricOverlay = new import_fabric25.Rect({
       left: target.left,
       top: target.top,
       width,
@@ -9040,7 +9214,7 @@ var DropHandler = class {
    * drop-target detection.
    */
   async createImagePreview(url) {
-    const img = await import_fabric24.FabricImage.fromURL(url, { crossOrigin: "anonymous" });
+    const img = await import_fabric25.FabricImage.fromURL(url, { crossOrigin: "anonymous" });
     let scale = 1;
     if (img.width > 300 || img.height > 300) {
       scale = Math.min(300 / img.width, 300 / img.height);
@@ -9075,7 +9249,7 @@ var DropHandler = class {
     if (e && !this.intersectsCanvas(e, null)) return null;
     const pointer = e ? this.editor.canvas.getScenePoint(e) : null;
     const object = this.editor.layers.createUserSlot(opts);
-    if (pointer) object.setPositionByOrigin(new import_fabric24.Point(pointer.x, pointer.y), "center", "center");
+    if (pointer) object.setPositionByOrigin(new import_fabric25.Point(pointer.x, pointer.y), "center", "center");
     this.editor.layers.add(object);
     this.editor.canvas.setActiveObject(object);
     this.editor.canvas.renderAll();
@@ -9780,6 +9954,7 @@ function layerToHtmlStandalone(layer, zIndex) {
   LayoutManager,
   MAX_CROP_SCALE,
   MIN_PAD,
+  MIXED,
   MaskManager,
   NO_CROP,
   PendingUploadsManager,
@@ -9789,6 +9964,7 @@ function layerToHtmlStandalone(layer, zIndex) {
   SelectionManager,
   SnappingManager,
   StackResizeSession,
+  TEXT_STYLE_KEYS,
   USER_SCOPE,
   USER_SLOT_FIELD,
   addCircleClip,
@@ -9821,6 +9997,7 @@ function layerToHtmlStandalone(layer, zIndex) {
   drawFrameBadge,
   fabricToHtml,
   fitFreeContainer,
+  fontFamiliesOf,
   getAvailableShapes,
   getCatalogShape,
   getLockMode,
@@ -9829,6 +10006,7 @@ function layerToHtmlStandalone(layer, zIndex) {
   hasExceededOffset,
   hasPendingBindings,
   initYoga,
+  isBold,
   isContentLocked,
   isCropped,
   isFreeContainer,
@@ -9862,6 +10040,8 @@ function layerToHtmlStandalone(layer, zIndex) {
   setTextContent,
   stackBlock,
   stackParentOf,
+  summarizeObject,
+  summarizeStyles,
   switchClip,
   switchShape,
   toolsFor,

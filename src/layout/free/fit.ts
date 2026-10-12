@@ -10,6 +10,7 @@ import type { FabricObject } from "#fabric";
 import { boxOf, outsetBox, placeTopLeft, setShapeSize, unionBox } from "../geometry";
 import { containerDataOf, isFreeContainer, paddingOf } from "../model";
 import { childrenOf, parentContainerOf } from "../hierarchy";
+import { inLocalFrame } from "../rotation";
 
 
 /**
@@ -17,6 +18,12 @@ import { childrenOf, parentContainerOf } from "../hierarchy";
  * enfant, rien ne bouge. Les groupes imbriqués d'abord (leur boîte compte dans la sienne).
  */
 export function fitFreeContainer(container: FabricObject, objects: FabricObject[]): void {
+  // Un groupe tourné : l'union se prend dans son repère, sinon les boîtes englobantes des
+  // enfants tournés gonfleraient la sienne
+  inLocalFrame(container, objects, () => fitFreeContainerLocal(container, objects));
+}
+
+function fitFreeContainerLocal(container: FabricObject, objects: FabricObject[]): void {
   const children = childrenOf(objects, container).map((c) => c.obj);
   if (children.length === 0) return;
   for (const child of children) if (isFreeContainer(child)) fitFreeContainer(child, objects);

@@ -33,6 +33,7 @@ import { yogaLayout } from "./stack/engine";
 
 export { parentContainerOf } from "./hierarchy";
 import { fitFreeContainer } from "./free/fit";
+import { inLocalFrame } from "./rotation";
 import { layoutOf, containerDataOf, isFreeContainer, sizingOf } from "./model";
 import { childrenOf, flowChildrenOf, parentContainerOf } from "./hierarchy";
 
@@ -57,8 +58,15 @@ export function runLayout(objects: FabricObject[]): void {
  * A container and everything under it. A group lays its child containers out first
  * (each one a root: its place is its own), then fits its box around them. A stack
  * fits the groups it holds first (rigid blocks for Yoga), then runs its Yoga pass.
+ *
+ * Un container tourné se calcule dans son propre repère (rotation.ts) : le moteur ne voit
+ * que des boîtes axées, le sous-arbre repart tourné d'un bloc.
  */
 function layoutTree(container: FabricObject, objects: FabricObject[]): void {
+  inLocalFrame(container, objects, () => layoutTreeLocal(container, objects));
+}
+
+function layoutTreeLocal(container: FabricObject, objects: FabricObject[]): void {
   const cd = layoutOf(container)!.container!;
   const children = flowChildrenOf(objects, container);
   if (children.length === 0) return;
