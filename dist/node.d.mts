@@ -348,6 +348,46 @@ declare class CustomTextbox extends Textbox {
      */
     minContentWidth(): number;
     /**
+     * Les plages atomiques du texte (les variables d'un texte lié, posées par l'hôte), en
+     * index plats de graphèmes sans les retours à la ligne — la convention des styles
+     * sérialisés. Non sérialisé : l'hôte les recalcule à l'affichage et pendant l'édition.
+     * Le curseur les saute, une suppression les emporte entières, une plage s'étend à leurs
+     * bornes ; une pastille les montre (`drawTokenPills`).
+     */
+    tokenSpans?: [number, number][];
+    /** La sélection d'avant le dernier mouvement : dit dans quel sens on traverse un token. */
+    private _lastSelection;
+    /** Les plages atomiques en index de `_text` (graphèmes, retours à la ligne compris). */
+    atomicSpans(): [number, number][];
+    /** Toute sélection passe ici avant d'être annoncée : elle se cale sur les tokens. */
+    _fireSelectionChanged(): void;
+    /**
+     * Un curseur dans un token en sort : d'un pas (flèche), de l'autre côté ; sinon (clic) à
+     * la borne la plus proche. Une plage s'étend aux bornes des tokens qu'elle coupe.
+     */
+    private _snapSelectionToTokens;
+    /**
+     * Retour arrière juste après un token, ou Suppr juste avant : le token est d'abord
+     * sélectionné (textarea compris), puis la suppression native l'emporte entier — on ne
+     * touche jamais au flux de saisie de Fabric.
+     */
+    onKeyDown(e: KeyboardEvent): void;
+    /** Fabric efface la zone du texte sur le calque du dessus à chaque clignotement du
+     *  curseur : les pastilles du texte en édition sont repeintes avec lui. */
+    renderCursorOrSelection(): void;
+    /**
+     * Une pastille derrière chaque token (couleur d'édition de l'hôte), sur le calque du
+     * dessus : un repère d'édition, jamais exporté. `ctx` est en coordonnées écran.
+     */
+    drawTokenPills(ctx: CanvasRenderingContext2D): void;
+    /**
+     * Les rectangles d'un token, un par ligne affichée (un token peut wrapper) : la boîte des
+     * glyphes, celle du fond de texte natif de Fabric — depuis le haut de la ligne, sur la
+     * hauteur de police (`getHeightOfLine / lineHeight`) ; l'interligne, en dessous, reste hors
+     * de la pastille.
+     */
+    private _tokenBoxes;
+    /**
      * Pas de glisser-déposer du texte sélectionné (Fabric) : presser sur une plage sélectionnée
      * et tirer re-sélectionne, comme dans un champ de texte — le glisser-déposer emportait le
      * texte quand on voulait étendre la sélection.
@@ -762,10 +802,6 @@ declare class ImageFrame extends Group {
     }): ImageFrame;
 }
 
-/**
- * Gère les calques (layers) du canvas Fabric.js
- * Responsable de l'ajout, suppression et organisation des objets
- */
 declare class LayerManager {
     private canvas;
     constructor(canvas: DesignCanvas);

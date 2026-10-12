@@ -357,6 +357,46 @@ declare class CustomTextbox extends Textbox {
      */
     minContentWidth(): number;
     /**
+     * Les plages atomiques du texte (les variables d'un texte lié, posées par l'hôte), en
+     * index plats de graphèmes sans les retours à la ligne — la convention des styles
+     * sérialisés. Non sérialisé : l'hôte les recalcule à l'affichage et pendant l'édition.
+     * Le curseur les saute, une suppression les emporte entières, une plage s'étend à leurs
+     * bornes ; une pastille les montre (`drawTokenPills`).
+     */
+    tokenSpans?: [number, number][];
+    /** La sélection d'avant le dernier mouvement : dit dans quel sens on traverse un token. */
+    private _lastSelection;
+    /** Les plages atomiques en index de `_text` (graphèmes, retours à la ligne compris). */
+    atomicSpans(): [number, number][];
+    /** Toute sélection passe ici avant d'être annoncée : elle se cale sur les tokens. */
+    _fireSelectionChanged(): void;
+    /**
+     * Un curseur dans un token en sort : d'un pas (flèche), de l'autre côté ; sinon (clic) à
+     * la borne la plus proche. Une plage s'étend aux bornes des tokens qu'elle coupe.
+     */
+    private _snapSelectionToTokens;
+    /**
+     * Retour arrière juste après un token, ou Suppr juste avant : le token est d'abord
+     * sélectionné (textarea compris), puis la suppression native l'emporte entier — on ne
+     * touche jamais au flux de saisie de Fabric.
+     */
+    onKeyDown(e: KeyboardEvent): void;
+    /** Fabric efface la zone du texte sur le calque du dessus à chaque clignotement du
+     *  curseur : les pastilles du texte en édition sont repeintes avec lui. */
+    renderCursorOrSelection(): void;
+    /**
+     * Une pastille derrière chaque token (couleur d'édition de l'hôte), sur le calque du
+     * dessus : un repère d'édition, jamais exporté. `ctx` est en coordonnées écran.
+     */
+    drawTokenPills(ctx: CanvasRenderingContext2D): void;
+    /**
+     * Les rectangles d'un token, un par ligne affichée (un token peut wrapper) : la boîte des
+     * glyphes, celle du fond de texte natif de Fabric — depuis le haut de la ligne, sur la
+     * hauteur de police (`getHeightOfLine / lineHeight`) ; l'interligne, en dessous, reste hors
+     * de la pastille.
+     */
+    private _tokenBoxes;
+    /**
      * Pas de glisser-déposer du texte sélectionné (Fabric) : presser sur une plage sélectionnée
      * et tirer re-sélectionne, comme dans un champ de texte — le glisser-déposer emportait le
      * texte quand on voulait étendre la sélection.
@@ -1406,6 +1446,13 @@ declare class ImageFrame extends Group {
  * Gère les calques (layers) du canvas Fabric.js
  * Responsable de l'ajout, suppression et organisation des objets
  */
+/**
+ * Les propriétés de l'éditeur qu'un calque sérialise en plus de celles de Fabric — la liste
+ * que tout hôte qui sérialise un objet seul doit passer à `toObject`. `bindingSegments` : la
+ * carte d'interpolation d'un texte lié affiché (apibots), le temps d'un snapshot ; l'export
+ * du document la consomme et la retire.
+ */
+declare const LAYER_PROPS: readonly ["layerId", "lockMode", "lockContent", "layout", "bindings", "bindingSegments"];
 declare class LayerManager {
     private canvas;
     constructor(canvas: DesignCanvas);
@@ -2269,8 +2316,8 @@ declare function distributeDeltas(boxes: Box[], axis: DistributeAxis): Delta[];
  * SAVOIR qu'un champ est lié :
  *
  * - la donnée voyage avec le calque (sérialisation/désérialisation, comme layerId) ;
- * - un texte au binding `text` en attente ne s'édite pas directement (règle : on édite le
- *   binding ou on délie — sinon sample et expression divergent en silence) → editable=false ;
+ * - un texte lié s'édite dans sa textbox, valeurs affichées : l'hôte reporte les frappes dans
+ *   l'expression et pose ses variables comme plages atomiques (`tokenSpans`, CustomTextbox) ;
  * - le lien se voit : un badge au coin du cadre (survol, sélection), dans la couleur d'édition
  *   (guideColor), et un liseré permanent sur les médias dynamiques.
  */
@@ -2284,7 +2331,6 @@ type BindingSpec = {
 type Bindings = Record<string, BindingSpec>;
 declare function pendingBindings(obj: FabricObject): Bindings;
 declare function hasPendingBindings(obj: FabricObject): boolean;
-declare function lockBoundText(obj: FabricObject): void;
 /**
  * Pose un texte par programme et REMET LA MISE EN PAGE À JOUR : un `set("text", …)` nu ne
  * remesure pas l'objet et n'émet pas l'événement `changed` que les sessions de layout
@@ -3376,4 +3422,4 @@ declare function displayFill(obj: FabricObject): string | null;
 /** Pose ou retire la couleur d'affichage ; rend true si elle a changé (à l'hôte de redessiner). */
 declare function setDisplayFill(obj: FabricObject, fill: string | null): boolean;
 
-export { type AlignEdge, type AlignItems, type AlignSelf, type Arrangement, type BadgeLabeler, type BindingSpec, type Bindings, type Box, CanvasGuides, type CatalogShape, type CatalogShapeInput, type ChildData, type ClipData, type ContainerData, ContainerizeSession, type ControlOption, type Crop, CropMode, CustomTextbox, type Delta, DesignCanvas, type DistributeAxis, type DragPayload, DropHandler, type DropHandlerConfig, type DropResult, type EditorConfig, FabCircle, FabPath, FabRect, FabricEditor, type FlexDirection, type FontConfig, type FontsConfig, type FrameRect, FreeResizeSession, GHOST_OPACITY, HEART_PATH, HEXAGON_PATH, type HistoryCallbacks, HistoryManager, type HistoryState, type HtmlLayerOutput, type HtmlRenderOptions, ImageFrame, type ImageLayerOptions, InsertChildSession, type JustifyContent, type LayerData, LayerManager, type LayoutData, LayoutManager, type LayoutManagerCallbacks, type LayoutParents, type LayoutSession, type LockMode$1 as LockMode, type Lockable, MAX_CROP_SCALE, MIN_PAD, MIXED, MaskManager, NO_CROP, type ObjectControlsConfig, type ObjectKind, type ObjectRules, PendingUploadsManager, PersistenceManager, PreviewCanvas, ResizeSession, type ResizeSnapResult, type SaveOptions, type SaveResult, type SelectionCallbacks, type SelectionKind, SelectionManager, type ShapeCatalogEntry, type ShapeLayerOptions, type ShapePathData, type ShapeType, type SizeMode, type SizePreset, type SizingData, type SnappingConfig, SnappingManager, StackResizeSession, TEXT_STYLE_KEYS, type TextLayerOptions, type TextOverflow, type TextStyleKey, type TextStyleState, type TextStyleValue, type ToolId, type ToolboxImageReaction, type TreeLayer, USER_SCOPE, USER_SLOT_FIELD, type UserSlot, type WorkspaceOptions, addCircleClip, addCropControls, addHeartClip, addHexagonClip, alignAxis, alignDelta, antiScale, applyClip, applyLockMode, badgeLabel, bindingBadgeLabel, clampTopLeft, clipDataFor, collectUserSlots, createCircle, createDropSession, createHeart, createHexagon, createImage, createPathShape, createPathsShape, createRect, createShape, cropFromRect, displayFill, distributeDeltas, drawBindingBadge, drawFrameBadge, fabricToHtml, fitFreeContainer, fontFamiliesOf, getAvailableShapes, getCatalogShape, getLockMode, getNextLockMode, getShapeCatalog, hasExceededOffset, hasPendingBindings, initYoga, isBold, isContentLocked, isCropped, isFreeContainer, isGhost, isMonoPath, isPositionLocked, isStyleLocked, isUserSlot, isValidShape, kindOf, layerToHtmlStandalone, layoutChildren, layoutDescendants, layoutParents, layoutRoot, lockBoundText, nextShape, panCrop, pendingBindings, photoRect, pointInObject, registerShapes, registeredShapes, removeCropControls, rulesOf, runLayout, scaledSize, selectionKindOf, setDisplayFill, setGhost, setTextContent, stackBlock, stackParentOf, summarizeObject, summarizeStyles, switchClip, switchShape, toolsFor, topLeft, unionBox, userSlotBinding, userSlotHint, wrapContainerAroundChild, yogaLayout, zoomCrop };
+export { type AlignEdge, type AlignItems, type AlignSelf, type Arrangement, type BadgeLabeler, type BindingSpec, type Bindings, type Box, CanvasGuides, type CatalogShape, type CatalogShapeInput, type ChildData, type ClipData, type ContainerData, ContainerizeSession, type ControlOption, type Crop, CropMode, CustomTextbox, type Delta, DesignCanvas, type DistributeAxis, type DragPayload, DropHandler, type DropHandlerConfig, type DropResult, type EditorConfig, FabCircle, FabPath, FabRect, FabricEditor, type FlexDirection, type FontConfig, type FontsConfig, type FrameRect, FreeResizeSession, GHOST_OPACITY, HEART_PATH, HEXAGON_PATH, type HistoryCallbacks, HistoryManager, type HistoryState, type HtmlLayerOutput, type HtmlRenderOptions, ImageFrame, type ImageLayerOptions, InsertChildSession, type JustifyContent, LAYER_PROPS, type LayerData, LayerManager, type LayoutData, LayoutManager, type LayoutManagerCallbacks, type LayoutParents, type LayoutSession, type LockMode$1 as LockMode, type Lockable, MAX_CROP_SCALE, MIN_PAD, MIXED, MaskManager, NO_CROP, type ObjectControlsConfig, type ObjectKind, type ObjectRules, PendingUploadsManager, PersistenceManager, PreviewCanvas, ResizeSession, type ResizeSnapResult, type SaveOptions, type SaveResult, type SelectionCallbacks, type SelectionKind, SelectionManager, type ShapeCatalogEntry, type ShapeLayerOptions, type ShapePathData, type ShapeType, type SizeMode, type SizePreset, type SizingData, type SnappingConfig, SnappingManager, StackResizeSession, TEXT_STYLE_KEYS, type TextLayerOptions, type TextOverflow, type TextStyleKey, type TextStyleState, type TextStyleValue, type ToolId, type ToolboxImageReaction, type TreeLayer, USER_SCOPE, USER_SLOT_FIELD, type UserSlot, type WorkspaceOptions, addCircleClip, addCropControls, addHeartClip, addHexagonClip, alignAxis, alignDelta, antiScale, applyClip, applyLockMode, badgeLabel, bindingBadgeLabel, clampTopLeft, clipDataFor, collectUserSlots, createCircle, createDropSession, createHeart, createHexagon, createImage, createPathShape, createPathsShape, createRect, createShape, cropFromRect, displayFill, distributeDeltas, drawBindingBadge, drawFrameBadge, fabricToHtml, fitFreeContainer, fontFamiliesOf, getAvailableShapes, getCatalogShape, getLockMode, getNextLockMode, getShapeCatalog, hasExceededOffset, hasPendingBindings, initYoga, isBold, isContentLocked, isCropped, isFreeContainer, isGhost, isMonoPath, isPositionLocked, isStyleLocked, isUserSlot, isValidShape, kindOf, layerToHtmlStandalone, layoutChildren, layoutDescendants, layoutParents, layoutRoot, nextShape, panCrop, pendingBindings, photoRect, pointInObject, registerShapes, registeredShapes, removeCropControls, rulesOf, runLayout, scaledSize, selectionKindOf, setDisplayFill, setGhost, setTextContent, stackBlock, stackParentOf, summarizeObject, summarizeStyles, switchClip, switchShape, toolsFor, topLeft, unionBox, userSlotBinding, userSlotHint, wrapContainerAroundChild, yogaLayout, zoomCrop };

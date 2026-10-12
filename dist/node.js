@@ -268,12 +268,20 @@ function subtreeOf(objects, roots) {
   return objects.filter((o) => roots.includes(o) || found.has(o));
 }
 
+// src/tokens.ts
+var TOKEN_COLOR_KEY = "tokenColor";
+function tokenColorOf(obj) {
+  return obj.canvas?.[TOKEN_COLOR_KEY] ?? null;
+}
+
 // src/controls/CustomTextbox.ts
 var { changeObjectWidth, changeObjectHeight } = import_fabric.controlsUtils;
 var UNBOUNDED_WIDTH = 1e4;
 var CustomTextbox = class extends import_fabric.Textbox {
   constructor(text, options) {
     super(text, options);
+    /** La sélection d'avant le dernier mouvement : dit dans quel sens on traverse un token. */
+    this._lastSelection = [0, 0];
     if (typeof options?.fontSizeIntent === "number") this.fontSizeIntent = options.fontSizeIntent;
     this.fontSizeIntent ?? (this.fontSizeIntent = this.fontSize);
     this._bakeLegacyScale();
@@ -325,6 +333,134 @@ var CustomTextbox = class extends import_fabric.Textbox {
     this._wrapAt(width);
     this.height = height;
     return min;
+  }
+  /** Les plages atomiques en index de `_text` (graphèmes, retours à la ligne compris). */
+  atomicSpans() {
+    const spans = (this.tokenSpans ?? []).filter(([start, end]) => end > start);
+    if (spans.length === 0) return [];
+    const at = [];
+    this._text.forEach((grapheme, i) => grapheme !== "\n" && at.push(i));
+    const textIndex = (flat) => at[flat] ?? this._text.length;
+    return spans.map(([start, end]) => [textIndex(start), textIndex(end - 1) + 1]);
+  }
+  /** Toute sélection passe ici avant d'être annoncée : elle se cale sur les tokens. */
+  _fireSelectionChanged() {
+    this._snapSelectionToTokens();
+    this._lastSelection = [this.selectionStart, this.selectionEnd];
+    super._fireSelectionChanged();
+  }
+  /**
+   * Un curseur dans un token en sort : d'un pas (flèche), de l'autre côté ; sinon (clic) à
+   * la borne la plus proche. Une plage s'étend aux bornes des tokens qu'elle coupe.
+   */
+  _snapSelectionToTokens() {
+    const spans = this.atomicSpans();
+    if (spans.length === 0) return;
+    const inside = (i) => spans.find(([start2, end2]) => start2 < i && i < end2);
+    const { selectionStart: start, selectionEnd: end } = this;
+    if (start === end) {
+      const span = inside(start);
+      if (!span) return;
+      const [from, to] = span;
+      const [last] = this._lastSelection;
+      const stepped = Math.abs(start - last) === 1;
+      let at;
+      if (stepped && last <= from) at = to;
+      else if (stepped && last >= to) at = from;
+      else at = start - from <= to - start ? from : to;
+      this.selectionStart = this.selectionEnd = at;
+      return;
+    }
+    const head = inside(start);
+    const tail = inside(end);
+    if (head) this.selectionStart = head[0];
+    if (tail) this.selectionEnd = tail[1];
+  }
+  /**
+   * Retour arrière juste après un token, ou Suppr juste avant : le token est d'abord
+   * sélectionné (textarea compris), puis la suppression native l'emporte entier — on ne
+   * touche jamais au flux de saisie de Fabric.
+   */
+  onKeyDown(e) {
+    const erase = e.key === "Backspace" || e.key === "Delete";
+    if (this.isEditing && erase && this.selectionStart === this.selectionEnd && !e.altKey && !e.metaKey && !e.ctrlKey) {
+      const at = this.selectionStart;
+      const span = this.atomicSpans().find(([start, end]) => e.key === "Backspace" ? end === at : start === at);
+      if (span) {
+        [this.selectionStart, this.selectionEnd] = span;
+        this._updateTextarea();
+      }
+    }
+    super.onKeyDown(e);
+  }
+  /** Fabric efface la zone du texte sur le calque du dessus à chaque clignotement du
+   *  curseur : les pastilles du texte en édition sont repeintes avec lui. */
+  renderCursorOrSelection() {
+    super.renderCursorOrSelection();
+    const ctx = this.canvas?.contextTop;
+    if (this.isEditing && ctx) this.drawTokenPills(ctx);
+  }
+  /**
+   * Une pastille derrière chaque token (couleur d'édition de l'hôte), sur le calque du
+   * dessus : un repère d'édition, jamais exporté. `ctx` est en coordonnées écran.
+   */
+  drawTokenPills(ctx) {
+    const spans = this.atomicSpans();
+    const color = tokenColorOf(this);
+    if (spans.length === 0 || !this.canvas || !color) return;
+    ctx.save();
+    ctx.transform(...this.canvas.viewportTransform);
+    ctx.transform(...this.calcTransformMatrix());
+    ctx.beginPath();
+    ctx.rect(-this.width / 2, -this.height / 2, this.width, this.height);
+    ctx.clip();
+    ctx.fillStyle = color;
+    ctx.strokeStyle = color;
+    for (const [start, end] of spans) {
+      for (const box of this._tokenBoxes(start, end)) {
+        ctx.beginPath();
+        ctx.roundRect(box.x, box.y, box.w, box.h, box.h * 0.25);
+        ctx.globalAlpha = 0.14;
+        ctx.fill();
+        ctx.globalAlpha = 0.55;
+        ctx.lineWidth = 1 / (this.canvas.getZoom() * (this.scaleX || 1));
+        ctx.stroke();
+      }
+    }
+    ctx.restore();
+  }
+  /**
+   * Les rectangles d'un token, un par ligne affichée (un token peut wrapper) : la boîte des
+   * glyphes, celle du fond de texte natif de Fabric — depuis le haut de la ligne, sur la
+   * hauteur de police (`getHeightOfLine / lineHeight`) ; l'interligne, en dessous, reste hors
+   * de la pastille.
+   */
+  _tokenBoxes(start, end) {
+    const a = this.get2DCursorLocation(start);
+    const b = this.get2DCursorLocation(end);
+    const pad = this.fontSize * 0.06;
+    const boxes = [];
+    let top = this._getTopOffset();
+    for (let line = 0; line <= b.lineIndex && line < this._textLines.length; line++) {
+      if (line >= a.lineIndex) {
+        const from = line === a.lineIndex ? a.charIndex : 0;
+        const to = line === b.lineIndex ? b.charIndex : this._textLines[line].length;
+        if (!this.__charBounds[line]) this.measureLine(line);
+        const bounds = this.__charBounds[line];
+        if (to > from && bounds?.[from] && bounds[to - 1]) {
+          const left = this._getLeftOffset() + this._getLineLeftOffset(line);
+          const glyphs = this.getHeightOfLine(line) / this.lineHeight;
+          boxes.push({
+            x: left + bounds[from].left - pad,
+            y: top,
+            w: bounds[to - 1].left + bounds[to - 1].width - bounds[from].left + 2 * pad,
+            h: glyphs
+          });
+        }
+      }
+      top += this.getHeightOfLine(line);
+    }
+    return boxes;
   }
   /**
    * Pas de glisser-déposer du texte sélectionné (Fabric) : presser sur une plage sélectionnée
@@ -759,12 +895,6 @@ function pendingBindings(obj) {
 function restoreBindings(obj, data) {
   if (!data.bindings) return;
   obj.set("bindings", data.bindings);
-  lockBoundText(obj);
-}
-function lockBoundText(obj) {
-  if (pendingBindings(obj)["text"] && "editable" in obj) {
-    obj.editable = false;
-  }
 }
 
 // src/userSlots.ts
@@ -2114,6 +2244,7 @@ import_fabric10.classRegistry.setClass(ImageFrame, "ImageFrame");
 // src/LayerManager.ts
 var BACKGROUND_LAYER_ID = "originalImage";
 var DEFAULT_SHAPE_FILL = "#d9d9d9";
+var LAYER_PROPS = ["layerId", "lockMode", "lockContent", "layout", "bindings", "bindingSegments"];
 var LayerManager = class {
   constructor(canvas) {
     this.canvas = canvas;
@@ -2518,7 +2649,7 @@ var LayerManager = class {
    * Inclut les propriétés custom : layerId, lockMode, lockContent
    */
   serialize() {
-    return this.all.map((obj) => obj.toObject(["layerId", "lockMode", "lockContent", "layout", "bindings"]));
+    return this.all.map((obj) => obj.toObject([...LAYER_PROPS]));
   }
   /**
    * Désérialise un calque depuis ses données JSON
