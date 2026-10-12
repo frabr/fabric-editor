@@ -22,11 +22,11 @@ function frameData(image: ImageFrameData["image"]): ImageFrameData {
 
 describe("imageMeta", () => {
   it("les clés inconnues de image font l'aller-retour, à côté de src", async () => {
-    const frame = await ImageFrame.fromObject(frameData({ src: PIXEL, offsetX: 0, offsetY: 0, scale: 1, content_medium_id: 42 }));
+    const frame = await ImageFrame.fromObject(frameData({ src: PIXEL, cropX: 0.5, cropY: 0.5, scale: 1, content_medium_id: 42 }));
     expect(frame.imageMeta).toEqual({ content_medium_id: 42 });
 
     const out = frame.toObject(["layerId"]);
-    expect(out.image).toMatchObject({ src: PIXEL, content_medium_id: 42, offsetX: 0, offsetY: 0, scale: 1 });
+    expect(out.image).toMatchObject({ src: PIXEL, content_medium_id: 42, cropX: 0.5, cropY: 0.5, scale: 1 });
   });
 
   it("les clés de la lib gagnent sur une collision", () => {
@@ -55,7 +55,7 @@ describe("cadre en attente (sans src)", () => {
     expect(frame.image.height).toBe(80);
 
     const out = frame.toObject();
-    expect(out.image).toEqual({ content_medium_id: 7, offsetX: 0, offsetY: 0, scale: 1 });
+    expect(out.image).toEqual({ content_medium_id: 7, cropX: 0.5, cropY: 0.5, scale: 1 });
     expect("src" in out.image).toBe(false);
   });
 
@@ -77,5 +77,66 @@ describe("cadre en attente (sans src)", () => {
     frame.replaceImage(image(), { content_medium_id: 7 });
     expect(frame.pending).toBe(false);
     expect(frame.toObject().image.src).toBeTruthy();
+  });
+});
+
+describe("recadrage", () => {
+  // Image 100 × 50 dans un cadre 120 × 80 : cover = 1.6 → 160 × 80, 40 px de marge en largeur
+  const wide = () => new FabricImage(createCanvas(100, 50) as unknown as HTMLCanvasElement);
+
+  it("centrée en cover par défaut, se décale et se grossit sans jamais découvrir le cadre", () => {
+    const frame = new ImageFrame(wide(), { frameWidth: 120, frameHeight: 80 });
+    expect(frame.crop).toEqual({ x: 0.5, y: 0.5, scale: 1 });
+    expect(frame.photoRect()).toEqual({ x: -20, y: 0, w: 160, h: 80 });
+    expect(frame.isCropped).toBe(false);
+
+    frame.panCrop(100, 100);
+    expect(frame.photoRect()).toEqual({ x: 0, y: 0, w: 160, h: 80 });
+    expect(frame.crop.x).toBe(0);
+
+    frame.zoomCrop(2, 0, 0);
+    expect(frame.crop.scale).toBe(2);
+    expect(frame.photoRect()).toEqual({ x: 0, y: 0, w: 320, h: 160 });
+    expect(frame.image.scaleX).toBe(3.2);
+    expect(frame.isCropped).toBe(true);
+
+    frame.resetCrop();
+    expect(frame.crop).toEqual({ x: 0.5, y: 0.5, scale: 1 });
+  });
+
+  it("l'image dans le groupe suit le recadrage (origine au centre)", () => {
+    const frame = new ImageFrame(wide(), { frameWidth: 120, frameHeight: 80, crop: { x: 0, y: 0.5, scale: 1 } });
+    // Calée à gauche : le centre de l'image est 20 px à droite du centre du cadre
+    expect(frame.image.left).toBe(20);
+    expect(frame.image.top).toBe(0);
+  });
+
+  it("un cadre qui change de taille garde la même zone", () => {
+    const frame = new ImageFrame(wide(), { frameWidth: 120, frameHeight: 80, crop: { x: 0, y: 0.5, scale: 1 } });
+    frame.resizeFrame(60, 80);
+    expect(frame.crop.x).toBe(0);
+    expect(frame.photoRect().x).toBe(0);
+  });
+
+  it("une image remplacée repart sans recadrage", () => {
+    const frame = new ImageFrame(wide(), { frameWidth: 120, frameHeight: 80, crop: { x: 0, y: 0, scale: 2 } });
+    frame.replaceImage(image(30));
+    expect(frame.crop).toEqual({ x: 0.5, y: 0.5, scale: 1 });
+  });
+
+  it("un document d'avant (décalage en pixels) se convertit à la lecture et se sauve au nouveau format", () => {
+    // Décalage +20 px = image calée à gauche (x = 0)
+    const frame = new ImageFrame(wide(), { frameWidth: 120, frameHeight: 80, imageOffsetX: 20, imageOffsetY: 0 });
+    expect(frame.crop).toEqual({ x: 0, y: 0.5, scale: 1 });
+    expect(frame.image.left).toBe(20);
+
+    const out = frame.toObject();
+    expect(out.image).toMatchObject({ cropX: 0, cropY: 0.5, scale: 1 });
+    expect("offsetX" in out.image).toBe(false);
+  });
+
+  it("un cadre en attente ne se recadre pas", async () => {
+    const frame = await ImageFrame.fromObject(frameData({ content_medium_id: 7 }));
+    expect(frame.croppable).toBe(false);
   });
 });

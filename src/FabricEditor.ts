@@ -23,6 +23,7 @@ import { rulesOf } from "./capabilities";
 import { collectUserSlots, USER_SLOT_STYLE_KEY, type UserSlot, type UserSlotStyle } from "./userSlots";
 import { installGhostRendering } from "./ghost";
 import { installDisplayStyleRendering } from "./displayStyle";
+import { CropMode } from "./CropMode";
 
 /**
  * Éditeur d'images basé sur Fabric.js
@@ -39,6 +40,8 @@ export class FabricEditor {
   readonly history: HistoryManager;
   readonly snapping: SnappingManager;
   readonly layout: LayoutManager;
+  /** Le recadrage d'une image dans son cadre (CropMode). */
+  readonly crop: CropMode;
 
   private config: EditorConfig;
   private _displayScale = 1;
@@ -94,6 +97,9 @@ export class FabricEditor {
       { getEnteredContainerId: () => this.selection.enteredContainerId },
       config.guideColor,
     );
+
+    this.crop = new CropMode(this.canvas, gc);
+    this.installCropOnDoubleClick();
 
     // Stocker une référence au SnappingManager sur le canvas pour l'accès depuis ImageFrame
     (this.canvas.originalFabricCanvas as unknown as { snappingManager: SnappingManager }).snappingManager = this.snapping;
@@ -151,6 +157,7 @@ export class FabricEditor {
     // l'écran jusqu'au nouveau, aucune frame vide. Les appels concurrents (changements de
     // slide rapides) se départagent par jeton : le dernier gagne.
     const token = (this._replaceToken = {});
+    this.crop.cancel();
     const objects = await this.layers.deserializeAll(layers);
     if (token !== this._replaceToken) return;
 
@@ -265,6 +272,25 @@ export class FabricEditor {
       this.canvas.requestRenderAll();
       this._resizeCallbacks.forEach((cb) => cb());
     });
+  }
+
+  /**
+   * Double-clic sur une forme-image : son recadrage ; à vide, dans le cadre : celui du fond
+   * de la page (le calque `bg`, inerte au ciblage), s'il est une image. Le double-clic d'un
+   * texte (édition) ne passe pas ici : ce n'est pas un ImageFrame.
+   */
+  private installCropOnDoubleClick(): void {
+    this.canvas.on("mouse:dblclick", (e: { target?: FabricObject; scenePoint?: Point }) => {
+      const target = e.target ? this.selection.resolveTarget(e.target) : this.backgroundFrame(e.scenePoint);
+      if (!(target instanceof ImageFrame) || !rulesOf(target).options.includes("image")) return;
+      this.crop.start(target);
+    });
+  }
+
+  /** Le fond image de la page, si `point` tombe dans le cadre. */
+  private backgroundFrame(point?: Point): FabricObject | null {
+    if (!point || point.x < 0 || point.y < 0 || point.x > this.width || point.y > this.height) return null;
+    return this.layers.all.find((obj) => obj.get("layerId") === "bg") ?? null;
   }
 
   /**
@@ -701,6 +727,7 @@ export class FabricEditor {
     this._resizeObserver?.disconnect();
     this._resizeObserver = null;
     this._resizeCallbacks = [];
+    this.crop.dispose();
     this.snapping.dispose();
     this.selection.dispose();
     this.canvas.dispose();

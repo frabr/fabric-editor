@@ -82,31 +82,7 @@ export function imageFrameToHtml(
     containerStyles.overflow = "hidden";
   }
 
-  // Image styles
-  // L'image doit couvrir le frame et pouvoir être déplacée/zoomée
-  const { offsetX = 0, offsetY = 0, scale: imageScale = 1 } = image;
-
-  // Dans Fabric, l'image est positionnée relativement au centre du frame.
-  // offsetX/Y = décalage de l'image par rapport au centre
-  // On utilise une image en position absolue avec top/left pour le décalage
-  const imageStyles: Record<string, string> = {
-    position: "absolute",
-    width: "100%",
-    height: "100%",
-    "object-fit": "cover",
-    top: `${offsetY}px`,
-    left: `${offsetX}px`,
-  };
-
-  // Pour le scale de l'image, on ajuste width/height et recentre
-  if (imageScale !== 1) {
-    imageStyles.width = `${imageScale * 100}%`;
-    imageStyles.height = `${imageScale * 100}%`;
-    // Ajuster top/left pour garder le centre
-    const offsetFromScale = (1 - imageScale) * 50;
-    imageStyles.left = `calc(${offsetFromScale}% + ${offsetX}px)`;
-    imageStyles.top = `calc(${offsetFromScale}% + ${offsetY}px)`;
-  }
+  const imageStyles = imageStylesFor(image);
 
   // Un cadre en attente (pas de src) : le clip seul, pas d'image cassée.
   const img = image.src ? `<img src="${image.src}" style="${stylesToString(imageStyles)}" alt="" />` : "";
@@ -119,4 +95,33 @@ export function imageFrameToHtml(
     html,
     // Plus besoin de clipPathDefs globaux, on utilise des SVG inline
   };
+}
+
+/**
+ * L'image dans son cadre, en CSS, sans connaître sa taille : une boîte de `scale` fois le
+ * cadre (même ratio, donc cover × scale), calée à cropX/cropY, et l'image calée au même
+ * point dans la boîte (object-position) — c'est la formule de crop.ts.
+ * Les documents d'avant (décalage du centre en pixels) gardent leur rendu.
+ */
+function imageStylesFor(image: ImageFrameLayerData["image"]): Record<string, string> {
+  const { cropX, cropY, offsetX = 0, offsetY = 0, scale = 1 } = image;
+  const styles: Record<string, string> = { position: "absolute", "object-fit": "cover" };
+
+  if (cropX === undefined && cropY === undefined && (offsetX || offsetY)) {
+    const offsetFromScale = (1 - scale) * 50;
+    styles.width = `${scale * 100}%`;
+    styles.height = `${scale * 100}%`;
+    styles.left = `calc(${offsetFromScale}% + ${offsetX}px)`;
+    styles.top = `calc(${offsetFromScale}% + ${offsetY}px)`;
+    return styles;
+  }
+
+  const x = cropX ?? 0.5;
+  const y = cropY ?? 0.5;
+  styles.width = `${scale * 100}%`;
+  styles.height = `${scale * 100}%`;
+  styles.left = `${x * (1 - scale) * 100}%`;
+  styles.top = `${y * (1 - scale) * 100}%`;
+  styles["object-position"] = `${x * 100}% ${y * 100}%`;
+  return styles;
 }

@@ -20,6 +20,10 @@ import { FabPath } from "./shapes/FabPath";
 import { clipDataFor, type ClipData } from "./shapes/registry";
 import type { SnappingManager } from "./SnappingManager";
 import { checkerCanvas } from "./userSlots";
+import {
+  NO_CROP, centerOffset, coverScale, cropFromCenterOffset, cropFromRect, isCropped, normalizeCrop, panCrop,
+  photoRect, zoomCrop, type Crop, type Rect as CropRect,
+} from "./crop";
 
 /** Interface pour accéder au SnappingManager depuis le canvas */
 interface CanvasWithSnapping extends Canvas {
@@ -37,9 +41,11 @@ export interface ImageFrameOptions {
   clipData?: ClipData;
   /** Corner radius in pixels for "rect" clip shape (0 = sharp corners). */
   cornerRadius?: number;
+  /** Le recadrage de l'image dans le cadre (cf. crop.ts) ; centrée, cover, sans. */
+  crop?: Partial<Crop>;
+  /** @deprecated Documents d'avant : le décalage du centre de l'image en pixels de cadre. */
   imageOffsetX?: number;
   imageOffsetY?: number;
-  imageScale?: number;
   /** Scale initial du frame (pour limiter la taille à l'import) */
   frameScale?: number;
   /** Dimensions explicites du frame (prioritaires sur frameScale) */
@@ -83,17 +89,24 @@ export interface ImageFrameData {
    * `src` absent = cadre EN ATTENTE : le fichier n'existe pas encore (média en cours de
    * production côté hôte). Il se dessine en damier et se sauve tel quel, sans `src` — ses
    * autres clés (l'identité du média) survivent au tour éditeur.
+   *
+   * Le recadrage est `cropX`, `cropY` (0 → 1) et `scale` (≥ 1) — voir crop.ts. Les
+   * documents d'avant portent `offsetX`, `offsetY` (pixels) : lus, convertis, plus écrits.
    */
   image: {
     src?: string;
-    offsetX?: number;
-    offsetY?: number;
+    cropX?: number;
+    cropY?: number;
     scale?: number;
+    /** @deprecated */
+    offsetX?: number;
+    /** @deprecated */
+    offsetY?: number;
     [key: string]: unknown;
   };
 }
 
-const IMAGE_KEYS = ["src", "offsetX", "offsetY", "scale"] as const;
+const IMAGE_KEYS = ["src", "cropX", "cropY", "scale", "offsetX", "offsetY"] as const;
 
 function imageMetaOf(image: ImageFrameData["image"]): ImageMeta {
   const meta: ImageMeta = { ...image };
@@ -140,9 +153,7 @@ export class ImageFrame extends Group {
   /** Corner radius in pixels for "rect" clip shape. 0 = sharp corners. */
   cornerRadius: number = 0;
 
-  private _imageOffsetX: number = 0;
-  private _imageOffsetY: number = 0;
-  private _imageScale: number = 1;
+  private _crop: Crop = NO_CROP;
   private _image: FabricImage;
   private _imageMeta: ImageMeta = {};
   private _pending = false;
@@ -186,9 +197,10 @@ export class ImageFrame extends Group {
     this._image = image;
     this.frameWidth = frameWidth;
     this.frameHeight = frameHeight;
-    this._imageOffsetX = options.imageOffsetX ?? 0;
-    this._imageOffsetY = options.imageOffsetY ?? 0;
-    this._imageScale = options.imageScale ?? 1;
+    this._crop = options.crop
+      ? normalizeCrop(options.crop)
+      : cropFromCenterOffset(frameWidth, frameHeight, { w: image.width, h: image.height },
+                             options.imageOffsetX ?? 0, options.imageOffsetY ?? 0, 1);
     this._imageMeta = { ...(options.imageMeta ?? {}) };
 
     if (options.layerId) {
@@ -203,7 +215,7 @@ export class ImageFrame extends Group {
 
     this._setupControls();
     this._setupScaleAbsorption();
-    this._applyImageOffset();
+    this._applyCrop();
   }
 
   get image(): FabricImage {
@@ -239,63 +251,56 @@ export class ImageFrame extends Group {
     this._pending = true;
   }
 
-  get imageOffsetX(): number {
-    return this._imageOffsetX;
+  // ─────────────────────────────────────────────────────────────
+  // Recadrage (cf. crop.ts) : tout est dans le repère du cadre, origine en haut à gauche
+  // ─────────────────────────────────────────────────────────────
+
+  get crop(): Crop {
+    return this._crop;
   }
 
-  get imageOffsetY(): number {
-    return this._imageOffsetY;
+  /** Se recadre : une vraie image (pas un damier d'attente). */
+  get croppable(): boolean {
+    return !this._pending;
   }
 
-  /**
-   * Vérifie si l'image peut être repositionnée dans le cadre.
-   * Retourne true si l'image déborde du cadre (avec une marge de tolérance).
-   * @param tolerancePercent - Marge de tolérance en pourcentage (défaut: 5%)
-   */
-  canRepositionImage(tolerancePercent: number = 5): boolean {
-    const imgWidth = this._image.width * this._image.scaleX;
-    const imgHeight = this._image.height * this._image.scaleY;
-
-    // Calcul de la marge de tolérance basée sur la taille du frame
-    const toleranceX = this.frameWidth * (tolerancePercent / 100);
-    const toleranceY = this.frameHeight * (tolerancePercent / 100);
-
-    // L'image peut être repositionnée si elle dépasse le cadre (moins la tolérance)
-    const canMoveX = imgWidth > this.frameWidth + toleranceX;
-    const canMoveY = imgHeight > this.frameHeight + toleranceY;
-
-    return canMoveX || canMoveY;
+  get isCropped(): boolean {
+    return isCropped(this._crop);
   }
 
-  /**
-   * Repositionne l'image dans le frame (pan)
-   */
-  setImageOffset(offsetX: number, offsetY: number): void {
-    const clamped = this._clampOffset(offsetX, offsetY);
-    this._imageOffsetX = clamped.x;
-    this._imageOffsetY = clamped.y;
-    this._applyImageOffset();
+  /** La taille native de l'image. */
+  get naturalSize(): { w: number; h: number } {
+    return { w: this._image.width, h: this._image.height };
+  }
+
+  setCrop(crop: Partial<Crop>): void {
+    this._crop = normalizeCrop({ ...this._crop, ...crop });
+    this._applyCrop();
     this.dirty = true;
   }
 
-  /**
-   * Change le zoom de l'image (min = cover)
-   */
-  setImageScale(scale: number): void {
-    const coverScale = Math.max(this.frameWidth / this._image.width, this.frameHeight / this._image.height);
-    this._imageScale = Math.max(1, scale);
+  resetCrop(): void {
+    this.setCrop(NO_CROP);
+  }
 
-    this._image.set({
-      scaleX: coverScale * this._imageScale,
-      scaleY: coverScale * this._imageScale,
-    });
+  /** L'image entière, dans le repère du cadre. */
+  photoRect(): CropRect {
+    return photoRect(this.frameWidth, this.frameHeight, this.naturalSize, this._crop);
+  }
 
-    // Re-clamp l'offset avec le nouveau scale
-    const clamped = this._clampOffset(this._imageOffsetX, this._imageOffsetY);
-    this._imageOffsetX = clamped.x;
-    this._imageOffsetY = clamped.y;
-    this._applyImageOffset();
-    this.dirty = true;
+  /** L'image posée en `rect` (repère du cadre) : bornée pour couvrir le cadre. */
+  setPhotoRect(rect: CropRect): void {
+    this.setCrop(cropFromRect(this.frameWidth, this.frameHeight, this.naturalSize, rect));
+  }
+
+  /** Décale l'image de (dx, dy) pixels de cadre depuis `from` (le recadrage au début du geste). */
+  panCrop(dx: number, dy: number, from: Crop = this._crop): void {
+    this.setCrop(panCrop(this.frameWidth, this.frameHeight, this.naturalSize, from, dx, dy));
+  }
+
+  /** Change l'échelle en gardant fixe le point (px, py) du cadre, depuis `from`. */
+  zoomCrop(scale: number, px?: number, py?: number, from: Crop = this._crop): void {
+    this.setCrop(zoomCrop(this.frameWidth, this.frameHeight, this.naturalSize, from, scale, px, py));
   }
 
   /**
@@ -334,34 +339,24 @@ export class ImageFrame extends Group {
     this._applyClip(savedClipShape);
     this.setCoords();
 
-    this._imageOffsetX = 0;
-    this._imageOffsetY = 0;
-    this._imageScale = 1;
+    // Une autre image : son recadrage repart de zéro
+    this._crop = NO_CROP;
+    this._applyCrop();
 
     this.dirty = true;
     this.canvas?.requestRenderAll();
   }
 
   /**
-   * Redimensionne le frame (l'image s'adapte en cover)
+   * Redimensionne le frame : l'image reste en cover, le recadrage (normalisé) garde la même
+   * zone autant que possible.
    */
   resizeFrame(newWidth: number, newHeight: number): void {
-    const coverScale = Math.max(newWidth / this._image.width, newHeight / this._image.height);
-
     this.frameWidth = newWidth;
     this.frameHeight = newHeight;
     this.width = newWidth;
     this.height = newHeight;
-
-    this._image.set({
-      scaleX: coverScale * this._imageScale,
-      scaleY: coverScale * this._imageScale,
-    });
-
-    const clamped = this._clampOffset(this._imageOffsetX, this._imageOffsetY);
-    this._imageOffsetX = clamped.x;
-    this._imageOffsetY = clamped.y;
-    this._applyImageOffset();
+    this._applyCrop();
 
     this._applyClip(this.clipShape || "rect");
     if (this.clipPath) {
@@ -435,20 +430,12 @@ export class ImageFrame extends Group {
   // Méthodes privées
   // ─────────────────────────────────────────────────────────────
 
-  private _applyImageOffset(): void {
-    this._image.set({ left: this._imageOffsetX, top: this._imageOffsetY });
-  }
-
-  private _clampOffset(offsetX: number, offsetY: number): { x: number; y: number } {
-    const imgWidth = this._image.width * this._image.scaleX;
-    const imgHeight = this._image.height * this._image.scaleY;
-    const maxOffsetX = Math.max(0, (imgWidth - this.frameWidth) / 2);
-    const maxOffsetY = Math.max(0, (imgHeight - this.frameHeight) / 2);
-
-    return {
-      x: Math.max(-maxOffsetX, Math.min(maxOffsetX, offsetX)),
-      y: Math.max(-maxOffsetY, Math.min(maxOffsetY, offsetY)),
-    };
+  /** L'image dans le groupe (origine au centre) : cover × échelle, centre décalé selon le recadrage. */
+  private _applyCrop(): void {
+    const nat = this.naturalSize;
+    const s = coverScale(this.frameWidth, this.frameHeight, nat) * this._crop.scale;
+    const offset = centerOffset(this.frameWidth, this.frameHeight, nat, this._crop);
+    this._image.set({ scaleX: s, scaleY: s, left: offset.x, top: offset.y });
   }
 
   private _applyClip(shapeType: ShapeType): void {
@@ -708,31 +695,37 @@ export class ImageFrame extends Group {
       image: {
         ...this._imageMeta,
         ...(this._pending ? {} : { src: this.imageSrc }),
-        offsetX: this._imageOffsetX,
-        offsetY: this._imageOffsetY,
-        scale: this._imageScale,
+        cropX: this._crop.x,
+        cropY: this._crop.y,
+        scale: this._crop.scale,
       },
     } as ImageFrameData;
   }
 
   static async fromObject(data: ImageFrameData): Promise<ImageFrame> {
-    const { src, offsetX = 0, offsetY = 0, scale = 1 } = data.image;
+    const { src, cropX, cropY, offsetX = 0, offsetY = 0, scale = 1 } = data.image;
     const options: ImageFrameOptions = {
       left: data.left,
       top: data.top,
       angle: data.angle,
       layerId: data.layerId,
       lockMode: data.lockMode,
-      imageOffsetX: offsetX,
-      imageOffsetY: offsetY,
-      imageScale: scale,
+      frameWidth: data.frameWidth,
+      frameHeight: data.frameHeight,
       imageMeta: imageMetaOf(data.image),
     };
 
-    const frame = src
-      ? new ImageFrame(await FabricImage.fromURL(src, { crossOrigin: "anonymous" }), options)
+    const img = src ? await FabricImage.fromURL(src, { crossOrigin: "anonymous" }) : null;
+    // Le nouveau format se lit tel quel ; l'ancien (décalage en pixels) se convertit ici,
+    // l'image chargée et sa taille connue — et ne se réécrit plus.
+    options.crop = cropX !== undefined || cropY !== undefined
+      ? { x: cropX, y: cropY, scale }
+      : cropFromCenterOffset(data.frameWidth, data.frameHeight, { w: img?.width || 1, h: img?.height || 1 },
+                             offsetX, offsetY, scale);
+
+    const frame = img
+      ? new ImageFrame(img, options)
       : ImageFrame.pending({ ...options, frameWidth: data.frameWidth, frameHeight: data.frameHeight });
-    const img = frame._image;
 
     // Le fromObject est manuel (contrairement aux shapes, servies par le générique de
     // fabric) : les extras sérialisés doivent être restaurés explicitement.
@@ -742,21 +735,6 @@ export class ImageFrame extends Group {
     // devenue container) ; absente (documents d'avant), c'est le centre par défaut.
     if (data.originX) frame.set({ originX: data.originX, originY: data.originY ?? data.originX });
     if (data.stroke) frame.set({ stroke: data.stroke, strokeWidth: data.strokeWidth ?? 4 });
-
-    // Restaurer les dimensions du frame
-    frame.frameWidth = data.frameWidth;
-    frame.frameHeight = data.frameHeight;
-    frame.width = data.frameWidth;
-    frame.height = data.frameHeight;
-
-    // Recalculer le coverScale
-    const coverScale = Math.max(data.frameWidth / img.width, data.frameHeight / img.height);
-    frame._image.set({
-      scaleX: coverScale * scale,
-      scaleY: coverScale * scale,
-      left: offsetX,
-      top: offsetY,
-    });
 
     // Le clip inliné se restaure AVANT applyClipShape : un id absent du registre
     // (forme de groupe, catalogue non injecté) reste résoluble par le document seul.

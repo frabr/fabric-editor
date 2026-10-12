@@ -70,6 +70,8 @@ declare class DesignCanvas {
     get scale(): number;
     /** Le cadre du document à l'écran (px CSS, relatifs à l'élément canvas). */
     get frameRect(): FrameRect;
+    /** Le fond du plan de travail (sa couleur unie), ou null hors plan de travail. */
+    get workspaceColor(): string | null;
     get isWorkspace(): boolean;
     /**
      * Passe en plan de travail : le rendu peint le fond du plan de travail sous les objets,
@@ -548,6 +550,32 @@ declare module "fabric" {
     }
 }
 
+/**
+ * Le recadrage d'une image dans son cadre (ImageFrame) : trois nombres, normalisés.
+ *
+ * L'image couvre d'abord le cadre tout juste (cover), puis se grossit de `scale` (≥ 1) et
+ * se cale à `x`, `y` (0 → 1, 0.5 = centrée). Dans le repère du cadre (largeur W, hauteur
+ * H, origine en haut à gauche), l'image affichée occupe :
+ *   Iw = largeur cover × scale          L = x × (W − Iw)
+ *   Ih = hauteur cover × scale          T = y × (H − Ih)
+ *
+ * Normalisé plutôt qu'en pixels : la zone choisie survit au cadre qui change de taille et
+ * à l'image remplacée par une autre (binding), sans connaître la taille de l'image. L'image
+ * couvre toujours le cadre : on ne peut pas la tirer au point de laisser un vide.
+ */
+interface Crop {
+    x: number;
+    y: number;
+    scale: number;
+}
+/** Une boîte dans le repère du cadre. */
+interface Rect {
+    x: number;
+    y: number;
+    w: number;
+    h: number;
+}
+
 interface ImageFrameOptions {
     left?: number;
     top?: number;
@@ -559,9 +587,11 @@ interface ImageFrameOptions {
     clipData?: ClipData;
     /** Corner radius in pixels for "rect" clip shape (0 = sharp corners). */
     cornerRadius?: number;
+    /** Le recadrage de l'image dans le cadre (cf. crop.ts) ; centrée, cover, sans. */
+    crop?: Partial<Crop>;
+    /** @deprecated Documents d'avant : le décalage du centre de l'image en pixels de cadre. */
     imageOffsetX?: number;
     imageOffsetY?: number;
-    imageScale?: number;
     /** Scale initial du frame (pour limiter la taille à l'import) */
     frameScale?: number;
     /** Dimensions explicites du frame (prioritaires sur frameScale) */
@@ -603,12 +633,19 @@ interface ImageFrameData {
      * `src` absent = cadre EN ATTENTE : le fichier n'existe pas encore (média en cours de
      * production côté hôte). Il se dessine en damier et se sauve tel quel, sans `src` — ses
      * autres clés (l'identité du média) survivent au tour éditeur.
+     *
+     * Le recadrage est `cropX`, `cropY` (0 → 1) et `scale` (≥ 1) — voir crop.ts. Les
+     * documents d'avant portent `offsetX`, `offsetY` (pixels) : lus, convertis, plus écrits.
      */
     image: {
         src?: string;
-        offsetX?: number;
-        offsetY?: number;
+        cropX?: number;
+        cropY?: number;
         scale?: number;
+        /** @deprecated */
+        offsetX?: number;
+        /** @deprecated */
+        offsetY?: number;
         [key: string]: unknown;
     };
 }
@@ -626,9 +663,7 @@ declare class ImageFrame extends Group {
     clipData?: ClipData;
     /** Corner radius in pixels for "rect" clip shape. 0 = sharp corners. */
     cornerRadius: number;
-    private _imageOffsetX;
-    private _imageOffsetY;
-    private _imageScale;
+    private _crop;
     private _image;
     private _imageMeta;
     private _pending;
@@ -648,22 +683,25 @@ declare class ImageFrame extends Group {
     /** L'image affichée n'est pas celle du document (une url de session, le temps d'un
      *  upload) : le cadre se sauve sans `src` jusqu'à ce que la vraie source la remplace. */
     markSourcePending(): void;
-    get imageOffsetX(): number;
-    get imageOffsetY(): number;
-    /**
-     * Vérifie si l'image peut être repositionnée dans le cadre.
-     * Retourne true si l'image déborde du cadre (avec une marge de tolérance).
-     * @param tolerancePercent - Marge de tolérance en pourcentage (défaut: 5%)
-     */
-    canRepositionImage(tolerancePercent?: number): boolean;
-    /**
-     * Repositionne l'image dans le frame (pan)
-     */
-    setImageOffset(offsetX: number, offsetY: number): void;
-    /**
-     * Change le zoom de l'image (min = cover)
-     */
-    setImageScale(scale: number): void;
+    get crop(): Crop;
+    /** Se recadre : une vraie image (pas un damier d'attente). */
+    get croppable(): boolean;
+    get isCropped(): boolean;
+    /** La taille native de l'image. */
+    get naturalSize(): {
+        w: number;
+        h: number;
+    };
+    setCrop(crop: Partial<Crop>): void;
+    resetCrop(): void;
+    /** L'image entière, dans le repère du cadre. */
+    photoRect(): Rect;
+    /** L'image posée en `rect` (repère du cadre) : bornée pour couvrir le cadre. */
+    setPhotoRect(rect: Rect): void;
+    /** Décale l'image de (dx, dy) pixels de cadre depuis `from` (le recadrage au début du geste). */
+    panCrop(dx: number, dy: number, from?: Crop): void;
+    /** Change l'échelle en gardant fixe le point (px, py) du cadre, depuis `from`. */
+    zoomCrop(scale: number, px?: number, py?: number, from?: Crop): void;
     /**
      * Remplace l'image du frame en mode cover. Les clés `imageMeta` sont celles de la NOUVELLE
      * source — jamais héritées : une image remplacée qui garderait l'identité de l'ancienne
@@ -671,7 +709,8 @@ declare class ImageFrame extends Group {
      */
     replaceImage(newImage: FabricImage, imageMeta?: ImageMeta): void;
     /**
-     * Redimensionne le frame (l'image s'adapte en cover)
+     * Redimensionne le frame : l'image reste en cover, le recadrage (normalisé) garde la même
+     * zone autant que possible.
      */
     resizeFrame(newWidth: number, newHeight: number): void;
     /** Taille visuelle (contrat des formes, utilisé par le layout) : le frame, image en cover. */
@@ -695,8 +734,8 @@ declare class ImageFrame extends Group {
      * de découpe par-dessus, hors clip, trait centré sur le bord comme pour une forme.
      */
     render(ctx: CanvasRenderingContext2D): void;
-    private _applyImageOffset;
-    private _clampOffset;
+    /** L'image dans le groupe (origine au centre) : cover × échelle, centre décalé selon le recadrage. */
+    private _applyCrop;
     private _applyClip;
     private _rectClip;
     /**

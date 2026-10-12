@@ -16,10 +16,11 @@ import type { FabricObject } from "#fabric";
 import { rulesOf, type ObjectRules } from "./capabilities";
 import { stackParentOf } from "./layout/hierarchy";
 import { containerDataOf, isContainerObject, parentIdOf } from "./layout/model";
+import { ImageFrame } from "./ImageFrame";
 
 export type ToolId =
   | "group" | "align" | "distribute" | "arrangement" | "ungroup"
-  | "fill" | "font" | "variables" | "image" | "promoteBackground" | "clip" | "outline"
+  | "fill" | "font" | "variables" | "crop" | "image" | "promoteBackground" | "clip" | "outline"
   | "effects" | "layout" | "containerize" | "animations" | "condition" | "lock" | "forward" | "backward" | "delete";
 
 /**
@@ -38,7 +39,7 @@ const ORDER: Record<SelectionKind, ToolId[]> = {
     "backward",
   ],
   image: [
-    "image", "promoteBackground", "clip", "animations", "outline", "effects", "layout", "containerize",
+    "crop", "image", "promoteBackground", "clip", "animations", "outline", "effects", "layout", "containerize",
     "condition", "lock", "forward", "backward",
   ],
   block: [
@@ -94,6 +95,8 @@ function oneAllows(obj: FabricObject, kind: SelectionKind): (tool: ToolId) => bo
       case "effects": return has("color") || has("outline");
       case "clip": return has("clip");
       case "image": return has("image");
+      // Recadrer : une vraie image dans son cadre (pas un damier d'attente)
+      case "crop": return has("image") && obj instanceof ImageFrame && obj.croppable;
       case "promoteBackground": return has("image") && rules.restacks;
       case "layout": return rules.restyles && laidOut;
       case "animations":

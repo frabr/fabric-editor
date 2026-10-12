@@ -1512,7 +1512,62 @@ function setShapeSize(obj, w, h) {
 
 // src/ImageFrame.ts
 var import_fabric10 = require("#fabric");
-var IMAGE_KEYS = ["src", "offsetX", "offsetY", "scale"];
+
+// src/crop.ts
+var NO_CROP = { x: 0.5, y: 0.5, scale: 1 };
+var MAX_CROP_SCALE = 4;
+var clamp01 = (v) => Math.max(0, Math.min(1, v));
+var clampScale = (s) => Math.max(1, Math.min(MAX_CROP_SCALE, s));
+var isCropped = (c) => c.scale > 1.001 || Math.abs(c.x - 0.5) > 1e-3 || Math.abs(c.y - 0.5) > 1e-3;
+function normalizeCrop(c) {
+  return {
+    x: clamp01(Number.isFinite(c.x) ? c.x : 0.5),
+    y: clamp01(Number.isFinite(c.y) ? c.y : 0.5),
+    scale: clampScale(Number.isFinite(c.scale) ? c.scale : 1)
+  };
+}
+var coverScale = (W, H, nat) => Math.max(W / nat.w, H / nat.h);
+function photoRect(W, H, nat, c) {
+  const s = coverScale(W, H, nat) * c.scale;
+  const Iw = nat.w * s;
+  const Ih = nat.h * s;
+  return { x: c.x * (W - Iw) + 0, y: c.y * (H - Ih) + 0, w: Iw, h: Ih };
+}
+function cropFromRect(W, H, nat, r) {
+  const scale = clampScale(r.w / (nat.w * coverScale(W, H, nat)));
+  const s = coverScale(W, H, nat) * scale;
+  const Iw = nat.w * s;
+  const Ih = nat.h * s;
+  const x = Math.abs(W - Iw) < 0.5 ? 0.5 : clamp01(r.x / (W - Iw));
+  const y = Math.abs(H - Ih) < 0.5 ? 0.5 : clamp01(r.y / (H - Ih));
+  return { x: x + 0, y: y + 0, scale };
+}
+function panCrop(W, H, nat, c, dx, dy) {
+  const r = photoRect(W, H, nat, c);
+  return cropFromRect(W, H, nat, { ...r, x: r.x + dx, y: r.y + dy });
+}
+function zoomCrop(W, H, nat, c, scale, px = W / 2, py = H / 2) {
+  const r = photoRect(W, H, nat, c);
+  const k = clampScale(scale) / c.scale;
+  return cropFromRect(W, H, nat, { x: px - (px - r.x) * k, y: py - (py - r.y) * k, w: r.w * k, h: r.h * k });
+}
+function centerOffset(W, H, nat, c) {
+  const r = photoRect(W, H, nat, c);
+  return { x: r.x + r.w / 2 - W / 2, y: r.y + r.h / 2 - H / 2 };
+}
+function cropFromCenterOffset(W, H, nat, offsetX, offsetY, scale) {
+  const s = coverScale(W, H, nat) * clampScale(scale);
+  const Iw = nat.w * s;
+  const Ih = nat.h * s;
+  return normalizeCrop({
+    x: Iw - W < 0.5 ? 0.5 : 0.5 - offsetX / (Iw - W),
+    y: Ih - H < 0.5 ? 0.5 : 0.5 - offsetY / (Ih - H),
+    scale
+  });
+}
+
+// src/ImageFrame.ts
+var IMAGE_KEYS = ["src", "cropX", "cropY", "scale", "offsetX", "offsetY"];
 function imageMetaOf(image) {
   const meta = { ...image };
   IMAGE_KEYS.forEach((key) => delete meta[key]);
@@ -1530,10 +1585,10 @@ var ImageFrame = class _ImageFrame extends import_fabric10.Group {
     const frameScale = options.frameScale ?? 1;
     const frameWidth = options.frameWidth ?? image.width * frameScale;
     const frameHeight = options.frameHeight ?? image.height * frameScale;
-    const coverScale = Math.max(frameWidth / image.width, frameHeight / image.height);
+    const coverScale2 = Math.max(frameWidth / image.width, frameHeight / image.height);
     image.set({
-      scaleX: coverScale,
-      scaleY: coverScale,
+      scaleX: coverScale2,
+      scaleY: coverScale2,
       originX: "center",
       originY: "center",
       clipPath: null,
@@ -1559,17 +1614,20 @@ var ImageFrame = class _ImageFrame extends import_fabric10.Group {
     });
     /** Corner radius in pixels for "rect" clip shape. 0 = sharp corners. */
     this.cornerRadius = 0;
-    this._imageOffsetX = 0;
-    this._imageOffsetY = 0;
-    this._imageScale = 1;
+    this._crop = NO_CROP;
     this._imageMeta = {};
     this._pending = false;
     this._image = image;
     this.frameWidth = frameWidth;
     this.frameHeight = frameHeight;
-    this._imageOffsetX = options.imageOffsetX ?? 0;
-    this._imageOffsetY = options.imageOffsetY ?? 0;
-    this._imageScale = options.imageScale ?? 1;
+    this._crop = options.crop ? normalizeCrop(options.crop) : cropFromCenterOffset(
+      frameWidth,
+      frameHeight,
+      { w: image.width, h: image.height },
+      options.imageOffsetX ?? 0,
+      options.imageOffsetY ?? 0,
+      1
+    );
     this._imageMeta = { ...options.imageMeta ?? {} };
     if (options.layerId) {
       this.set("layerId", options.layerId);
@@ -1580,7 +1638,7 @@ var ImageFrame = class _ImageFrame extends import_fabric10.Group {
     this._applyClip(options.clipShape || "rect");
     this._setupControls();
     this._setupScaleAbsorption();
-    this._applyImageOffset();
+    this._applyCrop();
   }
   get image() {
     return this._image;
@@ -1609,51 +1667,46 @@ var ImageFrame = class _ImageFrame extends import_fabric10.Group {
   markSourcePending() {
     this._pending = true;
   }
-  get imageOffsetX() {
-    return this._imageOffsetX;
+  // ─────────────────────────────────────────────────────────────
+  // Recadrage (cf. crop.ts) : tout est dans le repère du cadre, origine en haut à gauche
+  // ─────────────────────────────────────────────────────────────
+  get crop() {
+    return this._crop;
   }
-  get imageOffsetY() {
-    return this._imageOffsetY;
+  /** Se recadre : une vraie image (pas un damier d'attente). */
+  get croppable() {
+    return !this._pending;
   }
-  /**
-   * Vérifie si l'image peut être repositionnée dans le cadre.
-   * Retourne true si l'image déborde du cadre (avec une marge de tolérance).
-   * @param tolerancePercent - Marge de tolérance en pourcentage (défaut: 5%)
-   */
-  canRepositionImage(tolerancePercent = 5) {
-    const imgWidth = this._image.width * this._image.scaleX;
-    const imgHeight = this._image.height * this._image.scaleY;
-    const toleranceX = this.frameWidth * (tolerancePercent / 100);
-    const toleranceY = this.frameHeight * (tolerancePercent / 100);
-    const canMoveX = imgWidth > this.frameWidth + toleranceX;
-    const canMoveY = imgHeight > this.frameHeight + toleranceY;
-    return canMoveX || canMoveY;
+  get isCropped() {
+    return isCropped(this._crop);
   }
-  /**
-   * Repositionne l'image dans le frame (pan)
-   */
-  setImageOffset(offsetX, offsetY) {
-    const clamped = this._clampOffset(offsetX, offsetY);
-    this._imageOffsetX = clamped.x;
-    this._imageOffsetY = clamped.y;
-    this._applyImageOffset();
+  /** La taille native de l'image. */
+  get naturalSize() {
+    return { w: this._image.width, h: this._image.height };
+  }
+  setCrop(crop) {
+    this._crop = normalizeCrop({ ...this._crop, ...crop });
+    this._applyCrop();
     this.dirty = true;
   }
-  /**
-   * Change le zoom de l'image (min = cover)
-   */
-  setImageScale(scale) {
-    const coverScale = Math.max(this.frameWidth / this._image.width, this.frameHeight / this._image.height);
-    this._imageScale = Math.max(1, scale);
-    this._image.set({
-      scaleX: coverScale * this._imageScale,
-      scaleY: coverScale * this._imageScale
-    });
-    const clamped = this._clampOffset(this._imageOffsetX, this._imageOffsetY);
-    this._imageOffsetX = clamped.x;
-    this._imageOffsetY = clamped.y;
-    this._applyImageOffset();
-    this.dirty = true;
+  resetCrop() {
+    this.setCrop(NO_CROP);
+  }
+  /** L'image entière, dans le repère du cadre. */
+  photoRect() {
+    return photoRect(this.frameWidth, this.frameHeight, this.naturalSize, this._crop);
+  }
+  /** L'image posée en `rect` (repère du cadre) : bornée pour couvrir le cadre. */
+  setPhotoRect(rect) {
+    this.setCrop(cropFromRect(this.frameWidth, this.frameHeight, this.naturalSize, rect));
+  }
+  /** Décale l'image de (dx, dy) pixels de cadre depuis `from` (le recadrage au début du geste). */
+  panCrop(dx, dy, from = this._crop) {
+    this.setCrop(panCrop(this.frameWidth, this.frameHeight, this.naturalSize, from, dx, dy));
+  }
+  /** Change l'échelle en gardant fixe le point (px, py) du cadre, depuis `from`. */
+  zoomCrop(scale, px, py, from = this._crop) {
+    this.setCrop(zoomCrop(this.frameWidth, this.frameHeight, this.naturalSize, from, scale, px, py));
   }
   /**
    * Remplace l'image du frame en mode cover. Les clés `imageMeta` sont celles de la NOUVELLE
@@ -1664,10 +1717,10 @@ var ImageFrame = class _ImageFrame extends import_fabric10.Group {
     const savedClipShape = this.clipShape || "rect";
     this._imageMeta = { ...imageMeta };
     this._pending = false;
-    const coverScale = Math.max(this.frameWidth / newImage.width, this.frameHeight / newImage.height);
+    const coverScale2 = Math.max(this.frameWidth / newImage.width, this.frameHeight / newImage.height);
     newImage.set({
-      scaleX: coverScale,
-      scaleY: coverScale,
+      scaleX: coverScale2,
+      scaleY: coverScale2,
       originX: "center",
       originY: "center",
       left: 0,
@@ -1686,29 +1739,21 @@ var ImageFrame = class _ImageFrame extends import_fabric10.Group {
     this.height = this.frameHeight;
     this._applyClip(savedClipShape);
     this.setCoords();
-    this._imageOffsetX = 0;
-    this._imageOffsetY = 0;
-    this._imageScale = 1;
+    this._crop = NO_CROP;
+    this._applyCrop();
     this.dirty = true;
     this.canvas?.requestRenderAll();
   }
   /**
-   * Redimensionne le frame (l'image s'adapte en cover)
+   * Redimensionne le frame : l'image reste en cover, le recadrage (normalisé) garde la même
+   * zone autant que possible.
    */
   resizeFrame(newWidth, newHeight) {
-    const coverScale = Math.max(newWidth / this._image.width, newHeight / this._image.height);
     this.frameWidth = newWidth;
     this.frameHeight = newHeight;
     this.width = newWidth;
     this.height = newHeight;
-    this._image.set({
-      scaleX: coverScale * this._imageScale,
-      scaleY: coverScale * this._imageScale
-    });
-    const clamped = this._clampOffset(this._imageOffsetX, this._imageOffsetY);
-    this._imageOffsetX = clamped.x;
-    this._imageOffsetY = clamped.y;
-    this._applyImageOffset();
+    this._applyCrop();
     this._applyClip(this.clipShape || "rect");
     if (this.clipPath) {
       this.clipPath.setCoords();
@@ -1772,18 +1817,12 @@ var ImageFrame = class _ImageFrame extends import_fabric10.Group {
   // ─────────────────────────────────────────────────────────────
   // Méthodes privées
   // ─────────────────────────────────────────────────────────────
-  _applyImageOffset() {
-    this._image.set({ left: this._imageOffsetX, top: this._imageOffsetY });
-  }
-  _clampOffset(offsetX, offsetY) {
-    const imgWidth = this._image.width * this._image.scaleX;
-    const imgHeight = this._image.height * this._image.scaleY;
-    const maxOffsetX = Math.max(0, (imgWidth - this.frameWidth) / 2);
-    const maxOffsetY = Math.max(0, (imgHeight - this.frameHeight) / 2);
-    return {
-      x: Math.max(-maxOffsetX, Math.min(maxOffsetX, offsetX)),
-      y: Math.max(-maxOffsetY, Math.min(maxOffsetY, offsetY))
-    };
+  /** L'image dans le groupe (origine au centre) : cover × échelle, centre décalé selon le recadrage. */
+  _applyCrop() {
+    const nat = this.naturalSize;
+    const s = coverScale(this.frameWidth, this.frameHeight, nat) * this._crop.scale;
+    const offset = centerOffset(this.frameWidth, this.frameHeight, nat, this._crop);
+    this._image.set({ scaleX: s, scaleY: s, left: offset.x, top: offset.y });
   }
   _applyClip(shapeType) {
     this.clipShape = shapeType;
@@ -1991,41 +2030,37 @@ var ImageFrame = class _ImageFrame extends import_fabric10.Group {
       image: {
         ...this._imageMeta,
         ...this._pending ? {} : { src: this.imageSrc },
-        offsetX: this._imageOffsetX,
-        offsetY: this._imageOffsetY,
-        scale: this._imageScale
+        cropX: this._crop.x,
+        cropY: this._crop.y,
+        scale: this._crop.scale
       }
     };
   }
   static async fromObject(data) {
-    const { src, offsetX = 0, offsetY = 0, scale = 1 } = data.image;
+    const { src, cropX, cropY, offsetX = 0, offsetY = 0, scale = 1 } = data.image;
     const options = {
       left: data.left,
       top: data.top,
       angle: data.angle,
       layerId: data.layerId,
       lockMode: data.lockMode,
-      imageOffsetX: offsetX,
-      imageOffsetY: offsetY,
-      imageScale: scale,
+      frameWidth: data.frameWidth,
+      frameHeight: data.frameHeight,
       imageMeta: imageMetaOf(data.image)
     };
-    const frame = src ? new _ImageFrame(await import_fabric10.FabricImage.fromURL(src, { crossOrigin: "anonymous" }), options) : _ImageFrame.pending({ ...options, frameWidth: data.frameWidth, frameHeight: data.frameHeight });
-    const img = frame._image;
+    const img = src ? await import_fabric10.FabricImage.fromURL(src, { crossOrigin: "anonymous" }) : null;
+    options.crop = cropX !== void 0 || cropY !== void 0 ? { x: cropX, y: cropY, scale } : cropFromCenterOffset(
+      data.frameWidth,
+      data.frameHeight,
+      { w: img?.width || 1, h: img?.height || 1 },
+      offsetX,
+      offsetY,
+      scale
+    );
+    const frame = img ? new _ImageFrame(img, options) : _ImageFrame.pending({ ...options, frameWidth: data.frameWidth, frameHeight: data.frameHeight });
     if (data.layout) frame.set("layout", data.layout);
     if (data.originX) frame.set({ originX: data.originX, originY: data.originY ?? data.originX });
     if (data.stroke) frame.set({ stroke: data.stroke, strokeWidth: data.strokeWidth ?? 4 });
-    frame.frameWidth = data.frameWidth;
-    frame.frameHeight = data.frameHeight;
-    frame.width = data.frameWidth;
-    frame.height = data.frameHeight;
-    const coverScale = Math.max(data.frameWidth / img.width, data.frameHeight / img.height);
-    frame._image.set({
-      scaleX: coverScale * scale,
-      scaleY: coverScale * scale,
-      left: offsetX,
-      top: offsetY
-    });
     if (data.clipData) frame.clipData = data.clipData;
     let clipShape = data.clipShape;
     if (clipShape === "rounded") {
@@ -2307,18 +2342,18 @@ var LayerManager = class {
     const newImg = await import_fabric11.FabricImage.fromURL(newUrl, { crossOrigin: "anonymous" });
     const oldWidth = target.width * target.scaleX;
     const oldHeight = target.height * target.scaleY;
-    const coverScale = Math.max(oldWidth / newImg.width, oldHeight / newImg.height);
+    const coverScale2 = Math.max(oldWidth / newImg.width, oldHeight / newImg.height);
     let adjustedClipPath = target.clipPath;
     if (target.clipPath) {
       adjustedClipPath = await target.clipPath.clone();
-      const clipScaleX = (adjustedClipPath.scaleX || 1) * (target.scaleX / coverScale);
-      const clipScaleY = (adjustedClipPath.scaleY || 1) * (target.scaleY / coverScale);
+      const clipScaleX = (adjustedClipPath.scaleX || 1) * (target.scaleX / coverScale2);
+      const clipScaleY = (adjustedClipPath.scaleY || 1) * (target.scaleY / coverScale2);
       adjustedClipPath.set({ scaleX: clipScaleX, scaleY: clipScaleY });
     }
     newImg.set({
       ...props,
-      scaleX: coverScale,
-      scaleY: coverScale,
+      scaleX: coverScale2,
+      scaleY: coverScale2,
       clipPath: adjustedClipPath,
       originX: "center",
       originY: "center",

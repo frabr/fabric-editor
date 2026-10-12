@@ -102,6 +102,11 @@ export class DesignCanvas {
     return { ...this._frame };
   }
 
+  /** Le fond du plan de travail (sa couleur unie), ou null hors plan de travail. */
+  get workspaceColor(): string | null {
+    return this._workspace?.color ?? null;
+  }
+
   get isWorkspace(): boolean {
     return this._workspace !== null;
   }

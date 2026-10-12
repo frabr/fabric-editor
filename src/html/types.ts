@@ -109,10 +109,15 @@ export interface PathLayerData extends LayerData {
  * Données d'image dans un ImageFrame
  */
 export interface ImageFrameImageData {
-  src: string;
-  offsetX: number;
-  offsetY: number;
-  scale: number;
+  src?: string;
+  /** Recadrage normalisé (cf. crop.ts) : 0 → 1, 0.5 = centré. */
+  cropX?: number;
+  cropY?: number;
+  scale?: number;
+  /** @deprecated Documents d'avant : décalage du centre en pixels de cadre. */
+  offsetX?: number;
+  /** @deprecated */
+  offsetY?: number;
 }
 
 /**

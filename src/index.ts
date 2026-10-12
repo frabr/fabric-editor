@@ -23,8 +23,11 @@ export { DropHandler } from "./DropHandler";
 export type { DropHandlerConfig, DragPayload, DropResult } from "./DropHandler";
 export { PendingUploadsManager } from "./PendingUploadsManager";
 
-// ImageFrame
+// ImageFrame, et son recadrage
 export { ImageFrame } from "./ImageFrame";
+export { CropMode } from "./CropMode";
+export { NO_CROP, MAX_CROP_SCALE, isCropped, photoRect, cropFromRect, panCrop, zoomCrop } from "./crop";
+export type { Crop } from "./crop";
 
 // OOP shape classes
 export { FabRect, FabCircle, FabPath, type Lockable } from "./shapes";

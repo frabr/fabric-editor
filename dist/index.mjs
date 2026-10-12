@@ -115,7 +115,7 @@ var init_PendingUploadsManager = __esm({
 });
 
 // src/FabricEditor.ts
-import { ActiveSelection as ActiveSelection4, FabricObject as FabricObject9, Point as Point7 } from "#fabric";
+import { ActiveSelection as ActiveSelection4, FabricObject as FabricObject9, Point as Point8 } from "#fabric";
 
 // src/DesignCanvas.ts
 import { Canvas, Point } from "#fabric";
@@ -158,6 +158,10 @@ var DesignCanvas = class {
   /** Le cadre du document à l'écran (px CSS, relatifs à l'élément canvas). */
   get frameRect() {
     return { ...this._frame };
+  }
+  /** Le fond du plan de travail (sa couleur unie), ou null hors plan de travail. */
+  get workspaceColor() {
+    return this._workspace?.color ?? null;
   }
   get isWorkspace() {
     return this._workspace !== null;
@@ -2116,7 +2120,62 @@ import {
   LayoutManager,
   FixedLayout
 } from "#fabric";
-var IMAGE_KEYS = ["src", "offsetX", "offsetY", "scale"];
+
+// src/crop.ts
+var NO_CROP = { x: 0.5, y: 0.5, scale: 1 };
+var MAX_CROP_SCALE = 4;
+var clamp01 = (v) => Math.max(0, Math.min(1, v));
+var clampScale = (s) => Math.max(1, Math.min(MAX_CROP_SCALE, s));
+var isCropped = (c) => c.scale > 1.001 || Math.abs(c.x - 0.5) > 1e-3 || Math.abs(c.y - 0.5) > 1e-3;
+function normalizeCrop(c) {
+  return {
+    x: clamp01(Number.isFinite(c.x) ? c.x : 0.5),
+    y: clamp01(Number.isFinite(c.y) ? c.y : 0.5),
+    scale: clampScale(Number.isFinite(c.scale) ? c.scale : 1)
+  };
+}
+var coverScale = (W, H, nat) => Math.max(W / nat.w, H / nat.h);
+function photoRect(W, H, nat, c) {
+  const s = coverScale(W, H, nat) * c.scale;
+  const Iw = nat.w * s;
+  const Ih = nat.h * s;
+  return { x: c.x * (W - Iw) + 0, y: c.y * (H - Ih) + 0, w: Iw, h: Ih };
+}
+function cropFromRect(W, H, nat, r) {
+  const scale = clampScale(r.w / (nat.w * coverScale(W, H, nat)));
+  const s = coverScale(W, H, nat) * scale;
+  const Iw = nat.w * s;
+  const Ih = nat.h * s;
+  const x = Math.abs(W - Iw) < 0.5 ? 0.5 : clamp01(r.x / (W - Iw));
+  const y = Math.abs(H - Ih) < 0.5 ? 0.5 : clamp01(r.y / (H - Ih));
+  return { x: x + 0, y: y + 0, scale };
+}
+function panCrop(W, H, nat, c, dx, dy) {
+  const r = photoRect(W, H, nat, c);
+  return cropFromRect(W, H, nat, { ...r, x: r.x + dx, y: r.y + dy });
+}
+function zoomCrop(W, H, nat, c, scale, px = W / 2, py = H / 2) {
+  const r = photoRect(W, H, nat, c);
+  const k = clampScale(scale) / c.scale;
+  return cropFromRect(W, H, nat, { x: px - (px - r.x) * k, y: py - (py - r.y) * k, w: r.w * k, h: r.h * k });
+}
+function centerOffset(W, H, nat, c) {
+  const r = photoRect(W, H, nat, c);
+  return { x: r.x + r.w / 2 - W / 2, y: r.y + r.h / 2 - H / 2 };
+}
+function cropFromCenterOffset(W, H, nat, offsetX, offsetY, scale) {
+  const s = coverScale(W, H, nat) * clampScale(scale);
+  const Iw = nat.w * s;
+  const Ih = nat.h * s;
+  return normalizeCrop({
+    x: Iw - W < 0.5 ? 0.5 : 0.5 - offsetX / (Iw - W),
+    y: Ih - H < 0.5 ? 0.5 : 0.5 - offsetY / (Ih - H),
+    scale
+  });
+}
+
+// src/ImageFrame.ts
+var IMAGE_KEYS = ["src", "cropX", "cropY", "scale", "offsetX", "offsetY"];
 function imageMetaOf(image) {
   const meta = { ...image };
   IMAGE_KEYS.forEach((key) => delete meta[key]);
@@ -2134,10 +2193,10 @@ var ImageFrame = class _ImageFrame extends Group3 {
     const frameScale = options.frameScale ?? 1;
     const frameWidth = options.frameWidth ?? image.width * frameScale;
     const frameHeight = options.frameHeight ?? image.height * frameScale;
-    const coverScale = Math.max(frameWidth / image.width, frameHeight / image.height);
+    const coverScale2 = Math.max(frameWidth / image.width, frameHeight / image.height);
     image.set({
-      scaleX: coverScale,
-      scaleY: coverScale,
+      scaleX: coverScale2,
+      scaleY: coverScale2,
       originX: "center",
       originY: "center",
       clipPath: null,
@@ -2163,17 +2222,20 @@ var ImageFrame = class _ImageFrame extends Group3 {
     });
     /** Corner radius in pixels for "rect" clip shape. 0 = sharp corners. */
     this.cornerRadius = 0;
-    this._imageOffsetX = 0;
-    this._imageOffsetY = 0;
-    this._imageScale = 1;
+    this._crop = NO_CROP;
     this._imageMeta = {};
     this._pending = false;
     this._image = image;
     this.frameWidth = frameWidth;
     this.frameHeight = frameHeight;
-    this._imageOffsetX = options.imageOffsetX ?? 0;
-    this._imageOffsetY = options.imageOffsetY ?? 0;
-    this._imageScale = options.imageScale ?? 1;
+    this._crop = options.crop ? normalizeCrop(options.crop) : cropFromCenterOffset(
+      frameWidth,
+      frameHeight,
+      { w: image.width, h: image.height },
+      options.imageOffsetX ?? 0,
+      options.imageOffsetY ?? 0,
+      1
+    );
     this._imageMeta = { ...options.imageMeta ?? {} };
     if (options.layerId) {
       this.set("layerId", options.layerId);
@@ -2184,7 +2246,7 @@ var ImageFrame = class _ImageFrame extends Group3 {
     this._applyClip(options.clipShape || "rect");
     this._setupControls();
     this._setupScaleAbsorption();
-    this._applyImageOffset();
+    this._applyCrop();
   }
   get image() {
     return this._image;
@@ -2213,51 +2275,46 @@ var ImageFrame = class _ImageFrame extends Group3 {
   markSourcePending() {
     this._pending = true;
   }
-  get imageOffsetX() {
-    return this._imageOffsetX;
+  // ─────────────────────────────────────────────────────────────
+  // Recadrage (cf. crop.ts) : tout est dans le repère du cadre, origine en haut à gauche
+  // ─────────────────────────────────────────────────────────────
+  get crop() {
+    return this._crop;
   }
-  get imageOffsetY() {
-    return this._imageOffsetY;
+  /** Se recadre : une vraie image (pas un damier d'attente). */
+  get croppable() {
+    return !this._pending;
   }
-  /**
-   * Vérifie si l'image peut être repositionnée dans le cadre.
-   * Retourne true si l'image déborde du cadre (avec une marge de tolérance).
-   * @param tolerancePercent - Marge de tolérance en pourcentage (défaut: 5%)
-   */
-  canRepositionImage(tolerancePercent = 5) {
-    const imgWidth = this._image.width * this._image.scaleX;
-    const imgHeight = this._image.height * this._image.scaleY;
-    const toleranceX = this.frameWidth * (tolerancePercent / 100);
-    const toleranceY = this.frameHeight * (tolerancePercent / 100);
-    const canMoveX = imgWidth > this.frameWidth + toleranceX;
-    const canMoveY = imgHeight > this.frameHeight + toleranceY;
-    return canMoveX || canMoveY;
+  get isCropped() {
+    return isCropped(this._crop);
   }
-  /**
-   * Repositionne l'image dans le frame (pan)
-   */
-  setImageOffset(offsetX, offsetY) {
-    const clamped = this._clampOffset(offsetX, offsetY);
-    this._imageOffsetX = clamped.x;
-    this._imageOffsetY = clamped.y;
-    this._applyImageOffset();
+  /** La taille native de l'image. */
+  get naturalSize() {
+    return { w: this._image.width, h: this._image.height };
+  }
+  setCrop(crop) {
+    this._crop = normalizeCrop({ ...this._crop, ...crop });
+    this._applyCrop();
     this.dirty = true;
   }
-  /**
-   * Change le zoom de l'image (min = cover)
-   */
-  setImageScale(scale) {
-    const coverScale = Math.max(this.frameWidth / this._image.width, this.frameHeight / this._image.height);
-    this._imageScale = Math.max(1, scale);
-    this._image.set({
-      scaleX: coverScale * this._imageScale,
-      scaleY: coverScale * this._imageScale
-    });
-    const clamped = this._clampOffset(this._imageOffsetX, this._imageOffsetY);
-    this._imageOffsetX = clamped.x;
-    this._imageOffsetY = clamped.y;
-    this._applyImageOffset();
-    this.dirty = true;
+  resetCrop() {
+    this.setCrop(NO_CROP);
+  }
+  /** L'image entière, dans le repère du cadre. */
+  photoRect() {
+    return photoRect(this.frameWidth, this.frameHeight, this.naturalSize, this._crop);
+  }
+  /** L'image posée en `rect` (repère du cadre) : bornée pour couvrir le cadre. */
+  setPhotoRect(rect) {
+    this.setCrop(cropFromRect(this.frameWidth, this.frameHeight, this.naturalSize, rect));
+  }
+  /** Décale l'image de (dx, dy) pixels de cadre depuis `from` (le recadrage au début du geste). */
+  panCrop(dx, dy, from = this._crop) {
+    this.setCrop(panCrop(this.frameWidth, this.frameHeight, this.naturalSize, from, dx, dy));
+  }
+  /** Change l'échelle en gardant fixe le point (px, py) du cadre, depuis `from`. */
+  zoomCrop(scale, px, py, from = this._crop) {
+    this.setCrop(zoomCrop(this.frameWidth, this.frameHeight, this.naturalSize, from, scale, px, py));
   }
   /**
    * Remplace l'image du frame en mode cover. Les clés `imageMeta` sont celles de la NOUVELLE
@@ -2268,10 +2325,10 @@ var ImageFrame = class _ImageFrame extends Group3 {
     const savedClipShape = this.clipShape || "rect";
     this._imageMeta = { ...imageMeta };
     this._pending = false;
-    const coverScale = Math.max(this.frameWidth / newImage.width, this.frameHeight / newImage.height);
+    const coverScale2 = Math.max(this.frameWidth / newImage.width, this.frameHeight / newImage.height);
     newImage.set({
-      scaleX: coverScale,
-      scaleY: coverScale,
+      scaleX: coverScale2,
+      scaleY: coverScale2,
       originX: "center",
       originY: "center",
       left: 0,
@@ -2290,29 +2347,21 @@ var ImageFrame = class _ImageFrame extends Group3 {
     this.height = this.frameHeight;
     this._applyClip(savedClipShape);
     this.setCoords();
-    this._imageOffsetX = 0;
-    this._imageOffsetY = 0;
-    this._imageScale = 1;
+    this._crop = NO_CROP;
+    this._applyCrop();
     this.dirty = true;
     this.canvas?.requestRenderAll();
   }
   /**
-   * Redimensionne le frame (l'image s'adapte en cover)
+   * Redimensionne le frame : l'image reste en cover, le recadrage (normalisé) garde la même
+   * zone autant que possible.
    */
   resizeFrame(newWidth, newHeight) {
-    const coverScale = Math.max(newWidth / this._image.width, newHeight / this._image.height);
     this.frameWidth = newWidth;
     this.frameHeight = newHeight;
     this.width = newWidth;
     this.height = newHeight;
-    this._image.set({
-      scaleX: coverScale * this._imageScale,
-      scaleY: coverScale * this._imageScale
-    });
-    const clamped = this._clampOffset(this._imageOffsetX, this._imageOffsetY);
-    this._imageOffsetX = clamped.x;
-    this._imageOffsetY = clamped.y;
-    this._applyImageOffset();
+    this._applyCrop();
     this._applyClip(this.clipShape || "rect");
     if (this.clipPath) {
       this.clipPath.setCoords();
@@ -2376,18 +2425,12 @@ var ImageFrame = class _ImageFrame extends Group3 {
   // ─────────────────────────────────────────────────────────────
   // Méthodes privées
   // ─────────────────────────────────────────────────────────────
-  _applyImageOffset() {
-    this._image.set({ left: this._imageOffsetX, top: this._imageOffsetY });
-  }
-  _clampOffset(offsetX, offsetY) {
-    const imgWidth = this._image.width * this._image.scaleX;
-    const imgHeight = this._image.height * this._image.scaleY;
-    const maxOffsetX = Math.max(0, (imgWidth - this.frameWidth) / 2);
-    const maxOffsetY = Math.max(0, (imgHeight - this.frameHeight) / 2);
-    return {
-      x: Math.max(-maxOffsetX, Math.min(maxOffsetX, offsetX)),
-      y: Math.max(-maxOffsetY, Math.min(maxOffsetY, offsetY))
-    };
+  /** L'image dans le groupe (origine au centre) : cover × échelle, centre décalé selon le recadrage. */
+  _applyCrop() {
+    const nat = this.naturalSize;
+    const s = coverScale(this.frameWidth, this.frameHeight, nat) * this._crop.scale;
+    const offset = centerOffset(this.frameWidth, this.frameHeight, nat, this._crop);
+    this._image.set({ scaleX: s, scaleY: s, left: offset.x, top: offset.y });
   }
   _applyClip(shapeType) {
     this.clipShape = shapeType;
@@ -2595,41 +2638,37 @@ var ImageFrame = class _ImageFrame extends Group3 {
       image: {
         ...this._imageMeta,
         ...this._pending ? {} : { src: this.imageSrc },
-        offsetX: this._imageOffsetX,
-        offsetY: this._imageOffsetY,
-        scale: this._imageScale
+        cropX: this._crop.x,
+        cropY: this._crop.y,
+        scale: this._crop.scale
       }
     };
   }
   static async fromObject(data) {
-    const { src, offsetX = 0, offsetY = 0, scale = 1 } = data.image;
+    const { src, cropX, cropY, offsetX = 0, offsetY = 0, scale = 1 } = data.image;
     const options = {
       left: data.left,
       top: data.top,
       angle: data.angle,
       layerId: data.layerId,
       lockMode: data.lockMode,
-      imageOffsetX: offsetX,
-      imageOffsetY: offsetY,
-      imageScale: scale,
+      frameWidth: data.frameWidth,
+      frameHeight: data.frameHeight,
       imageMeta: imageMetaOf(data.image)
     };
-    const frame = src ? new _ImageFrame(await FabricImage4.fromURL(src, { crossOrigin: "anonymous" }), options) : _ImageFrame.pending({ ...options, frameWidth: data.frameWidth, frameHeight: data.frameHeight });
-    const img = frame._image;
+    const img = src ? await FabricImage4.fromURL(src, { crossOrigin: "anonymous" }) : null;
+    options.crop = cropX !== void 0 || cropY !== void 0 ? { x: cropX, y: cropY, scale } : cropFromCenterOffset(
+      data.frameWidth,
+      data.frameHeight,
+      { w: img?.width || 1, h: img?.height || 1 },
+      offsetX,
+      offsetY,
+      scale
+    );
+    const frame = img ? new _ImageFrame(img, options) : _ImageFrame.pending({ ...options, frameWidth: data.frameWidth, frameHeight: data.frameHeight });
     if (data.layout) frame.set("layout", data.layout);
     if (data.originX) frame.set({ originX: data.originX, originY: data.originY ?? data.originX });
     if (data.stroke) frame.set({ stroke: data.stroke, strokeWidth: data.strokeWidth ?? 4 });
-    frame.frameWidth = data.frameWidth;
-    frame.frameHeight = data.frameHeight;
-    frame.width = data.frameWidth;
-    frame.height = data.frameHeight;
-    const coverScale = Math.max(data.frameWidth / img.width, data.frameHeight / img.height);
-    frame._image.set({
-      scaleX: coverScale * scale,
-      scaleY: coverScale * scale,
-      left: offsetX,
-      top: offsetY
-    });
     if (data.clipData) frame.clipData = data.clipData;
     let clipShape = data.clipShape;
     if (clipShape === "rounded") {
@@ -2911,18 +2950,18 @@ var LayerManager = class {
     const newImg = await FabricImage5.fromURL(newUrl, { crossOrigin: "anonymous" });
     const oldWidth = target.width * target.scaleX;
     const oldHeight = target.height * target.scaleY;
-    const coverScale = Math.max(oldWidth / newImg.width, oldHeight / newImg.height);
+    const coverScale2 = Math.max(oldWidth / newImg.width, oldHeight / newImg.height);
     let adjustedClipPath = target.clipPath;
     if (target.clipPath) {
       adjustedClipPath = await target.clipPath.clone();
-      const clipScaleX = (adjustedClipPath.scaleX || 1) * (target.scaleX / coverScale);
-      const clipScaleY = (adjustedClipPath.scaleY || 1) * (target.scaleY / coverScale);
+      const clipScaleX = (adjustedClipPath.scaleX || 1) * (target.scaleX / coverScale2);
+      const clipScaleY = (adjustedClipPath.scaleY || 1) * (target.scaleY / coverScale2);
       adjustedClipPath.set({ scaleX: clipScaleX, scaleY: clipScaleY });
     }
     newImg.set({
       ...props,
-      scaleX: coverScale,
-      scaleY: coverScale,
+      scaleX: coverScale2,
+      scaleY: coverScale2,
       clipPath: adjustedClipPath,
       originX: "center",
       originY: "center",
@@ -7456,6 +7495,254 @@ function installDisplayStyleRendering(target) {
   };
 }
 
+// src/CropMode.ts
+import { Point as Point7, util as util3 } from "#fabric";
+var HANDLE_RADIUS = 6;
+var HANDLE_GRAB = 12;
+var FALLBACK_VEIL = "#f3f4f6";
+var VEIL_ALPHA = 0.85;
+var PHOTO_VEIL_ALPHA = 0.55;
+var CropMode = class {
+  constructor(canvas, guideColor) {
+    this.canvas = canvas;
+    this.guideColor = guideColor;
+    this.frame = null;
+    this.before = null;
+    this.drag = null;
+    this.saved = null;
+    this.onKeyDown = (e) => {
+      if (!this.frame) return;
+      if (e.key === "Enter") this.commit();
+      else if (e.key === "Escape") this.cancel();
+      else return;
+      e.preventDefault();
+      e.stopPropagation();
+    };
+    canvas.on("mouse:down", (e) => this.onDown(e));
+    canvas.on("mouse:move", (e) => this.onMove(e));
+    canvas.on("mouse:up", () => this.onUp());
+    canvas.on("after:render", () => this.paint());
+    canvas.on("object:removed", (e) => {
+      if (e.target === this.frame) this.end(false);
+    });
+    if (typeof document !== "undefined") document.addEventListener("keydown", this.onKeyDown, true);
+  }
+  get active() {
+    return this.frame !== null;
+  }
+  get target() {
+    return this.frame;
+  }
+  /** Entre en recadrage sur `frame` ; un recadrage en cours se valide d'abord. */
+  start(frame) {
+    if (!frame.croppable) return;
+    if (this.frame === frame) return;
+    if (this.frame) this.commit();
+    const fc = this.fc;
+    this.canvas.discardActiveObject();
+    this.saved = { selection: fc.selection, skipTargetFind: fc.skipTargetFind, defaultCursor: fc.defaultCursor };
+    fc.selection = false;
+    fc.skipTargetFind = true;
+    fc.defaultCursor = "default";
+    this.frame = frame;
+    this.before = frame.crop;
+    this.fire("crop:start", { target: frame });
+    this.canvas.requestRenderAll();
+  }
+  /** Valide : le recadrage courant reste. */
+  commit() {
+    if (!this.frame || !this.before) return;
+    const changed = JSON.stringify(this.frame.crop) !== JSON.stringify(this.before);
+    this.end(changed);
+  }
+  /** Annule : le recadrage d'avant revient. */
+  cancel() {
+    if (!this.frame || !this.before) return;
+    this.frame.setCrop(this.before);
+    this.end(false);
+  }
+  /** Recentre, échelle ×1 — sans sortir du mode. */
+  reset() {
+    if (!this.frame) return;
+    this.frame.resetCrop();
+    this.changed();
+  }
+  dispose() {
+    if (typeof document !== "undefined") document.removeEventListener("keydown", this.onKeyDown, true);
+  }
+  // ─────────────────────────────────────────────────────────────
+  get fc() {
+    return this.canvas.originalFabricCanvas;
+  }
+  fire(name, detail) {
+    this.fc.fire(name, detail);
+  }
+  end(changed) {
+    const frame = this.frame;
+    if (!frame) return;
+    const fc = this.fc;
+    if (this.saved) Object.assign(fc, this.saved);
+    this.frame = null;
+    this.before = null;
+    this.drag = null;
+    this.saved = null;
+    if (frame.selectable && frame.canvas === fc) fc.setActiveObject(frame);
+    this.fire("crop:end", { target: frame, changed });
+    this.canvas.requestRenderAll();
+  }
+  changed() {
+    if (!this.frame) return;
+    this.fire("crop:change", { target: this.frame });
+    this.canvas.requestRenderAll();
+  }
+  // ─────────────────────────────────────────────────────────────
+  // Gestes : tout en coordonnées du cadre (origine en haut à gauche)
+  // ─────────────────────────────────────────────────────────────
+  /** Le point de la scène dans le repère du cadre. */
+  toFrame(scene) {
+    const frame = this.frame;
+    const local = scene.transform(util3.invertTransform(frame.calcTransformMatrix()));
+    return { x: local.x + frame.frameWidth / 2, y: local.y + frame.frameHeight / 2 };
+  }
+  /** Le point du cadre à l'écran (pixels CSS du canvas). */
+  toScreen(x, y) {
+    const frame = this.frame;
+    return new Point7(x - frame.frameWidth / 2, y - frame.frameHeight / 2).transform(frame.calcTransformMatrix()).transform(this.fc.viewportTransform);
+  }
+  /** Une unité d'écran en unités de cadre. */
+  frameUnit() {
+    const frame = this.frame;
+    const scale = Math.max(Math.abs(frame.scaleX || 1), Math.abs(frame.scaleY || 1)) * this.fc.getZoom();
+    return 1 / scale;
+  }
+  hitAt(p) {
+    const rect = this.frame.photoRect();
+    const grab = HANDLE_GRAB * this.frameUnit();
+    for (const cx of [0, 1]) {
+      for (const cy of [0, 1]) {
+        const hx = rect.x + cx * rect.w;
+        const hy = rect.y + cy * rect.h;
+        if (Math.hypot(p.x - hx, p.y - hy) <= grab) return { kind: "corner", cx, cy };
+      }
+    }
+    const inside = p.x >= rect.x && p.x <= rect.x + rect.w && p.y >= rect.y && p.y <= rect.y + rect.h;
+    return inside ? { kind: "photo" } : { kind: "outside" };
+  }
+  onDown(e) {
+    if (!this.frame) return;
+    if (e.e.button) return;
+    const scene = e.scenePoint ?? this.fc.getScenePoint(e.e);
+    const p = this.toFrame(scene);
+    const hit = this.hitAt(p);
+    if (hit.kind === "outside") {
+      this.commit();
+      return;
+    }
+    this.drag = { from: this.frame.crop, start: p, rect: this.frame.photoRect(), hit };
+  }
+  onMove(e) {
+    if (!this.frame) return;
+    const scene = e.scenePoint ?? this.fc.getScenePoint(e.e);
+    const p = this.toFrame(scene);
+    if (!this.drag) {
+      this.fc.setCursor(this.cursorFor(this.hitAt(p)));
+      return;
+    }
+    const { from, start, rect, hit } = this.drag;
+    const dx = p.x - start.x;
+    const dy = p.y - start.y;
+    if (hit.kind === "photo") {
+      this.frame.panCrop(dx, dy, from);
+    } else if (hit.kind === "corner") {
+      const ax = rect.x + (1 - hit.cx) * rect.w;
+      const ay = rect.y + (1 - hit.cy) * rect.h;
+      const px = rect.x + hit.cx * rect.w + dx;
+      const py = rect.y + hit.cy * rect.h + dy;
+      const k = Math.max(Math.abs(px - ax) / rect.w, Math.abs(py - ay) / rect.h);
+      this.frame.zoomCrop(from.scale * k, ax, ay, from);
+    }
+    this.fc.setCursor(this.cursorFor(hit));
+    this.changed();
+  }
+  onUp() {
+    this.drag = null;
+  }
+  cursorFor(hit) {
+    switch (hit.kind) {
+      case "corner":
+        return hit.cx === hit.cy ? "nwse-resize" : "nesw-resize";
+      case "photo":
+        return "move";
+      default:
+        return "default";
+    }
+  }
+  // ─────────────────────────────────────────────────────────────
+  // Rendu, sur le calque du dessus
+  // ─────────────────────────────────────────────────────────────
+  paint() {
+    const frame = this.frame;
+    if (!frame) return;
+    const fc = this.fc;
+    const ctx = fc.contextTop;
+    if (!ctx) return;
+    const retina = fc.getRetinaScaling();
+    const rect = frame.photoRect();
+    const W = frame.frameWidth;
+    const H = frame.frameHeight;
+    const element = frame.image.getElement();
+    const veil = this.canvas.workspaceColor ?? FALLBACK_VEIL;
+    ctx.save();
+    ctx.setTransform(retina, 0, 0, retina, 0, 0);
+    ctx.globalAlpha = VEIL_ALPHA;
+    ctx.fillStyle = veil;
+    ctx.fillRect(0, 0, fc.width, fc.height);
+    ctx.globalAlpha = 1;
+    ctx.transform(...fc.viewportTransform);
+    if (element) {
+      ctx.save();
+      frame.transform(ctx);
+      ctx.drawImage(element, rect.x - W / 2, rect.y - H / 2, rect.w, rect.h);
+      ctx.globalAlpha = PHOTO_VEIL_ALPHA;
+      ctx.fillStyle = veil;
+      ctx.fillRect(rect.x - W / 2, rect.y - H / 2, rect.w, rect.h);
+      ctx.restore();
+    }
+    frame.render(ctx);
+    this.paintOutline(ctx);
+    ctx.restore();
+    ctx.save();
+    ctx.setTransform(retina, 0, 0, retina, 0, 0);
+    ctx.fillStyle = "#ffffff";
+    ctx.strokeStyle = this.guideColor;
+    ctx.lineWidth = 1.5;
+    for (const cx of [0, 1]) {
+      for (const cy of [0, 1]) {
+        const p = this.toScreen(rect.x + cx * rect.w, rect.y + cy * rect.h);
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, HANDLE_RADIUS, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+      }
+    }
+    ctx.restore();
+    fc.contextTopDirty = true;
+  }
+  /** Le liseré du cadre : la forme de découpe, tracée par-dessus (comme son contour). */
+  paintOutline(ctx) {
+    const frame = this.frame;
+    const outline = frame.clipPath;
+    if (!outline) return;
+    const saved = { fill: outline.fill, stroke: outline.stroke, strokeWidth: outline.strokeWidth };
+    ctx.save();
+    frame.transform(ctx);
+    outline.set({ fill: "transparent", stroke: this.guideColor, strokeWidth: 1.5 * this.frameUnit() });
+    outline.render(ctx);
+    outline.set(saved);
+    ctx.restore();
+  }
+};
+
 // src/FabricEditor.ts
 var _FabricEditor = class _FabricEditor {
   constructor(canvasElement, config) {
@@ -7494,6 +7781,8 @@ var _FabricEditor = class _FabricEditor {
       { getEnteredContainerId: () => this.selection.enteredContainerId },
       config.guideColor
     );
+    this.crop = new CropMode(this.canvas, gc);
+    this.installCropOnDoubleClick();
     this.canvas.originalFabricCanvas.snappingManager = this.snapping;
     this.extendFabricObject();
     if (config.transparent) {
@@ -7543,6 +7832,7 @@ var _FabricEditor = class _FabricEditor {
   async replaceAllLayers(layers) {
     await this.init();
     const token = this._replaceToken = {};
+    this.crop.cancel();
     const objects = await this.layers.deserializeAll(layers);
     if (token !== this._replaceToken) return;
     this.layers.all.forEach((obj) => this.layers.remove(obj));
@@ -7635,6 +7925,23 @@ var _FabricEditor = class _FabricEditor {
       this.canvas.requestRenderAll();
       this._resizeCallbacks.forEach((cb) => cb());
     });
+  }
+  /**
+   * Double-clic sur une forme-image : son recadrage ; à vide, dans le cadre : celui du fond
+   * de la page (le calque `bg`, inerte au ciblage), s'il est une image. Le double-clic d'un
+   * texte (édition) ne passe pas ici : ce n'est pas un ImageFrame.
+   */
+  installCropOnDoubleClick() {
+    this.canvas.on("mouse:dblclick", (e) => {
+      const target = e.target ? this.selection.resolveTarget(e.target) : this.backgroundFrame(e.scenePoint);
+      if (!(target instanceof ImageFrame) || !rulesOf(target).options.includes("image")) return;
+      this.crop.start(target);
+    });
+  }
+  /** Le fond image de la page, si `point` tombe dans le cadre. */
+  backgroundFrame(point) {
+    if (!point || point.x < 0 || point.y < 0 || point.x > this.width || point.y > this.height) return null;
+    return this.layers.all.find((obj) => obj.get("layerId") === "bg") ?? null;
   }
   /**
    * Observe the container for size changes and automatically re-fit.
@@ -8025,7 +8332,7 @@ var _FabricEditor = class _FabricEditor {
    * remplacement, et l'image est ajoutée.
    */
   findDropTargetAtPoint(x, y) {
-    const point = new Point7(x, y);
+    const point = new Point8(x, y);
     const objects = this.canvas.getObjects().slice().reverse();
     for (const obj of objects) {
       if (obj.get(DRAG_PREVIEW_KEY)) continue;
@@ -8042,6 +8349,7 @@ var _FabricEditor = class _FabricEditor {
     this._resizeObserver?.disconnect();
     this._resizeObserver = null;
     this._resizeCallbacks = [];
+    this.crop.dispose();
     this.snapping.dispose();
     this.selection.dispose();
     this.canvas.dispose();
@@ -8133,7 +8441,7 @@ var PreviewCanvas = class extends StaticCanvas {
 };
 
 // src/DropHandler.ts
-import { FabricImage as FabricImage9, Point as Point8, Rect as Rect5 } from "#fabric";
+import { FabricImage as FabricImage9, Point as Point9, Rect as Rect5 } from "#fabric";
 var HIGHLIGHT_COLOR = "#3b82f6";
 var KIND_CAPABILITIES = {
   image: { layout: false, replaceTarget: true },
@@ -8304,7 +8612,7 @@ var DropHandler = class {
       if (!committed && object) {
         if (e) {
           const pointer = this.editor.canvas.getScenePoint(e);
-          object.setPositionByOrigin(new Point8(pointer.x, pointer.y), "center", "center");
+          object.setPositionByOrigin(new Point9(pointer.x, pointer.y), "center", "center");
           object.setCoords();
         }
         if (!this.editor.canvas.getObjects().includes(object)) {
@@ -8380,7 +8688,7 @@ var DropHandler = class {
         this.editor.layout.tickExternalDrag(object, pointer);
         return;
       }
-      object.setPositionByOrigin(new Point8(pointer.x, pointer.y), "center", "center");
+      object.setPositionByOrigin(new Point9(pointer.x, pointer.y), "center", "center");
       object.setCoords();
       this.editor.canvas.requestRenderAll();
     }
@@ -8637,7 +8945,7 @@ var DropHandler = class {
     if (e && !this.intersectsCanvas(e, null)) return null;
     const pointer = e ? this.editor.canvas.getScenePoint(e) : null;
     const object = this.editor.layers.createUserSlot(opts);
-    if (pointer) object.setPositionByOrigin(new Point8(pointer.x, pointer.y), "center", "center");
+    if (pointer) object.setPositionByOrigin(new Point9(pointer.x, pointer.y), "center", "center");
     this.editor.layers.add(object);
     this.editor.canvas.setActiveObject(object);
     this.editor.canvas.renderAll();
@@ -8676,6 +8984,7 @@ var ORDER = {
     "backward"
   ],
   image: [
+    "crop",
     "image",
     "promoteBackground",
     "clip",
@@ -8758,6 +9067,9 @@ function oneAllows(obj, kind) {
         return has("clip");
       case "image":
         return has("image");
+      // Recadrer : une vraie image dans son cadre (pas un damier d'attente)
+      case "crop":
+        return has("image") && obj instanceof ImageFrame && obj.croppable;
       case "promoteBackground":
         return has("image") && rules.restacks;
       case "layout":
@@ -9211,22 +9523,7 @@ function imageFrameToHtml(layer, zIndex) {
   if (useOverflowHidden) {
     containerStyles.overflow = "hidden";
   }
-  const { offsetX = 0, offsetY = 0, scale: imageScale = 1 } = image;
-  const imageStyles = {
-    position: "absolute",
-    width: "100%",
-    height: "100%",
-    "object-fit": "cover",
-    top: `${offsetY}px`,
-    left: `${offsetX}px`
-  };
-  if (imageScale !== 1) {
-    imageStyles.width = `${imageScale * 100}%`;
-    imageStyles.height = `${imageScale * 100}%`;
-    const offsetFromScale = (1 - imageScale) * 50;
-    imageStyles.left = `calc(${offsetFromScale}% + ${offsetX}px)`;
-    imageStyles.top = `calc(${offsetFromScale}% + ${offsetY}px)`;
-  }
+  const imageStyles = imageStylesFor(image);
   const img = image.src ? `<img src="${image.src}" style="${stylesToString(imageStyles)}" alt="" />` : "";
   const html = `<div style="${stylesToString(containerStyles)}">
   ${inlineSvgClip}
@@ -9236,6 +9533,26 @@ function imageFrameToHtml(layer, zIndex) {
     html
     // Plus besoin de clipPathDefs globaux, on utilise des SVG inline
   };
+}
+function imageStylesFor(image) {
+  const { cropX, cropY, offsetX = 0, offsetY = 0, scale = 1 } = image;
+  const styles = { position: "absolute", "object-fit": "cover" };
+  if (cropX === void 0 && cropY === void 0 && (offsetX || offsetY)) {
+    const offsetFromScale = (1 - scale) * 50;
+    styles.width = `${scale * 100}%`;
+    styles.height = `${scale * 100}%`;
+    styles.left = `calc(${offsetFromScale}% + ${offsetX}px)`;
+    styles.top = `calc(${offsetFromScale}% + ${offsetY}px)`;
+    return styles;
+  }
+  const x = cropX ?? 0.5;
+  const y = cropY ?? 0.5;
+  styles.width = `${scale * 100}%`;
+  styles.height = `${scale * 100}%`;
+  styles.left = `${x * (1 - scale) * 100}%`;
+  styles.top = `${y * (1 - scale) * 100}%`;
+  styles["object-position"] = `${x * 100}% ${y * 100}%`;
+  return styles;
 }
 
 // src/html/htmlRenderer.ts
@@ -9313,6 +9630,7 @@ function layerToHtmlStandalone(layer, zIndex) {
 export {
   CanvasGuides,
   ContainerizeSession,
+  CropMode,
   CustomTextbox,
   DesignCanvas,
   DropHandler,
@@ -9329,8 +9647,10 @@ export {
   InsertChildSession,
   LayerManager,
   LayoutManager2 as LayoutManager,
+  MAX_CROP_SCALE,
   MIN_PAD,
   MaskManager,
+  NO_CROP,
   PendingUploadsManager,
   PersistenceManager,
   PreviewCanvas,
@@ -9363,6 +9683,7 @@ export {
   createPathsShape,
   createRect,
   createShape,
+  cropFromRect,
   displayFill,
   distributeDeltas,
   drawBindingBadge,
@@ -9378,6 +9699,7 @@ export {
   hasPendingBindings,
   initYoga,
   isContentLocked,
+  isCropped,
   isFreeContainer,
   isGhost,
   isMonoPath,
@@ -9393,7 +9715,9 @@ export {
   layoutRoot,
   lockBoundText,
   nextShape,
+  panCrop,
   pendingBindings,
+  photoRect,
   pointInObject,
   registerShapes,
   registeredShapes,
@@ -9415,6 +9739,7 @@ export {
   userSlotBinding,
   userSlotHint,
   wrapContainerAroundChild,
-  yogaLayout
+  yogaLayout,
+  zoomCrop
 };
 //# sourceMappingURL=index.mjs.map
