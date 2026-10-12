@@ -9,7 +9,7 @@ export { DesignCanvas, type FrameRect, type WorkspaceOptions } from "./DesignCan
 export { PreviewCanvas } from "./PreviewCanvas";
 
 // Managers
-export { LayerManager } from "./LayerManager";
+export { LayerManager, LAYER_PROPS } from "./LayerManager";
 export { SelectionManager } from "./SelectionManager";
 export { MaskManager } from "./MaskManager";
 export { PersistenceManager } from "./PersistenceManager";
@@ -138,7 +138,7 @@ export type { HistoryState, HistoryCallbacks } from "./HistoryManager";
 export type { SnappingConfig, ResizeSnapResult } from "./SnappingManager";
 export type { LayoutManagerCallbacks, SizePreset } from "./LayoutManager";
 export {
-  pendingBindings, hasPendingBindings, lockBoundText, setTextContent, drawBindingBadge, bindingBadgeLabel,
+  pendingBindings, hasPendingBindings, setTextContent, drawBindingBadge, bindingBadgeLabel,
 } from "./bindings";
 export { drawFrameBadge, badgeLabel, type BadgeLabeler } from "./ui/badges";
 export { fontFamiliesOf, isBold, summarizeStyles, summarizeObject, MIXED, TEXT_STYLE_KEYS } from "./text-styles";

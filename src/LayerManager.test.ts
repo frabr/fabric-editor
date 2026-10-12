@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { LayerManager } from "./LayerManager";
+import { LAYER_PROPS, LayerManager } from "./LayerManager";
 import type { Canvas, FabricObject } from "#fabric";
 import { FabRect } from "./shapes/FabRect";
 import { FabPath } from "./shapes/FabPath";
@@ -202,8 +202,8 @@ describe("LayerManager", () => {
       const result = manager.serialize();
 
       expect(result).toHaveLength(2);
-      expect(layer1.toObject).toHaveBeenCalledWith(["layerId", "lockMode", "lockContent", "layout", "bindings"]);
-      expect(layer2.toObject).toHaveBeenCalledWith(["layerId", "lockMode", "lockContent", "layout", "bindings"]);
+      expect(layer1.toObject).toHaveBeenCalledWith([...LAYER_PROPS]);
+      expect(layer2.toObject).toHaveBeenCalledWith([...LAYER_PROPS]);
     });
   });
 

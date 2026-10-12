@@ -28,6 +28,14 @@ export const DEFAULT_SHAPE_FILL = "#d9d9d9";
  * Gère les calques (layers) du canvas Fabric.js
  * Responsable de l'ajout, suppression et organisation des objets
  */
+/**
+ * Les propriétés de l'éditeur qu'un calque sérialise en plus de celles de Fabric — la liste
+ * que tout hôte qui sérialise un objet seul doit passer à `toObject`. `bindingSegments` : la
+ * carte d'interpolation d'un texte lié affiché (apibots), le temps d'un snapshot ; l'export
+ * du document la consomme et la retire.
+ */
+export const LAYER_PROPS = ["layerId", "lockMode", "lockContent", "layout", "bindings", "bindingSegments"] as const;
+
 export class LayerManager {
   constructor(private canvas: DesignCanvas) { }
 
@@ -546,7 +554,7 @@ export class LayerManager {
    * Inclut les propriétés custom : layerId, lockMode, lockContent
    */
   serialize(): LayerData[] {
-    return this.all.map((obj) => obj.toObject(["layerId", "lockMode", "lockContent", "layout", "bindings"]) as LayerData);
+    return this.all.map((obj) => obj.toObject([...LAYER_PROPS]) as LayerData);
   }
 
   /**

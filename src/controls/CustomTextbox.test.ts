@@ -45,6 +45,76 @@ describe("CustomTextbox — édition", () => {
   });
 });
 
+describe("CustomTextbox — tokens atomiques", () => {
+  /** « Prix : $P €\nfin » — le token $P en index plats [7, 9). */
+  function bound(): CustomTextbox {
+    const t = text("Prix : $P €\nfin");
+    t.tokenSpans = [[7, 9]];
+    t.isEditing = true;
+    return t;
+  }
+
+  /** Une touche, telle que Fabric la lit (node : pas de KeyboardEvent). */
+  const key = (name: string) => ({ key: name, keyCode: 0 }) as unknown as KeyboardEvent;
+
+  function move(t: CustomTextbox, start: number, end = start): void {
+    t.selectionStart = start;
+    t.selectionEnd = end;
+    t._fireSelectionChanged();
+  }
+
+  it("les plages atomiques en index du texte : les retours à la ligne ne comptent pas", () => {
+    const t = bound();
+    expect(t.atomicSpans()).toEqual([[7, 9]]);
+    t.tokenSpans = [[11, 14]];
+    expect(t.atomicSpans()).toEqual([[12, 15]]);
+  });
+
+  it("un pas vers la droite saute le token ; vers la gauche aussi", () => {
+    const t = bound();
+    move(t, 7);
+    move(t, 8);
+    expect([t.selectionStart, t.selectionEnd]).toEqual([9, 9]);
+    move(t, 8);
+    expect([t.selectionStart, t.selectionEnd]).toEqual([7, 7]);
+  });
+
+  it("une plage qui coupe un token s'étend à ses bornes", () => {
+    const t = bound();
+    move(t, 3, 8);
+    expect([t.selectionStart, t.selectionEnd]).toEqual([3, 9]);
+    move(t, 8, 11);
+    expect([t.selectionStart, t.selectionEnd]).toEqual([7, 11]);
+  });
+
+  it("la pastille couvre les glyphes, pas l'interligne : elle reste dans sa ligne", () => {
+    const t = text("Prix $P", { lineHeight: 2 });
+    t.tokenSpans = [[5, 7]];
+    const [box] = (t as unknown as { _tokenBoxes(a: number, b: number): { y: number; h: number }[] })._tokenBoxes(5, 7);
+    const lineTop = -t.height / 2;
+    expect(box.y).toBeGreaterThanOrEqual(lineTop);
+    expect(box.y + box.h).toBeLessThanOrEqual(lineTop + t.getHeightOfLine(0) / t.lineHeight + 0.01);
+  });
+
+  it("retour arrière juste après le token le sélectionne entier, avant la suppression native", () => {
+    const t = bound();
+    t.selectionStart = t.selectionEnd = 9;
+    t.onKeyDown(key("Backspace"));
+    expect([t.selectionStart, t.selectionEnd]).toEqual([7, 9]);
+  });
+
+  it("Suppr juste avant le token aussi ; ailleurs, rien ne change", () => {
+    const t = bound();
+    t.selectionStart = t.selectionEnd = 7;
+    t.onKeyDown(key("Delete"));
+    expect([t.selectionStart, t.selectionEnd]).toEqual([7, 9]);
+
+    t.selectionStart = t.selectionEnd = 3;
+    t.onKeyDown(key("Backspace"));
+    expect([t.selectionStart, t.selectionEnd]).toEqual([3, 3]);
+  });
+});
+
 describe("CustomTextbox — modes de taille", () => {
   it("un nouveau texte est en largeur et hauteur contenu, sur une ligne", () => {
     const t = text("Bonjour");

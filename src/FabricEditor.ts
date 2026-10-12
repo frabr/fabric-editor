@@ -22,6 +22,7 @@ import { SelectionCommands } from "./editor/selection-commands";
 import { type AlignEdge, type DistributeAxis } from "./align";
 import { rulesOf } from "./capabilities";
 import { collectUserSlots, USER_SLOT_STYLE_KEY, type UserSlot, type UserSlotStyle } from "./userSlots";
+import { TOKEN_COLOR_KEY } from "./tokens";
 import { installGhostRendering } from "./ghost";
 import { installDisplayStyleRendering } from "./displayStyle";
 import { CropMode } from "./CropMode";
@@ -89,6 +90,7 @@ export class FabricEditor {
     applyControlStyle(this.canvas, gc, (obj) => this.selection.resolveTarget(obj), config.userSlotLabel);
     const slotStyle: UserSlotStyle = { color: gc, prompt: config.userSlotPrompt };
     (this.canvas.originalFabricCanvas as unknown as Record<string, UserSlotStyle>)[USER_SLOT_STYLE_KEY] = slotStyle;
+    (this.canvas.originalFabricCanvas as unknown as Record<string, string>)[TOKEN_COLOR_KEY] = gc;
     this.masks = new MaskManager(this.canvas);
     this.persistence = new PersistenceManager(this.canvas, this.layers);
     this.history = new HistoryManager(this.canvas, this.layers);

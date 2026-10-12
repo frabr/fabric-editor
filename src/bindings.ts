@@ -8,8 +8,8 @@ import { drawFrameBadge } from "./ui/badges";
  * SAVOIR qu'un champ est lié :
  *
  * - la donnée voyage avec le calque (sérialisation/désérialisation, comme layerId) ;
- * - un texte au binding `text` en attente ne s'édite pas directement (règle : on édite le
- *   binding ou on délie — sinon sample et expression divergent en silence) → editable=false ;
+ * - un texte lié s'édite dans sa textbox, valeurs affichées : l'hôte reporte les frappes dans
+ *   l'expression et pose ses variables comme plages atomiques (`tokenSpans`, CustomTextbox) ;
  * - le lien se voit : un badge au coin du cadre (survol, sélection), dans la couleur d'édition
  *   (guideColor), et un liseré permanent sur les médias dynamiques.
  */
@@ -27,18 +27,11 @@ export function hasPendingBindings(obj: FabricObject): boolean {
   return Object.keys(pendingBindings(obj)).length > 0;
 }
 
-/** Restaure les bindings depuis le JSON et verrouille l'édition directe d'un texte lié. */
+/** Restaure les bindings depuis le JSON. */
 export function restoreBindings(obj: FabricObject, data: { bindings?: Bindings } & Record<string, unknown>): void {
   if (!data.bindings) return;
 
   obj.set("bindings", data.bindings);
-  lockBoundText(obj);
-}
-
-export function lockBoundText(obj: FabricObject): void {
-  if (pendingBindings(obj)["text"] && "editable" in obj) {
-    (obj as FabricObject & { editable: boolean }).editable = false;
-  }
 }
 
 /**

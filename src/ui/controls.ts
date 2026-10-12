@@ -9,6 +9,7 @@ import { FabricObject, Control, controlsUtils, type TPointerEvent } from "#fabri
 import type { DesignCanvas } from "../DesignCanvas";
 import { parseHex } from "./color";
 import { bindingBadgeLabel, drawDynamicMediaOutline } from "../bindings";
+import { drawActiveTokenPills } from "../tokens";
 import { installBadgeLayer } from "./badges";
 
 import { getLockMode } from "../locking";
@@ -356,6 +357,7 @@ function installHoverBorder(
     // rendu : l'effacement vient de les emporter, on les repeint (rien hors édition)
     const active = canvas.getActiveObject();
     (active as { renderCursorOrSelection?: () => void } | undefined)?.renderCursorOrSelection?.();
+    drawActiveTokenPills(ctx, active);
 
     // Les médias dynamiques portent un liseré PERMANENT : l'aperçu montre la vraie image
     // d'exemple, le pointillé dit « remplie à la publication ». L'objet visé (survol,

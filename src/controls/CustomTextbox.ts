@@ -4,6 +4,7 @@ import { resolveTextBox, type TextConstraint, type TextMeasure } from "../layout
 import { layoutOf, parentIdOf, isFreeContainer } from "../layout/model";
 import { parentOf } from "../layout/hierarchy";
 import { scaleStyleFontSizes, type TextStyles } from "../layout/text";
+import { tokenColorOf } from "../tokens";
 
 const { changeObjectWidth, changeObjectHeight } = controlsUtils;
 
@@ -120,6 +121,162 @@ export class CustomTextbox extends Textbox {
     this._wrapAt(width);
     this.height = height;
     return min;
+  }
+
+  // ── Tokens atomiques ───────────────────────────────────────────────
+
+  /**
+   * Les plages atomiques du texte (les variables d'un texte lié, posées par l'hôte), en
+   * index plats de graphèmes sans les retours à la ligne — la convention des styles
+   * sérialisés. Non sérialisé : l'hôte les recalcule à l'affichage et pendant l'édition.
+   * Le curseur les saute, une suppression les emporte entières, une plage s'étend à leurs
+   * bornes ; une pastille les montre (`drawTokenPills`).
+   */
+  declare tokenSpans?: [number, number][];
+
+  /** La sélection d'avant le dernier mouvement : dit dans quel sens on traverse un token. */
+  private _lastSelection: [number, number] = [0, 0];
+
+  /** Les plages atomiques en index de `_text` (graphèmes, retours à la ligne compris). */
+  atomicSpans(): [number, number][] {
+    const spans = (this.tokenSpans ?? []).filter(([start, end]) => end > start);
+    if (spans.length === 0) return [];
+
+    // index plat → index de `_text`, en une passe ; une borne au-delà du texte vaut sa fin
+    const at: number[] = [];
+    this._text.forEach((grapheme, i) => grapheme !== "\n" && at.push(i));
+    const textIndex = (flat: number) => at[flat] ?? this._text.length;
+    return spans.map(([start, end]) => [textIndex(start), textIndex(end - 1) + 1]);
+  }
+
+  /** Toute sélection passe ici avant d'être annoncée : elle se cale sur les tokens. */
+  _fireSelectionChanged(): void {
+    this._snapSelectionToTokens();
+    this._lastSelection = [this.selectionStart, this.selectionEnd];
+    super._fireSelectionChanged();
+  }
+
+  /**
+   * Un curseur dans un token en sort : d'un pas (flèche), de l'autre côté ; sinon (clic) à
+   * la borne la plus proche. Une plage s'étend aux bornes des tokens qu'elle coupe.
+   */
+  private _snapSelectionToTokens(): void {
+    const spans = this.atomicSpans();
+    if (spans.length === 0) return;
+
+    const inside = (i: number) => spans.find(([start, end]) => start < i && i < end);
+    const { selectionStart: start, selectionEnd: end } = this;
+    if (start === end) {
+      const span = inside(start);
+      if (!span) return;
+      const [from, to] = span;
+      const [last] = this._lastSelection;
+      const stepped = Math.abs(start - last) === 1;
+      let at: number;
+      if (stepped && last <= from) at = to;
+      else if (stepped && last >= to) at = from;
+      else at = start - from <= to - start ? from : to;
+      this.selectionStart = this.selectionEnd = at;
+      return;
+    }
+    const head = inside(start);
+    const tail = inside(end);
+    if (head) this.selectionStart = head[0];
+    if (tail) this.selectionEnd = tail[1];
+  }
+
+  /**
+   * Retour arrière juste après un token, ou Suppr juste avant : le token est d'abord
+   * sélectionné (textarea compris), puis la suppression native l'emporte entier — on ne
+   * touche jamais au flux de saisie de Fabric.
+   */
+  onKeyDown(e: KeyboardEvent): void {
+    const erase = e.key === "Backspace" || e.key === "Delete";
+    if (this.isEditing && erase && this.selectionStart === this.selectionEnd && !e.altKey && !e.metaKey && !e.ctrlKey) {
+      const at = this.selectionStart;
+      const span = this.atomicSpans().find(([start, end]) => (e.key === "Backspace" ? end === at : start === at));
+      if (span) {
+        [this.selectionStart, this.selectionEnd] = span;
+        this._updateTextarea();
+      }
+    }
+    super.onKeyDown(e);
+  }
+
+  /** Fabric efface la zone du texte sur le calque du dessus à chaque clignotement du
+   *  curseur : les pastilles du texte en édition sont repeintes avec lui. */
+  renderCursorOrSelection(): void {
+    super.renderCursorOrSelection();
+    const ctx = this.canvas?.contextTop;
+    if (this.isEditing && ctx) this.drawTokenPills(ctx);
+  }
+
+  /**
+   * Une pastille derrière chaque token (couleur d'édition de l'hôte), sur le calque du
+   * dessus : un repère d'édition, jamais exporté. `ctx` est en coordonnées écran.
+   */
+  drawTokenPills(ctx: CanvasRenderingContext2D): void {
+    const spans = this.atomicSpans();
+    const color = tokenColorOf(this);
+    if (spans.length === 0 || !this.canvas || !color) return;
+
+    ctx.save();
+    ctx.transform(...(this.canvas.viewportTransform as [number, number, number, number, number, number]));
+    ctx.transform(...(this.calcTransformMatrix() as [number, number, number, number, number, number]));
+    // Jamais hors de la boîte : Fabric n'efface que la boîte du texte en édition à chaque
+    // clignotement, un débord s'y accumulerait (et foncerait)
+    ctx.beginPath();
+    ctx.rect(-this.width / 2, -this.height / 2, this.width, this.height);
+    ctx.clip();
+    ctx.fillStyle = color;
+    ctx.strokeStyle = color;
+    for (const [start, end] of spans) {
+      for (const box of this._tokenBoxes(start, end)) {
+        ctx.beginPath();
+        ctx.roundRect(box.x, box.y, box.w, box.h, box.h * 0.25);
+        ctx.globalAlpha = 0.14;
+        ctx.fill();
+        ctx.globalAlpha = 0.55;
+        ctx.lineWidth = 1 / (this.canvas.getZoom() * (this.scaleX || 1));
+        ctx.stroke();
+      }
+    }
+    ctx.restore();
+  }
+
+  /**
+   * Les rectangles d'un token, un par ligne affichée (un token peut wrapper) : la boîte des
+   * glyphes, celle du fond de texte natif de Fabric — depuis le haut de la ligne, sur la
+   * hauteur de police (`getHeightOfLine / lineHeight`) ; l'interligne, en dessous, reste hors
+   * de la pastille.
+   */
+  private _tokenBoxes(start: number, end: number): { x: number; y: number; w: number; h: number }[] {
+    const a = this.get2DCursorLocation(start);
+    const b = this.get2DCursorLocation(end);
+    const pad = this.fontSize * 0.06;
+    const boxes = [];
+    let top = this._getTopOffset();
+    for (let line = 0; line <= b.lineIndex && line < this._textLines.length; line++) {
+      if (line >= a.lineIndex) {
+        const from = line === a.lineIndex ? a.charIndex : 0;
+        const to = line === b.lineIndex ? b.charIndex : this._textLines[line].length;
+        // Fabric vide ses mesures par caractère entre deux passes : on les redemande
+        if (!this.__charBounds[line]) this.measureLine(line);
+        const bounds = this.__charBounds[line];
+        if (to > from && bounds?.[from] && bounds[to - 1]) {
+          const left = this._getLeftOffset() + this._getLineLeftOffset(line);
+          const glyphs = this.getHeightOfLine(line) / this.lineHeight;
+          boxes.push({
+            x: left + bounds[from].left - pad,
+            y: top,
+            w: bounds[to - 1].left + bounds[to - 1].width - bounds[from].left + 2 * pad,
+            h: glyphs,
+          });
+        }
+      }
+      top += this.getHeightOfLine(line);
+    }
+    return boxes;
   }
 
   /**
