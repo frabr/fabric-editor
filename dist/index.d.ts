@@ -1719,7 +1719,10 @@ declare class SelectionManager {
      */
     select(obj: FabricObject): void;
     /**
-     * Sélectionne un objet par son layerId
+     * Sélectionne un objet par son layerId — depuis l'extérieur du canvas (la piste Calques
+     * d'une vidéo, un panneau). Un enfant de container est sélectionné LUI, pas son container :
+     * on entre dans le container comme un double-clic, sinon resolveTarget remonterait la
+     * sélection d'un cran.
      */
     selectByLayerId(layerId: string): boolean;
     /**
