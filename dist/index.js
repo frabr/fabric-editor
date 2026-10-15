@@ -1519,23 +1519,39 @@ function bindingLabel(obj, userSlotLabel) {
   return labels.length ? [...new Set(labels)].join(" ") : "$";
 }
 function drawDynamicMediaOutline(ctx, obj, color) {
+  if (!obj.visible || !obj.canvas) return;
   const pending = pendingBindings(obj);
   if (!Object.keys(pending).some((field) => field.startsWith("image."))) return;
-  const coords = obj.oCoords;
-  if (!coords) return;
+  const screen = ctx.getTransform();
   ctx.save();
+  ctx.transform(...obj.canvas.viewportTransform);
+  obj.transform(ctx);
+  ctx.beginPath();
+  traceOutline(ctx, obj);
+  ctx.setTransform(screen);
   ctx.strokeStyle = color;
   ctx.lineWidth = 1.5;
   ctx.setLineDash([6, 4]);
   ctx.globalAlpha = 0.9;
-  ctx.beginPath();
-  ctx.moveTo(coords.tl.x, coords.tl.y);
-  ctx.lineTo(coords.tr.x, coords.tr.y);
-  ctx.lineTo(coords.br.x, coords.br.y);
-  ctx.lineTo(coords.bl.x, coords.bl.y);
-  ctx.closePath();
   ctx.stroke();
   ctx.restore();
+}
+function traceOutline(ctx, obj) {
+  const shape = obj.clipPath;
+  if (!shape) {
+    ctx.rect(-obj.width / 2, -obj.height / 2, obj.width, obj.height);
+    return;
+  }
+  shape.transform(ctx);
+  if (shape._renderPathCommands) {
+    ctx.translate(-(shape.pathOffset?.x ?? 0), -(shape.pathOffset?.y ?? 0));
+    shape._renderPathCommands(ctx);
+  } else if (typeof shape.radius === "number") {
+    ctx.arc(0, 0, shape.radius, 0, Math.PI * 2);
+  } else {
+    const radius = Math.min(shape.rx ?? 0, shape.width / 2, shape.height / 2);
+    ctx.roundRect(-shape.width / 2, -shape.height / 2, shape.width, shape.height, radius);
+  }
 }
 
 // src/userSlots.ts
