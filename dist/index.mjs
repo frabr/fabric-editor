@@ -119,6 +119,30 @@ import { ActiveSelection as ActiveSelection4, FabricObject as FabricObject9, Poi
 
 // src/DesignCanvas.ts
 import { Canvas, Point } from "#fabric";
+
+// src/ui/color.ts
+function parseHex(hex) {
+  const h = hex.replace("#", "");
+  if (h.length === 3) {
+    return [
+      parseInt(h[0] + h[0], 16),
+      parseInt(h[1] + h[1], 16),
+      parseInt(h[2] + h[2], 16)
+    ];
+  }
+  return [
+    parseInt(h.slice(0, 2), 16),
+    parseInt(h.slice(2, 4), 16),
+    parseInt(h.slice(4, 6), 16)
+  ];
+}
+function hexAlpha(hex, alpha) {
+  const [r, g, b] = parseHex(hex);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+var DEFAULT_GUIDE_COLOR = "#d946ef";
+
+// src/DesignCanvas.ts
 var DesignCanvas = class {
   constructor(canvasElement, opts) {
     this._scale = 1;
@@ -183,7 +207,7 @@ var DesignCanvas = class {
       veil: "checker",
       checkerColor: "rgba(0, 0, 0, 0.03)",
       checkerSize: 8,
-      frameColor: "#d946ef",
+      frameColor: DEFAULT_GUIDE_COLOR,
       ...options
     };
     const fc = this.originalFabricCanvas;
@@ -1425,7 +1449,7 @@ function checkerPattern(obj) {
   return new Pattern({ source: checkerTile(), repeat: "repeat", patternTransform: [1 / sx, 0, 0, 1 / sy, 0, 0] });
 }
 var USER_SLOT_STYLE_KEY = "userSlotStyle";
-var DEFAULT_COLOR = "#d946ef";
+var DEFAULT_COLOR = DEFAULT_GUIDE_COLOR;
 var BASE = { icon: 20, font: 10, line: 13, gap: 6, pad: 8 };
 var SCALES = [4, 3.5, 3, 2.5, 2, 1.6];
 var fontAt = (scale) => `500 ${BASE.font * scale}px ui-sans-serif, system-ui, sans-serif`;
@@ -4178,31 +4202,8 @@ import { ActiveSelection as ActiveSelection2 } from "#fabric";
 
 // src/ui/guides.ts
 import { Line, Rect as Rect4, Pattern as Pattern2 } from "#fabric";
-
-// src/ui/color.ts
-function parseHex(hex) {
-  const h = hex.replace("#", "");
-  if (h.length === 3) {
-    return [
-      parseInt(h[0] + h[0], 16),
-      parseInt(h[1] + h[1], 16),
-      parseInt(h[2] + h[2], 16)
-    ];
-  }
-  return [
-    parseInt(h.slice(0, 2), 16),
-    parseInt(h.slice(2, 4), 16),
-    parseInt(h.slice(4, 6), 16)
-  ];
-}
-function hexAlpha(hex, alpha) {
-  const [r, g, b] = parseHex(hex);
-  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
-}
-
-// src/ui/guides.ts
 var CanvasGuides = class {
-  constructor(canvas, color = "#ff00ff") {
+  constructor(canvas, color = DEFAULT_GUIDE_COLOR) {
     this.objects = [];
     this.canvas = canvas;
     this.color = color;
@@ -8091,7 +8092,7 @@ var _FabricEditor = class _FabricEditor {
     this._replaceToken = {};
     this.config = config;
     if (config.shapes) registerShapes(config.shapes);
-    const gc = config.guideColor ?? "#d946ef";
+    const gc = config.guideColor ?? DEFAULT_GUIDE_COLOR;
     this.canvas = new DesignCanvas(canvasElement, {
       width: config.width,
       height: config.height,
@@ -8110,11 +8111,11 @@ var _FabricEditor = class _FabricEditor {
     this.masks = new MaskManager(this.canvas);
     this.persistence = new PersistenceManager(this.canvas, this.layers);
     this.history = new HistoryManager(this.canvas, this.layers);
-    this.snapping = new SnappingManager(this.canvas, {}, config.guideColor);
+    this.snapping = new SnappingManager(this.canvas, {}, gc);
     this.layout = new LayoutManager2(
       this.canvas,
       { getEnteredContainerId: () => this.selection.enteredContainerId },
-      config.guideColor
+      gc
     );
     this.crop = new CropMode(this.canvas, gc);
     this.installCropOnDoubleClick();
@@ -9977,6 +9978,7 @@ export {
   ContainerizeSession,
   CropMode,
   CustomTextbox,
+  DEFAULT_GUIDE_COLOR,
   DesignCanvas,
   DropHandler,
   FabCircle,

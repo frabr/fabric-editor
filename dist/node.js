@@ -887,6 +887,9 @@ function applyLockMode(obj, mode) {
 // src/userSlots.ts
 var import_fabric2 = require("#fabric");
 
+// src/ui/color.ts
+var DEFAULT_GUIDE_COLOR = "#d946ef";
+
 // src/bindings.ts
 function pendingBindings(obj) {
   const bindings = obj.get("bindings") || {};
@@ -947,7 +950,7 @@ function checkerPattern(obj) {
   return new import_fabric2.Pattern({ source: checkerTile(), repeat: "repeat", patternTransform: [1 / sx, 0, 0, 1 / sy, 0, 0] });
 }
 var USER_SLOT_STYLE_KEY = "userSlotStyle";
-var DEFAULT_COLOR = "#d946ef";
+var DEFAULT_COLOR = DEFAULT_GUIDE_COLOR;
 var BASE = { icon: 20, font: 10, line: 13, gap: 6, pad: 8 };
 var SCALES = [4, 3.5, 3, 2.5, 2, 1.6];
 var fontAt = (scale) => `500 ${BASE.font * scale}px ui-sans-serif, system-ui, sans-serif`;
