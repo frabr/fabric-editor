@@ -141,6 +141,7 @@ function hexAlpha(hex, alpha) {
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 var DEFAULT_GUIDE_COLOR = "#d946ef";
+var DEFAULT_SNAP_GUIDE_COLOR = "#ff00ff";
 
 // src/DesignCanvas.ts
 var DesignCanvas = class {
@@ -4203,7 +4204,7 @@ import { ActiveSelection as ActiveSelection2 } from "#fabric";
 // src/ui/guides.ts
 import { Line, Rect as Rect4, Pattern as Pattern2 } from "#fabric";
 var CanvasGuides = class {
-  constructor(canvas, color = DEFAULT_GUIDE_COLOR) {
+  constructor(canvas, color = DEFAULT_SNAP_GUIDE_COLOR) {
     this.objects = [];
     this.canvas = canvas;
     this.color = color;
@@ -8111,11 +8112,11 @@ var _FabricEditor = class _FabricEditor {
     this.masks = new MaskManager(this.canvas);
     this.persistence = new PersistenceManager(this.canvas, this.layers);
     this.history = new HistoryManager(this.canvas, this.layers);
-    this.snapping = new SnappingManager(this.canvas, {}, gc);
+    this.snapping = new SnappingManager(this.canvas, {}, config.guideColor);
     this.layout = new LayoutManager2(
       this.canvas,
       { getEnteredContainerId: () => this.selection.enteredContainerId },
-      gc
+      config.guideColor
     );
     this.crop = new CropMode(this.canvas, gc);
     this.installCropOnDoubleClick();
@@ -9979,6 +9980,7 @@ export {
   CropMode,
   CustomTextbox,
   DEFAULT_GUIDE_COLOR,
+  DEFAULT_SNAP_GUIDE_COLOR,
   DesignCanvas,
   DropHandler,
   FabCircle,
