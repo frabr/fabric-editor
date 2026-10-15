@@ -10,7 +10,7 @@ import { LayoutManager } from "./LayoutManager";
 import { registerShapes } from "./shapes";
 import { ImageFrame } from "./ImageFrame";
 import { applyControlStyle } from "./ui/controls";
-import { hexAlpha } from "./ui/color";
+import { hexAlpha, DEFAULT_GUIDE_COLOR } from "./ui/color";
 import { DRAG_PREVIEW_KEY } from "./types";
 import type { EditorConfig, LayerData, FontsConfig, ShapeType } from "./types";
 import type { TextStyleState } from "./text-styles";
@@ -71,7 +71,7 @@ export class FabricEditor {
     // clipShape par id (stock legacy) en dépend.
     if (config.shapes) registerShapes(config.shapes);
 
-    const gc = config.guideColor ?? "#d946ef";
+    const gc = config.guideColor ?? DEFAULT_GUIDE_COLOR;
 
     this.canvas = new DesignCanvas(canvasElement, {
       width: config.width,
@@ -94,11 +94,11 @@ export class FabricEditor {
     this.masks = new MaskManager(this.canvas);
     this.persistence = new PersistenceManager(this.canvas, this.layers);
     this.history = new HistoryManager(this.canvas, this.layers);
-    this.snapping = new SnappingManager(this.canvas, {}, config.guideColor);
+    this.snapping = new SnappingManager(this.canvas, {}, gc);
     this.layout = new LayoutManager(
       this.canvas,
       { getEnteredContainerId: () => this.selection.enteredContainerId },
-      config.guideColor,
+      gc,
     );
 
     this.crop = new CropMode(this.canvas, gc);

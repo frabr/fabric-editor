@@ -24,3 +24,10 @@ export function hexAlpha(hex: string, alpha: number): string {
   const [r, g, b] = parseHex(hex);
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
+
+/**
+ * La couleur de l'éditeur quand l'hôte n'en donne pas (`guideColor`) : guides d'aimantation,
+ * sélection, liseré du cadre, médias à fournir, recadrage. Une seule valeur — l'hôte peut
+ * l'importer pour teinter ses propres surfaces de la même couleur.
+ */
+export const DEFAULT_GUIDE_COLOR = "#d946ef";

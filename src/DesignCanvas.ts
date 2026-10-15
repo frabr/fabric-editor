@@ -8,6 +8,7 @@
  * is intentional: prefer using delegation methods when possible.
  */
 import { Canvas, Point, type FabricObject, type TPointerEvent } from "#fabric";
+import { DEFAULT_GUIDE_COLOR } from "./ui/color";
 
 /**
  * Plan de travail : le canvas remplit son panneau, le cadre du document — (0,0)–(w,h)
@@ -128,7 +129,7 @@ export class DesignCanvas {
       veil: "checker",
       checkerColor: "rgba(0, 0, 0, 0.03)",
       checkerSize: 8,
-      frameColor: "#d946ef",
+      frameColor: DEFAULT_GUIDE_COLOR,
       ...options,
     };
     const fc = this.originalFabricCanvas as unknown as {

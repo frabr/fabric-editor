@@ -1,4 +1,5 @@
 import { Pattern, util, type FabricObject } from "#fabric";
+import { DEFAULT_GUIDE_COLOR } from "./ui/color";
 import { pendingBindings, type BindingSpec, type Bindings } from "./bindings";
 import { idOf } from "./layout/model";
 
@@ -119,7 +120,7 @@ export interface UserSlotStyle {
 }
 
 export const USER_SLOT_STYLE_KEY = "userSlotStyle";
-const DEFAULT_COLOR = "#d946ef";
+const DEFAULT_COLOR = DEFAULT_GUIDE_COLOR;
 /**
  * Les mesures à l'échelle 1 (celles des badges) ; le cadre s'affiche au plus grand facteur
  * qui tient — ×4 dès qu'il y a la place, jusqu'à ×1,6 avant de lâcher l'invite.
