@@ -8424,6 +8424,7 @@ var _FabricEditor = class _FabricEditor {
     this._resizeObserver?.disconnect();
     this._resizeObserver = new ResizeObserver(() => {
       this.fitToContainer();
+      this.canvas.renderAll();
       this._resizeCallbacks.forEach((cb) => cb());
     });
     this._resizeObserver.observe(container);
