@@ -88,31 +88,64 @@ function bindingLabel(obj: FabricObject, userSlotLabel: string): string {
 /**
  * Le liseré des MÉDIAS dynamiques : un pointillé permanent dans la couleur d'édition autour
  * des calques dont un champ image est lié — l'aperçu montre la vraie image d'exemple, le
- * liseré dit « celle-ci sera remplie à la publication ». Espace écran (oCoords, le repère
- * des poignées), épaisseur constante au zoom.
+ * liseré dit « celle-ci sera remplie à la publication ».
+ *
+ * Il suit le calque tel qu'il est peint : rien pour un calque masqué (hors de sa fenêtre de
+ * temps dans l'éditeur vidéo), la forme de découpe d'une ImageFrame (un cercle reste un
+ * cercle), et la position calculée au moment du dessin — viewport compris : les oCoords ne
+ * sont recalculées qu'au setCoords, un redimensionnement du canvas les laissait en arrière.
+ * Le tracé se fait dans le repère du calque, le trait dans celui de l'écran : épaisseur et
+ * pointillé constants, quels que soient le zoom et l'échelle du calque.
  */
 export function drawDynamicMediaOutline(
   ctx: CanvasRenderingContext2D,
   obj: FabricObject,
   color: string,
 ): void {
+  if (!obj.visible || !obj.canvas) return;
   const pending = pendingBindings(obj);
   if (!Object.keys(pending).some((field) => field.startsWith("image."))) return;
 
-  const coords = (obj as unknown as { oCoords?: Record<string, { x: number; y: number }> }).oCoords;
-  if (!coords) return;
-
+  const screen = ctx.getTransform();
   ctx.save();
+  ctx.transform(...(obj.canvas.viewportTransform as [number, number, number, number, number, number]));
+  obj.transform(ctx);
+  ctx.beginPath();
+  traceOutline(ctx, obj);
+  ctx.setTransform(screen);
   ctx.strokeStyle = color;
   ctx.lineWidth = 1.5;
   ctx.setLineDash([6, 4]);
   ctx.globalAlpha = 0.9;
-  ctx.beginPath();
-  ctx.moveTo(coords.tl.x, coords.tl.y);
-  ctx.lineTo(coords.tr.x, coords.tr.y);
-  ctx.lineTo(coords.br.x, coords.br.y);
-  ctx.lineTo(coords.bl.x, coords.bl.y);
-  ctx.closePath();
   ctx.stroke();
   ctx.restore();
+}
+
+type Traceable = FabricObject & {
+  rx?: number;
+  ry?: number;
+  radius?: number;
+  pathOffset?: { x: number; y: number };
+  _renderPathCommands?: (ctx: CanvasRenderingContext2D) => void;
+};
+
+/** Le contour du calque dans son repère : sa découpe (clipPath d'une ImageFrame) s'il en a
+ *  une, son cadre sinon. */
+function traceOutline(ctx: CanvasRenderingContext2D, obj: FabricObject): void {
+  const shape = obj.clipPath as Traceable | undefined;
+  if (!shape) {
+    ctx.rect(-obj.width / 2, -obj.height / 2, obj.width, obj.height);
+    return;
+  }
+
+  shape.transform(ctx);
+  if (shape._renderPathCommands) {
+    ctx.translate(-(shape.pathOffset?.x ?? 0), -(shape.pathOffset?.y ?? 0));
+    shape._renderPathCommands(ctx);
+  } else if (typeof shape.radius === "number") {
+    ctx.arc(0, 0, shape.radius, 0, Math.PI * 2);
+  } else {
+    const radius = Math.min(shape.rx ?? 0, shape.width / 2, shape.height / 2);
+    ctx.roundRect(-shape.width / 2, -shape.height / 2, shape.width, shape.height, radius);
+  }
 }
