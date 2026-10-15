@@ -307,6 +307,10 @@ export class FabricEditor {
     this._resizeObserver?.disconnect();
     this._resizeObserver = new ResizeObserver(() => {
       this.fitToContainer();
+      // Redessin immédiat : setDimensions vide le buffer et Fabric ne programme le rendu que
+      // pour l'image suivante — pendant un redimensionnement continu (une transition de
+      // hauteur), chaque image peinte serait vide, les calques clignoteraient jusqu'à la fin.
+      this.canvas.renderAll();
       this._resizeCallbacks.forEach((cb) => cb());
     });
     this._resizeObserver.observe(container);
