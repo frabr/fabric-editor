@@ -1,7 +1,7 @@
 import { FabricObject, Line, Rect, Pattern } from "#fabric";
 import type { DesignCanvas } from "../DesignCanvas";
 import { scaledSize, topLeft } from "../layout/geometry";
-import { DEFAULT_GUIDE_COLOR, hexAlpha } from "./color";
+import { DEFAULT_SNAP_GUIDE_COLOR, hexAlpha } from "./color";
 import { layoutOf } from "../layout/model";
 import type { SnapGuide } from "../snap";
 
@@ -27,7 +27,7 @@ export class CanvasGuides {
   private fillLight: string;
   private hatchPattern: Pattern;
 
-  constructor(canvas: DesignCanvas, color = DEFAULT_GUIDE_COLOR) {
+  constructor(canvas: DesignCanvas, color = DEFAULT_SNAP_GUIDE_COLOR) {
     this.canvas = canvas;
     this.color = color;
 

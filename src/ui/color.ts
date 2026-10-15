@@ -26,8 +26,13 @@ export function hexAlpha(hex: string, alpha: number): string {
 }
 
 /**
- * La couleur de l'éditeur quand l'hôte n'en donne pas (`guideColor`) : guides d'aimantation,
- * sélection, liseré du cadre, médias à fournir, recadrage. Une seule valeur — l'hôte peut
- * l'importer pour teinter ses propres surfaces de la même couleur.
+ * La couleur de l'éditeur quand l'hôte n'en donne pas (`guideColor`) : sélection, liseré du
+ * cadre, médias à fournir, recadrage.
  */
 export const DEFAULT_GUIDE_COLOR = "#d946ef";
+
+/**
+ * Les guides d'aimantation et de mise en page, quand l'hôte ne donne pas de `guideColor` : le
+ * magenta franc des outils de design (Canva, Figma) — un code que les gens reconnaissent.
+ */
+export const DEFAULT_SNAP_GUIDE_COLOR = "#ff00ff";

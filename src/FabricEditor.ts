@@ -94,11 +94,12 @@ export class FabricEditor {
     this.masks = new MaskManager(this.canvas);
     this.persistence = new PersistenceManager(this.canvas, this.layers);
     this.history = new HistoryManager(this.canvas, this.layers);
-    this.snapping = new SnappingManager(this.canvas, {}, gc);
+    // Les guides gardent leur magenta (DEFAULT_SNAP_GUIDE_COLOR) sauf couleur donnée par l'hôte.
+    this.snapping = new SnappingManager(this.canvas, {}, config.guideColor);
     this.layout = new LayoutManager(
       this.canvas,
       { getEnteredContainerId: () => this.selection.enteredContainerId },
-      gc,
+      config.guideColor,
     );
 
     this.crop = new CropMode(this.canvas, gc);

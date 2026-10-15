@@ -150,4 +150,4 @@ export {
   isUserSlot, userSlotHint, userSlotBinding, collectUserSlots, USER_SCOPE, USER_SLOT_FIELD,
 } from "./userSlots";
 export type { UserSlot } from "./userSlots";
-export { DEFAULT_GUIDE_COLOR } from "./ui/color";
+export { DEFAULT_GUIDE_COLOR, DEFAULT_SNAP_GUIDE_COLOR } from "./ui/color";
