@@ -500,9 +500,15 @@ export class DropHandler {
 
     const pointerEvent = e.e as MouseEvent | undefined;
     const inEdge = Boolean(pointerEvent && this.config.canvasEdge?.near(pointerEvent));
-    if (!this.moving || this.moving.source !== source) this.moving = { source, inEdge: false };
+    if (!this.moving || this.moving.source !== source) {
+      this.moving = { source, inEdge: false };
+      // eslint-disable-next-line no-console
+      console.debug("[drop] canvas drag", { layerId: source.get("layerId"), pointerEvent: Boolean(pointerEvent) });
+    }
     if (inEdge !== this.moving.inEdge) {
       this.moving.inEdge = inEdge;
+      // eslint-disable-next-line no-console
+      console.debug("[drop] canvas drag edge", inEdge);
       this.config.canvasEdge?.cue?.(inEdge);
     }
     if (inEdge) {
