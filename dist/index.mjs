@@ -142,6 +142,7 @@ function hexAlpha(hex, alpha) {
 }
 var DEFAULT_GUIDE_COLOR = "#d946ef";
 var DEFAULT_SNAP_GUIDE_COLOR = "#ff00ff";
+var DEFAULT_CENTER_GUIDE_COLOR = "#f24822";
 
 // src/DesignCanvas.ts
 var DesignCanvas = class {
@@ -4515,17 +4516,29 @@ var CanvasGuides = class {
   /**
    * Les guides de l'aimant d'un déplacement (SnappingManager, src/snap.ts) : un pointillé
    * fin à l'écran quel que soit le zoom, qui joint l'objet et sa cible et dépasse un peu
-   * de chaque côté.
+   * de chaque côté. Le centre de la PAGE (`center` + `page`) se dit autrement : un trait
+   * rouge plein d'un bord à l'autre, et une croix de 9 px au centre de l'objet — on voit
+   * qu'on est centré, sur un axe ou les deux.
    */
-  showSnapGuides(guides, zoom) {
+  showSnapGuides(guides, zoom, center) {
     this.clear();
     const overshoot = 8 / zoom;
+    let centered = false;
     for (const guide2 of guides) {
-      const from = guide2.from - overshoot;
-      const to = guide2.to + overshoot;
+      const onPageCenter = Boolean(guide2.center && guide2.page);
+      centered || (centered = onPageCenter);
+      const from = guide2.from - (onPageCenter ? 0 : overshoot);
+      const to = guide2.to + (onPageCenter ? 0 : overshoot);
       const coords = guide2.axis === "x" ? [guide2.at, from, guide2.at, to] : [from, guide2.at, to, guide2.at];
-      this.addLine(coords, { strokeWidth: 1 / zoom, strokeDashArray: [4 / zoom, 4 / zoom] });
+      this.addLine(coords, onPageCenter ? { stroke: DEFAULT_CENTER_GUIDE_COLOR, strokeWidth: 1 / zoom, strokeDashArray: [] } : { strokeWidth: 1 / zoom, strokeDashArray: [4 / zoom, 4 / zoom] });
     }
+    if (centered && center) this.addCross(center, 9 / zoom, DEFAULT_CENTER_GUIDE_COLOR, 1 / zoom);
+  }
+  /** Une croix de `size` de côté, centrée sur `at`. */
+  addCross(at, size, stroke, strokeWidth) {
+    const half = size / 2;
+    this.addLine([at.x - half, at.y, at.x + half, at.y], { stroke, strokeWidth, strokeDashArray: [] });
+    this.addLine([at.x, at.y - half, at.x, at.y + half], { stroke, strokeWidth, strokeDashArray: [] });
   }
   showSnapLines(guides) {
     this.clear();
@@ -4573,9 +4586,10 @@ function snapMove(moving, targets, threshold, keep = {}) {
   const dy = bestY?.delta ?? 0;
   const placed = { ...moving, left: moving.left + dx, top: moving.top + dy };
   const guides = [];
-  if (bestX) guides.push(guide("x", bestX.at, placed.top, placed.height, bestX.target.top, bestX.target.height));
-  if (bestY) guides.push(guide("y", bestY.at, placed.left, placed.width, bestY.target.left, bestY.target.width));
-  return { dx, dy, guides };
+  if (bestX) guides.push(guide("x", bestX, placed.top, placed.height, bestX.target.top, bestX.target.height));
+  if (bestY) guides.push(guide("y", bestY, placed.left, placed.width, bestY.target.left, bestY.target.width));
+  const center = { x: placed.left + placed.width / 2, y: placed.top + placed.height / 2 };
+  return { dx, dy, guides, center };
 }
 function closest(best, own, theirs, threshold, target, kept) {
   for (const a of own) {
@@ -4583,7 +4597,7 @@ function closest(best, own, theirs, threshold, target, kept) {
       if (a.center !== b.center) continue;
       const delta = b.at - a.at;
       if (Math.abs(delta) > threshold) continue;
-      if (!best || better(b.at, delta, best, kept)) best = { at: b.at, delta, target };
+      if (!best || better(b.at, delta, best, kept)) best = { at: b.at, delta, target, center: a.center };
     }
   }
   return best;
@@ -4593,8 +4607,16 @@ function better(at, delta, best, kept) {
   if (at === kept) return true;
   return Math.abs(delta) < Math.abs(best.delta);
 }
-function guide(axis, at, start, size, targetStart, targetSize) {
-  return { axis, at, from: Math.min(start, targetStart), to: Math.max(start + size, targetStart + targetSize) };
+function guide(axis, best, start, size, targetStart, targetSize) {
+  const line = {
+    axis,
+    at: best.at,
+    from: Math.min(start, targetStart),
+    to: Math.max(start + size, targetStart + targetSize)
+  };
+  if (best.center) line.center = true;
+  if (best.target.page) line.page = true;
+  return line;
 }
 
 // src/SnappingManager.ts
@@ -4669,10 +4691,10 @@ var SnappingManager = class {
       ...moving.flatMap((member) => ancestorsOf(member, objects))
     ]);
     const targets = objects.filter((other) => !excluded.has(other) && isSnapTarget(other)).map((other) => other.getBoundingRect());
-    targets.push({ left: 0, top: 0, width: this.canvas.width, height: this.canvas.height });
+    targets.push({ left: 0, top: 0, width: this.canvas.width, height: this.canvas.height, page: true });
     const zoom = this.canvas.getZoom() || 1;
     obj.setCoords();
-    const { dx, dy, guides } = snapMove(obj.getBoundingRect(), targets, this.config.threshold / zoom, this.kept);
+    const { dx, dy, guides, center } = snapMove(obj.getBoundingRect(), targets, this.config.threshold / zoom, this.kept);
     this.kept = {
       x: guides.find((guide2) => guide2.axis === "x")?.at,
       y: guides.find((guide2) => guide2.axis === "y")?.at
@@ -4681,7 +4703,7 @@ var SnappingManager = class {
       obj.set({ left: (obj.left ?? 0) + dx, top: (obj.top ?? 0) + dy });
       obj.setCoords();
     }
-    this.guides.showSnapGuides(guides, zoom);
+    this.guides.showSnapGuides(guides, zoom, center);
     this.canvas.requestRenderAll();
   }
   handleObjectScaling(obj) {

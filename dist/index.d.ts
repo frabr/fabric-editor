@@ -2715,12 +2715,15 @@ declare class PreviewCanvas extends StaticCanvas {
 }
 
 /** Un guide : un trait sur l'axe `axis` (x : vertical, y : horizontal) à la coordonnée
- *  `at`, de `from` à `to` sur l'autre axe. */
+ *  `at`, de `from` à `to` sur l'autre axe. `center` : il joint deux centres ; `page` : sa
+ *  cible est la page — les deux ensemble, c'est « centré sur la page », le repère rouge. */
 interface SnapGuide {
     axis: "x" | "y";
     at: number;
     from: number;
     to: number;
+    center?: boolean;
+    page?: boolean;
 }
 
 /**
@@ -2812,9 +2815,16 @@ declare class CanvasGuides {
     /**
      * Les guides de l'aimant d'un déplacement (SnappingManager, src/snap.ts) : un pointillé
      * fin à l'écran quel que soit le zoom, qui joint l'objet et sa cible et dépasse un peu
-     * de chaque côté.
+     * de chaque côté. Le centre de la PAGE (`center` + `page`) se dit autrement : un trait
+     * rouge plein d'un bord à l'autre, et une croix de 9 px au centre de l'objet — on voit
+     * qu'on est centré, sur un axe ou les deux.
      */
-    showSnapGuides(guides: SnapGuide[], zoom: number): void;
+    showSnapGuides(guides: SnapGuide[], zoom: number, center?: {
+        x: number;
+        y: number;
+    }): void;
+    /** Une croix de `size` de côté, centrée sur `at`. */
+    private addCross;
     showSnapLines(guides: Array<{
         orientation: "horizontal" | "vertical";
         position: number;
