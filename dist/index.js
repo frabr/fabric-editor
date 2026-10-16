@@ -187,6 +187,7 @@ __export(index_exports, {
   applyLockMode: () => applyLockMode,
   badgeLabel: () => badgeLabel,
   bindingBadgeLabel: () => bindingBadgeLabel,
+  canvasImageSource: () => canvasImageSource,
   clampTopLeft: () => clampTopLeft,
   clipDataFor: () => clipDataFor,
   collectUserSlots: () => collectUserSlots,
@@ -7031,6 +7032,10 @@ var LayoutManager2 = class {
   get isAnchored() {
     return this.drag.isAnchored;
   }
+  /** Nothing is being dropped into a container (no timer, no session). */
+  get isIdle() {
+    return this.drag.isIdle;
+  }
   /** Clean up event listeners. */
   dispose() {
     this.drag.reset();
@@ -8862,11 +8867,11 @@ var _FabricEditor = class _FabricEditor {
    * peut ne pas réagir (verrouillé, groupe de paths) : DropHandler n'arme alors pas le
    * remplacement, et l'image est ajoutée.
    */
-  findDropTargetAtPoint(x, y) {
+  findDropTargetAtPoint(x, y, exclude) {
     const point = new import_fabric24.Point(x, y);
     const objects = this.canvas.getObjects().slice().reverse();
     for (const obj of objects) {
-      if (obj.get(DRAG_PREVIEW_KEY)) continue;
+      if (obj === exclude || obj.get(DRAG_PREVIEW_KEY)) continue;
       const rules = rulesOf(obj, { ignoreLock: true });
       if (!rules.onToolboxImage && !rules.hosts) continue;
       if (obj.containsPoint(point)) return obj;
@@ -8980,6 +8985,11 @@ var KIND_CAPABILITIES = {
   shape: { layout: true, replaceTarget: false },
   userSlot: { layout: false, replaceTarget: true }
 };
+function canvasImageSource(obj) {
+  if (obj instanceof ImageFrame) return obj.imageSrc ? { url: obj.imageSrc, imageMeta: obj.imageMeta } : null;
+  if (obj instanceof import_fabric26.FabricImage) return obj.getSrc() ? { url: obj.getSrc(), imageMeta: {} } : null;
+  return null;
+}
 var DropHandler = class {
   constructor(editor, config) {
     this.editor = editor;
@@ -8988,13 +8998,19 @@ var DropHandler = class {
       pendingTarget: null,
       timer: null,
       replaceMode: false,
+      selected: false,
       originalColors: null,
       fabricOverlay: null,
       htmlOverlay: null
     };
     this.dropZone = null;
     this.drag = null;
+    this.moving = null;
     this.lastPointer = null;
+    this.boundOnCanvasMoving = (e) => this.onCanvasMoving(e);
+    this.boundOnCanvasUp = (e) => {
+      void this.onCanvasUp(e);
+    };
     this.config = {
       hoverDelay: 1e3,
       overlayElement: void 0,
@@ -9007,6 +9023,8 @@ var DropHandler = class {
     this.boundHandleDragOver = this.handleDragOver.bind(this);
     this.boundHandleDragLeave = this.handleDragLeave.bind(this);
     this.boundHandleDrop = this.handleDrop.bind(this);
+    this.editor.canvas.on("object:moving", this.boundOnCanvasMoving);
+    this.editor.canvas.on("mouse:up", this.boundOnCanvasUp);
   }
   /**
    * Attache les event listeners sur l'élément drop zone
@@ -9018,7 +9036,7 @@ var DropHandler = class {
     dropZone.addEventListener("drop", this.boundHandleDrop);
   }
   /**
-   * Détache les event listeners et nettoie l'état
+   * Détache les event listeners (drop zone et canvas) et nettoie l'état
    */
   detach() {
     if (this.dropZone) {
@@ -9027,6 +9045,9 @@ var DropHandler = class {
       this.dropZone.removeEventListener("drop", this.boundHandleDrop);
       this.dropZone = null;
     }
+    this.editor.canvas.off("object:moving", this.boundOnCanvasMoving);
+    this.editor.canvas.off("mouse:up", this.boundOnCanvasUp);
+    this.moving = null;
     this.reset();
   }
   // ==================== Public API (for external drag sources) ====================
@@ -9224,17 +9245,90 @@ var DropHandler = class {
       this.editor.canvas.requestRenderAll();
     }
     if (this.drag && !this.drag.capabilities.replaceTarget) return;
-    const targetAtPoint = this.editor.findDropTargetAtPoint(pointer.x, pointer.y);
-    if (targetAtPoint !== this.state.pendingTarget) {
-      this.clearTimer();
-      this.clearHighlight();
-      this.state.pendingTarget = targetAtPoint;
-      if (targetAtPoint) {
-        this.state.timer = setTimeout(() => {
-          this.activateReplaceMode(targetAtPoint);
-        }, this.config.hoverDelay);
-      }
+    this.trackHoverTarget(this.editor.findDropTargetAtPoint(pointer.x, pointer.y));
+  }
+  /** La cible sous le pointeur : un changement relance l'attente avant « Remplacer ». */
+  trackHoverTarget(targetAtPoint, select = true) {
+    if (targetAtPoint === this.state.pendingTarget) return;
+    this.clearTimer();
+    this.clearHighlight();
+    this.state.pendingTarget = targetAtPoint;
+    if (targetAtPoint) {
+      this.state.timer = setTimeout(() => {
+        this.activateReplaceMode(targetAtPoint, select);
+      }, this.config.hoverDelay);
     }
+  }
+  // ==================== Une image du canvas, glissée ====================
+  /** Un pas de glisser natif : une image du canvas au-dessus d'une cible, ou dans la bande du fond. */
+  onCanvasMoving(e) {
+    const source = e.target;
+    if (this.drag || !source || !canvasImageSource(source)) return;
+    if (rulesOf(source).onToolboxImage !== "replaceImage") return;
+    if (!this.editor.layout.isIdle) {
+      this.leaveCanvasDrag();
+      return;
+    }
+    const pointerEvent = e.e;
+    const inEdge = Boolean(pointerEvent && this.config.canvasEdge?.near(pointerEvent));
+    if (!this.moving || this.moving.source !== source) this.moving = { source, inEdge: false };
+    if (inEdge !== this.moving.inEdge) {
+      this.moving.inEdge = inEdge;
+      this.config.canvasEdge?.cue?.(inEdge);
+    }
+    if (inEdge) {
+      this.trackHoverTarget(null, false);
+      return;
+    }
+    const pointer = e.scenePoint ?? (pointerEvent ? this.editor.canvas.getScenePoint(pointerEvent) : null);
+    if (!pointer) return;
+    const target = this.editor.findDropTargetAtPoint(pointer.x, pointer.y, source);
+    const candidate = target && !isStackContainer(target) && rulesOf(target).onToolboxImage ? target : null;
+    this.trackHoverTarget(candidate, false);
+  }
+  /** Le lâcher d'un glisser natif : la cible armée prend l'image, ou l'hôte prend le fond. */
+  async onCanvasUp(e) {
+    const moving = this.moving;
+    if (!moving) return;
+    this.moving = null;
+    const { source, inEdge } = moving;
+    const target = this.state.replaceMode ? this.state.hoveredTarget : null;
+    this.reset();
+    if (inEdge) this.config.canvasEdge?.cue?.(false);
+    try {
+      if (inEdge && e.e && this.config.canvasEdge) {
+        if (await this.config.canvasEdge.take(source, e.e)) this.removeSource(source);
+        return;
+      }
+      if (!target) return;
+      const image = canvasImageSource(source);
+      if (!image) return;
+      if (rulesOf(target).onToolboxImage === "fill") {
+        await this.editor.layers.replaceShapeWithImage(target, image.url, image.imageMeta);
+      } else {
+        await this.editor.layers.replaceImageSource(
+          target,
+          image.url,
+          { imageMeta: image.imageMeta }
+        );
+      }
+      this.removeSource(source);
+      this.config.onSuccess();
+    } catch (error) {
+      this.config.onError(error);
+    }
+  }
+  /** Le glisser natif quitte notre périmètre (une pile l'a pris) : plus de cible, plus de cue. */
+  leaveCanvasDrag() {
+    if (this.moving?.inEdge) this.config.canvasEdge?.cue?.(false);
+    this.moving = null;
+    this.reset();
+  }
+  /** Le calque glissé est entré dans sa cible : il quitte le canvas. */
+  removeSource(source) {
+    this.editor.canvas.discardActiveObject();
+    this.editor.layers.remove(source);
+    this.editor.canvas.renderAll();
   }
   handleDragOver(e) {
     e.preventDefault();
@@ -9289,7 +9383,7 @@ var DropHandler = class {
     if (!file.type.startsWith("image/")) return null;
     return file;
   }
-  activateReplaceMode(target) {
+  activateReplaceMode(target, select = true) {
     if (!rulesOf(target).onToolboxImage) {
       return;
     }
@@ -9300,7 +9394,7 @@ var DropHandler = class {
     });
     this.state.replaceMode = true;
     this.state.hoveredTarget = target;
-    this.highlightTarget(target);
+    this.highlightTarget(target, select);
   }
   clearTimer() {
     if (this.state.timer) {
@@ -9316,10 +9410,17 @@ var DropHandler = class {
     }
   }
   /**
-   * Met en surbrillance une cible via les contrôles de sélection Fabric
-   * et un overlay HTML sombre avec texte personnalisable
+   * Met en surbrillance une cible : un voile sombre et le texte « Remplacer » ; sélectionnée
+   * pour montrer ses contrôles — sauf pendant un glisser natif (`select` faux), où la
+   * sélection est l'objet qu'on tient.
    */
-  highlightTarget(target) {
+  highlightTarget(target, select = true) {
+    this.createOverlay(target);
+    this.state.selected = select;
+    if (!select) {
+      this.editor.canvas.requestRenderAll();
+      return;
+    }
     this.state.originalColors = {
       border: target.borderColor,
       corner: target.cornerColor
@@ -9328,7 +9429,6 @@ var DropHandler = class {
       borderColor: HIGHLIGHT_COLOR,
       cornerColor: HIGHLIGHT_COLOR
     });
-    this.createOverlay(target);
     this.editor.canvas.setActiveObject(target);
     this.editor.canvas.renderAll();
   }
@@ -9402,7 +9502,8 @@ var DropHandler = class {
       this.state.originalColors = null;
     }
     this.removeOverlay();
-    this.editor.canvas.discardActiveObject();
+    if (this.state.selected) this.editor.canvas.discardActiveObject();
+    this.state.selected = false;
     this.editor.canvas.renderAll();
   }
   /**
@@ -10213,6 +10314,7 @@ function layerToHtmlStandalone(layer, zIndex) {
   applyLockMode,
   badgeLabel,
   bindingBadgeLabel,
+  canvasImageSource,
   clampTopLeft,
   clipDataFor,
   collectUserSlots,

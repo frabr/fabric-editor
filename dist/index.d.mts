@@ -2237,6 +2237,8 @@ declare class LayoutManager {
     rollbackExternalDrag(): void;
     /** Whether the DTL state machine is currently in ANCHORED phase. */
     get isAnchored(): boolean;
+    /** Nothing is being dropped into a container (no timer, no session). */
+    get isIdle(): boolean;
     /** Clean up event listeners. */
     dispose(): void;
     private onMovingBound;
@@ -2662,7 +2664,7 @@ declare class FabricEditor {
      * peut ne pas réagir (verrouillé, groupe de paths) : DropHandler n'arme alors pas le
      * remplacement, et l'image est ajoutée.
      */
-    findDropTargetAtPoint(x: number, y: number): FabricObject | null;
+    findDropTargetAtPoint(x: number, y: number, exclude?: FabricObject): FabricObject | null;
     /**
      * Nettoie les ressources
      */
@@ -2885,7 +2887,23 @@ interface DropHandlerConfig {
     onSuccess?: () => void;
     /** Callback en cas d'erreur */
     onError?: (error: unknown) => void;
+    /**
+     * Le bord de l'artboard pendant qu'on glisse une image DU CANVAS : l'hôte dit si le
+     * pointeur est dans sa bande du fond (`near` — le remplacement ne s'arme pas là), montre
+     * son cue (`cue`), et prend le lâcher (`take` : l'image devient le fond ; vrai si prise —
+     * le calque glissé est alors retiré du canvas).
+     */
+    canvasEdge?: {
+        near: (e: MouseEvent) => boolean;
+        cue?: (near: boolean) => void;
+        take: (source: FabricObject, e: MouseEvent) => boolean | Promise<boolean>;
+    };
 }
+/** L'image qu'un calque du canvas porte — ce qu'il donnerait s'il venait de la toolbox. */
+declare function canvasImageSource(obj: FabricObject): {
+    url: string;
+    imageMeta: ImageMeta;
+} | null;
 /**
  * Gère le drag & drop sur le canvas Fabric.js
  *
@@ -2896,6 +2914,12 @@ interface DropHandlerConfig {
  * - Drop après attente (>= hoverDelay sur une cible) : remplace l'image survolée
  *
  * Text & shape drops are always "add at position" — no replace mode.
+ *
+ * Une image DÉJÀ sur le canvas agit comme une image de la toolbox quand on la glisse
+ * (object:moving) : au-dessus d'une forme ou d'une forme-image, le même « Remplacer » se
+ * pose après la même attente, et le lâcher remplit la cible de son image — le calque glissé
+ * disparaît. Une pile reste l'affaire de DragToLayout (la session d'insertion) ; la bande
+ * du fond, celle de l'hôte (canvasEdge).
  */
 declare class DropHandler {
     private editor;
@@ -2903,17 +2927,20 @@ declare class DropHandler {
     private config;
     private dropZone;
     private drag;
+    private moving;
     private lastPointer;
     private boundHandleDragOver;
     private boundHandleDragLeave;
     private boundHandleDrop;
+    private boundOnCanvasMoving;
+    private boundOnCanvasUp;
     constructor(editor: FabricEditor, config: DropHandlerConfig);
     /**
      * Attache les event listeners sur l'élément drop zone
      */
     attach(dropZone: HTMLElement): void;
     /**
-     * Détache les event listeners et nettoie l'état
+     * Détache les event listeners (drop zone et canvas) et nettoie l'état
      */
     detach(): void;
     /**
@@ -2962,6 +2989,16 @@ declare class DropHandler {
      * The caller is responsible for calling preventDefault() on the event.
      */
     trackPointer(e: DragEvent): void;
+    /** La cible sous le pointeur : un changement relance l'attente avant « Remplacer ». */
+    private trackHoverTarget;
+    /** Un pas de glisser natif : une image du canvas au-dessus d'une cible, ou dans la bande du fond. */
+    private onCanvasMoving;
+    /** Le lâcher d'un glisser natif : la cible armée prend l'image, ou l'hôte prend le fond. */
+    private onCanvasUp;
+    /** Le glisser natif quitte notre périmètre (une pile l'a pris) : plus de cible, plus de cue. */
+    private leaveCanvasDrag;
+    /** Le calque glissé est entré dans sa cible : il quitte le canvas. */
+    private removeSource;
     private handleDragOver;
     private handleDragLeave;
     private handleDrop;
@@ -2977,8 +3014,9 @@ declare class DropHandler {
     private clearTimer;
     private clearHighlight;
     /**
-     * Met en surbrillance une cible via les contrôles de sélection Fabric
-     * et un overlay HTML sombre avec texte personnalisable
+     * Met en surbrillance une cible : un voile sombre et le texte « Remplacer » ; sélectionnée
+     * pour montrer ses contrôles — sauf pendant un glisser natif (`select` faux), où la
+     * sélection est l'objet qu'on tient.
      */
     private highlightTarget;
     /**
@@ -3457,4 +3495,4 @@ declare const DEFAULT_GUIDE_COLOR = "#d946ef";
  */
 declare const DEFAULT_SNAP_GUIDE_COLOR = "#ff00ff";
 
-export { type AlignEdge, type AlignItems, type AlignSelf, type Arrangement, type BadgeLabeler, type BindingSpec, type Bindings, type Box, CanvasGuides, type CatalogShape, type CatalogShapeInput, type ChildData, type ClipData, type ContainerData, ContainerizeSession, type ControlOption, type Crop, CropMode, CustomTextbox, DEFAULT_GUIDE_COLOR, DEFAULT_SNAP_GUIDE_COLOR, type Delta, DesignCanvas, type DistributeAxis, type DragPayload, DropHandler, type DropHandlerConfig, type DropResult, type EditorConfig, FabCircle, FabPath, FabRect, FabricEditor, type FlexDirection, type FontConfig, type FontsConfig, type FrameRect, FreeResizeSession, GHOST_OPACITY, type GradientStop, HEART_PATH, HEXAGON_PATH, type HistoryCallbacks, HistoryManager, type HistoryState, type HtmlLayerOutput, type HtmlRenderOptions, ImageFrame, type ImageLayerOptions, InsertChildSession, type JustifyContent, LAYER_PROPS, type LayerData, LayerManager, type LayoutData, LayoutManager, type LayoutManagerCallbacks, type LayoutParents, type LayoutSession, type LockMode$1 as LockMode, type Lockable, MAX_CROP_SCALE, MIN_PAD, MIXED, MaskManager, NO_CROP, type ObjectControlsConfig, type ObjectKind, type ObjectRules, PendingUploadsManager, PersistenceManager, PreviewCanvas, ResizeSession, type ResizeSnapResult, type SaveOptions, type SaveResult, type SelectionCallbacks, type SelectionKind, SelectionManager, type ShapeCatalogEntry, type ShapeLayerOptions, type ShapePathData, type ShapeType, type SizeMode, type SizePreset, type SizingData, type SnappingConfig, SnappingManager, StackResizeSession, TEXT_STYLE_KEYS, type TextLayerOptions, type TextOverflow, type TextStyleKey, type TextStyleState, type TextStyleValue, type ToolId, type ToolboxImageReaction, type TreeLayer, USER_SCOPE, USER_SLOT_FIELD, type UserSlot, type WorkspaceOptions, addCircleClip, addCropControls, addHeartClip, addHexagonClip, alignAxis, alignDelta, antiScale, applyClip, applyLockMode, badgeLabel, bindingBadgeLabel, clampTopLeft, clipDataFor, collectUserSlots, createCircle, createDropSession, createHeart, createHexagon, createImage, createPathShape, createPathsShape, createRect, createShape, cropFromRect, displayFill, distributeDeltas, drawBindingBadge, drawFrameBadge, fabricToHtml, fitFreeContainer, fontFamiliesOf, getAvailableShapes, getCatalogShape, getLockMode, getNextLockMode, getShapeCatalog, hasExceededOffset, hasPendingBindings, initYoga, isBold, isContentLocked, isCropped, isFreeContainer, isGhost, isMonoPath, isPositionLocked, isStyleLocked, isUserSlot, isValidShape, kindOf, layerToHtmlStandalone, layoutChildren, layoutDescendants, layoutParents, layoutRoot, nextShape, panCrop, pendingBindings, photoRect, pointInObject, registerShapes, registeredShapes, removeCropControls, rulesOf, runLayout, scaledSize, selectionKindOf, setDisplayFill, setGhost, setTextContent, stackBlock, stackParentOf, summarizeObject, summarizeStyles, switchClip, switchShape, toolsFor, topLeft, unionBox, userSlotBinding, userSlotHint, wrapContainerAroundChild, yogaLayout, zoomCrop };
+export { type AlignEdge, type AlignItems, type AlignSelf, type Arrangement, type BadgeLabeler, type BindingSpec, type Bindings, type Box, CanvasGuides, type CatalogShape, type CatalogShapeInput, type ChildData, type ClipData, type ContainerData, ContainerizeSession, type ControlOption, type Crop, CropMode, CustomTextbox, DEFAULT_GUIDE_COLOR, DEFAULT_SNAP_GUIDE_COLOR, type Delta, DesignCanvas, type DistributeAxis, type DragPayload, DropHandler, type DropHandlerConfig, type DropResult, type EditorConfig, FabCircle, FabPath, FabRect, FabricEditor, type FlexDirection, type FontConfig, type FontsConfig, type FrameRect, FreeResizeSession, GHOST_OPACITY, type GradientStop, HEART_PATH, HEXAGON_PATH, type HistoryCallbacks, HistoryManager, type HistoryState, type HtmlLayerOutput, type HtmlRenderOptions, ImageFrame, type ImageLayerOptions, InsertChildSession, type JustifyContent, LAYER_PROPS, type LayerData, LayerManager, type LayoutData, LayoutManager, type LayoutManagerCallbacks, type LayoutParents, type LayoutSession, type LockMode$1 as LockMode, type Lockable, MAX_CROP_SCALE, MIN_PAD, MIXED, MaskManager, NO_CROP, type ObjectControlsConfig, type ObjectKind, type ObjectRules, PendingUploadsManager, PersistenceManager, PreviewCanvas, ResizeSession, type ResizeSnapResult, type SaveOptions, type SaveResult, type SelectionCallbacks, type SelectionKind, SelectionManager, type ShapeCatalogEntry, type ShapeLayerOptions, type ShapePathData, type ShapeType, type SizeMode, type SizePreset, type SizingData, type SnappingConfig, SnappingManager, StackResizeSession, TEXT_STYLE_KEYS, type TextLayerOptions, type TextOverflow, type TextStyleKey, type TextStyleState, type TextStyleValue, type ToolId, type ToolboxImageReaction, type TreeLayer, USER_SCOPE, USER_SLOT_FIELD, type UserSlot, type WorkspaceOptions, addCircleClip, addCropControls, addHeartClip, addHexagonClip, alignAxis, alignDelta, antiScale, applyClip, applyLockMode, badgeLabel, bindingBadgeLabel, canvasImageSource, clampTopLeft, clipDataFor, collectUserSlots, createCircle, createDropSession, createHeart, createHexagon, createImage, createPathShape, createPathsShape, createRect, createShape, cropFromRect, displayFill, distributeDeltas, drawBindingBadge, drawFrameBadge, fabricToHtml, fitFreeContainer, fontFamiliesOf, getAvailableShapes, getCatalogShape, getLockMode, getNextLockMode, getShapeCatalog, hasExceededOffset, hasPendingBindings, initYoga, isBold, isContentLocked, isCropped, isFreeContainer, isGhost, isMonoPath, isPositionLocked, isStyleLocked, isUserSlot, isValidShape, kindOf, layerToHtmlStandalone, layoutChildren, layoutDescendants, layoutParents, layoutRoot, nextShape, panCrop, pendingBindings, photoRect, pointInObject, registerShapes, registeredShapes, removeCropControls, rulesOf, runLayout, scaledSize, selectionKindOf, setDisplayFill, setGhost, setTextContent, stackBlock, stackParentOf, summarizeObject, summarizeStyles, switchClip, switchShape, toolsFor, topLeft, unionBox, userSlotBinding, userSlotHint, wrapContainerAroundChild, yogaLayout, zoomCrop };
