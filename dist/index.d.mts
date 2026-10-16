@@ -1053,6 +1053,164 @@ declare function layoutDescendants(parents: LayoutParents, ids: Iterable<string>
 declare function stackBlock(objects: FabricObject[], root: FabricObject): FabricObject[];
 
 /**
+ * Les combinaisons de touches : leur écriture déclarative (`mod+shift+z`, `Delete`,
+ * `shift+ArrowUp`, `Space`), leur reconnaissance sur un KeyboardEvent, et leur affichage
+ * selon la plateforme (`⌘⇧Z` sur Mac, `Ctrl+Shift+Z` ailleurs).
+ *
+ * `mod` est la touche de commande de la plateforme : ⌘ sur Mac, Ctrl ailleurs. Les
+ * modificateurs doivent correspondre EXACTEMENT : `mod+z` ne reconnaît pas ⌘⇧Z.
+ */
+type Platform = "mac" | "other";
+type Modifier = "mod" | "shift" | "alt";
+interface KeyCombo {
+    key: string;
+    mod: boolean;
+    shift: boolean;
+    alt: boolean;
+}
+declare function parseCombo(combo: string): KeyCombo;
+interface KeyLike {
+    key: string;
+    metaKey: boolean;
+    ctrlKey: boolean;
+    shiftKey: boolean;
+    altKey: boolean;
+}
+declare function detectPlatform(nav?: {
+    platform?: string;
+    userAgent?: string;
+} | undefined): Platform;
+/** Une combinaison telle qu'on l'écrit pour l'utilisateur : `⌘⇧Z`, `Ctrl+Shift+Z`, `⇧↑`. */
+declare function formatCombo(combo: KeyCombo, platform: Platform): string;
+declare function formatModifier(modifier: Modifier, platform: Platform): string;
+
+/**
+ * Les outils d'une sélection : lesquels, dans quel ordre. La barre d'actions des éditeurs
+ * ne décide rien : elle montre ce que rend `toolsFor`, dans cet ordre.
+ *
+ * Deux questions, deux sources :
+ * - ce que la sélection permet — le règlement (`rulesOf`), verrous compris, et sa place
+ *   dans l'arbre (container, groupe, enfant) ;
+ * - ce que l'éditeur propose — `offered` : un outil que l'éditeur n'a pas (les animations
+ *   hors vidéo, le verrou hors création…) n'apparaît jamais.
+ *
+ * L'ordre suit la fréquence d'usage, par sorte de sélection (barre d'actions du round 2) :
+ * la couleur et le contenu d'abord, puis l'animation, les réglages fins, l'ordre des plans ;
+ * Supprimer toujours en dernier. En multi-sélection, Grouper d'abord.
+ */
+
+type ToolId = "group" | "align" | "distribute" | "arrangement" | "ungroup" | "fill" | "font" | "variables" | "crop" | "image" | "promoteBackground" | "clip" | "outline" | "effects" | "layout" | "containerize" | "animations" | "condition" | "lock" | "forward" | "backward" | "delete";
+/**
+ * - `text`, `shape`, `image` : un objet seul, d'après sa sorte ;
+ * - `block` : une forme qui porte des éléments ;
+ * - `group` : un groupe (⌘G), libre ou rangé ;
+ * - `many` : plusieurs objets.
+ */
+type SelectionKind = "text" | "shape" | "image" | "block" | "group" | "many";
+/** La sorte d'une sélection, ou null si elle est vide. */
+declare function selectionKindOf(selected: FabricObject[]): SelectionKind | null;
+/**
+ * Les outils de la sélection que l'éditeur propose, dans l'ordre de la barre. Un texte en
+ * édition ne montre que ce qui se règle sur une plage (couleur, police) : la barre reste
+ * sous le texte pendant qu'on y sélectionne des mots.
+ */
+declare function toolsFor(selected: FabricObject[], offered: Iterable<ToolId>): ToolId[];
+
+/**
+ * La table des raccourcis : chaque entrée est une DONNÉE — consultable (une page d'aide,
+ * l'infobulle d'un outil : `tool`), reliée à un outil de la barre, et pilotée par
+ * ShortcutManager. Deux sortes d'entrées :
+ * - une touche (`keys`), qui exécute `run` ;
+ * - un geste de souris (`gesture` + `modifiers`), que le code des gestes interroge
+ *   (`shortcuts.gesture("duplicate-on-drag", e)`) — la table pilote, elle ne décrit pas.
+ *
+ * La portée (`when`) : `canvas` (défaut) ne tire ni dans un champ ni pendant la saisie
+ * d'un texte ; `editing` tire aussi pendant la saisie d'un texte du canvas (⌘Z en sort et
+ * annule) ; `always` partout.
+ *
+ * Les entrées de la lib (CANVAS_SHORTCUTS) : ce que tout éditeur fabric sait faire. L'hôte
+ * y ajoute les siennes (annuler, lecture, timeline…) par `register`.
+ */
+
+type ShortcutGroup = "select" | "edit" | "move" | "text" | "image" | "view" | "timeline";
+type ShortcutScope = "canvas" | "editing" | "always";
+type Gesture = "drag" | "resize" | "rotate" | "wheel" | "dblclick";
+interface ShortcutContext {
+    editor: FabricEditor;
+    event: KeyboardEvent;
+    mod: boolean;
+    shift: boolean;
+    alt: boolean;
+}
+interface KeyShortcut {
+    id: string;
+    keys: string[];
+    group: ShortcutGroup;
+    /** L'outil de la barre qu'il double : son infobulle montre la touche. */
+    tool?: ToolId | string;
+    when?: ShortcutScope;
+    /** false : « pas pour moi » — l'événement n'est pas consommé par cette entrée. */
+    run: (ctx: ShortcutContext) => void | boolean | Promise<void | boolean>;
+}
+interface GestureShortcut {
+    id: string;
+    gesture: Gesture;
+    modifiers: Modifier[];
+    group: ShortcutGroup;
+}
+type ShortcutEntry = KeyShortcut | GestureShortcut;
+declare const isKeyShortcut: (entry: ShortcutEntry) => entry is KeyShortcut;
+/** Ce que tout canvas fabric sait faire au clavier. */
+declare const CANVAS_SHORTCUTS: ShortcutEntry[];
+
+/**
+ * Le gestionnaire des raccourcis d'un éditeur : une table déclarative (ShortcutEntry) qu'il
+ * fait vivre — les touches sur `keydown`, les gestes de souris à la demande du code des
+ * gestes — et qu'il rend consultable (étiquettes selon la plateforme, raccourci d'un outil).
+ *
+ * Plusieurs entrées peuvent répondre à la même touche (Échap : fermer un menu, puis
+ * désélectionner) : toutes celles dont la portée convient s'exécutent, dans l'ordre
+ * d'enregistrement ; l'événement est consommé dès qu'une l'a prise (`run` ≠ false).
+ *
+ * Ce qui compte comme « en saisie » : un champ de formulaire, un élément éditable, et le
+ * textarea caché de fabric (la saisie d'un texte du canvas) — là, seules les entrées
+ * `editing` et `always` tirent ; dans un champ ordinaire, `always` seulement.
+ */
+
+interface ShortcutManagerOptions {
+    /** Les entrées de départ (défaut : CANVAS_SHORTCUTS). */
+    entries?: ShortcutEntry[];
+    /** Où écouter les touches — injectable pour les tests. */
+    doc?: Pick<Document, "addEventListener" | "removeEventListener">;
+    platform?: Platform;
+}
+declare class ShortcutManager {
+    private readonly editor;
+    readonly platform: Platform;
+    private readonly doc;
+    private list;
+    private bound;
+    private readonly onKeyDown;
+    constructor(editor: FabricEditor, options?: ShortcutManagerOptions);
+    /** Ajoute des entrées (celles de l'hôte) ; rend de quoi les retirer. */
+    register(entries: ShortcutEntry[]): () => void;
+    /** La table, consultable. */
+    entries(): readonly ShortcutEntry[];
+    keyEntries(): KeyShortcut[];
+    gestures(): GestureShortcut[];
+    /** L'étiquette d'un raccourci (« ⌘D », « ⌫ ou Suppr »), null s'il n'existe pas. */
+    labelFor(id: string): string | null;
+    /** L'étiquette du raccourci qui double un outil de la barre. */
+    labelForTool(tool: string): string | null;
+    /** Un geste déclaré est-il demandé par les touches tenues pendant l'événement ? */
+    gesture(id: string, e: Pick<KeyLike, "metaKey" | "ctrlKey" | "shiftKey" | "altKey">): boolean;
+    /** Traite une touche ; vrai si une entrée l'a prise (l'événement est alors consommé). */
+    handle(e: KeyboardEvent): Promise<boolean>;
+    dispose(): void;
+    private rebind;
+}
+
+/**
  * Un path du catalogue : géométrie normalisée 100x100, apparence d'auteur optionnelle.
  * Sans fill ni stroke = géométrie recolorable (le défaut de l'appelant s'applique) ;
  * stroke sans fill = forme en contour (fill transparent, jamais le défaut).
@@ -1115,6 +1273,8 @@ interface EditorConfig {
     userSlotLabel?: string;
     /** Invite dans les images à fournir, sous l'icône (si elle tient) — la traduction de l'hôte. */
     userSlotPrompt?: string;
+    /** Les raccourcis : la table de départ, le document écouté, la plateforme (tests). */
+    shortcuts?: ShortcutManagerOptions;
     container?: HTMLElement;
     transparent?: boolean;
     /**
@@ -1820,6 +1980,9 @@ declare class SelectionManager {
      * Gère la fin d'une modification d'objet
      */
     private handleModified;
+    /** Le canal « quelque chose a changé » : ce que l'hôte écoute après un geste — les
+     *  commandes de l'éditeur (coller, décaler, dupliquer) le préviennent par là aussi. */
+    notifyModified(target: FabricObject | null): void;
     /**
      * Nettoie les écouteurs
      */
@@ -2466,6 +2629,8 @@ declare class FabricEditor {
     readonly layout: LayoutManager;
     /** Le recadrage d'une image dans son cadre (CropMode). */
     readonly crop: CropMode;
+    /** Les raccourcis : la table du canvas, plus ceux que l'hôte enregistre (ShortcutManager). */
+    readonly shortcuts: ShortcutManager;
     private config;
     private _displayScale;
     private _userZoom;
@@ -2649,6 +2814,11 @@ declare class FabricEditor {
      */
     onUserSlotsChange(callback: (slots: UserSlot[]) => void): () => void;
     groupSelection(): FabricObject | null;
+    selectAll(): FabricObject[];
+    deselect(): void;
+    nudgeSelection(dx: number, dy: number): boolean;
+    cutSelection(): void;
+    duplicateSelection(): Promise<FabricObject[]>;
     ungroupSelection(): FabricObject[];
     alignSelection(edge: AlignEdge): void;
     distributeSelection(axis: DistributeAxis): void;
@@ -3323,38 +3493,6 @@ declare function kindOf(obj: FabricObject): ObjectKind;
 declare function rulesOf(obj: FabricObject, { ignoreLock }?: RulesQuery): ObjectRules;
 
 /**
- * Les outils d'une sélection : lesquels, dans quel ordre. La barre d'actions des éditeurs
- * ne décide rien : elle montre ce que rend `toolsFor`, dans cet ordre.
- *
- * Deux questions, deux sources :
- * - ce que la sélection permet — le règlement (`rulesOf`), verrous compris, et sa place
- *   dans l'arbre (container, groupe, enfant) ;
- * - ce que l'éditeur propose — `offered` : un outil que l'éditeur n'a pas (les animations
- *   hors vidéo, le verrou hors création…) n'apparaît jamais.
- *
- * L'ordre suit la fréquence d'usage, par sorte de sélection (barre d'actions du round 2) :
- * la couleur et le contenu d'abord, puis l'animation, les réglages fins, l'ordre des plans ;
- * Supprimer toujours en dernier. En multi-sélection, Grouper d'abord.
- */
-
-type ToolId = "group" | "align" | "distribute" | "arrangement" | "ungroup" | "fill" | "font" | "variables" | "crop" | "image" | "promoteBackground" | "clip" | "outline" | "effects" | "layout" | "containerize" | "animations" | "condition" | "lock" | "forward" | "backward" | "delete";
-/**
- * - `text`, `shape`, `image` : un objet seul, d'après sa sorte ;
- * - `block` : une forme qui porte des éléments ;
- * - `group` : un groupe (⌘G), libre ou rangé ;
- * - `many` : plusieurs objets.
- */
-type SelectionKind = "text" | "shape" | "image" | "block" | "group" | "many";
-/** La sorte d'une sélection, ou null si elle est vide. */
-declare function selectionKindOf(selected: FabricObject[]): SelectionKind | null;
-/**
- * Les outils de la sélection que l'éditeur propose, dans l'ordre de la barre. Un texte en
- * édition ne montre que ce qui se règle sur une plage (couleur, police) : la barre reste
- * sous le texte pendant qu'on y sélectionne des mots.
- */
-declare function toolsFor(selected: FabricObject[], offered: Iterable<ToolId>): ToolId[];
-
-/**
  * Calcule les facteurs d'anti-scale pour maintenir les proportions d'un clip
  * sur un objet étendu de manière non-uniforme.
  *
@@ -3505,4 +3643,4 @@ declare const DEFAULT_GUIDE_COLOR = "#d946ef";
  */
 declare const DEFAULT_SNAP_GUIDE_COLOR = "#ff00ff";
 
-export { type AlignEdge, type AlignItems, type AlignSelf, type Arrangement, type BadgeLabeler, type BindingSpec, type Bindings, type Box, CanvasGuides, type CatalogShape, type CatalogShapeInput, type ChildData, type ClipData, type ContainerData, ContainerizeSession, type ControlOption, type Crop, CropMode, CustomTextbox, DEFAULT_GUIDE_COLOR, DEFAULT_SNAP_GUIDE_COLOR, type Delta, DesignCanvas, type DistributeAxis, type DragPayload, DropHandler, type DropHandlerConfig, type DropResult, type EditorConfig, FabCircle, FabPath, FabRect, FabricEditor, type FlexDirection, type FontConfig, type FontsConfig, type FrameRect, FreeResizeSession, GHOST_OPACITY, type GradientStop, HEART_PATH, HEXAGON_PATH, type HistoryCallbacks, HistoryManager, type HistoryState, type HtmlLayerOutput, type HtmlRenderOptions, ImageFrame, type ImageLayerOptions, InsertChildSession, type JustifyContent, LAYER_PROPS, type LayerData, LayerManager, type LayoutData, LayoutManager, type LayoutManagerCallbacks, type LayoutParents, type LayoutSession, type LockMode$1 as LockMode, type Lockable, MAX_CROP_SCALE, MIN_PAD, MIXED, MaskManager, NO_CROP, type ObjectControlsConfig, type ObjectKind, type ObjectRules, PendingUploadsManager, PersistenceManager, PreviewCanvas, ResizeSession, type ResizeSnapResult, type SaveOptions, type SaveResult, type SelectionCallbacks, type SelectionKind, SelectionManager, type ShapeCatalogEntry, type ShapeLayerOptions, type ShapePathData, type ShapeType, type SizeMode, type SizePreset, type SizingData, type SnappingConfig, SnappingManager, StackResizeSession, TEXT_STYLE_KEYS, type TextLayerOptions, type TextOverflow, type TextStyleKey, type TextStyleState, type TextStyleValue, type ToolId, type ToolboxImageReaction, type TreeLayer, USER_SCOPE, USER_SLOT_FIELD, type UserSlot, type WorkspaceOptions, addCircleClip, addCropControls, addHeartClip, addHexagonClip, alignAxis, alignDelta, antiScale, applyClip, applyLockMode, badgeLabel, bindingBadgeLabel, canvasImageSource, clampTopLeft, clipDataFor, collectUserSlots, createCircle, createDropSession, createHeart, createHexagon, createImage, createPathShape, createPathsShape, createRect, createShape, cropFromRect, displayFill, distributeDeltas, drawBindingBadge, drawFrameBadge, fabricToHtml, fitFreeContainer, fontFamiliesOf, getAvailableShapes, getCatalogShape, getLockMode, getNextLockMode, getShapeCatalog, hasExceededOffset, hasPendingBindings, initYoga, isBold, isContentLocked, isCropped, isFreeContainer, isGhost, isMonoPath, isPositionLocked, isStyleLocked, isUserSlot, isValidShape, kindOf, layerToHtmlStandalone, layoutChildren, layoutDescendants, layoutParents, layoutRoot, nextShape, panCrop, pendingBindings, photoRect, pointInObject, registerShapes, registeredShapes, removeCropControls, rulesOf, runLayout, scaledSize, selectionKindOf, setDisplayFill, setGhost, setTextContent, stackBlock, stackParentOf, summarizeObject, summarizeStyles, switchClip, switchShape, toolsFor, topLeft, unionBox, userSlotBinding, userSlotHint, wrapContainerAroundChild, yogaLayout, zoomCrop };
+export { type AlignEdge, type AlignItems, type AlignSelf, type Arrangement, type BadgeLabeler, type BindingSpec, type Bindings, type Box, CANVAS_SHORTCUTS, CanvasGuides, type CatalogShape, type CatalogShapeInput, type ChildData, type ClipData, type ContainerData, ContainerizeSession, type ControlOption, type Crop, CropMode, CustomTextbox, DEFAULT_GUIDE_COLOR, DEFAULT_SNAP_GUIDE_COLOR, type Delta, DesignCanvas, type DistributeAxis, type DragPayload, DropHandler, type DropHandlerConfig, type DropResult, type EditorConfig, FabCircle, FabPath, FabRect, FabricEditor, type FlexDirection, type FontConfig, type FontsConfig, type FrameRect, FreeResizeSession, GHOST_OPACITY, type GestureShortcut, type GradientStop, HEART_PATH, HEXAGON_PATH, type HistoryCallbacks, HistoryManager, type HistoryState, type HtmlLayerOutput, type HtmlRenderOptions, ImageFrame, type ImageLayerOptions, InsertChildSession, type JustifyContent, type KeyShortcut, LAYER_PROPS, type LayerData, LayerManager, type LayoutData, LayoutManager, type LayoutManagerCallbacks, type LayoutParents, type LayoutSession, type LockMode$1 as LockMode, type Lockable, MAX_CROP_SCALE, MIN_PAD, MIXED, MaskManager, type Modifier, NO_CROP, type ObjectControlsConfig, type ObjectKind, type ObjectRules, PendingUploadsManager, PersistenceManager, type Platform, PreviewCanvas, ResizeSession, type ResizeSnapResult, type SaveOptions, type SaveResult, type SelectionCallbacks, type SelectionKind, SelectionManager, type ShapeCatalogEntry, type ShapeLayerOptions, type ShapePathData, type ShapeType, type ShortcutContext, type ShortcutEntry, type ShortcutGroup, ShortcutManager, type ShortcutManagerOptions, type ShortcutScope, type SizeMode, type SizePreset, type SizingData, type SnappingConfig, SnappingManager, StackResizeSession, TEXT_STYLE_KEYS, type TextLayerOptions, type TextOverflow, type TextStyleKey, type TextStyleState, type TextStyleValue, type ToolId, type ToolboxImageReaction, type TreeLayer, USER_SCOPE, USER_SLOT_FIELD, type UserSlot, type WorkspaceOptions, addCircleClip, addCropControls, addHeartClip, addHexagonClip, alignAxis, alignDelta, antiScale, applyClip, applyLockMode, badgeLabel, bindingBadgeLabel, canvasImageSource, clampTopLeft, clipDataFor, collectUserSlots, createCircle, createDropSession, createHeart, createHexagon, createImage, createPathShape, createPathsShape, createRect, createShape, cropFromRect, detectPlatform, displayFill, distributeDeltas, drawBindingBadge, drawFrameBadge, fabricToHtml, fitFreeContainer, fontFamiliesOf, formatCombo, formatModifier, getAvailableShapes, getCatalogShape, getLockMode, getNextLockMode, getShapeCatalog, hasExceededOffset, hasPendingBindings, initYoga, isBold, isContentLocked, isCropped, isFreeContainer, isGhost, isKeyShortcut, isMonoPath, isPositionLocked, isStyleLocked, isUserSlot, isValidShape, kindOf, layerToHtmlStandalone, layoutChildren, layoutDescendants, layoutParents, layoutRoot, nextShape, panCrop, parseCombo, pendingBindings, photoRect, pointInObject, registerShapes, registeredShapes, removeCropControls, rulesOf, runLayout, scaledSize, selectionKindOf, setDisplayFill, setGhost, setTextContent, stackBlock, stackParentOf, summarizeObject, summarizeStyles, switchClip, switchShape, toolsFor, topLeft, unionBox, userSlotBinding, userSlotHint, wrapContainerAroundChild, yogaLayout, zoomCrop };

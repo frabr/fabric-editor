@@ -3896,9 +3896,12 @@ var SelectionManager = class {
    */
   handleModified(e) {
     this.isTransforming = false;
-    if (this.callbacks.onModified) {
-      this.callbacks.onModified(e.target || null);
-    }
+    this.notifyModified(e.target || null);
+  }
+  /** Le canal « quelque chose a changé » : ce que l'hôte écoute après un geste — les
+   *  commandes de l'éditeur (coller, décaler, dupliquer) le préviennent par là aussi. */
+  notifyModified(target) {
+    this.callbacks.onModified?.(target);
   }
   /**
    * Nettoie les écouteurs
@@ -7665,14 +7668,27 @@ var Clipboard = class {
       (obj) => obj.toObject(["layerId", "lockMode", "lockContent", "layout", "bindings"])
     );
   }
+  /** Couper : copier, puis retirer la sélection (les objets verrouillés restent). */
+  cutSelection() {
+    this.copySelection();
+    this.editor.deleteSelection();
+  }
+  /** Dupliquer : une copie décalée de 32 px, sélectionnée — sans toucher au presse-papiers. */
+  async duplicateSelection() {
+    const kept = this._clipboard;
+    this.copySelection();
+    const copies = await this.pasteClipboard();
+    this._clipboard = kept;
+    return copies;
+  }
   /**
    * Paste clipboard contents onto the canvas.
    * Generates fresh layerIds and remaps parent/child references.
-   * Offsets pasted objects by 20px so they don't overlap the originals.
+   * Offsets pasted objects by 32px so they don't overlap the originals.
    */
   async pasteClipboard() {
     if (!this._clipboard?.length) return [];
-    const OFFSET = 20;
+    const OFFSET = 32;
     const idMap = /* @__PURE__ */ new Map();
     this._clipboard.forEach((data, i) => {
       if (data.layerId) {
@@ -7703,6 +7719,7 @@ var Clipboard = class {
     }
     this.editor.selection.selectMany(objects);
     this.editor.canvas.renderAll();
+    this.editor.selection.notifyModified(null);
     return objects;
   }
 };
@@ -7752,6 +7769,37 @@ var SelectionCommands = class {
   constructor(editor) {
     this.editor = editor;
   }
+  // ── Sélectionner ──────────────────────────────────────────────────
+  /**
+   * Tout sélectionner : les objets de premier niveau qu'on peut saisir (visibles, en jeu,
+   * non verrouillés) — un container emmène ses enfants. Rend la sélection.
+   */
+  selectAll() {
+    const roots = this.editor.canvas.getObjects().filter((obj) => obj.visible !== false && obj.selectable !== false && obj.evented !== false && !layoutOf(obj)?.child && getLockMode(obj) === "free" && rulesOf(obj).kind !== "other");
+    if (roots.length) this.editor.selection.selectMany(roots);
+    return roots;
+  }
+  /** Désélectionner. */
+  deselect() {
+    this.editor.canvas.discardActiveObject();
+    this.editor.canvas.renderAll();
+  }
+  // ── Décaler ───────────────────────────────────────────────────────
+  /**
+   * Décale la sélection de (dx, dy), descendance comprise. Un enfant de pile ne bouge
+   * pas (la pile le place). Vrai si quelque chose a bougé — l'hôte est prévenu comme
+   * après un glisser (onModified).
+   */
+  nudgeSelection(dx, dy) {
+    const objects = this.editor.canvas.getObjects();
+    const roots = this.editor.selection.selected.filter((obj) => rulesOf(obj).deletes && !stackParentOf(obj, objects));
+    if (!roots.length) return false;
+    this.editor.selection.withSelectionReleased(() => translateSubtree(objects, roots, dx, dy));
+    this.editor.layout.relayout();
+    this.editor.canvas.renderAll();
+    this.editor.selection.notifyModified(roots.length === 1 ? roots[0] : null);
+    return true;
+  }
   // ── Grouper, dégrouper ────────────────────────────────────────────
   /**
    * Groupe la sélection (au moins deux objets) dans un groupe libre — rien ne bouge. La
@@ -7766,6 +7814,7 @@ var SelectionCommands = class {
       group = groupObjects(this.editor.canvas, selected, `layer_${Date.now()}_${Math.floor(Math.random() * 1e3)}`);
       if (group) this.editor.layout.relayout();
     });
+    if (group) this.editor.selection.notifyModified(group);
     return group;
   }
   /**
@@ -7780,6 +7829,7 @@ var SelectionCommands = class {
     this.editor.layout.relayout();
     const kept = this.editor.canvas.getObjects().includes(container);
     this.editor.selection.selectMany(children.length || !kept ? children : [container]);
+    this.editor.selection.notifyModified(null);
     return children;
   }
   // ── Aligner, répartir ─────────────────────────────────────────────
@@ -7853,6 +7903,7 @@ var SelectionCommands = class {
     this.editor.canvas.discardActiveObject();
     this.editor.layers.removeMany(doomed);
     this.editor.canvas.renderAll();
+    this.editor.selection.notifyModified(null);
   }
 };
 
@@ -8155,6 +8206,211 @@ var CropMode = class {
   }
 };
 
+// src/shortcuts/keys.ts
+var ALIASES = { space: " ", esc: "Escape", del: "Delete" };
+var NAMED = ["Delete", "Backspace", "Escape", "Enter", "Tab", "Home", "End", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"];
+function parseCombo(combo) {
+  const parts = combo.split("+");
+  const raw = parts.pop() ?? "";
+  const lower = raw.toLowerCase();
+  const named = NAMED.find((name) => name.toLowerCase() === lower);
+  const key = ALIASES[lower] ?? named ?? (raw.length === 1 ? lower : raw);
+  const mods = new Set(parts.map((part) => part.toLowerCase()));
+  return { key, mod: mods.has("mod"), shift: mods.has("shift"), alt: mods.has("alt") };
+}
+function modPressed(e, platform) {
+  return platform === "mac" ? e.metaKey : e.ctrlKey;
+}
+function matchesCombo(combo, e, platform) {
+  if (combo.mod !== modPressed(e, platform)) return false;
+  if (combo.shift !== e.shiftKey || combo.alt !== e.altKey) return false;
+  const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+  return key === combo.key;
+}
+function detectPlatform(nav = globalThis.navigator) {
+  const hint = `${nav?.platform ?? ""} ${nav?.userAgent ?? ""}`;
+  return /mac|iphone|ipad/i.test(hint) ? "mac" : "other";
+}
+var KEY_NAMES = {
+  " ": "Espace",
+  Escape: "\xC9chap",
+  Enter: "\u21B5",
+  Backspace: "\u232B",
+  Delete: "Suppr",
+  ArrowUp: "\u2191",
+  ArrowDown: "\u2193",
+  ArrowLeft: "\u2190",
+  ArrowRight: "\u2192",
+  Tab: "Tab",
+  Home: "D\xE9but",
+  End: "Fin"
+};
+function formatCombo(combo, platform) {
+  const key = KEY_NAMES[combo.key] ?? (combo.key.length === 1 ? combo.key.toUpperCase() : combo.key);
+  if (platform === "mac") {
+    return `${combo.mod ? "\u2318" : ""}${combo.alt ? "\u2325" : ""}${combo.shift ? "\u21E7" : ""}${key}`;
+  }
+  return [combo.mod && "Ctrl", combo.alt && "Alt", combo.shift && "Shift", key].filter(Boolean).join("+");
+}
+function formatCombos(combos, platform) {
+  return combos.map((combo) => formatCombo(combo, platform)).join(" ou ");
+}
+function formatModifier(modifier, platform) {
+  if (platform === "mac") return { mod: "\u2318", shift: "\u21E7", alt: "\u2325" }[modifier];
+  return { mod: "Ctrl", shift: "Shift", alt: "Alt" }[modifier];
+}
+
+// src/shortcuts/table.ts
+var isKeyShortcut = (entry) => "keys" in entry;
+var nudge = (dx, dy) => (ctx) => {
+  const step = ctx.shift ? 10 : 1;
+  return ctx.editor.nudgeSelection(dx * step, dy * step);
+};
+var CANVAS_SHORTCUTS = [
+  {
+    id: "delete",
+    keys: ["Delete", "Backspace"],
+    group: "edit",
+    tool: "delete",
+    run: ({ editor }) => editor.selection.hasSelection && (editor.deleteSelection(), true)
+  },
+  {
+    id: "duplicate",
+    keys: ["mod+d"],
+    group: "edit",
+    run: ({ editor }) => editor.selection.hasSelection && (void editor.duplicateSelection(), true)
+  },
+  {
+    id: "copy",
+    keys: ["mod+c"],
+    group: "edit",
+    run: ({ editor }) => editor.selection.hasSelection && (editor.copySelection(), true)
+  },
+  {
+    id: "cut",
+    keys: ["mod+x"],
+    group: "edit",
+    run: ({ editor }) => editor.selection.hasSelection && (editor.cutSelection(), true)
+  },
+  { id: "paste", keys: ["mod+v"], group: "edit", run: ({ editor }) => {
+    void editor.pasteClipboard();
+  } },
+  { id: "select-all", keys: ["mod+a"], group: "select", run: ({ editor }) => editor.selectAll().length > 0 },
+  {
+    id: "deselect",
+    keys: ["Escape"],
+    group: "select",
+    run: ({ editor }) => editor.selection.hasSelection && (editor.deselect(), true)
+  },
+  { id: "group", keys: ["mod+g"], group: "edit", tool: "group", run: ({ editor }) => editor.groupSelection() !== null },
+  {
+    id: "ungroup",
+    keys: ["mod+shift+g"],
+    group: "edit",
+    tool: "ungroup",
+    run: ({ editor }) => editor.ungroupSelection().length > 0
+  },
+  { id: "nudge-left", keys: ["ArrowLeft", "shift+ArrowLeft"], group: "move", run: nudge(-1, 0) },
+  { id: "nudge-right", keys: ["ArrowRight", "shift+ArrowRight"], group: "move", run: nudge(1, 0) },
+  { id: "nudge-up", keys: ["ArrowUp", "shift+ArrowUp"], group: "move", run: nudge(0, -1) },
+  { id: "nudge-down", keys: ["ArrowDown", "shift+ArrowDown"], group: "move", run: nudge(0, 1) }
+];
+
+// src/shortcuts/ShortcutManager.ts
+var ShortcutManager = class {
+  constructor(editor, options = {}) {
+    this.editor = editor;
+    this.list = [];
+    this.bound = [];
+    this.onKeyDown = (e) => {
+      void this.handle(e);
+    };
+    this.platform = options.platform ?? detectPlatform();
+    this.doc = options.doc ?? (typeof document !== "undefined" ? document : void 0);
+    this.register(options.entries ?? CANVAS_SHORTCUTS);
+    this.doc?.addEventListener("keydown", this.onKeyDown);
+  }
+  /** Ajoute des entrées (celles de l'hôte) ; rend de quoi les retirer. */
+  register(entries) {
+    this.list = [...this.list, ...entries];
+    this.rebind();
+    return () => {
+      this.list = this.list.filter((entry) => !entries.includes(entry));
+      this.rebind();
+    };
+  }
+  /** La table, consultable. */
+  entries() {
+    return this.list;
+  }
+  keyEntries() {
+    return this.list.filter(isKeyShortcut);
+  }
+  gestures() {
+    return this.list.filter((entry) => !isKeyShortcut(entry));
+  }
+  /** L'étiquette d'un raccourci (« ⌘D », « ⌫ ou Suppr »), null s'il n'existe pas. */
+  labelFor(id) {
+    const found = this.bound.find((item) => item.entry.id === id);
+    return found ? formatCombos(found.combos, this.platform) : null;
+  }
+  /** L'étiquette du raccourci qui double un outil de la barre. */
+  labelForTool(tool) {
+    const found = this.bound.find((item) => item.entry.tool === tool);
+    return found ? formatCombos(found.combos, this.platform) : null;
+  }
+  /** Un geste déclaré est-il demandé par les touches tenues pendant l'événement ? */
+  gesture(id, e) {
+    const found = this.gestures().find((entry) => entry.id === id);
+    if (!found) return false;
+    return found.modifiers.every((modifier) => {
+      if (modifier === "mod") return this.platform === "mac" ? e.metaKey : e.ctrlKey;
+      return modifier === "shift" ? e.shiftKey : e.altKey;
+    });
+  }
+  /** Traite une touche ; vrai si une entrée l'a prise (l'événement est alors consommé). */
+  async handle(e) {
+    const scope = scopeOf(e);
+    let handled = false;
+    for (const { entry, combos } of this.bound) {
+      if (!allowed(entry.when ?? "canvas", scope)) continue;
+      if (!combos.some((combo) => matchesCombo(combo, e, this.platform))) continue;
+      const result = await entry.run({
+        editor: this.editor,
+        event: e,
+        shift: e.shiftKey,
+        alt: e.altKey,
+        mod: this.platform === "mac" ? e.metaKey : e.ctrlKey
+      });
+      if (result !== false) {
+        handled = true;
+        e.preventDefault();
+      }
+    }
+    return handled;
+  }
+  dispose() {
+    this.doc?.removeEventListener("keydown", this.onKeyDown);
+    this.list = [];
+    this.bound = [];
+  }
+  rebind() {
+    this.bound = this.keyEntries().map((entry) => ({ entry, combos: entry.keys.map(parseCombo) }));
+  }
+};
+function allowed(when, scope) {
+  if (when === "always") return true;
+  if (scope === "canvas") return true;
+  return when === "editing" && scope === "editing";
+}
+function scopeOf(e) {
+  const target = e.target;
+  if (!target || typeof target.closest !== "function") return "canvas";
+  const field = target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable;
+  if (!field) return "canvas";
+  return target.closest(".canvas-container") ? "editing" : "field";
+}
+
 // src/FabricEditor.ts
 var _FabricEditor = class _FabricEditor {
   constructor(canvasElement, config) {
@@ -8196,6 +8452,7 @@ var _FabricEditor = class _FabricEditor {
     );
     this.crop = new CropMode(this.canvas, gc);
     this.installCropOnDoubleClick();
+    this.shortcuts = new ShortcutManager(this, config.shortcuts);
     this.canvas.originalFabricCanvas.snappingManager = this.snapping;
     this.extendFabricObject();
     if (config.transparent) {
@@ -8722,6 +8979,21 @@ var _FabricEditor = class _FabricEditor {
   groupSelection() {
     return this.commands.groupSelection();
   }
+  selectAll() {
+    return this.commands.selectAll();
+  }
+  deselect() {
+    this.commands.deselect();
+  }
+  nudgeSelection(dx, dy) {
+    return this.commands.nudgeSelection(dx, dy);
+  }
+  cutSelection() {
+    this.clipboard.cutSelection();
+  }
+  duplicateSelection() {
+    return this.clipboard.duplicateSelection();
+  }
   ungroupSelection() {
     return this.commands.ungroupSelection();
   }
@@ -8767,6 +9039,7 @@ var _FabricEditor = class _FabricEditor {
     this._resizeObserver?.disconnect();
     this._resizeObserver = null;
     this._resizeCallbacks = [];
+    this.shortcuts.dispose();
     this.crop.dispose();
     this.snapping.dispose();
     this.selection.dispose();
@@ -10147,6 +10420,7 @@ function layerToHtmlStandalone(layer, zIndex) {
   return layerToHtml(layer, zIndex);
 }
 export {
+  CANVAS_SHORTCUTS,
   CanvasGuides,
   ContainerizeSession,
   CropMode,
@@ -10179,6 +10453,7 @@ export {
   PreviewCanvas,
   ResizeSession,
   SelectionManager,
+  ShortcutManager,
   SnappingManager,
   StackResizeSession,
   TEXT_STYLE_KEYS,
@@ -10209,6 +10484,7 @@ export {
   createRect,
   createShape,
   cropFromRect,
+  detectPlatform,
   displayFill,
   distributeDeltas,
   drawBindingBadge,
@@ -10216,6 +10492,8 @@ export {
   fabricToHtml,
   fitFreeContainer,
   fontFamiliesOf,
+  formatCombo,
+  formatModifier,
   getAvailableShapes,
   getCatalogShape,
   getLockMode,
@@ -10229,6 +10507,7 @@ export {
   isCropped,
   isFreeContainer,
   isGhost,
+  isKeyShortcut,
   isMonoPath,
   isPositionLocked,
   isStyleLocked,
@@ -10242,6 +10521,7 @@ export {
   layoutRoot,
   nextShape,
   panCrop,
+  parseCombo,
   pendingBindings,
   photoRect,
   pointInObject,

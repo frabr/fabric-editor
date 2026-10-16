@@ -500,6 +500,184 @@ declare class CustomTextbox extends Textbox {
 type LockMode$1 = "free" | "position" | "full";
 
 /**
+ * Gère les fichiers en attente d'upload vers Cloudinary
+ *
+ * Permet d'utiliser des blob URLs pendant l'édition et d'uploader
+ * tous les fichiers en une seule fois à la sauvegarde.
+ */
+declare class PendingUploadsManager {
+    /** Map blob URL → File original */
+    private pending;
+    /** Fonction d'upload (injectée pour découplage) */
+    private uploadFn;
+    /** Compteur pour générer des IDs uniques en environnement Node.js */
+    private static nodeIdCounter;
+    constructor(uploadFn: (file: File) => Promise<string>);
+    /**
+     * Ajoute un fichier en attente d'upload
+     * @returns URL blob locale utilisable immédiatement
+     */
+    add(file: File): string;
+    /**
+     * Vérifie si une URL est un blob en attente
+     */
+    isPending(url: string): boolean;
+    /**
+     * Vérifie si des fichiers sont en attente
+     */
+    hasPending(): boolean;
+    /**
+     * Nombre de fichiers en attente
+     */
+    get count(): number;
+    /**
+     * Upload tous les fichiers en attente vers Cloudinary
+     * @returns Map blob URL → Cloudinary URL
+     */
+    uploadAll(): Promise<Map<string, string>>;
+    /**
+     * Remplace les blob URLs par les URLs Cloudinary dans un objet JSON
+     * @param obj Objet contenant potentiellement des blob URLs (layers, etc.)
+     * @param urlMap Map blob URL → Cloudinary URL
+     * @returns Nouvel objet avec URLs remplacées
+     */
+    static replaceUrls<T>(obj: T, urlMap: Map<string, string>): T;
+    /**
+     * Nettoie toutes les ressources (blob URLs) sans uploader
+     * À appeler si l'utilisateur abandonne
+     */
+    clear(): void;
+}
+
+/**
+ * Gère la sauvegarde et le chargement des données de l'éditeur
+ */
+declare class PersistenceManager {
+    private canvas;
+    private layers;
+    private pendingUploads;
+    constructor(canvas: DesignCanvas, layers: LayerManager);
+    /**
+     * Configure le gestionnaire d'uploads en attente
+     */
+    setPendingUploads(manager: PendingUploadsManager): void;
+    /**
+     * Sauvegarde l'état actuel de l'éditeur
+     *
+     * Si des fichiers sont en attente d'upload, ils sont uploadés en parallèle
+     * du rendu canvas pour optimiser le temps total.
+     */
+    save(options?: SaveOptions): Promise<SaveResult>;
+    /**
+     * Upload les fichiers en attente vers Cloudinary
+     */
+    private uploadPendingFiles;
+    /**
+     * Rasterise le canvas en image base64
+     */
+    rasterize(): Promise<string>;
+    /**
+     * Compacte le canvas autour des calques (pour le mode standalone)
+     *
+     * Calcule le bounding box manuellement sans Group, car Fabric.js 7
+     * transforme les coordonnées des enfants en relatif au centre du groupe.
+     */
+    compactAroundLayers(): void;
+    /**
+     * Exporte les données des calques en JSON
+     */
+    exportLayersJSON(): string;
+    /**
+     * Importe des calques depuis du JSON
+     */
+    importLayersJSON(json: string): Promise<void>;
+    /**
+     * Réinitialise l'éditeur (supprime tous les calques sauf le fond)
+     */
+    reset(): void;
+}
+
+interface HistoryState {
+    canUndo: boolean;
+    canRedo: boolean;
+}
+interface HistoryCallbacks {
+    /** Appelé quand l'état undo/redo change */
+    onStateChange?: (state: HistoryState) => void;
+}
+/**
+ * Gère l'historique des modifications pour undo/redo
+ *
+ * Utilise une approche "snapshot" : à chaque modification,
+ * l'état complet des calques est sérialisé et stocké.
+ */
+declare class HistoryManager {
+    private canvas;
+    private layers;
+    private stack;
+    private index;
+    private maxSize;
+    private callbacks;
+    private isRestoring;
+    constructor(canvas: DesignCanvas, layers: LayerManager, options?: {
+        maxSize?: number;
+    });
+    /**
+     * Configure les callbacks
+     */
+    setCallbacks(callbacks: HistoryCallbacks): void;
+    /**
+     * Définit le callback onStateChange
+     */
+    set onStateChange(callback: ((state: HistoryState) => void) | undefined);
+    /**
+     * Vérifie si on peut annuler
+     */
+    get canUndo(): boolean;
+    /**
+     * Vérifie si on peut refaire
+     */
+    get canRedo(): boolean;
+    /**
+     * Retourne l'état actuel
+     */
+    get state(): HistoryState;
+    /**
+     * Enregistre l'état actuel dans l'historique
+     * Appelé après chaque modification
+     */
+    push(): void;
+    /**
+     * Annule la dernière modification (Ctrl+Z)
+     * @returns true si l'annulation a réussi
+     */
+    undo(): Promise<boolean>;
+    /**
+     * Refait la dernière modification annulée (Ctrl+Y / Ctrl+Shift+Z)
+     * @returns true si le redo a réussi
+     */
+    redo(): Promise<boolean>;
+    /**
+     * Réinitialise l'historique
+     * Utile après un chargement initial ou une sauvegarde
+     */
+    clear(): void;
+    /**
+     * Initialise l'historique avec l'état actuel
+     * À appeler après le chargement initial des calques
+     */
+    initialize(): void;
+    /**
+     * Restaure l'état à l'index actuel
+     */
+    private restore;
+    /**
+     * Notifie les callbacks du changement d'état
+     */
+    private notifyStateChange;
+}
+
+/**
  * Un path du catalogue : géométrie normalisée 100x100, apparence d'auteur optionnelle.
  * Sans fill ni stroke = géométrie recolorable (le défaut de l'appelant s'applique) ;
  * stroke sans fill = forme en contour (fill transparent, jamais le défaut).
@@ -986,184 +1164,6 @@ declare class LayerManager {
      */
     private detectLegacyClipShape;
     private detectClipPath;
-}
-
-/**
- * Gère les fichiers en attente d'upload vers Cloudinary
- *
- * Permet d'utiliser des blob URLs pendant l'édition et d'uploader
- * tous les fichiers en une seule fois à la sauvegarde.
- */
-declare class PendingUploadsManager {
-    /** Map blob URL → File original */
-    private pending;
-    /** Fonction d'upload (injectée pour découplage) */
-    private uploadFn;
-    /** Compteur pour générer des IDs uniques en environnement Node.js */
-    private static nodeIdCounter;
-    constructor(uploadFn: (file: File) => Promise<string>);
-    /**
-     * Ajoute un fichier en attente d'upload
-     * @returns URL blob locale utilisable immédiatement
-     */
-    add(file: File): string;
-    /**
-     * Vérifie si une URL est un blob en attente
-     */
-    isPending(url: string): boolean;
-    /**
-     * Vérifie si des fichiers sont en attente
-     */
-    hasPending(): boolean;
-    /**
-     * Nombre de fichiers en attente
-     */
-    get count(): number;
-    /**
-     * Upload tous les fichiers en attente vers Cloudinary
-     * @returns Map blob URL → Cloudinary URL
-     */
-    uploadAll(): Promise<Map<string, string>>;
-    /**
-     * Remplace les blob URLs par les URLs Cloudinary dans un objet JSON
-     * @param obj Objet contenant potentiellement des blob URLs (layers, etc.)
-     * @param urlMap Map blob URL → Cloudinary URL
-     * @returns Nouvel objet avec URLs remplacées
-     */
-    static replaceUrls<T>(obj: T, urlMap: Map<string, string>): T;
-    /**
-     * Nettoie toutes les ressources (blob URLs) sans uploader
-     * À appeler si l'utilisateur abandonne
-     */
-    clear(): void;
-}
-
-/**
- * Gère la sauvegarde et le chargement des données de l'éditeur
- */
-declare class PersistenceManager {
-    private canvas;
-    private layers;
-    private pendingUploads;
-    constructor(canvas: DesignCanvas, layers: LayerManager);
-    /**
-     * Configure le gestionnaire d'uploads en attente
-     */
-    setPendingUploads(manager: PendingUploadsManager): void;
-    /**
-     * Sauvegarde l'état actuel de l'éditeur
-     *
-     * Si des fichiers sont en attente d'upload, ils sont uploadés en parallèle
-     * du rendu canvas pour optimiser le temps total.
-     */
-    save(options?: SaveOptions): Promise<SaveResult>;
-    /**
-     * Upload les fichiers en attente vers Cloudinary
-     */
-    private uploadPendingFiles;
-    /**
-     * Rasterise le canvas en image base64
-     */
-    rasterize(): Promise<string>;
-    /**
-     * Compacte le canvas autour des calques (pour le mode standalone)
-     *
-     * Calcule le bounding box manuellement sans Group, car Fabric.js 7
-     * transforme les coordonnées des enfants en relatif au centre du groupe.
-     */
-    compactAroundLayers(): void;
-    /**
-     * Exporte les données des calques en JSON
-     */
-    exportLayersJSON(): string;
-    /**
-     * Importe des calques depuis du JSON
-     */
-    importLayersJSON(json: string): Promise<void>;
-    /**
-     * Réinitialise l'éditeur (supprime tous les calques sauf le fond)
-     */
-    reset(): void;
-}
-
-interface HistoryState {
-    canUndo: boolean;
-    canRedo: boolean;
-}
-interface HistoryCallbacks {
-    /** Appelé quand l'état undo/redo change */
-    onStateChange?: (state: HistoryState) => void;
-}
-/**
- * Gère l'historique des modifications pour undo/redo
- *
- * Utilise une approche "snapshot" : à chaque modification,
- * l'état complet des calques est sérialisé et stocké.
- */
-declare class HistoryManager {
-    private canvas;
-    private layers;
-    private stack;
-    private index;
-    private maxSize;
-    private callbacks;
-    private isRestoring;
-    constructor(canvas: DesignCanvas, layers: LayerManager, options?: {
-        maxSize?: number;
-    });
-    /**
-     * Configure les callbacks
-     */
-    setCallbacks(callbacks: HistoryCallbacks): void;
-    /**
-     * Définit le callback onStateChange
-     */
-    set onStateChange(callback: ((state: HistoryState) => void) | undefined);
-    /**
-     * Vérifie si on peut annuler
-     */
-    get canUndo(): boolean;
-    /**
-     * Vérifie si on peut refaire
-     */
-    get canRedo(): boolean;
-    /**
-     * Retourne l'état actuel
-     */
-    get state(): HistoryState;
-    /**
-     * Enregistre l'état actuel dans l'historique
-     * Appelé après chaque modification
-     */
-    push(): void;
-    /**
-     * Annule la dernière modification (Ctrl+Z)
-     * @returns true si l'annulation a réussi
-     */
-    undo(): Promise<boolean>;
-    /**
-     * Refait la dernière modification annulée (Ctrl+Y / Ctrl+Shift+Z)
-     * @returns true si le redo a réussi
-     */
-    redo(): Promise<boolean>;
-    /**
-     * Réinitialise l'historique
-     * Utile après un chargement initial ou une sauvegarde
-     */
-    clear(): void;
-    /**
-     * Initialise l'historique avec l'état actuel
-     * À appeler après le chargement initial des calques
-     */
-    initialize(): void;
-    /**
-     * Restaure l'état à l'index actuel
-     */
-    private restore;
-    /**
-     * Notifie les callbacks du changement d'état
-     */
-    private notifyStateChange;
 }
 
 /**
