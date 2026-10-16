@@ -9132,13 +9132,9 @@ var DropHandler = class {
     }
     const pointerEvent = e.e;
     const inEdge = Boolean(pointerEvent && this.config.canvasEdge?.near(pointerEvent));
-    if (!this.moving || this.moving.source !== source) {
-      this.moving = { source, inEdge: false };
-      console.debug("[drop] canvas drag", { layerId: source.get("layerId"), pointerEvent: Boolean(pointerEvent) });
-    }
+    if (!this.moving || this.moving.source !== source) this.moving = { source, inEdge: false };
     if (inEdge !== this.moving.inEdge) {
       this.moving.inEdge = inEdge;
-      console.debug("[drop] canvas drag edge", inEdge);
       this.config.canvasEdge?.cue?.(inEdge);
     }
     if (inEdge) {
