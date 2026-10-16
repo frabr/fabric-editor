@@ -36,7 +36,3 @@ export const DEFAULT_GUIDE_COLOR = "#d946ef";
  * magenta franc des outils de design (Canva, Figma) — un code que les gens reconnaissent.
  */
 export const DEFAULT_SNAP_GUIDE_COLOR = "#ff00ff";
-
-/** Le repère du centrage sur la page : le rouge des repères de Figma — il dit « centré »,
- *  là où le magenta dit « aligné sur quelque chose ». */
-export const DEFAULT_CENTER_GUIDE_COLOR = "#f24822";

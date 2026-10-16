@@ -1,7 +1,7 @@
 import { FabricObject, Line, Rect, Pattern } from "#fabric";
 import type { DesignCanvas } from "../DesignCanvas";
 import { scaledSize, topLeft } from "../layout/geometry";
-import { DEFAULT_CENTER_GUIDE_COLOR, DEFAULT_SNAP_GUIDE_COLOR, hexAlpha } from "./color";
+import { DEFAULT_SNAP_GUIDE_COLOR, hexAlpha } from "./color";
 import { layoutOf } from "../layout/model";
 import type { SnapGuide } from "../snap";
 
@@ -322,9 +322,9 @@ export class CanvasGuides {
   /**
    * Les guides de l'aimant d'un déplacement (SnappingManager, src/snap.ts) : un pointillé
    * fin à l'écran quel que soit le zoom, qui joint l'objet et sa cible et dépasse un peu
-   * de chaque côté. Le centre de la PAGE (`center` + `page`) se dit autrement : un trait
-   * rouge plein d'un bord à l'autre, et une croix de 9 px au centre de l'objet — on voit
-   * qu'on est centré, sur un axe ou les deux.
+   * de chaque côté. Le centre de la PAGE (`center` + `page`) se dit autrement, dans la même
+   * couleur : un trait plein d'un bord à l'autre, et une croix de 9 px au centre de l'objet
+   * — on voit qu'on est centré, sur un axe ou les deux.
    */
   showSnapGuides(guides: SnapGuide[], zoom: number, center?: { x: number; y: number }): void {
     this.clear();
@@ -337,18 +337,16 @@ export class CanvasGuides {
       const to = guide.to + (onPageCenter ? 0 : overshoot);
       const coords: [number, number, number, number] =
         guide.axis === "x" ? [guide.at, from, guide.at, to] : [from, guide.at, to, guide.at];
-      this.addLine(coords, onPageCenter
-        ? { stroke: DEFAULT_CENTER_GUIDE_COLOR, strokeWidth: 1 / zoom, strokeDashArray: [] }
-        : { strokeWidth: 1 / zoom, strokeDashArray: [4 / zoom, 4 / zoom] });
+      this.addLine(coords, { strokeWidth: 1 / zoom, strokeDashArray: onPageCenter ? [] : [4 / zoom, 4 / zoom] });
     }
-    if (centered && center) this.addCross(center, 9 / zoom, DEFAULT_CENTER_GUIDE_COLOR, 1 / zoom);
+    if (centered && center) this.addCross(center, 9 / zoom, 1 / zoom);
   }
 
-  /** Une croix de `size` de côté, centrée sur `at`. */
-  private addCross(at: { x: number; y: number }, size: number, stroke: string, strokeWidth: number): void {
+  /** Une croix de `size` de côté, centrée sur `at`, dans la couleur des guides. */
+  private addCross(at: { x: number; y: number }, size: number, strokeWidth: number): void {
     const half = size / 2;
-    this.addLine([at.x - half, at.y, at.x + half, at.y], { stroke, strokeWidth, strokeDashArray: [] });
-    this.addLine([at.x, at.y - half, at.x, at.y + half], { stroke, strokeWidth, strokeDashArray: [] });
+    this.addLine([at.x - half, at.y, at.x + half, at.y], { strokeWidth, strokeDashArray: [] });
+    this.addLine([at.x, at.y - half, at.x, at.y + half], { strokeWidth, strokeDashArray: [] });
   }
 
   showSnapLines(
