@@ -26,6 +26,7 @@ import { TOKEN_COLOR_KEY } from "./tokens";
 import { installGhostRendering } from "./ghost";
 import { installDisplayStyleRendering } from "./displayStyle";
 import { CropMode } from "./CropMode";
+import { ShortcutManager } from "./shortcuts/ShortcutManager";
 
 /**
  * Éditeur d'images basé sur Fabric.js
@@ -44,6 +45,8 @@ export class FabricEditor {
   readonly layout: LayoutManager;
   /** Le recadrage d'une image dans son cadre (CropMode). */
   readonly crop: CropMode;
+  /** Les raccourcis : la table du canvas, plus ceux que l'hôte enregistre (ShortcutManager). */
+  readonly shortcuts: ShortcutManager;
 
   private config: EditorConfig;
   private _displayScale = 1;
@@ -104,6 +107,7 @@ export class FabricEditor {
 
     this.crop = new CropMode(this.canvas, gc);
     this.installCropOnDoubleClick();
+    this.shortcuts = new ShortcutManager(this, config.shortcuts);
 
     // Stocker une référence au SnappingManager sur le canvas pour l'accès depuis ImageFrame
     (this.canvas.originalFabricCanvas as unknown as { snappingManager: SnappingManager }).snappingManager = this.snapping;
@@ -686,6 +690,11 @@ export class FabricEditor {
   // ── Commandes de sélection (editor/selection-commands) ──────────
 
   groupSelection(): FabricObject | null { return this.commands.groupSelection(); }
+  selectAll(): FabricObject[] { return this.commands.selectAll(); }
+  deselect(): void { this.commands.deselect(); }
+  nudgeSelection(dx: number, dy: number): boolean { return this.commands.nudgeSelection(dx, dy); }
+  cutSelection(): void { this.clipboard.cutSelection(); }
+  duplicateSelection(): Promise<FabricObject[]> { return this.clipboard.duplicateSelection(); }
   ungroupSelection(): FabricObject[] { return this.commands.ungroupSelection(); }
   alignSelection(edge: AlignEdge): void { this.commands.alignSelection(edge); }
   distributeSelection(axis: DistributeAxis): void { this.commands.distributeSelection(axis); }
@@ -738,6 +747,7 @@ export class FabricEditor {
     this._resizeObserver?.disconnect();
     this._resizeObserver = null;
     this._resizeCallbacks = [];
+    this.shortcuts.dispose();
     this.crop.dispose();
     this.snapping.dispose();
     this.selection.dispose();

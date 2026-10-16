@@ -35,6 +35,12 @@ export { FabRect, FabCircle, FabPath, type Lockable } from "./shapes";
 export { rulesOf, kindOf, type ObjectRules, type ObjectKind, type ToolboxImageReaction } from "./capabilities";
 export { toolsFor, selectionKindOf, type ToolId, type SelectionKind } from "./tools";
 
+// Raccourcis : le gestionnaire, la table du canvas, les types d'entrée
+export { ShortcutManager, type ShortcutManagerOptions } from "./shortcuts/ShortcutManager";
+export { CANVAS_SHORTCUTS, isKeyShortcut } from "./shortcuts/table";
+export type { ShortcutEntry, KeyShortcut, GestureShortcut, ShortcutContext, ShortcutGroup, ShortcutScope } from "./shortcuts/table";
+export { parseCombo, formatCombo, formatModifier, detectPlatform, type Platform, type Modifier } from "./shortcuts/keys";
+
 // Shape factories (return Fab* instances)
 export {
   createRect,

@@ -18,6 +18,8 @@ export interface EditorConfig {
   userSlotLabel?: string;
   /** Invite dans les images à fournir, sous l'icône (si elle tient) — la traduction de l'hôte. */
   userSlotPrompt?: string;
+  /** Les raccourcis : la table de départ, le document écouté, la plateforme (tests). */
+  shortcuts?: import("./shortcuts/ShortcutManager").ShortcutManagerOptions;
   container?: HTMLElement;
   transparent?: boolean;
   /**

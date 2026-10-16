@@ -4,6 +4,7 @@
 import type { FabricObject } from "#fabric";
 import { groupObjects, ungroupObject } from "../layout/grouping";
 import { parentOf, stackParentOf, subtreeOf, translateSubtree } from "../layout/hierarchy";
+import { getLockMode } from "../locking";
 import { boxOf, insetBox, type Box } from "../layout/geometry";
 import { containerDataOf, directionOf, layoutOf, paddingOf } from "../layout/model";
 import { alignAxis, alignDelta, distributeDeltas, unionBox, type AlignEdge, type DistributeAxis } from "../align";
@@ -12,6 +13,45 @@ import type { FabricEditor } from "../FabricEditor";
 
 export class SelectionCommands {
   constructor(private readonly editor: FabricEditor) {}
+
+  // ── Sélectionner ──────────────────────────────────────────────────
+
+  /**
+   * Tout sélectionner : les objets de premier niveau qu'on peut saisir (visibles, en jeu,
+   * non verrouillés) — un container emmène ses enfants. Rend la sélection.
+   */
+  selectAll(): FabricObject[] {
+    const roots = this.editor.canvas.getObjects().filter((obj) =>
+      obj.visible !== false && obj.selectable !== false && obj.evented !== false &&
+      !layoutOf(obj)?.child && getLockMode(obj) === "free" && rulesOf(obj).kind !== "other");
+    if (roots.length) this.editor.selection.selectMany(roots);
+    return roots;
+  }
+
+  /** Désélectionner. */
+  deselect(): void {
+    this.editor.canvas.discardActiveObject();
+    this.editor.canvas.renderAll();
+  }
+
+  // ── Décaler ───────────────────────────────────────────────────────
+
+  /**
+   * Décale la sélection de (dx, dy), descendance comprise. Un enfant de pile ne bouge
+   * pas (la pile le place). Vrai si quelque chose a bougé — l'hôte est prévenu comme
+   * après un glisser (onModified).
+   */
+  nudgeSelection(dx: number, dy: number): boolean {
+    const objects = this.editor.canvas.getObjects();
+    const roots = this.editor.selection.selected.filter((obj) => rulesOf(obj).deletes && !stackParentOf(obj, objects));
+    if (!roots.length) return false;
+
+    this.editor.selection.withSelectionReleased(() => translateSubtree(objects, roots, dx, dy));
+    this.editor.layout.relayout();
+    this.editor.canvas.renderAll();
+    this.editor.selection.notifyModified(roots.length === 1 ? roots[0] : null);
+    return true;
+  }
 
   // ── Grouper, dégrouper ────────────────────────────────────────────
 
@@ -29,6 +69,7 @@ export class SelectionCommands {
       group = groupObjects(this.editor.canvas, selected, `layer_${Date.now()}_${Math.floor(Math.random() * 1000)}`);
       if (group) this.editor.layout.relayout();
     });
+    if (group) this.editor.selection.notifyModified(group);
     return group;
   }
 
@@ -46,6 +87,7 @@ export class SelectionCommands {
     // Un bloc vide redevient une forme : elle reste sélectionnée
     const kept = this.editor.canvas.getObjects().includes(container);
     this.editor.selection.selectMany(children.length || !kept ? children : [container]);
+    this.editor.selection.notifyModified(null);
     return children;
   }
 
@@ -138,5 +180,6 @@ export class SelectionCommands {
     this.editor.canvas.discardActiveObject();
     this.editor.layers.removeMany(doomed);
     this.editor.canvas.renderAll();
+    this.editor.selection.notifyModified(null);
   }
 }

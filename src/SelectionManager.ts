@@ -459,9 +459,13 @@ export class SelectionManager {
    */
   private handleModified(e: { target?: FabricObject }): void {
     this.isTransforming = false;
-    if (this.callbacks.onModified) {
-      this.callbacks.onModified(e.target || null);
-    }
+    this.notifyModified(e.target || null);
+  }
+
+  /** Le canal « quelque chose a changé » : ce que l'hôte écoute après un geste — les
+   *  commandes de l'éditeur (coller, décaler, dupliquer) le préviennent par là aussi. */
+  notifyModified(target: FabricObject | null): void {
+    this.callbacks.onModified?.(target);
   }
 
   /**

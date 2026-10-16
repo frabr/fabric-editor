@@ -1,6 +1,7 @@
 /**
- * Copier, coller : la sélection et toute sa descendance, collées à côté (+20 px) avec des
- * ids neufs — les liens parent/enfant suivent.
+ * Copier, couper, coller, dupliquer : la sélection et toute sa descendance, collées à côté
+ * (+32 px, le décalage des éditeurs de design) avec des ids neufs — les liens parent/enfant
+ * suivent. Le presse-papiers est celui de l'éditeur, en mémoire ; dupliquer ne le touche pas.
  */
 import type { FabricObject } from "#fabric";
 import { subtreeOf } from "../layout/hierarchy";
@@ -28,15 +29,30 @@ export class Clipboard {
     );
   }
 
+  /** Couper : copier, puis retirer la sélection (les objets verrouillés restent). */
+  cutSelection(): void {
+    this.copySelection();
+    this.editor.deleteSelection();
+  }
+
+  /** Dupliquer : une copie décalée de 32 px, sélectionnée — sans toucher au presse-papiers. */
+  async duplicateSelection(): Promise<FabricObject[]> {
+    const kept = this._clipboard;
+    this.copySelection();
+    const copies = await this.pasteClipboard();
+    this._clipboard = kept;
+    return copies;
+  }
+
   /**
    * Paste clipboard contents onto the canvas.
    * Generates fresh layerIds and remaps parent/child references.
-   * Offsets pasted objects by 20px so they don't overlap the originals.
+   * Offsets pasted objects by 32px so they don't overlap the originals.
    */
   async pasteClipboard(): Promise<FabricObject[]> {
     if (!this._clipboard?.length) return [];
 
-    const OFFSET = 20;
+    const OFFSET = 32;
 
     // Build an ID remapping table: old layerId → new layerId
     const idMap = new Map<string, string>();
@@ -84,6 +100,7 @@ export class Clipboard {
     // Select the pasted objects (their roots: children follow their container)
     this.editor.selection.selectMany(objects);
     this.editor.canvas.renderAll();
+    this.editor.selection.notifyModified(null);
     return objects;
   }
 }
