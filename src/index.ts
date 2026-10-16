@@ -5,6 +5,7 @@
 
 // Classe principale
 export { FabricEditor } from "./FabricEditor";
+export type { GradientStop } from "./editor/style-commands";
 export { DesignCanvas, type FrameRect, type WorkspaceOptions } from "./DesignCanvas";
 export { PreviewCanvas } from "./PreviewCanvas";
 

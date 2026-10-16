@@ -15,7 +15,7 @@ import { DRAG_PREVIEW_KEY } from "./types";
 import type { EditorConfig, LayerData, FontsConfig, ShapeType } from "./types";
 import type { TextStyleState } from "./text-styles";
 import { initYoga } from "./layout/stack/engine";
-import { StyleCommands } from "./editor/style-commands";
+import { StyleCommands, type GradientStop } from "./editor/style-commands";
 import { Clipboard } from "./editor/clipboard";
 import { SelectionCommands } from "./editor/selection-commands";
 
@@ -630,7 +630,7 @@ export class FabricEditor {
   setStrokeWidth(width: number): void { this.styles.setStrokeWidth(width); }
   setStrokeColor(color: string): void { this.styles.setStrokeColor(color); }
   setFillColor(color: string): void { this.styles.setFillColor(color); }
-  setFillGradient(color1: string, color2: string, angleDeg: number): void { this.styles.setFillGradient(color1, color2, angleDeg); }
+  setFillGradient(stops: GradientStop[], angleDeg: number): void { this.styles.setFillGradient(stops, angleDeg); }
   changeFont(fontFamily: string, fontWeight?: string): void { this.styles.changeFont(fontFamily, fontWeight); }
   setFontSize(size: number): void { this.styles.setFontSize(size); }
   setTextAlign(align: "left" | "center" | "right" | "justify"): void { this.styles.setTextAlign(align); }

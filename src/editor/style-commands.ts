@@ -3,6 +3,12 @@
  * du texte — et les bascules legacy de forme et de découpe.
  */
 import { FabricObject, FabricImage, Gradient, Shadow } from "#fabric";
+
+/** Un arrêt de dégradé : sa couleur (hex ou rgba) et sa position, de 0 à 1. */
+export interface GradientStop {
+  color: string;
+  offset: number;
+}
 import { switchClip } from "../clipping";
 import { switchShape, nextShape } from "../shapes";
 import { ImageFrame } from "../ImageFrame";
@@ -259,11 +265,14 @@ export class StyleCommands {
   }
 
   /**
-   * Set a linear gradient fill on the selected object.
+   * Un dégradé linéaire sur l'objet sélectionné : ses stops (offset 0..1, dans l'ordre) et
+   * son angle en degrés, dans la convention de la lib — 0° de gauche à droite, 90° de haut en
+   * bas (un quart de tour de moins que le CSS). L'opacité globale revient à 1 : les couleurs
+   * des stops la portent.
    */
-  setFillGradient(color1: string, color2: string, angleDeg: number): void {
+  setFillGradient(stops: GradientStop[], angleDeg: number): void {
     const obj = this.editor.selection.current;
-    if (!obj) return;
+    if (!obj || stops.length < 2) return;
     const rad = (angleDeg * Math.PI) / 180;
     const cos = Math.cos(rad);
     const sin = Math.sin(rad);
@@ -276,10 +285,7 @@ export class StyleCommands {
         x2: 0.5 + cos / 2,
         y2: 0.5 + sin / 2,
       },
-      colorStops: [
-        { offset: 0, color: color1 },
-        { offset: 1, color: color2 },
-      ],
+      colorStops: stops.map(({ color, offset }) => ({ color, offset })),
     });
     const previous = obj.fill;
     obj.set({ fill: gradient, opacity: 1 });
