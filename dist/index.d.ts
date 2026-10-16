@@ -2815,15 +2815,15 @@ declare class CanvasGuides {
     /**
      * Les guides de l'aimant d'un déplacement (SnappingManager, src/snap.ts) : un pointillé
      * fin à l'écran quel que soit le zoom, qui joint l'objet et sa cible et dépasse un peu
-     * de chaque côté. Le centre de la PAGE (`center` + `page`) se dit autrement : un trait
-     * rouge plein d'un bord à l'autre, et une croix de 9 px au centre de l'objet — on voit
-     * qu'on est centré, sur un axe ou les deux.
+     * de chaque côté. Le centre de la PAGE (`center` + `page`) se dit autrement, dans la même
+     * couleur : un trait plein d'un bord à l'autre, et une croix de 9 px au centre de l'objet
+     * — on voit qu'on est centré, sur un axe ou les deux.
      */
     showSnapGuides(guides: SnapGuide[], zoom: number, center?: {
         x: number;
         y: number;
     }): void;
-    /** Une croix de `size` de côté, centrée sur `at`. */
+    /** Une croix de `size` de côté, centrée sur `at`, dans la couleur des guides. */
     private addCross;
     showSnapLines(guides: Array<{
         orientation: "horizontal" | "vertical";

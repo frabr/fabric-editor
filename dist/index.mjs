@@ -142,7 +142,6 @@ function hexAlpha(hex, alpha) {
 }
 var DEFAULT_GUIDE_COLOR = "#d946ef";
 var DEFAULT_SNAP_GUIDE_COLOR = "#ff00ff";
-var DEFAULT_CENTER_GUIDE_COLOR = "#f24822";
 
 // src/DesignCanvas.ts
 var DesignCanvas = class {
@@ -4516,9 +4515,9 @@ var CanvasGuides = class {
   /**
    * Les guides de l'aimant d'un déplacement (SnappingManager, src/snap.ts) : un pointillé
    * fin à l'écran quel que soit le zoom, qui joint l'objet et sa cible et dépasse un peu
-   * de chaque côté. Le centre de la PAGE (`center` + `page`) se dit autrement : un trait
-   * rouge plein d'un bord à l'autre, et une croix de 9 px au centre de l'objet — on voit
-   * qu'on est centré, sur un axe ou les deux.
+   * de chaque côté. Le centre de la PAGE (`center` + `page`) se dit autrement, dans la même
+   * couleur : un trait plein d'un bord à l'autre, et une croix de 9 px au centre de l'objet
+   * — on voit qu'on est centré, sur un axe ou les deux.
    */
   showSnapGuides(guides, zoom, center) {
     this.clear();
@@ -4530,15 +4529,15 @@ var CanvasGuides = class {
       const from = guide2.from - (onPageCenter ? 0 : overshoot);
       const to = guide2.to + (onPageCenter ? 0 : overshoot);
       const coords = guide2.axis === "x" ? [guide2.at, from, guide2.at, to] : [from, guide2.at, to, guide2.at];
-      this.addLine(coords, onPageCenter ? { stroke: DEFAULT_CENTER_GUIDE_COLOR, strokeWidth: 1 / zoom, strokeDashArray: [] } : { strokeWidth: 1 / zoom, strokeDashArray: [4 / zoom, 4 / zoom] });
+      this.addLine(coords, { strokeWidth: 1 / zoom, strokeDashArray: onPageCenter ? [] : [4 / zoom, 4 / zoom] });
     }
-    if (centered && center) this.addCross(center, 9 / zoom, DEFAULT_CENTER_GUIDE_COLOR, 1 / zoom);
+    if (centered && center) this.addCross(center, 9 / zoom, 1 / zoom);
   }
-  /** Une croix de `size` de côté, centrée sur `at`. */
-  addCross(at, size, stroke, strokeWidth) {
+  /** Une croix de `size` de côté, centrée sur `at`, dans la couleur des guides. */
+  addCross(at, size, strokeWidth) {
     const half = size / 2;
-    this.addLine([at.x - half, at.y, at.x + half, at.y], { stroke, strokeWidth, strokeDashArray: [] });
-    this.addLine([at.x, at.y - half, at.x, at.y + half], { stroke, strokeWidth, strokeDashArray: [] });
+    this.addLine([at.x - half, at.y, at.x + half, at.y], { strokeWidth, strokeDashArray: [] });
+    this.addLine([at.x, at.y - half, at.x, at.y + half], { strokeWidth, strokeDashArray: [] });
   }
   showSnapLines(guides) {
     this.clear();
