@@ -660,6 +660,34 @@ function scaleStyleFontSizes(styles, k) {
   }
   return scaled;
 }
+function textScaleState(obj) {
+  const t = obj;
+  return {
+    width: t.width,
+    height: t.height,
+    fontSize: t.fontSize,
+    fontSizeIntent: t.fontSizeIntent ?? t.fontSize,
+    styles: scaleStyleFontSizes(t.styles, 1),
+    minSize: obj.layout?.sizing?.minSize
+  };
+}
+function scaleText(obj, state, k) {
+  const t = obj;
+  t.styles = scaleStyleFontSizes(state.styles, k);
+  t.fontSizeIntent = state.fontSizeIntent * k;
+  t.fontSize = state.fontSize * k;
+  t.width = state.width * k;
+  const layout = obj.layout;
+  if (layout?.sizing) {
+    if (layout.sizing.y === "fixed") t.height = state.height * k;
+    if (state.minSize) {
+      const minSize = { w: state.minSize.w * k, h: state.minSize.h * k };
+      obj.set("layout", { ...layout, sizing: { ...layout.sizing, minSize } });
+    }
+  }
+  t.initDimensions();
+  obj.dirty = true;
+}
 
 // src/layout/model.ts
 function layoutOf(obj) {
@@ -805,6 +833,11 @@ function translateSubtree(objects, roots, dx, dy) {
   translateObjects(subtreeOf(objects, roots), dx, dy);
 }
 
+// src/shapes/resizeUtils.ts
+function isTransformCentered(transform) {
+  return transform.originX === "center" && transform.originY === "center";
+}
+
 // src/tokens.ts
 var TOKEN_COLOR_KEY = "tokenColor";
 function tokenColorOf(obj) {
@@ -817,7 +850,8 @@ function drawActiveTokenPills(ctx, active) {
 }
 
 // src/controls/CustomTextbox.ts
-var { changeObjectWidth, changeObjectHeight } = import_fabric2.controlsUtils;
+var { changeObjectWidth, changeObjectHeight, getLocalPoint } = import_fabric2.controlsUtils;
+var MIN_CORNER_SCALE = 0.05;
 var UNBOUNDED_WIDTH = 1e4;
 var CustomTextbox = class extends import_fabric2.Textbox {
   constructor(text, options) {
@@ -1101,13 +1135,38 @@ var CustomTextbox = class extends import_fabric2.Textbox {
     const corner = transform.corner;
     return corner === "ml" || corner === "mr" ? this._withAnchor(transform, () => this._resizeWidth(transform, x, y)) : this._withAnchor(transform, () => this._resizeHeight(transform, x, y));
   }
-  /** Coin : les deux règles des bords à la fois. */
+  /**
+   * Coin : le texte et sa boîte grandissent ensemble, proportions gardées, le coin opposé
+   * immobile. Le facteur est celui de la poignée native de Fabric (distance au coin
+   * d'ancrage, en somme des deux axes), appliqué depuis l'état du début du geste : les
+   * modes de taille ne changent pas, la police absorbe tout.
+   */
   handleCornerResize(transform, x, y) {
+    let start = this._cornerStart;
+    if (!start || start.transform !== transform) {
+      const dim = this._getTransformedDimensions();
+      start = { transform, state: textScaleState(this), distance: Math.abs(dim.x) + Math.abs(dim.y) };
+      this._cornerStart = start;
+    }
+    if (start.distance === 0) return false;
+    const { originX, originY } = transform;
+    const local = getLocalPoint(transform, originX, originY, x, y);
+    let k = (Math.abs(local.x) + Math.abs(local.y)) / start.distance;
+    if (isTransformCentered(transform)) k *= 2;
+    k = Math.max(MIN_CORNER_SCALE, k);
     return this._withAnchor(transform, () => {
-      const changedW = this._resizeWidth(transform, x, y);
-      const changedH = this._resizeHeight(transform, x, y);
-      return changedW || changedH;
+      const before = { width: this.width, height: this.height, fontSize: this.fontSize };
+      scaleText(this, start.state, k);
+      return before.width !== this.width || before.height !== this.height || before.fontSize !== this.fontSize;
     });
+  }
+  /**
+   * Taille programmatique (`setShapeSize`, comme une forme) : le facteur uniforme — la
+   * moyenne des deux axes — passe dans la police, jamais dans un scale.
+   */
+  setSize(w, h) {
+    const k = (w / (this.width || 1) + h / (this.height || 1)) / 2;
+    scaleText(this, textScaleState(this), k);
   }
   /** Placé par une pile — un groupe (container libre) laisse ses enfants à leur propre taille. */
   _isChild() {
@@ -1144,20 +1203,19 @@ var CustomTextbox = class extends import_fabric2.Textbox {
   // ── Données legacy ─────────────────────────────────────────────────
   /**
    * Un texte étiré (scaleX/scaleY) est ramené à scale 1 : le scale passe dans la
-   * largeur et la police. Exact pour un scale uniforme ; un étirement non uniforme est
-   * perdu (les glyphes reprennent leurs proportions).
+   * largeur et la police (`scaleText`). Exact pour un scale uniforme ; un étirement non
+   * uniforme est perdu (les glyphes reprennent leurs proportions, la largeur garde son
+   * propre facteur).
    */
   _bakeLegacyScale() {
     const sx = this.scaleX || 1;
     const sy = this.scaleY || 1;
     if (sx === 1 && sy === 1) return;
-    this.width *= sx;
-    this.height *= sy;
-    this.fontSize *= sy;
-    this.fontSizeIntent *= sy;
-    this.styles = scaleStyleFontSizes(this.styles, sy);
+    const state = textScaleState(this);
     this.scaleX = 1;
     this.scaleY = 1;
+    scaleText(this, state, sy);
+    this.width = state.width * sx;
   }
   /**
    * Un texte sans `layout.sizing` (nouveau, ou document d'avant les modes de taille)
@@ -1798,14 +1856,7 @@ import_fabric4.classRegistry.setClass(FabRect, "Rect");
 
 // src/shapes/FabCircle.ts
 var import_fabric5 = require("#fabric");
-
-// src/shapes/resizeUtils.ts
-function isTransformCentered(transform) {
-  return transform.originX === "center" && transform.originY === "center";
-}
-
-// src/shapes/FabCircle.ts
-var { changeObjectWidth: changeObjectWidth3, changeObjectHeight: changeObjectHeight3, getLocalPoint } = import_fabric5.controlsUtils;
+var { changeObjectWidth: changeObjectWidth3, changeObjectHeight: changeObjectHeight3, getLocalPoint: getLocalPoint2 } = import_fabric5.controlsUtils;
 var FabCircle = class extends import_fabric5.Circle {
   constructor(options) {
     super({
@@ -1824,7 +1875,7 @@ var FabCircle = class extends import_fabric5.Circle {
   handleCornerResize(transform, x, y) {
     const { originX, originY } = transform;
     const anchor = this.getPositionByOrigin(originX, originY);
-    const localPoint = getLocalPoint(transform, originX, originY, x, y);
+    const localPoint = getLocalPoint2(transform, originX, originY, x, y);
     const dim = this._getTransformedDimensions();
     const distance = Math.abs(localPoint.x) + Math.abs(localPoint.y);
     const originalDistance = Math.abs(dim.x * transform.original.scaleX / this.scaleX) + Math.abs(dim.y * transform.original.scaleY / this.scaleY);
@@ -1896,7 +1947,7 @@ function normalizeEntry(entry) {
 }
 
 // src/shapes/FabPath.ts
-var { changeObjectWidth: changeObjectWidth4, changeObjectHeight: changeObjectHeight4, getLocalPoint: getLocalPoint2 } = import_fabric6.controlsUtils;
+var { changeObjectWidth: changeObjectWidth4, changeObjectHeight: changeObjectHeight4, getLocalPoint: getLocalPoint3 } = import_fabric6.controlsUtils;
 var DEFAULT_SIZE = 300;
 var _FabPath = class _FabPath extends import_fabric6.Path {
   constructor(path, options) {
@@ -1912,7 +1963,7 @@ var _FabPath = class _FabPath extends import_fabric6.Path {
   handleCornerResize(transform, x, y) {
     const { originX, originY } = transform;
     const anchor = this.getPositionByOrigin(originX, originY);
-    const localPoint = getLocalPoint2(transform, originX, originY, x, y);
+    const localPoint = getLocalPoint3(transform, originX, originY, x, y);
     const dim = this._getTransformedDimensions();
     const distance = Math.abs(localPoint.x) + Math.abs(localPoint.y);
     const originalDistance = Math.abs(dim.x * transform.original.scaleX / this.scaleX) + Math.abs(dim.y * transform.original.scaleY / this.scaleY);
@@ -6774,14 +6825,7 @@ var FreeResizeSession = class _FreeResizeSession {
     const state = { obj, box: { left: tl.x, top: tl.y, width: w, height: h } };
     const layout = layoutOf(obj);
     if (isTextObject(obj)) {
-      const t = obj;
-      state.text = {
-        width: obj.width,
-        fontSize: t.fontSize,
-        fontSizeIntent: t.fontSizeIntent ?? t.fontSize,
-        styles: scaleStyleFontSizes(t.styles, 1),
-        minSize: layout?.sizing?.minSize
-      };
+      state.text = textScaleState(obj);
     } else if (layout?.container) {
       state.container = {
         padding: layout.container.padding,
@@ -6795,16 +6839,7 @@ var FreeResizeSession = class _FreeResizeSession {
     const { obj, box } = state;
     const layout = layoutOf(obj);
     if (state.text) {
-      const t = obj;
-      t.styles = scaleStyleFontSizes(state.text.styles, k);
-      t.fontSizeIntent = state.text.fontSizeIntent * k;
-      t.fontSize = state.text.fontSize * k;
-      t.width = state.text.width * k;
-      if (layout?.sizing) {
-        obj.set("layout", { ...layout, sizing: { ...layout.sizing, minSize: scaleMin(state.text.minSize, k) } });
-      }
-      t.initDimensions();
-      obj.dirty = true;
+      scaleText(obj, state.text, k);
     } else if (state.container && layout?.container) {
       const p = state.container.padding;
       obj.set("layout", {

@@ -301,7 +301,9 @@ interface TextConstraint {
  * en page (document tout juste chargé) s'affiche tel que sauvegardé ; un texte hors
  * container ignore toute contrainte.
  *
- * Les poignées ne déforment jamais : elles changent la boîte (jamais de scale).
+ * Les poignées ne déforment jamais (jamais de scale) : un bord change la boîte, un coin
+ * agrandit le texte avec elle, proportions gardées — la police absorbe le facteur
+ * (`scaleText`, layout/text.ts), comme pour tout agrandissement proportionnel d'un texte.
  *
  * `fontSize` est la taille effective (celle qui est rendue et sauvegardée, pour qu'un
  * document s'affiche juste sans relayout) ; `fontSizeIntent` est la taille voulue par
@@ -418,8 +420,20 @@ declare class CustomTextbox extends Textbox {
      * change la hauteur.
      */
     handleEdgeResize(transform: any, x: number, y: number): boolean;
-    /** Coin : les deux règles des bords à la fois. */
+    /**
+     * Coin : le texte et sa boîte grandissent ensemble, proportions gardées, le coin opposé
+     * immobile. Le facteur est celui de la poignée native de Fabric (distance au coin
+     * d'ancrage, en somme des deux axes), appliqué depuis l'état du début du geste : les
+     * modes de taille ne changent pas, la police absorbe tout.
+     */
     handleCornerResize(transform: any, x: number, y: number): boolean;
+    /** Le geste de coin en cours (un par objet `transform` de Fabric). */
+    private _cornerStart?;
+    /**
+     * Taille programmatique (`setShapeSize`, comme une forme) : le facteur uniforme — la
+     * moyenne des deux axes — passe dans la police, jamais dans un scale.
+     */
+    setSize(w: number, h: number): void;
     /** Placé par une pile — un groupe (container libre) laisse ses enfants à leur propre taille. */
     private _isChild;
     private _withAnchor;
@@ -427,8 +441,9 @@ declare class CustomTextbox extends Textbox {
     private _resizeHeight;
     /**
      * Un texte étiré (scaleX/scaleY) est ramené à scale 1 : le scale passe dans la
-     * largeur et la police. Exact pour un scale uniforme ; un étirement non uniforme est
-     * perdu (les glyphes reprennent leurs proportions).
+     * largeur et la police (`scaleText`). Exact pour un scale uniforme ; un étirement non
+     * uniforme est perdu (les glyphes reprennent leurs proportions, la largeur garde son
+     * propre facteur).
      */
     private _bakeLegacyScale;
     /**
