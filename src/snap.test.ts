@@ -7,14 +7,22 @@ import { snapMove } from "./snap";
 const page = { left: 0, top: 0, width: 1000, height: 1000 };
 
 describe("snapMove", () => {
-  it("cale le centre sur le centre de la page, et trace le guide", () => {
-    const { dx, dy, guides } = snapMove({ left: 445, top: 300, width: 100, height: 50 }, [page], 8);
+  it("cale le centre sur le centre de la page, et trace le guide — marqué centre et page, avec le centre calé", () => {
+    const { dx, dy, guides, center } = snapMove({ left: 445, top: 300, width: 100, height: 50 }, [{ ...page, page: true }], 8);
 
     expect([dx, dy]).toEqual([5, 0]);
-    expect(guides).toEqual([{ axis: "x", at: 500, from: 0, to: 1000 }]);
+    expect(guides).toEqual([{ axis: "x", at: 500, from: 0, to: 1000, center: true, page: true }]);
+    expect(center).toEqual({ x: 500, y: 325 });
   });
 
-  it("cale un bord sur le bord d'un autre objet ; le guide les joint", () => {
+  it("centré sur les deux axes : deux guides de centre, la croix au centre de la page", () => {
+    const { guides, center } = snapMove({ left: 447, top: 478, width: 100, height: 50 }, [{ ...page, page: true }], 8);
+
+    expect(guides.map((g) => [g.axis, g.center, g.page])).toEqual([["x", true, true], ["y", true, true]]);
+    expect(center).toEqual({ x: 500, y: 500 });
+  });
+
+  it("cale un bord sur le bord d'un autre objet ; le guide les joint, sans marque de centre", () => {
     const other = { left: 200, top: 600, width: 300, height: 100 };
     const { dx, guides } = snapMove({ left: 497, top: 100, width: 80, height: 80 }, [other], 8);
 
@@ -49,6 +57,7 @@ describe("snapMove", () => {
   });
 
   it("hors du seuil, rien ne bouge : l'objet suit le pointeur", () => {
-    expect(snapMove({ left: 430, top: 430, width: 100, height: 100 }, [page], 8)).toEqual({ dx: 0, dy: 0, guides: [] });
+    expect(snapMove({ left: 430, top: 430, width: 100, height: 100 }, [page], 8))
+      .toEqual({ dx: 0, dy: 0, guides: [], center: { x: 480, y: 480 } });
   });
 });

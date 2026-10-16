@@ -129,14 +129,14 @@ export class SnappingManager {
     const targets: SnapBox[] = objects
       .filter((other) => !excluded.has(other) && isSnapTarget(other))
       .map((other) => other.getBoundingRect());
-    targets.push({ left: 0, top: 0, width: this.canvas.width, height: this.canvas.height });
+    targets.push({ left: 0, top: 0, width: this.canvas.width, height: this.canvas.height, page: true });
 
     const zoom = this.canvas.getZoom() || 1;
     // fabric pose la position brute sans recalculer les coordonnées : mesurées en cache, elles
     // diraient la position aimantée du mouvement précédent — l'objet ne serait recalé
     // qu'une frame sur deux, et tremblerait autour du guide
     obj.setCoords();
-    const { dx, dy, guides } = snapMove(obj.getBoundingRect(), targets, this.config.threshold / zoom, this.kept);
+    const { dx, dy, guides, center } = snapMove(obj.getBoundingRect(), targets, this.config.threshold / zoom, this.kept);
     this.kept = {
       x: guides.find((guide) => guide.axis === "x")?.at,
       y: guides.find((guide) => guide.axis === "y")?.at,
@@ -146,7 +146,7 @@ export class SnappingManager {
       obj.setCoords();
     }
 
-    this.guides.showSnapGuides(guides, zoom);
+    this.guides.showSnapGuides(guides, zoom, center);
     this.canvas.requestRenderAll();
   }
 

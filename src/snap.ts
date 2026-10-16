@@ -18,21 +18,28 @@ export interface SnapBox {
   top: number;
   width: number;
   height: number;
+  /** La page elle-même (ses bords, son centre) — son centre se trace autrement. */
+  page?: boolean;
 }
 
 /** Un guide : un trait sur l'axe `axis` (x : vertical, y : horizontal) à la coordonnée
- *  `at`, de `from` à `to` sur l'autre axe. */
+ *  `at`, de `from` à `to` sur l'autre axe. `center` : il joint deux centres ; `page` : sa
+ *  cible est la page — les deux ensemble, c'est « centré sur la page », le repère rouge. */
 export interface SnapGuide {
   axis: "x" | "y";
   at: number;
   from: number;
   to: number;
+  center?: boolean;
+  page?: boolean;
 }
 
 export interface SnapResult {
   dx: number;
   dy: number;
   guides: SnapGuide[];
+  /** Le centre de l'objet une fois calé — où se dessine la croix du centrage. */
+  center: { x: number; y: number };
 }
 
 /** Les guides actifs, par axe : ce que le prochain mouvement préfère garder. */
@@ -45,6 +52,7 @@ interface Candidate {
   at: number;
   delta: number;
   target: SnapBox;
+  center: boolean;
 }
 
 interface Mark {
@@ -76,9 +84,10 @@ export function snapMove(moving: SnapBox, targets: SnapBox[], threshold: number,
   const dy = bestY?.delta ?? 0;
   const placed = { ...moving, left: moving.left + dx, top: moving.top + dy };
   const guides: SnapGuide[] = [];
-  if (bestX) guides.push(guide("x", bestX.at, placed.top, placed.height, bestX.target.top, bestX.target.height));
-  if (bestY) guides.push(guide("y", bestY.at, placed.left, placed.width, bestY.target.left, bestY.target.width));
-  return { dx, dy, guides };
+  if (bestX) guides.push(guide("x", bestX, placed.top, placed.height, bestX.target.top, bestX.target.height));
+  if (bestY) guides.push(guide("y", bestY, placed.left, placed.width, bestY.target.left, bestY.target.width));
+  const center = { x: placed.left + placed.width / 2, y: placed.top + placed.height / 2 };
+  return { dx, dy, guides, center };
 }
 
 function closest(
@@ -94,7 +103,7 @@ function closest(
       if (a.center !== b.center) continue;
       const delta = b.at - a.at;
       if (Math.abs(delta) > threshold) continue;
-      if (!best || better(b.at, delta, best, kept)) best = { at: b.at, delta, target };
+      if (!best || better(b.at, delta, best, kept)) best = { at: b.at, delta, target, center: a.center };
     }
   }
   return best;
@@ -108,6 +117,11 @@ function better(at: number, delta: number, best: Candidate, kept: number | undef
 }
 
 /** Le guide joint l'objet et sa cible sur l'autre axe. */
-function guide(axis: "x" | "y", at: number, start: number, size: number, targetStart: number, targetSize: number): SnapGuide {
-  return { axis, at, from: Math.min(start, targetStart), to: Math.max(start + size, targetStart + targetSize) };
+function guide(axis: "x" | "y", best: Candidate, start: number, size: number, targetStart: number, targetSize: number): SnapGuide {
+  const line: SnapGuide = {
+    axis, at: best.at, from: Math.min(start, targetStart), to: Math.max(start + size, targetStart + targetSize),
+  };
+  if (best.center) line.center = true;
+  if (best.target.page) line.page = true;
+  return line;
 }
