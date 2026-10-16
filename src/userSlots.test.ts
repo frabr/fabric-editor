@@ -218,6 +218,7 @@ describe("lâcher un cadre à fournir (DropHandler) : comme une image", () => {
   function dropping(objects: FabricObject[], target: FabricObject | null) {
     const layers = managerWith(objects);
     const canvas = {
+      on: vi.fn(), off: vi.fn(),
       setActiveObject: vi.fn(), discardActiveObject: vi.fn(), renderAll: vi.fn(), requestRenderAll: vi.fn(),
       remove: vi.fn(), getScenePoint: vi.fn(),
     };

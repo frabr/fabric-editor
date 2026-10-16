@@ -243,6 +243,11 @@ export class LayoutManager {
     return this.drag.isAnchored;
   }
 
+  /** Nothing is being dropped into a container (no timer, no session). */
+  get isIdle(): boolean {
+    return this.drag.isIdle;
+  }
+
   /** Clean up event listeners. */
   dispose(): void {
     this.drag.reset();

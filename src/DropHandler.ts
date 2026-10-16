@@ -2,7 +2,8 @@ import { FabricImage, Point, Rect, type FabricObject } from "#fabric";
 import type { FabricEditor } from "./FabricEditor";
 import { DRAG_PREVIEW_KEY } from "./types";
 import type { ImageLayerOptions, ShapeType, TextLayerOptions, ShapeLayerOptions } from "./types";
-import { rulesOf } from "./capabilities";
+import { kindOf, rulesOf } from "./capabilities";
+import { isStackContainer } from "./layout/model";
 import { ImageFrame, type ImageMeta } from "./ImageFrame";
 
 /** Couleur pour le feedback drag & drop via les contrôles de sélection */
@@ -66,6 +67,8 @@ interface DropState {
   pendingTarget: DropTarget | null;
   timer: ReturnType<typeof setTimeout> | null;
   replaceMode: boolean;
+  /** La cible a été sélectionnée pour montrer ses contrôles (jamais pendant un drag natif). */
+  selected: boolean;
   /** Couleurs originales des contrôles */
   originalColors: { border: string; corner: string } | null;
   /** Overlay Fabric (suit le clipPath de l'image) */
@@ -98,14 +101,40 @@ export interface DropHandlerConfig {
   onSuccess?: () => void;
   /** Callback en cas d'erreur */
   onError?: (error: unknown) => void;
+  /**
+   * Le bord de l'artboard pendant qu'on glisse une image DU CANVAS : l'hôte dit si le
+   * pointeur est dans sa bande du fond (`near` — le remplacement ne s'arme pas là), montre
+   * son cue (`cue`), et prend le lâcher (`take` : l'image devient le fond ; vrai si prise —
+   * le calque glissé est alors retiré du canvas).
+   */
+  canvasEdge?: {
+    near: (e: MouseEvent) => boolean;
+    cue?: (near: boolean) => void;
+    take: (source: FabricObject, e: MouseEvent) => boolean | Promise<boolean>;
+  };
 }
 
 /** Config avec valeurs par défaut appliquées (overlayElement reste optionnel) */
-type ResolvedConfig = Required<Omit<DropHandlerConfig, "overlayElement" | "resolveFile" | "onFile">> & {
+type ResolvedConfig = Required<Omit<DropHandlerConfig, "overlayElement" | "resolveFile" | "onFile" | "canvasEdge">> & {
   overlayElement: HTMLElement | undefined;
   resolveFile?: DropHandlerConfig["resolveFile"];
   onFile?: DropHandlerConfig["onFile"];
+  canvasEdge?: DropHandlerConfig["canvasEdge"];
 };
+
+/** Un glisser natif d'une image du canvas (object:moving) : ce qu'on tient, et où. */
+interface CanvasDragState {
+  source: FabricObject;
+  /** Le pointeur est dans la bande du fond de l'hôte. */
+  inEdge: boolean;
+}
+
+/** L'image qu'un calque du canvas porte — ce qu'il donnerait s'il venait de la toolbox. */
+export function canvasImageSource(obj: FabricObject): { url: string; imageMeta: ImageMeta } | null {
+  if (obj instanceof ImageFrame) return obj.imageSrc ? { url: obj.imageSrc, imageMeta: obj.imageMeta } : null;
+  if (obj instanceof FabricImage) return obj.getSrc() ? { url: obj.getSrc(), imageMeta: {} } : null;
+  return null;
+}
 
 /**
  * Gère le drag & drop sur le canvas Fabric.js
@@ -117,6 +146,12 @@ type ResolvedConfig = Required<Omit<DropHandlerConfig, "overlayElement" | "resol
  * - Drop après attente (>= hoverDelay sur une cible) : remplace l'image survolée
  *
  * Text & shape drops are always "add at position" — no replace mode.
+ *
+ * Une image DÉJÀ sur le canvas agit comme une image de la toolbox quand on la glisse
+ * (object:moving) : au-dessus d'une forme ou d'une forme-image, le même « Remplacer » se
+ * pose après la même attente, et le lâcher remplit la cible de son image — le calque glissé
+ * disparaît. Une pile reste l'affaire de DragToLayout (la session d'insertion) ; la bande
+ * du fond, celle de l'hôte (canvasEdge).
  */
 export class DropHandler {
   private state: DropState = {
@@ -124,6 +159,7 @@ export class DropHandler {
     pendingTarget: null,
     timer: null,
     replaceMode: false,
+    selected: false,
     originalColors: null,
     fabricOverlay: null,
     htmlOverlay: null,
@@ -132,12 +168,15 @@ export class DropHandler {
   private config: ResolvedConfig;
   private dropZone: HTMLElement | null = null;
   private drag: ExternalDragState | null = null;
+  private moving: CanvasDragState | null = null;
   private lastPointer: { x: number; y: number } | null = null;
 
   // Handlers liés pour pouvoir les retirer
   private boundHandleDragOver: (e: DragEvent) => void;
   private boundHandleDragLeave: (e: DragEvent) => void;
   private boundHandleDrop: (e: DragEvent) => void;
+  private boundOnCanvasMoving = (e: { target?: FabricObject; e?: Event; scenePoint?: Point }) => this.onCanvasMoving(e);
+  private boundOnCanvasUp = (e: { e?: Event }) => { void this.onCanvasUp(e); };
 
   constructor(
     private editor: FabricEditor,
@@ -155,6 +194,11 @@ export class DropHandler {
     this.boundHandleDragOver = this.handleDragOver.bind(this);
     this.boundHandleDragLeave = this.handleDragLeave.bind(this);
     this.boundHandleDrop = this.handleDrop.bind(this);
+
+    // Le glisser natif d'une image du canvas se suit dès la construction : un hôte sans
+    // dépôt de fichiers (le compositeur vidéo) n'attache jamais de drop zone.
+    this.editor.canvas.on("object:moving", this.boundOnCanvasMoving);
+    this.editor.canvas.on("mouse:up", this.boundOnCanvasUp);
   }
 
   /**
@@ -168,7 +212,7 @@ export class DropHandler {
   }
 
   /**
-   * Détache les event listeners et nettoie l'état
+   * Détache les event listeners (drop zone et canvas) et nettoie l'état
    */
   detach(): void {
     if (this.dropZone) {
@@ -177,6 +221,9 @@ export class DropHandler {
       this.dropZone.removeEventListener("drop", this.boundHandleDrop);
       this.dropZone = null;
     }
+    this.editor.canvas.off("object:moving", this.boundOnCanvasMoving);
+    this.editor.canvas.off("mouse:up", this.boundOnCanvasUp);
+    this.moving = null;
     this.reset();
   }
 
@@ -419,19 +466,103 @@ export class DropHandler {
     if (this.drag && !this.drag.capabilities.replaceTarget) return;
 
     // Replace-capable drag (armed image) or native file drag: track hover target
-    const targetAtPoint = this.editor.findDropTargetAtPoint(pointer.x, pointer.y);
+    this.trackHoverTarget(this.editor.findDropTargetAtPoint(pointer.x, pointer.y));
+  }
 
-    if (targetAtPoint !== this.state.pendingTarget) {
-      this.clearTimer();
-      this.clearHighlight();
-      this.state.pendingTarget = targetAtPoint;
+  /** La cible sous le pointeur : un changement relance l'attente avant « Remplacer ». */
+  private trackHoverTarget(targetAtPoint: DropTarget | null, select = true): void {
+    if (targetAtPoint === this.state.pendingTarget) return;
 
-      if (targetAtPoint) {
-        this.state.timer = setTimeout(() => {
-          this.activateReplaceMode(targetAtPoint);
-        }, this.config.hoverDelay);
-      }
+    this.clearTimer();
+    this.clearHighlight();
+    this.state.pendingTarget = targetAtPoint;
+
+    if (targetAtPoint) {
+      this.state.timer = setTimeout(() => {
+        this.activateReplaceMode(targetAtPoint, select);
+      }, this.config.hoverDelay);
     }
+  }
+
+  // ==================== Une image du canvas, glissée ====================
+
+  /** Un pas de glisser natif : une image du canvas au-dessus d'une cible, ou dans la bande du fond. */
+  private onCanvasMoving(e: { target?: FabricObject; e?: Event; scenePoint?: Point }): void {
+    const source = e.target;
+    if (this.drag || !source || !canvasImageSource(source)) return;
+    // Une image verrouillée ou hors-jeu ne se glisse pas dans une autre
+    if (rulesOf(source).onToolboxImage !== "replaceImage") return;
+    // Une pile a pris l'objet (session d'insertion) : rien à proposer ici
+    if (!this.editor.layout.isIdle) {
+      this.leaveCanvasDrag();
+      return;
+    }
+
+    const pointerEvent = e.e as MouseEvent | undefined;
+    const inEdge = Boolean(pointerEvent && this.config.canvasEdge?.near(pointerEvent));
+    if (!this.moving || this.moving.source !== source) this.moving = { source, inEdge: false };
+    if (inEdge !== this.moving.inEdge) {
+      this.moving.inEdge = inEdge;
+      this.config.canvasEdge?.cue?.(inEdge);
+    }
+    if (inEdge) {
+      this.trackHoverTarget(null, false);
+      return;
+    }
+
+    const pointer = e.scenePoint ?? (pointerEvent ? this.editor.canvas.getScenePoint(pointerEvent) : null);
+    if (!pointer) return;
+    const target = this.editor.findDropTargetAtPoint(pointer.x, pointer.y, source);
+    // Une pile reçoit par DragToLayout ; une cible qui ne prend pas d'image reste opaque
+    const candidate = target && !isStackContainer(target) && rulesOf(target).onToolboxImage ? target : null;
+    this.trackHoverTarget(candidate, false);
+  }
+
+  /** Le lâcher d'un glisser natif : la cible armée prend l'image, ou l'hôte prend le fond. */
+  private async onCanvasUp(e: { e?: Event }): Promise<void> {
+    const moving = this.moving;
+    if (!moving) return;
+    this.moving = null;
+
+    const { source, inEdge } = moving;
+    const target = this.state.replaceMode ? this.state.hoveredTarget : null;
+    this.reset();
+    if (inEdge) this.config.canvasEdge?.cue?.(false);
+
+    try {
+      if (inEdge && e.e && this.config.canvasEdge) {
+        if (await this.config.canvasEdge.take(source, e.e as MouseEvent)) this.removeSource(source);
+        return;
+      }
+      if (!target) return;
+
+      const image = canvasImageSource(source);
+      if (!image) return;
+      if (rulesOf(target as FabricObject).onToolboxImage === "fill") {
+        await this.editor.layers.replaceShapeWithImage(target as FabricObject, image.url, image.imageMeta);
+      } else {
+        await this.editor.layers.replaceImageSource(target as ImageFrame | FabricImage, image.url,
+                                                    { imageMeta: image.imageMeta });
+      }
+      this.removeSource(source);
+      this.config.onSuccess();
+    } catch (error) {
+      this.config.onError(error);
+    }
+  }
+
+  /** Le glisser natif quitte notre périmètre (une pile l'a pris) : plus de cible, plus de cue. */
+  private leaveCanvasDrag(): void {
+    if (this.moving?.inEdge) this.config.canvasEdge?.cue?.(false);
+    this.moving = null;
+    this.reset();
+  }
+
+  /** Le calque glissé est entré dans sa cible : il quitte le canvas. */
+  private removeSource(source: FabricObject): void {
+    this.editor.canvas.discardActiveObject();
+    this.editor.layers.remove(source);
+    this.editor.canvas.renderAll();
   }
 
   private handleDragOver(e: DragEvent): void {
@@ -503,7 +634,7 @@ export class DropHandler {
     return file;
   }
 
-  private activateReplaceMode(target: DropTarget): void {
+  private activateReplaceMode(target: DropTarget, select = true): void {
     // Verrouillé (contenu) : la cible reste opaque mais ne réagit pas
     if (!rulesOf(target as FabricObject).onToolboxImage) {
       return;
@@ -518,7 +649,7 @@ export class DropHandler {
 
     this.state.replaceMode = true;
     this.state.hoveredTarget = target;
-    this.highlightTarget(target);
+    this.highlightTarget(target, select);
   }
 
   private clearTimer(): void {
@@ -537,10 +668,18 @@ export class DropHandler {
   }
 
   /**
-   * Met en surbrillance une cible via les contrôles de sélection Fabric
-   * et un overlay HTML sombre avec texte personnalisable
+   * Met en surbrillance une cible : un voile sombre et le texte « Remplacer » ; sélectionnée
+   * pour montrer ses contrôles — sauf pendant un glisser natif (`select` faux), où la
+   * sélection est l'objet qu'on tient.
    */
-  private highlightTarget(target: DropTarget): void {
+  private highlightTarget(target: DropTarget, select = true): void {
+    this.createOverlay(target);
+    this.state.selected = select;
+    if (!select) {
+      this.editor.canvas.requestRenderAll();
+      return;
+    }
+
     // Sauvegarder les couleurs originales
     this.state.originalColors = {
       border: target.borderColor as string,
@@ -552,9 +691,6 @@ export class DropHandler {
       borderColor: HIGHLIGHT_COLOR,
       cornerColor: HIGHLIGHT_COLOR,
     });
-
-    // Créer l'overlay HTML
-    this.createOverlay(target);
 
     // Sélectionner la cible pour afficher les contrôles
     this.editor.canvas.setActiveObject(target);
@@ -651,7 +787,8 @@ export class DropHandler {
     // Supprimer l'overlay HTML
     this.removeOverlay();
 
-    this.editor.canvas.discardActiveObject();
+    if (this.state.selected) this.editor.canvas.discardActiveObject();
+    this.state.selected = false;
     this.editor.canvas.renderAll();
   }
 

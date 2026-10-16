@@ -3,7 +3,7 @@
  * document — l'url finale et l'identité du média, jamais une url de session.
  */
 import { describe, it, expect, vi } from "vitest";
-import { FabricImage } from "#fabric";
+import { FabricImage, Rect } from "#fabric";
 import { createCanvas } from "canvas";
 import { DropHandler } from "./DropHandler";
 import { ImageFrame } from "./ImageFrame";
@@ -11,6 +11,7 @@ import { ImageFrame } from "./ImageFrame";
 function handlerWith(config: Record<string, unknown>, frame: ImageFrame = imageFrame()) {
   const objects: object[] = [frame];
   const canvas = {
+    on: vi.fn(), off: vi.fn(),
     setActiveObject: vi.fn(), renderAll: vi.fn(), requestRenderAll: vi.fn(), getScenePoint: vi.fn(),
     getObjects: () => objects,
   };
@@ -107,5 +108,124 @@ describe("handleDrop", () => {
     expect(layers.replaceImageSource).not.toHaveBeenCalled();
     expect(frame.pending).toBe(true);
     expect(onError).toHaveBeenCalledWith(expect.any(Error));
+  });
+});
+
+/**
+ * Une image déjà sur le canvas, glissée (object:moving) : elle agit comme une image de la
+ * toolbox — « Remplacer » sur une forme ou une forme-image après l'attente, la bande du fond
+ * à l'hôte, une pile à DragToLayout.
+ */
+describe("une image du canvas, glissée", () => {
+  function nativeSetup(config: Record<string, unknown> = {}, target: object = new Rect({ width: 100, height: 100 })) {
+    const source = imageFrame();
+    Object.defineProperty(source, "imageSrc", { get: () => "https://cdn/a.jpg" });
+    Object.defineProperty(source, "imageMeta", { get: () => ({ content_medium_id: 7 }) });
+    const replaced = imageFrame();
+    const canvas = {
+      on: vi.fn(), off: vi.fn(), add: vi.fn(), remove: vi.fn(), renderAll: vi.fn(), requestRenderAll: vi.fn(),
+      setActiveObject: vi.fn(), discardActiveObject: vi.fn(), getScenePoint: vi.fn(() => ({ x: 5, y: 5 })),
+      getObjects: () => [source, target],
+    };
+    const layers = {
+      replaceShapeWithImage: vi.fn(async () => replaced), replaceImageSource: vi.fn(async () => replaced), remove: vi.fn(),
+    };
+    const editor = { canvas, layers, layout: { isIdle: true }, findDropTargetAtPoint: vi.fn(() => target) };
+    const onSuccess = vi.fn();
+    const handler = new DropHandler(editor as any, { getImageUrl: () => "", onSuccess, hoverDelay: 500, ...config } as any);
+    const pointer = { clientX: 10, clientY: 10 } as MouseEvent;
+    const move = () => (handler as any).onCanvasMoving({ target: source, e: pointer, scenePoint: { x: 5, y: 5 } });
+    const up = () => (handler as any).onCanvasUp({ e: pointer });
+    return { handler, source, target, layers, canvas, editor, onSuccess, move, up };
+  }
+
+  it("au-dessus d'une forme, après l'attente, le lâcher la remplit de l'image et retire le calque glissé", async () => {
+    vi.useFakeTimers();
+    const { source, target, layers, canvas, onSuccess, move, up } = nativeSetup();
+
+    move();
+    vi.advanceTimersByTime(500);
+    // Pendant un glisser natif, la sélection reste l'objet qu'on tient
+    expect(canvas.setActiveObject).not.toHaveBeenCalled();
+
+    await up();
+
+    expect(layers.replaceShapeWithImage).toHaveBeenCalledWith(target, "https://cdn/a.jpg", { content_medium_id: 7 });
+    expect(layers.remove).toHaveBeenCalledWith(source);
+    expect(onSuccess).toHaveBeenCalled();
+    vi.useRealTimers();
+  });
+
+  it("au-dessus d'une forme-image, c'est son image qui est remplacée", async () => {
+    vi.useFakeTimers();
+    const target = imageFrame();
+    const { layers, move, up } = nativeSetup({}, target);
+
+    move();
+    vi.advanceTimersByTime(500);
+    await up();
+
+    expect(layers.replaceImageSource).toHaveBeenCalledWith(target, "https://cdn/a.jpg", { imageMeta: { content_medium_id: 7 } });
+    expect(layers.replaceShapeWithImage).not.toHaveBeenCalled();
+    vi.useRealTimers();
+  });
+
+  it("lâchée avant l'attente, ou sans cible : rien ne change", async () => {
+    vi.useFakeTimers();
+    const { layers, move, up } = nativeSetup();
+
+    move();
+    vi.advanceTimersByTime(100);
+    await up();
+
+    expect(layers.replaceShapeWithImage).not.toHaveBeenCalled();
+    expect(layers.remove).not.toHaveBeenCalled();
+    vi.useRealTimers();
+  });
+
+  it("une pile reste l'affaire de DragToLayout : pas de « Remplacer » dessus", async () => {
+    vi.useFakeTimers();
+    const stack = new Rect({ width: 100, height: 100 });
+    stack.set("layout", { container: { arrangement: "column" } });
+    const { layers, move, up } = nativeSetup({}, stack);
+
+    move();
+    vi.advanceTimersByTime(500);
+    await up();
+
+    expect(layers.replaceShapeWithImage).not.toHaveBeenCalled();
+    vi.useRealTimers();
+  });
+
+  it("dans la bande du fond : le cue de l'hôte, aucune cible, et le lâcher lui revient", async () => {
+    vi.useFakeTimers();
+    const cue = vi.fn();
+    const take = vi.fn(async () => true);
+    const { source, layers, move, up } = nativeSetup({ canvasEdge: { near: () => true, cue, take } });
+
+    move();
+    vi.advanceTimersByTime(500);
+    expect(cue).toHaveBeenCalledWith(true);
+
+    await up();
+
+    expect(take).toHaveBeenCalledWith(source, expect.anything());
+    expect(cue).toHaveBeenLastCalledWith(false);
+    expect(layers.replaceShapeWithImage).not.toHaveBeenCalled();
+    expect(layers.remove).toHaveBeenCalledWith(source);
+    vi.useRealTimers();
+  });
+
+  it("un glisser de la toolbox en cours n'est pas un glisser natif", async () => {
+    vi.useFakeTimers();
+    const { handler, layers, move, up } = nativeSetup();
+    (handler as any).drag = { payload: { kind: "image", url: "x" }, capabilities: {}, object: null, onCanvas: false };
+
+    move();
+    vi.advanceTimersByTime(500);
+    await up();
+
+    expect(layers.replaceShapeWithImage).not.toHaveBeenCalled();
+    vi.useRealTimers();
   });
 });

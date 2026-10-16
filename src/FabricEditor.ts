@@ -707,15 +707,16 @@ export class FabricEditor {
    * peut ne pas réagir (verrouillé, groupe de paths) : DropHandler n'arme alors pas le
    * remplacement, et l'image est ajoutée.
    */
-  findDropTargetAtPoint(x: number, y: number): FabricObject | null {
+  findDropTargetAtPoint(x: number, y: number, exclude?: FabricObject): FabricObject | null {
     const point = new Point(x, y);
 
     // Parcourir les objets du dessus vers le dessous
     const objects = this.canvas.getObjects().slice().reverse();
 
     for (const obj of objects) {
-      // La preview de drag suit le curseur : elle matcherait toujours
-      if (obj.get(DRAG_PREVIEW_KEY)) continue;
+      // La preview de drag suit le curseur : elle matcherait toujours — l'objet qu'on
+      // glisse (exclude) aussi
+      if (obj === exclude || obj.get(DRAG_PREVIEW_KEY)) continue;
       // Le fond (legacy, promu, passthrough) est hors-jeu : un fond réactif au drop,
       // plein cadre, capterait tous les drops — il se change par le drop en bord ou
       // la promotion, jamais par le drop direct. Le verrou est ignoré ici : un objet
