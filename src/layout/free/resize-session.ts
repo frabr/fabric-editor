@@ -10,7 +10,7 @@ import { placeTopLeft, scaledSize, setShapeSize, type Box } from "../geometry";
 import { isStackContainer, layoutOf } from "../model";
 import { descendantsOf } from "../hierarchy";
 import { layoutSubtree } from "../run";
-import { isTextObject, scaleStyleFontSizes, type TextStyles } from "../text";
+import { isTextObject, scaleText, textScaleState, type TextScaleState } from "../text";
 import { fitFreeContainer } from "./fit";
 
 /** Ce qu'il faut d'un descendant pour le remettre à l'échelle depuis le début du geste. */
@@ -18,7 +18,7 @@ interface ScaledState {
   obj: FabricObject;
   /** Coin haut-gauche et taille. */
   box: Box;
-  text?: { width: number; fontSize: number; fontSizeIntent: number; styles: TextStyles; minSize?: SizingData["minSize"] };
+  text?: TextScaleState;
   container?: { padding?: ContainerData["padding"]; gap?: number; minSize?: SizingData["minSize"] };
 }
 
@@ -85,14 +85,7 @@ export class FreeResizeSession {
     const layout = layoutOf(obj);
 
     if (isTextObject(obj)) {
-      const t = obj as FabricObject & { fontSize: number; fontSizeIntent?: number; styles?: object };
-      state.text = {
-        width: obj.width,
-        fontSize: t.fontSize,
-        fontSizeIntent: t.fontSizeIntent ?? t.fontSize,
-        styles: scaleStyleFontSizes(t.styles as TextStyles, 1),
-        minSize: layout?.sizing?.minSize,
-      };
+      state.text = textScaleState(obj);
     } else if (layout?.container) {
       state.container = {
         padding: layout.container.padding,
@@ -108,16 +101,7 @@ export class FreeResizeSession {
     const layout = layoutOf(obj);
 
     if (state.text) {
-      const t = obj as FabricObject & { fontSize: number; fontSizeIntent?: number; styles?: TextStyles; initDimensions(): void };
-      t.styles = scaleStyleFontSizes(state.text.styles, k);
-      t.fontSizeIntent = state.text.fontSizeIntent * k;
-      t.fontSize = state.text.fontSize * k;
-      t.width = state.text.width * k;
-      if (layout?.sizing) {
-        obj.set("layout", { ...layout, sizing: { ...layout.sizing, minSize: scaleMin(state.text.minSize, k) } });
-      }
-      t.initDimensions();
-      obj.dirty = true;
+      scaleText(obj, state.text, k);
     } else if (state.container && layout?.container) {
       const p = state.container.padding;
       obj.set("layout", {

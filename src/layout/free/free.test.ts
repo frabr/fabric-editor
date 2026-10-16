@@ -123,6 +123,24 @@ describe("groupe libre", () => {
     expect(t.fontSize).toBe(20);
     expect(box(g)).toEqual(start);
   });
+
+  it("redimensionner : un texte en hauteur fixe garde ses proportions, son plancher suit", () => {
+    const g = group("g");
+    const t = new CustomTextbox("Bonjour", { left: 100, top: 100, width: 200, fontSize: 20, fontFamily: "Arial", originX: "left", originY: "top" });
+    t.set({ layerId: "t", layout: { sizing: { x: "fixed", y: "fixed", minSize: { w: 0, h: 30 } }, child: { parentId: "g" } } } as never);
+    t.set({ height: 80 });
+    const canvas = canvasWith(g, t);
+    runLayout(canvas.getObjects());
+    const start = box(g);
+
+    const session = new FreeResizeSession(g, canvas.getObjects(), { left: start.x, top: start.y, width: start.w, height: start.h });
+    session.apply(2, { x: start.x, y: start.y });
+    expect(t.fontSize).toBe(40);
+    expect(t.width).toBe(400);
+    expect(t.height).toBe(160);
+    expect((t.get("layout") as { sizing: { minSize: { h: number } } }).sizing.minSize.h).toBe(60);
+    expect(t.scaleX).toBe(1);
+  });
 });
 
 describe("redimensionner un groupe à la poignée", () => {

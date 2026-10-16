@@ -11,6 +11,7 @@ import { migrateLegacyLayout } from "../layout/legacy";
 import { StackResizeSession } from "../layout/stack/resize-session";
 import type { LayoutData } from "../layout/types";
 import { detachChild } from "../layout/model";
+import { setShapeSize } from "../layout/geometry";
 
 beforeAll(async () => {
   await initYoga();
@@ -426,13 +427,85 @@ describe("CustomTextbox — poignées", () => {
     expect(Math.abs(t.height - 250)).toBeLessThanOrEqual(1);
   });
 
-  it("coin : largeur fixe et minimum de hauteur", () => {
+  /** Le coin bas-droit tiré au facteur k : la boîte de Fabric compte le contour (1 px). */
+  function corner(t: CustomTextbox, k: number) {
+    return { x: (t.width + t.strokeWidth) * k, y: (t.height + t.strokeWidth) * k };
+  }
+
+  it("coin : le texte et sa boîte grandissent ensemble, proportions gardées, sans scale ni changement de mode", () => {
     const t = text("Bonjour");
-    drag(t, "br", 400, 200);
-    expect(t.sizing.x).toBe("fixed");
-    expect(t.sizing.y).toBe("hug");
-    expect(Math.abs(t.width - 400)).toBeLessThanOrEqual(1);
-    expect(Math.abs(t.height - 200)).toBeLessThanOrEqual(1);
+    const { width, height } = t;
+    const { x, y } = corner(t, 2);
+    drag(t, "br", x, y);
+    expect(t.fontSize).toBe(64);
+    expect(t.fontSizeIntent).toBe(64);
+    expect(t.sizing).toEqual({ x: "hug", y: "hug" });
+    expect(Math.abs(t.width - 2 * width)).toBeLessThanOrEqual(2);
+    expect(Math.abs(t.height - 2 * height)).toBeLessThanOrEqual(2);
+    expect(t.scaleX).toBe(1);
+    expect(t.scaleY).toBe(1);
+  });
+
+  it("coin : la police par caractère suit", () => {
+    const t = text("Bonjour", { styles: { 0: { 0: { fontSize: 16 } } } });
+    const { x, y } = corner(t, 2);
+    drag(t, "br", x, y);
+    expect(t.styles[0][0].fontSize).toBe(32);
+  });
+
+  it("coin en largeur et hauteur fixes : la boîte suit le facteur, le texte wrappe pareil", () => {
+    const t = text(LONG, { width: 200 });
+    t.setSizing({ x: "fixed", y: "fixed" });
+    t.set({ height: 300 });
+    const lines = t.textLines.length;
+    const { x, y } = corner(t, 1.5);
+    drag(t, "br", x, y);
+    expect(t.fontSize).toBe(48);
+    expect(Math.abs(t.width - 300)).toBeLessThanOrEqual(1);
+    expect(Math.abs(t.height - 450)).toBeLessThanOrEqual(1);
+    expect(t.textLines.length).toBe(lines);
+  });
+
+  it("coin : le plancher de hauteur suit", () => {
+    const t = text("Bonjour");
+    drag(t, "mb", 0, 100);
+    const { x, y } = corner(t, 2);
+    drag(t, "br", x, y);
+    expect(Math.abs((t.sizing.minSize?.h ?? 0) - 200)).toBeLessThanOrEqual(2);
+  });
+
+  it("coin : chaque pas du geste repart du départ, rien ne s'accumule", () => {
+    const t = text("Bonjour");
+    t.set({ originX: "left", originY: "top", left: 0, top: 0 });
+    const transform = { target: t, corner: "br", originX: "left", originY: "top" } as any;
+    const big = corner(t, 2);
+    const back = corner(t, 1);
+    t.handleCornerResize(transform, big.x, big.y);
+    expect(t.fontSize).toBe(64);
+    t.handleCornerResize(transform, back.x, back.y);
+    expect(t.fontSize).toBe(32);
+  });
+
+  it("coin : le coin opposé reste en place", () => {
+    const t = text("Bonjour");
+    t.set({ originX: "center", originY: "center", left: 300, top: 200 });
+    t.setCoords();
+    const tl = t.getPositionByOrigin("left", "top");
+    const transform = { target: t, corner: "br", originX: "left", originY: "top" } as any;
+    t.handleCornerResize(transform, tl.x + (t.width + 1) * 2, tl.y + (t.height + 1) * 2);
+    const after = t.getPositionByOrigin("left", "top");
+    expect(Math.abs(after.x - tl.x)).toBeLessThanOrEqual(0.01);
+    expect(Math.abs(after.y - tl.y)).toBeLessThanOrEqual(0.01);
+  });
+
+  it("taille programmatique (setShapeSize) : la police absorbe, jamais de scale", () => {
+    const t = text("Bonjour");
+    const { width, height } = t;
+    setShapeSize(t, width * 2, height * 2);
+    expect(t.fontSize).toBe(64);
+    expect(t.scaleX).toBe(1);
+    expect(t.scaleY).toBe(1);
+    expect(Math.abs(t.width - 2 * width)).toBeLessThanOrEqual(2);
   });
 });
 

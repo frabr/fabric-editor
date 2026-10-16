@@ -3,10 +3,21 @@ import { type SizingData, type TextOverflow } from "../layout/types";
 import { resolveTextBox, type TextConstraint, type TextMeasure } from "../layout/text-box";
 import { layoutOf, parentIdOf, isFreeContainer } from "../layout/model";
 import { parentOf } from "../layout/hierarchy";
-import { scaleStyleFontSizes, type TextStyles } from "../layout/text";
+import { scaleText, textScaleState, type TextScaleState } from "../layout/text";
+import { isTransformCentered } from "../shapes/resizeUtils";
 import { tokenColorOf } from "../tokens";
 
-const { changeObjectWidth, changeObjectHeight } = controlsUtils;
+const { changeObjectWidth, changeObjectHeight, getLocalPoint } = controlsUtils;
+
+/** Un texte ne se réduit jamais sous ce facteur de son état de départ (une poignée de coin). */
+const MIN_CORNER_SCALE = 0.05;
+
+/** Le début d'un geste de coin : le texte et sa boîte (contour compris) tels qu'on les a pris. */
+interface CornerStart {
+  transform: unknown;
+  state: TextScaleState;
+  distance: number;
+}
 
 /** Largeur de mesure « sans contrainte » (une ligne par paragraphe). */
 const UNBOUNDED_WIDTH = 10000;
@@ -33,7 +44,9 @@ const UNBOUNDED_WIDTH = 10000;
  * en page (document tout juste chargé) s'affiche tel que sauvegardé ; un texte hors
  * container ignore toute contrainte.
  *
- * Les poignées ne déforment jamais : elles changent la boîte (jamais de scale).
+ * Les poignées ne déforment jamais (jamais de scale) : un bord change la boîte, un coin
+ * agrandit le texte avec elle, proportions gardées — la police absorbe le facteur
+ * (`scaleText`, layout/text.ts), comme pour tout agrandissement proportionnel d'un texte.
  *
  * `fontSize` est la taille effective (celle qui est rendue et sauvegardée, pour qu'un
  * document s'affiche juste sans relayout) ; `fontSizeIntent` est la taille voulue par
@@ -396,13 +409,44 @@ export class CustomTextbox extends Textbox {
       : this._withAnchor(transform, () => this._resizeHeight(transform, x, y));
   }
 
-  /** Coin : les deux règles des bords à la fois. */
+  /**
+   * Coin : le texte et sa boîte grandissent ensemble, proportions gardées, le coin opposé
+   * immobile. Le facteur est celui de la poignée native de Fabric (distance au coin
+   * d'ancrage, en somme des deux axes), appliqué depuis l'état du début du geste : les
+   * modes de taille ne changent pas, la police absorbe tout.
+   */
   handleCornerResize(transform: any, x: number, y: number): boolean {
+    let start = this._cornerStart;
+    if (!start || start.transform !== transform) {
+      const dim = this._getTransformedDimensions();
+      start = { transform, state: textScaleState(this), distance: Math.abs(dim.x) + Math.abs(dim.y) };
+      this._cornerStart = start;
+    }
+    if (start.distance === 0) return false;
+
+    const { originX, originY } = transform;
+    const local = getLocalPoint(transform, originX, originY, x, y);
+    let k = (Math.abs(local.x) + Math.abs(local.y)) / start.distance;
+    if (isTransformCentered(transform)) k *= 2;
+    k = Math.max(MIN_CORNER_SCALE, k);
+
     return this._withAnchor(transform, () => {
-      const changedW = this._resizeWidth(transform, x, y);
-      const changedH = this._resizeHeight(transform, x, y);
-      return changedW || changedH;
+      const before = { width: this.width, height: this.height, fontSize: this.fontSize };
+      scaleText(this, start.state, k);
+      return before.width !== this.width || before.height !== this.height || before.fontSize !== this.fontSize;
     });
+  }
+
+  /** Le geste de coin en cours (un par objet `transform` de Fabric). */
+  private _cornerStart?: CornerStart;
+
+  /**
+   * Taille programmatique (`setShapeSize`, comme une forme) : le facteur uniforme — la
+   * moyenne des deux axes — passe dans la police, jamais dans un scale.
+   */
+  setSize(w: number, h: number): void {
+    const k = (w / (this.width || 1) + h / (this.height || 1)) / 2;
+    scaleText(this, textScaleState(this), k);
   }
 
   /** Placé par une pile — un groupe (container libre) laisse ses enfants à leur propre taille. */
@@ -448,20 +492,19 @@ export class CustomTextbox extends Textbox {
 
   /**
    * Un texte étiré (scaleX/scaleY) est ramené à scale 1 : le scale passe dans la
-   * largeur et la police. Exact pour un scale uniforme ; un étirement non uniforme est
-   * perdu (les glyphes reprennent leurs proportions).
+   * largeur et la police (`scaleText`). Exact pour un scale uniforme ; un étirement non
+   * uniforme est perdu (les glyphes reprennent leurs proportions, la largeur garde son
+   * propre facteur).
    */
   private _bakeLegacyScale(): void {
     const sx = this.scaleX || 1;
     const sy = this.scaleY || 1;
     if (sx === 1 && sy === 1) return;
-    this.width *= sx;
-    this.height *= sy;
-    this.fontSize *= sy;
-    this.fontSizeIntent *= sy;
-    this.styles = scaleStyleFontSizes(this.styles as TextStyles, sy) as typeof this.styles;
+    const state = textScaleState(this);
     this.scaleX = 1;
     this.scaleY = 1;
+    scaleText(this, state, sy);
+    this.width = state.width * sx;
   }
 
   /**
