@@ -7524,11 +7524,14 @@ var StyleCommands = class {
     this.editor.canvas.renderAll();
   }
   /**
-   * Set a linear gradient fill on the selected object.
+   * Un dégradé linéaire sur l'objet sélectionné : ses stops (offset 0..1, dans l'ordre) et
+   * son angle en degrés, dans la convention de la lib — 0° de gauche à droite, 90° de haut en
+   * bas (un quart de tour de moins que le CSS). L'opacité globale revient à 1 : les couleurs
+   * des stops la portent.
    */
-  setFillGradient(color1, color2, angleDeg) {
+  setFillGradient(stops, angleDeg) {
     const obj = this.editor.selection.current;
-    if (!obj) return;
+    if (!obj || stops.length < 2) return;
     const rad = angleDeg * Math.PI / 180;
     const cos = Math.cos(rad);
     const sin = Math.sin(rad);
@@ -7541,10 +7544,7 @@ var StyleCommands = class {
         x2: 0.5 + cos / 2,
         y2: 0.5 + sin / 2
       },
-      colorStops: [
-        { offset: 0, color: color1 },
-        { offset: 1, color: color2 }
-      ]
+      colorStops: stops.map(({ color, offset }) => ({ color, offset }))
     });
     const previous = obj.fill;
     obj.set({ fill: gradient, opacity: 1 });
@@ -8623,8 +8623,8 @@ var _FabricEditor = class _FabricEditor {
   setFillColor(color) {
     this.styles.setFillColor(color);
   }
-  setFillGradient(color1, color2, angleDeg) {
-    this.styles.setFillGradient(color1, color2, angleDeg);
+  setFillGradient(stops, angleDeg) {
+    this.styles.setFillGradient(stops, angleDeg);
   }
   changeFont(fontFamily, fontWeight) {
     this.styles.changeFont(fontFamily, fontWeight);
