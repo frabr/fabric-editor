@@ -122,7 +122,7 @@ import { StaticCanvas, FabricObject as FabricObject4 } from "#fabric";
 import { FabricImage as FabricImage5, Group as Group4, Point as Point3, util as util2 } from "#fabric";
 
 // src/controls/CustomTextbox.ts
-import { Textbox, Point, controlsUtils } from "#fabric";
+import { Textbox, Point, controlsUtils as controlsUtils2 } from "#fabric";
 
 // src/layout/types.ts
 var MIN_FONT_SIZE = 8;
@@ -264,8 +264,23 @@ function subtreeOf(objects, roots) {
 }
 
 // src/shapes/resizeUtils.ts
+import { controlsUtils } from "#fabric";
+var { getLocalPoint } = controlsUtils;
 function isTransformCentered(transform) {
   return transform.originX === "center" && transform.originY === "center";
+}
+var MIN_CORNER_SCALE = 0.05;
+function cornerScaleFactor(obj, transform, x, y) {
+  if (transform._cornerDistance === void 0) {
+    const dim = obj._getTransformedDimensions();
+    transform._cornerDistance = Math.abs(dim.x) + Math.abs(dim.y);
+  }
+  const start = transform._cornerDistance;
+  if (start === 0) return 1;
+  const local = getLocalPoint(transform, transform.originX, transform.originY, x, y);
+  let k = (Math.abs(local.x) + Math.abs(local.y)) / start;
+  if (isTransformCentered(transform)) k *= 2;
+  return Math.max(MIN_CORNER_SCALE, k);
 }
 
 // src/tokens.ts
@@ -275,8 +290,7 @@ function tokenColorOf(obj) {
 }
 
 // src/controls/CustomTextbox.ts
-var { changeObjectWidth, changeObjectHeight, getLocalPoint } = controlsUtils;
-var MIN_CORNER_SCALE = 0.05;
+var { changeObjectWidth, changeObjectHeight } = controlsUtils2;
 var UNBOUNDED_WIDTH = 1e4;
 var CustomTextbox = class extends Textbox {
   constructor(text, options) {
@@ -562,23 +576,17 @@ var CustomTextbox = class extends Textbox {
   }
   /**
    * Coin : le texte et sa boîte grandissent ensemble, proportions gardées, le coin opposé
-   * immobile. Le facteur est celui de la poignée native de Fabric (distance au coin
-   * d'ancrage, en somme des deux axes), appliqué depuis l'état du début du geste : les
-   * modes de taille ne changent pas, la police absorbe tout.
+   * immobile. Le facteur est celui de toute poignée de coin (cornerScaleFactor), appliqué
+   * depuis l'état du début du geste : les modes de taille ne changent pas, la police
+   * absorbe tout.
    */
   handleCornerResize(transform, x, y) {
     let start = this._cornerStart;
     if (!start || start.transform !== transform) {
-      const dim = this._getTransformedDimensions();
-      start = { transform, state: textScaleState(this), distance: Math.abs(dim.x) + Math.abs(dim.y) };
+      start = { transform, state: textScaleState(this) };
       this._cornerStart = start;
     }
-    if (start.distance === 0) return false;
-    const { originX, originY } = transform;
-    const local = getLocalPoint(transform, originX, originY, x, y);
-    let k = (Math.abs(local.x) + Math.abs(local.y)) / start.distance;
-    if (isTransformCentered(transform)) k *= 2;
-    k = Math.max(MIN_CORNER_SCALE, k);
+    const k = cornerScaleFactor(this, transform, x, y);
     return this._withAnchor(transform, () => {
       const before = { width: this.width, height: this.height, fontSize: this.fontSize };
       scaleText(this, start.state, k);
@@ -1077,7 +1085,7 @@ function installUserSlotRendering(target) {
 }
 
 // src/shapes/FabRect.ts
-import { Rect, classRegistry, controlsUtils as controlsUtils2 } from "#fabric";
+import { Rect, classRegistry, controlsUtils as controlsUtils3 } from "#fabric";
 
 // src/shapes/lockMixin.ts
 var LOCK_MODES = ["free", "position", "full"];
@@ -1114,7 +1122,7 @@ function installLockMethods(proto) {
 }
 
 // src/shapes/FabRect.ts
-var { changeObjectWidth: changeObjectWidth2, changeObjectHeight: changeObjectHeight2 } = controlsUtils2;
+var { changeObjectWidth: changeObjectWidth2, changeObjectHeight: changeObjectHeight2 } = controlsUtils3;
 var FabRect = class extends Rect {
   constructor(options) {
     super({
@@ -1135,13 +1143,20 @@ var FabRect = class extends Rect {
     return this.rx ?? 0;
   }
   /** Corner resize: free resize on both axes (no ratio lock). */
+  /**
+   * Coin : proportions gardées, le facteur passe dans width/height (jamais dans un scale),
+   * depuis la taille de départ du geste. Un container y ajoute son contenu (ScaleSession).
+   */
   handleCornerResize(transform, x, y) {
     const { originX, originY } = transform;
     const anchor = this.getPositionByOrigin(originX, originY);
-    const changedW = changeObjectWidth2({}, transform, x, y);
-    const changedH = changeObjectHeight2({}, transform, x, y);
+    transform._startSize ?? (transform._startSize = { w: this.width, h: this.height });
+    const start = transform._startSize;
+    const k = cornerScaleFactor(this, transform, x, y);
+    const before = { w: this.width, h: this.height };
+    this.set({ width: start.w * k, height: start.h * k });
     this.setPositionByOrigin(anchor, originX, originY);
-    return changedW || changedH;
+    return before.w !== this.width || before.h !== this.height;
   }
   /** Edge resize: single-axis width or height change. */
   handleEdgeResize(transform, x, y) {
@@ -1163,8 +1178,8 @@ installUserSlotRendering(FabRect.prototype);
 classRegistry.setClass(FabRect, "Rect");
 
 // src/shapes/FabCircle.ts
-import { Circle, classRegistry as classRegistry2, controlsUtils as controlsUtils3 } from "#fabric";
-var { changeObjectWidth: changeObjectWidth3, changeObjectHeight: changeObjectHeight3, getLocalPoint: getLocalPoint2 } = controlsUtils3;
+import { Circle, classRegistry as classRegistry2, controlsUtils as controlsUtils4 } from "#fabric";
+var { changeObjectWidth: changeObjectWidth3, changeObjectHeight: changeObjectHeight3 } = controlsUtils4;
 var FabCircle = class extends Circle {
   constructor(options) {
     super({
@@ -1183,13 +1198,7 @@ var FabCircle = class extends Circle {
   handleCornerResize(transform, x, y) {
     const { originX, originY } = transform;
     const anchor = this.getPositionByOrigin(originX, originY);
-    const localPoint = getLocalPoint2(transform, originX, originY, x, y);
-    const dim = this._getTransformedDimensions();
-    const distance = Math.abs(localPoint.x) + Math.abs(localPoint.y);
-    const originalDistance = Math.abs(dim.x * transform.original.scaleX / this.scaleX) + Math.abs(dim.y * transform.original.scaleY / this.scaleY);
-    if (originalDistance === 0) return false;
-    let scale = distance / originalDistance;
-    if (isTransformCentered(transform)) scale *= 2;
+    const scale = cornerScaleFactor(this, transform, x, y);
     const oldScaleX = this.scaleX;
     const oldScaleY = this.scaleY;
     this.set("scaleX", transform.original.scaleX * scale);
@@ -1225,7 +1234,7 @@ installUserSlotRendering(FabCircle.prototype);
 classRegistry2.setClass(FabCircle, "Circle");
 
 // src/shapes/FabPath.ts
-import { Path, classRegistry as classRegistry3, controlsUtils as controlsUtils4 } from "#fabric";
+import { Path, classRegistry as classRegistry3, controlsUtils as controlsUtils5 } from "#fabric";
 
 // src/shapes/registry.ts
 var registry = [];
@@ -1245,7 +1254,7 @@ function clipDataFor(id) {
 }
 
 // src/shapes/FabPath.ts
-var { changeObjectWidth: changeObjectWidth4, changeObjectHeight: changeObjectHeight4, getLocalPoint: getLocalPoint3 } = controlsUtils4;
+var { changeObjectWidth: changeObjectWidth4, changeObjectHeight: changeObjectHeight4 } = controlsUtils5;
 var DEFAULT_SIZE = 300;
 var _FabPath = class _FabPath extends Path {
   constructor(path, options) {
@@ -1261,13 +1270,7 @@ var _FabPath = class _FabPath extends Path {
   handleCornerResize(transform, x, y) {
     const { originX, originY } = transform;
     const anchor = this.getPositionByOrigin(originX, originY);
-    const localPoint = getLocalPoint3(transform, originX, originY, x, y);
-    const dim = this._getTransformedDimensions();
-    const distance = Math.abs(localPoint.x) + Math.abs(localPoint.y);
-    const originalDistance = Math.abs(dim.x * transform.original.scaleX / this.scaleX) + Math.abs(dim.y * transform.original.scaleY / this.scaleY);
-    if (originalDistance === 0) return false;
-    let scale = distance / originalDistance;
-    if (isTransformCentered(transform)) scale *= 2;
+    const scale = cornerScaleFactor(this, transform, x, y);
     const oldScaleX = this.scaleX;
     const oldScaleY = this.scaleY;
     this.set("scaleX", transform.original.scaleX * scale);
@@ -2094,6 +2097,13 @@ var ImageFrame = class _ImageFrame extends Group3 {
         );
         let newWidth = Math.max(20, transform._startWidth + rotated.x * changeX);
         let newHeight = Math.max(20, transform._startHeight + rotated.y * changeY);
+        const corner = changeX !== 0 && changeY !== 0;
+        const ratio = transform._startHeight / transform._startWidth;
+        if (corner) {
+          const k = (newWidth + newHeight) / (transform._startWidth + transform._startHeight);
+          newWidth = transform._startWidth * k;
+          newHeight = transform._startHeight * k;
+        }
         const startCenterX = transform._startLeft;
         const startCenterY = transform._startTop;
         const startHalfWidth = transform._startWidth / 2;
@@ -2142,12 +2152,10 @@ var ImageFrame = class _ImageFrame extends Group3 {
         const snappingManager = canvas.snappingManager;
         if (snappingManager) {
           const snapResult = snappingManager.calculateResizeSnap(bounds, changeX, changeY, pointer);
-          if (snapResult.width !== null) {
-            newWidth = snapResult.width;
-          }
-          if (snapResult.height !== null) {
-            newHeight = snapResult.height;
-          }
+          if (snapResult.width !== null) newWidth = snapResult.width;
+          if (snapResult.height !== null) newHeight = snapResult.height;
+          if (corner && snapResult.width !== null) newHeight = newWidth * ratio;
+          else if (corner && snapResult.height !== null) newWidth = newHeight / ratio;
         }
         target.resizeFrame(newWidth, newHeight);
         target.setPositionByOrigin(transform._anchor, anchorX, anchorY);

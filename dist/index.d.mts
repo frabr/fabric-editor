@@ -431,9 +431,9 @@ declare class CustomTextbox extends Textbox {
     handleEdgeResize(transform: any, x: number, y: number): boolean;
     /**
      * Coin : le texte et sa boîte grandissent ensemble, proportions gardées, le coin opposé
-     * immobile. Le facteur est celui de la poignée native de Fabric (distance au coin
-     * d'ancrage, en somme des deux axes), appliqué depuis l'état du début du geste : les
-     * modes de taille ne changent pas, la police absorbe tout.
+     * immobile. Le facteur est celui de toute poignée de coin (cornerScaleFactor), appliqué
+     * depuis l'état du début du geste : les modes de taille ne changent pas, la police
+     * absorbe tout.
      */
     handleCornerResize(transform: any, x: number, y: number): boolean;
     /** Le geste de coin en cours (un par objet `transform` de Fabric). */
@@ -567,7 +567,7 @@ declare function stackParentOf(obj: FabricObject, objects?: FabricObject<Partial
  * keep their place and its box follows them (see free.ts). Its child containers are
  * laid out as roots; inside a stack, a group is a rigid block (see yoga-engine).
  *
- * Note: user-initiated resize is handled by StackResizeSession / FreeResizeSession, not here.
+ * Note: user-initiated resize is handled by StackResizeSession / ScaleSession, not here.
  * This module only handles programmatic relayout (content changes, mode
  * changes, move, etc.).
  */
@@ -580,13 +580,13 @@ declare function stackParentOf(obj: FabricObject, objects?: FabricObject<Partial
 declare function runLayout(objects: FabricObject[]): void;
 
 /**
- * StackResizeSession — one user-initiated resize of a stack container (a group: see
- * free/resize-session).
+ * StackResizeSession — one user-initiated resize of a stack container by an edge handle
+ * (a corner scales the whole thing instead: see scale-session).
  *
  * Created by the LayoutManager on the first `object:resizing` event,
- * fed with each subsequent scaling frame, and dropped on `object:modified`.
+ * fed with each subsequent frame, and dropped on `object:modified`.
  *
- * Separates the user's resize intent (which axes, what size) from
+ * Separates the user's resize intent (which axis, what size) from
  * the programmatic layout reconciliation that runs on every frame.
  */
 
@@ -595,7 +595,8 @@ declare function runLayout(objects: FabricObject[]): void;
  * - dragging a left/right edge fixes the width (hug → fixed);
  * - dragging a top/bottom edge on a hug height sets the floor `minSize.h`
  *   (the mode doesn't change); on a fixed height, sets the height;
- * - a corner applies both rules;
+ * - a corner never comes here (ScaleSession) — the axes still cover both for a
+ *   programmatic caller without a corner;
  * - the content stops the handle on the way in, the parent's room on the way
  *   out (see room.ts): a child never grows out of its container, and its
  *   ancestors follow on every frame (it stays in its flex slot, siblings move).
@@ -668,7 +669,7 @@ declare function isFreeContainer(obj: Readable): boolean;
  * une pile, un groupe est un bloc rigide (cf. yoga-engine), que ses enfants suivent quand
  * la pile le déplace.
  *
- * Le redimensionner : free/resize-session.ts.
+ * Le redimensionner : scale-session.ts.
  */
 
 /**
@@ -731,37 +732,52 @@ declare function hasExceededOffset(current: {
 }, offsetX: number, offsetY: number, margin: number): boolean;
 
 /**
- * Redimensionner un groupe ne pose jamais de `scale` : chaque descendant absorbe
- * l'agrandissement dans ses propres dimensions (une forme sa taille, un texte sa largeur
- * et sa police, une pile ses marges et son espacement), au prorata, autour du coin qui ne
- * bouge pas.
+ * Mettre un container à l'échelle, à la poignée de coin — un groupe (container libre),
+ * une pile, un bloc vide : la même règle que le texte, le coin agrandit la chose entière,
+ * proportions gardées, les modes de taille inchangés.
+ *
+ * Jamais de `scale` posé : chaque descendant absorbe le facteur dans ses propres
+ * dimensions (une forme sa taille, un texte sa largeur et sa police, un container sa
+ * boîte, ses marges, son espacement et son plancher), au prorata, autour du coin qui ne
+ * bouge pas. Une homothétie de tout le sous-arbre est un point fixe du layout : toutes
+ * les entrées de Yoga sont en pixels, la passe qui suit ne déplace rien — elle absorbe
+ * les arrondis (mesure du texte, planchers).
  */
 
 /**
- * Un redimensionnement de groupe, du premier au dernier instant du geste : chaque étape
- * repart de l'état de départ (pas d'erreur qui s'accumule), au facteur `k` — uniforme,
- * un texte ne se déforme pas.
+ * Une mise à l'échelle, du premier au dernier instant du geste : chaque étape repart de
+ * l'état de départ (pas d'erreur qui s'accumule), au facteur `k` — uniforme, un texte ne
+ * se déforme pas.
  */
-declare class FreeResizeSession {
+declare class ScaleSession {
     readonly container: FabricObject;
     private readonly objects;
     readonly start: Box;
     private readonly states;
-    constructor(container: FabricObject, objects: FabricObject[], start: Box);
-    /** L'angle du groupe : ses coins tournent avec lui, l'ancre aussi. */
+    /** L'angle du container : ses coins tournent avec lui, l'ancre aussi. */
     private readonly angle;
-    /** Au début du geste : le groupe tel qu'il est. */
-    static begin(container: FabricObject, objects: FabricObject[]): FreeResizeSession;
+    /** Un groupe suit ses enfants ; une pile (ou un bloc vide) est elle-même mise à l'échelle. */
+    private readonly free;
+    /** Le plus grand facteur que la place laissée par les ancêtres (une pile) permet. */
+    private readonly maxK;
+    constructor(container: FabricObject, objects: FabricObject[], start: Box);
+    /** Au début du geste : le container tel qu'il est. */
+    static begin(container: FabricObject, objects: FabricObject[]): ScaleSession;
     /**
-     * Un pas du geste : le facteur est la moyenne des deux axes (uniforme, un texte ne se
-     * déforme pas), le coin opposé à la poignée (l'origine du transform) reste en place ;
-     * les piles du groupe se rangent dans leurs nouvelles dimensions.
+     * Un pas du geste : la poignée a posé la boîte du porteur ; le facteur est la moyenne des
+     * deux axes (uniforme — une poignée de coin l'est déjà), borné par la place laissée par
+     * les ancêtres ; le coin opposé à la poignée (l'origine du transform) reste en place.
      */
     step(transform: {
         originX?: string;
         originY?: string;
     }): void;
-    /** Le groupe à l'échelle `k` de son état de départ, `anchor` (scène) immobile. */
+    /**
+     * Le container à l'échelle `k` de son état de départ, `anchor` (scène) immobile — puis
+     * tout se range : les piles dedans dans leurs nouvelles dimensions (une homothétie les
+     * laisse où elles sont, à l'arrondi près), un groupe sur ses enfants, et les ancêtres
+     * prennent la nouvelle taille en compte (le container reste dans son emplacement).
+     */
     apply(k: number, anchor: {
         x: number;
         y: number;
@@ -769,6 +785,8 @@ declare class FreeResizeSession {
     private snapshot;
     private scale;
 }
+/** @deprecated Use `ScaleSession` (a corner scales any container, not only a group). */
+declare const FreeResizeSession: typeof ScaleSession;
 
 /**
  * Ce que les sessions de dépôt dans une pile partagent : leur contrat, la marge de sortie,
@@ -2314,9 +2332,10 @@ interface LayoutManagerCallbacks {
  * 1. **Commands** of the layout panel: size mode, padding, gap, direction,
  *    alignment, free / stacked arrangement, "use as a block" (makeContainer).
  * 2. **Gestures** on existing containers, wired to the canvas events: a moved
- *    container or group takes its content along, a resized stack or group
- *    settles (StackResizeSession / FreeResizeSession), a child of a group moves
- *    freely, a text edit relayouts its ancestors.
+ *    container or group takes its content along, a container resized by a corner
+ *    scales with its content (ScaleSession), a stack resized by an edge settles
+ *    (StackResizeSession), a child of a group moves freely, a text edit relayouts
+ *    its ancestors.
  * 3. **Dropping into a stack**: delegated to DragToLayout (native drags through
  *    object:moving, toolbox drags through the external drag API below).
  */
@@ -2326,8 +2345,8 @@ declare class LayoutManager {
     private guides;
     private readonly drag;
     private resizeSession;
-    /** Le redimensionnement d'un groupe en cours (ouvert à before:transform). */
-    private freeResize;
+    /** La mise à l'échelle d'un container par un coin, en cours (ouverte à before:transform). */
+    private scaling;
     /** Les descendants qui suivent les objets déplacés (un groupe, une sélection multiple). */
     private followers;
     /** Les descendants qui suivent les objets tournés (un container, une sélection multiple). */
@@ -2426,7 +2445,10 @@ declare class LayoutManager {
      *  comme un bloc — autour du centre de départ, depuis le début du geste. */
     private onRotating;
     private rotateFollowers;
-    /** Le début d'une transformation : un groupe qu'on redimensionne garde son état de départ. */
+    /**
+     * Le début d'une transformation : un container pris par un coin garde son état de départ,
+     * il va être mis à l'échelle avec son contenu (un bord règle sa boîte : StackResizeSession).
+     */
     private onBeforeTransform;
     /** A text inside a container was edited → its ancestors adapt. */
     private onTextChanged;
@@ -3298,6 +3320,10 @@ declare class FabRect extends Rect$1 implements Lockable {
     setCornerRadius(radius: number): void;
     getCornerRadius(): number;
     /** Corner resize: free resize on both axes (no ratio lock). */
+    /**
+     * Coin : proportions gardées, le facteur passe dans width/height (jamais dans un scale),
+     * depuis la taille de départ du geste. Un container y ajoute son contenu (ScaleSession).
+     */
     handleCornerResize(transform: any, x: number, y: number): boolean;
     /** Edge resize: single-axis width or height change. */
     handleEdgeResize(transform: any, x: number, y: number): boolean;
@@ -3675,4 +3701,4 @@ declare const DEFAULT_GUIDE_COLOR = "#d946ef";
  */
 declare const DEFAULT_SNAP_GUIDE_COLOR = "#ff00ff";
 
-export { type AlignEdge, type AlignItems, type AlignSelf, type Arrangement, type BadgeLabeler, type BindingSpec, type Bindings, type Box, CANVAS_SHORTCUTS, CanvasGuides, type CatalogShape, type CatalogShapeInput, type ChildData, type ClipData, type ContainerData, ContainerizeSession, type ControlOption, type Crop, CropMode, CustomTextbox, DEFAULT_GUIDE_COLOR, DEFAULT_SNAP_GUIDE_COLOR, type Delta, DesignCanvas, type DistributeAxis, type DragPayload, DropHandler, type DropHandlerConfig, type DropResult, type EditorConfig, FabCircle, FabPath, FabRect, FabricEditor, type FlexDirection, type FontConfig, type FontsConfig, type FrameRect, FreeResizeSession, GHOST_OPACITY, GestureManager, type GestureShortcut, type GradientStop, HEART_PATH, HEXAGON_PATH, type HistoryCallbacks, HistoryManager, type HistoryState, type HtmlLayerOutput, type HtmlRenderOptions, ImageFrame, type ImageLayerOptions, InsertChildSession, type JustifyContent, type KeyShortcut, LAYER_PROPS, type LayerData, LayerManager, type LayoutData, LayoutManager, type LayoutManagerCallbacks, type LayoutParents, type LayoutSession, type LockMode$1 as LockMode, type Lockable, MAX_CROP_SCALE, MIN_PAD, MIXED, MaskManager, type Modifier, NO_CROP, type ObjectControlsConfig, type ObjectKind, type ObjectRules, PendingUploadsManager, PersistenceManager, type Platform, PreviewCanvas, ROTATION_STEP, ResizeSession, type ResizeSnapResult, type SaveOptions, type SaveResult, type SelectionCallbacks, type SelectionKind, SelectionManager, type ShapeCatalogEntry, type ShapeLayerOptions, type ShapePathData, type ShapeType, type ShortcutContext, type ShortcutEntry, type ShortcutGroup, ShortcutManager, type ShortcutManagerOptions, type ShortcutScope, type SizeMode, type SizePreset, type SizingData, type SnappingConfig, SnappingManager, StackResizeSession, TEXT_STYLE_KEYS, type TextLayerOptions, type TextOverflow, type TextStyleKey, type TextStyleState, type TextStyleValue, type ToolId, type ToolboxImageReaction, type TreeLayer, USER_SCOPE, USER_SLOT_FIELD, type UserSlot, type WorkspaceOptions, addCircleClip, addCropControls, addHeartClip, addHexagonClip, alignAxis, alignDelta, antiScale, applyClip, applyLockMode, badgeLabel, bindingBadgeLabel, canvasImageSource, clampTopLeft, clipDataFor, collectUserSlots, createCircle, createDropSession, createHeart, createHexagon, createImage, createPathShape, createPathsShape, createRect, createShape, cropFromRect, detectPlatform, displayFill, distributeDeltas, drawBindingBadge, drawFrameBadge, fabricToHtml, fitFreeContainer, fontFamiliesOf, formatCombo, formatModifier, getAvailableShapes, getCatalogShape, getLockMode, getNextLockMode, getShapeCatalog, hasExceededOffset, hasPendingBindings, initYoga, isBold, isContentLocked, isCropped, isFreeContainer, isGhost, isKeyShortcut, isMonoPath, isPositionLocked, isStyleLocked, isUserSlot, isValidShape, kindOf, layerToHtmlStandalone, layoutChildren, layoutDescendants, layoutParents, layoutRoot, nextShape, panCrop, parseCombo, pendingBindings, photoRect, pointInObject, registerShapes, registeredShapes, removeCropControls, rulesOf, runLayout, scaledSize, selectionKindOf, setDisplayFill, setGhost, setTextContent, stackBlock, stackParentOf, summarizeObject, summarizeStyles, switchClip, switchShape, toolsFor, topLeft, unionBox, userSlotBinding, userSlotHint, wrapContainerAroundChild, yogaLayout, zoomCrop };
+export { type AlignEdge, type AlignItems, type AlignSelf, type Arrangement, type BadgeLabeler, type BindingSpec, type Bindings, type Box, CANVAS_SHORTCUTS, CanvasGuides, type CatalogShape, type CatalogShapeInput, type ChildData, type ClipData, type ContainerData, ContainerizeSession, type ControlOption, type Crop, CropMode, CustomTextbox, DEFAULT_GUIDE_COLOR, DEFAULT_SNAP_GUIDE_COLOR, type Delta, DesignCanvas, type DistributeAxis, type DragPayload, DropHandler, type DropHandlerConfig, type DropResult, type EditorConfig, FabCircle, FabPath, FabRect, FabricEditor, type FlexDirection, type FontConfig, type FontsConfig, type FrameRect, FreeResizeSession, GHOST_OPACITY, GestureManager, type GestureShortcut, type GradientStop, HEART_PATH, HEXAGON_PATH, type HistoryCallbacks, HistoryManager, type HistoryState, type HtmlLayerOutput, type HtmlRenderOptions, ImageFrame, type ImageLayerOptions, InsertChildSession, type JustifyContent, type KeyShortcut, LAYER_PROPS, type LayerData, LayerManager, type LayoutData, LayoutManager, type LayoutManagerCallbacks, type LayoutParents, type LayoutSession, type LockMode$1 as LockMode, type Lockable, MAX_CROP_SCALE, MIN_PAD, MIXED, MaskManager, type Modifier, NO_CROP, type ObjectControlsConfig, type ObjectKind, type ObjectRules, PendingUploadsManager, PersistenceManager, type Platform, PreviewCanvas, ROTATION_STEP, ResizeSession, type ResizeSnapResult, type SaveOptions, type SaveResult, ScaleSession, type SelectionCallbacks, type SelectionKind, SelectionManager, type ShapeCatalogEntry, type ShapeLayerOptions, type ShapePathData, type ShapeType, type ShortcutContext, type ShortcutEntry, type ShortcutGroup, ShortcutManager, type ShortcutManagerOptions, type ShortcutScope, type SizeMode, type SizePreset, type SizingData, type SnappingConfig, SnappingManager, StackResizeSession, TEXT_STYLE_KEYS, type TextLayerOptions, type TextOverflow, type TextStyleKey, type TextStyleState, type TextStyleValue, type ToolId, type ToolboxImageReaction, type TreeLayer, USER_SCOPE, USER_SLOT_FIELD, type UserSlot, type WorkspaceOptions, addCircleClip, addCropControls, addHeartClip, addHexagonClip, alignAxis, alignDelta, antiScale, applyClip, applyLockMode, badgeLabel, bindingBadgeLabel, canvasImageSource, clampTopLeft, clipDataFor, collectUserSlots, createCircle, createDropSession, createHeart, createHexagon, createImage, createPathShape, createPathsShape, createRect, createShape, cropFromRect, detectPlatform, displayFill, distributeDeltas, drawBindingBadge, drawFrameBadge, fabricToHtml, fitFreeContainer, fontFamiliesOf, formatCombo, formatModifier, getAvailableShapes, getCatalogShape, getLockMode, getNextLockMode, getShapeCatalog, hasExceededOffset, hasPendingBindings, initYoga, isBold, isContentLocked, isCropped, isFreeContainer, isGhost, isKeyShortcut, isMonoPath, isPositionLocked, isStyleLocked, isUserSlot, isValidShape, kindOf, layerToHtmlStandalone, layoutChildren, layoutDescendants, layoutParents, layoutRoot, nextShape, panCrop, parseCombo, pendingBindings, photoRect, pointInObject, registerShapes, registeredShapes, removeCropControls, rulesOf, runLayout, scaledSize, selectionKindOf, setDisplayFill, setGhost, setTextContent, stackBlock, stackParentOf, summarizeObject, summarizeStyles, switchClip, switchShape, toolsFor, topLeft, unionBox, userSlotBinding, userSlotHint, wrapContainerAroundChild, yogaLayout, zoomCrop };

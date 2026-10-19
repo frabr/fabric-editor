@@ -149,13 +149,13 @@ __export(node_exports, {
 });
 module.exports = __toCommonJS(node_exports);
 var import_module = require("module");
-var import_fabric12 = require("#fabric");
+var import_fabric13 = require("#fabric");
 
 // src/LayerManager.ts
-var import_fabric11 = require("#fabric");
+var import_fabric12 = require("#fabric");
 
 // src/controls/CustomTextbox.ts
-var import_fabric = require("#fabric");
+var import_fabric2 = require("#fabric");
 
 // src/layout/types.ts
 var MIN_FONT_SIZE = 8;
@@ -297,8 +297,23 @@ function subtreeOf(objects, roots) {
 }
 
 // src/shapes/resizeUtils.ts
+var import_fabric = require("#fabric");
+var { getLocalPoint } = import_fabric.controlsUtils;
 function isTransformCentered(transform) {
   return transform.originX === "center" && transform.originY === "center";
+}
+var MIN_CORNER_SCALE = 0.05;
+function cornerScaleFactor(obj, transform, x, y) {
+  if (transform._cornerDistance === void 0) {
+    const dim = obj._getTransformedDimensions();
+    transform._cornerDistance = Math.abs(dim.x) + Math.abs(dim.y);
+  }
+  const start = transform._cornerDistance;
+  if (start === 0) return 1;
+  const local = getLocalPoint(transform, transform.originX, transform.originY, x, y);
+  let k = (Math.abs(local.x) + Math.abs(local.y)) / start;
+  if (isTransformCentered(transform)) k *= 2;
+  return Math.max(MIN_CORNER_SCALE, k);
 }
 
 // src/tokens.ts
@@ -308,10 +323,9 @@ function tokenColorOf(obj) {
 }
 
 // src/controls/CustomTextbox.ts
-var { changeObjectWidth, changeObjectHeight, getLocalPoint } = import_fabric.controlsUtils;
-var MIN_CORNER_SCALE = 0.05;
+var { changeObjectWidth, changeObjectHeight } = import_fabric2.controlsUtils;
 var UNBOUNDED_WIDTH = 1e4;
-var CustomTextbox = class extends import_fabric.Textbox {
+var CustomTextbox = class extends import_fabric2.Textbox {
   constructor(text, options) {
     super(text, options);
     /** La sélection d'avant le dernier mouvement : dit dans quel sens on traverse un token. */
@@ -595,23 +609,17 @@ var CustomTextbox = class extends import_fabric.Textbox {
   }
   /**
    * Coin : le texte et sa boîte grandissent ensemble, proportions gardées, le coin opposé
-   * immobile. Le facteur est celui de la poignée native de Fabric (distance au coin
-   * d'ancrage, en somme des deux axes), appliqué depuis l'état du début du geste : les
-   * modes de taille ne changent pas, la police absorbe tout.
+   * immobile. Le facteur est celui de toute poignée de coin (cornerScaleFactor), appliqué
+   * depuis l'état du début du geste : les modes de taille ne changent pas, la police
+   * absorbe tout.
    */
   handleCornerResize(transform, x, y) {
     let start = this._cornerStart;
     if (!start || start.transform !== transform) {
-      const dim = this._getTransformedDimensions();
-      start = { transform, state: textScaleState(this), distance: Math.abs(dim.x) + Math.abs(dim.y) };
+      start = { transform, state: textScaleState(this) };
       this._cornerStart = start;
     }
-    if (start.distance === 0) return false;
-    const { originX, originY } = transform;
-    const local = getLocalPoint(transform, originX, originY, x, y);
-    let k = (Math.abs(local.x) + Math.abs(local.y)) / start.distance;
-    if (isTransformCentered(transform)) k *= 2;
-    k = Math.max(MIN_CORNER_SCALE, k);
+    const k = cornerScaleFactor(this, transform, x, y);
     return this._withAnchor(transform, () => {
       const before = { width: this.width, height: this.height, fontSize: this.fontSize };
       scaleText(this, start.state, k);
@@ -839,11 +847,11 @@ var CustomTextbox = class extends import_fabric.Textbox {
     const upperCanvas = this.canvas.upperCanvasEl;
     const upperCanvasWidth = upperCanvas.width / retinaScaling;
     const upperCanvasHeight = upperCanvas.height / retinaScaling;
-    const p = new import_fabric.Point(
+    const p = new import_fabric2.Point(
       boundaries.left + leftOffset,
       boundaries.top + boundaries.topOffset + charHeight
     ).transform(this.calcTransformMatrix()).transform(this.canvas.viewportTransform).multiply(
-      new import_fabric.Point(
+      new import_fabric2.Point(
         upperCanvas.clientWidth / upperCanvasWidth,
         upperCanvas.clientHeight / upperCanvasHeight
       )
@@ -921,7 +929,7 @@ function sendBlocksBackward(objects, moved) {
 }
 
 // src/capabilities.ts
-var import_fabric6 = require("#fabric");
+var import_fabric7 = require("#fabric");
 
 // src/locking.ts
 function getLockMode(obj) {
@@ -943,7 +951,7 @@ function applyLockMode(obj, mode) {
 }
 
 // src/userSlots.ts
-var import_fabric2 = require("#fabric");
+var import_fabric3 = require("#fabric");
 
 // src/ui/color.ts
 var DEFAULT_GUIDE_COLOR = "#d946ef";
@@ -982,7 +990,7 @@ var CHECKER_DARK = "#e5e7eb";
 var checkerSource = null;
 function checkerTile() {
   if (checkerSource) return checkerSource;
-  const tile = import_fabric2.util.createCanvasElement();
+  const tile = import_fabric3.util.createCanvasElement();
   tile.width = tile.height = CELL * 2;
   const ctx = tile.getContext("2d");
   ctx.fillStyle = CHECKER_LIGHT;
@@ -994,7 +1002,7 @@ function checkerTile() {
   return tile;
 }
 function checkerCanvas(width, height) {
-  const el = import_fabric2.util.createCanvasElement();
+  const el = import_fabric3.util.createCanvasElement();
   el.width = Math.max(1, Math.round(width));
   el.height = Math.max(1, Math.round(height));
   const ctx = el.getContext("2d");
@@ -1003,7 +1011,7 @@ function checkerCanvas(width, height) {
   return el;
 }
 function transparentCanvas(width, height) {
-  const el = import_fabric2.util.createCanvasElement();
+  const el = import_fabric3.util.createCanvasElement();
   el.width = Math.max(1, Math.round(width));
   el.height = Math.max(1, Math.round(height));
   return el;
@@ -1011,7 +1019,7 @@ function transparentCanvas(width, height) {
 function checkerPattern(obj) {
   const sx = obj.scaleX || 1;
   const sy = obj.scaleY || 1;
-  return new import_fabric2.Pattern({ source: checkerTile(), repeat: "repeat", patternTransform: [1 / sx, 0, 0, 1 / sy, 0, 0] });
+  return new import_fabric3.Pattern({ source: checkerTile(), repeat: "repeat", patternTransform: [1 / sx, 0, 0, 1 / sy, 0, 0] });
 }
 var USER_SLOT_STYLE_KEY = "userSlotStyle";
 var DEFAULT_COLOR = DEFAULT_GUIDE_COLOR;
@@ -1110,7 +1118,7 @@ function installUserSlotRendering(target) {
 }
 
 // src/shapes/FabRect.ts
-var import_fabric3 = require("#fabric");
+var import_fabric4 = require("#fabric");
 
 // src/shapes/lockMixin.ts
 var LOCK_MODES = ["free", "position", "full"];
@@ -1147,8 +1155,8 @@ function installLockMethods(proto) {
 }
 
 // src/shapes/FabRect.ts
-var { changeObjectWidth: changeObjectWidth2, changeObjectHeight: changeObjectHeight2 } = import_fabric3.controlsUtils;
-var FabRect = class extends import_fabric3.Rect {
+var { changeObjectWidth: changeObjectWidth2, changeObjectHeight: changeObjectHeight2 } = import_fabric4.controlsUtils;
+var FabRect = class extends import_fabric4.Rect {
   constructor(options) {
     super({
       originX: "center",
@@ -1168,13 +1176,20 @@ var FabRect = class extends import_fabric3.Rect {
     return this.rx ?? 0;
   }
   /** Corner resize: free resize on both axes (no ratio lock). */
+  /**
+   * Coin : proportions gardées, le facteur passe dans width/height (jamais dans un scale),
+   * depuis la taille de départ du geste. Un container y ajoute son contenu (ScaleSession).
+   */
   handleCornerResize(transform, x, y) {
     const { originX, originY } = transform;
     const anchor = this.getPositionByOrigin(originX, originY);
-    const changedW = changeObjectWidth2({}, transform, x, y);
-    const changedH = changeObjectHeight2({}, transform, x, y);
+    transform._startSize ?? (transform._startSize = { w: this.width, h: this.height });
+    const start = transform._startSize;
+    const k = cornerScaleFactor(this, transform, x, y);
+    const before = { w: this.width, h: this.height };
+    this.set({ width: start.w * k, height: start.h * k });
     this.setPositionByOrigin(anchor, originX, originY);
-    return changedW || changedH;
+    return before.w !== this.width || before.h !== this.height;
   }
   /** Edge resize: single-axis width or height change. */
   handleEdgeResize(transform, x, y) {
@@ -1193,12 +1208,12 @@ FabRect.type = "Rect";
 FabRect.customProperties = ["layerId", "layerType", "lockMode", "lockContent"];
 installLockMethods(FabRect.prototype);
 installUserSlotRendering(FabRect.prototype);
-import_fabric3.classRegistry.setClass(FabRect, "Rect");
+import_fabric4.classRegistry.setClass(FabRect, "Rect");
 
 // src/shapes/FabCircle.ts
-var import_fabric4 = require("#fabric");
-var { changeObjectWidth: changeObjectWidth3, changeObjectHeight: changeObjectHeight3, getLocalPoint: getLocalPoint2 } = import_fabric4.controlsUtils;
-var FabCircle = class extends import_fabric4.Circle {
+var import_fabric5 = require("#fabric");
+var { changeObjectWidth: changeObjectWidth3, changeObjectHeight: changeObjectHeight3 } = import_fabric5.controlsUtils;
+var FabCircle = class extends import_fabric5.Circle {
   constructor(options) {
     super({
       originX: "center",
@@ -1216,13 +1231,7 @@ var FabCircle = class extends import_fabric4.Circle {
   handleCornerResize(transform, x, y) {
     const { originX, originY } = transform;
     const anchor = this.getPositionByOrigin(originX, originY);
-    const localPoint = getLocalPoint2(transform, originX, originY, x, y);
-    const dim = this._getTransformedDimensions();
-    const distance = Math.abs(localPoint.x) + Math.abs(localPoint.y);
-    const originalDistance = Math.abs(dim.x * transform.original.scaleX / this.scaleX) + Math.abs(dim.y * transform.original.scaleY / this.scaleY);
-    if (originalDistance === 0) return false;
-    let scale = distance / originalDistance;
-    if (isTransformCentered(transform)) scale *= 2;
+    const scale = cornerScaleFactor(this, transform, x, y);
     const oldScaleX = this.scaleX;
     const oldScaleY = this.scaleY;
     this.set("scaleX", transform.original.scaleX * scale);
@@ -1255,10 +1264,10 @@ FabCircle.type = "Circle";
 FabCircle.customProperties = ["layerId", "layerType", "lockMode", "lockContent"];
 installLockMethods(FabCircle.prototype);
 installUserSlotRendering(FabCircle.prototype);
-import_fabric4.classRegistry.setClass(FabCircle, "Circle");
+import_fabric5.classRegistry.setClass(FabCircle, "Circle");
 
 // src/shapes/FabPath.ts
-var import_fabric5 = require("#fabric");
+var import_fabric6 = require("#fabric");
 
 // src/shapes/registry.ts
 var registry = [];
@@ -1278,9 +1287,9 @@ function clipDataFor(id) {
 }
 
 // src/shapes/FabPath.ts
-var { changeObjectWidth: changeObjectWidth4, changeObjectHeight: changeObjectHeight4, getLocalPoint: getLocalPoint3 } = import_fabric5.controlsUtils;
+var { changeObjectWidth: changeObjectWidth4, changeObjectHeight: changeObjectHeight4 } = import_fabric6.controlsUtils;
 var DEFAULT_SIZE = 300;
-var _FabPath = class _FabPath extends import_fabric5.Path {
+var _FabPath = class _FabPath extends import_fabric6.Path {
   constructor(path, options) {
     super(path, {
       originX: "center",
@@ -1294,13 +1303,7 @@ var _FabPath = class _FabPath extends import_fabric5.Path {
   handleCornerResize(transform, x, y) {
     const { originX, originY } = transform;
     const anchor = this.getPositionByOrigin(originX, originY);
-    const localPoint = getLocalPoint3(transform, originX, originY, x, y);
-    const dim = this._getTransformedDimensions();
-    const distance = Math.abs(localPoint.x) + Math.abs(localPoint.y);
-    const originalDistance = Math.abs(dim.x * transform.original.scaleX / this.scaleX) + Math.abs(dim.y * transform.original.scaleY / this.scaleY);
-    if (originalDistance === 0) return false;
-    let scale = distance / originalDistance;
-    if (isTransformCentered(transform)) scale *= 2;
+    const scale = cornerScaleFactor(this, transform, x, y);
     const oldScaleX = this.scaleX;
     const oldScaleY = this.scaleY;
     this.set("scaleX", transform.original.scaleX * scale);
@@ -1393,15 +1396,15 @@ _FabPath.customProperties = ["layerId", "layerType", "lockMode", "lockContent"];
 var FabPath = _FabPath;
 installLockMethods(FabPath.prototype);
 installUserSlotRendering(FabPath.prototype);
-import_fabric5.classRegistry.setClass(FabPath, "Path");
+import_fabric6.classRegistry.setClass(FabPath, "Path");
 
 // src/capabilities.ts
 function kindOf(obj) {
   const layerType = obj.layerType;
   if (isTextObject(obj)) return "text";
   if (layerType === "imageFrame") return "imageShape";
-  if (obj instanceof import_fabric6.FabricImage) return "legacyImage";
-  if (layerType === "shape" || obj instanceof import_fabric6.Rect) return "shape";
+  if (obj instanceof import_fabric7.FabricImage) return "legacyImage";
+  if (layerType === "shape" || obj instanceof import_fabric7.Rect) return "shape";
   return "other";
 }
 function rulesOf(obj, { ignoreLock = false } = {}) {
@@ -1445,7 +1448,7 @@ function kindRules(obj, kind) {
     case "shape":
       return {
         kind,
-        onToolboxImage: obj instanceof import_fabric6.Group ? null : "fill",
+        onToolboxImage: obj instanceof import_fabric7.Group ? null : "fill",
         hosts: true,
         options: shapeOptions(obj),
         ...free
@@ -1474,10 +1477,10 @@ function isOutOfPlay(obj) {
 }
 
 // src/shapes/factories.ts
-var import_fabric8 = require("#fabric");
+var import_fabric9 = require("#fabric");
 
 // src/controls/cropControls.ts
-var import_fabric7 = require("#fabric");
+var import_fabric8 = require("#fabric");
 var CROP_CONFIGS = {
   left: {
     dimension: "width",
@@ -1571,7 +1574,7 @@ function addCropControls(obj) {
   sides.forEach((side) => {
     const position = CONTROL_POSITIONS[side];
     const controlName = CONTROL_NAMES[side];
-    obj.controls[controlName] = new import_fabric7.Control({
+    obj.controls[controlName] = new import_fabric8.Control({
       x: position.x,
       y: position.y,
       actionHandler: createCropActionHandler(side),
@@ -1589,7 +1592,7 @@ function createCircle(options) {
   return new FabCircle(options);
 }
 async function createImage(url, options) {
-  const img = await import_fabric8.FabricImage.fromURL(url, { crossOrigin: "anonymous" });
+  const img = await import_fabric9.FabricImage.fromURL(url, { crossOrigin: "anonymous" });
   let scale = 1;
   if (img.width > 300 || img.height > 300) {
     scale = Math.min(300 / img.width, 300 / img.height);
@@ -1631,7 +1634,7 @@ function createPathsShape(paths, options = {}) {
     child.setCoords();
     return child;
   });
-  const group = new import_fabric8.Group(children, { originX: "center", originY: "center", ...withoutUndefined({ left, top }) });
+  const group = new import_fabric9.Group(children, { originX: "center", originY: "center", ...withoutUndefined({ left, top }) });
   if (id) group.set({ id });
   const target = targetDims(group.width, group.height, options.width, options.height);
   group.set({ scaleX: target.width / group.width, scaleY: target.height / group.height });
@@ -1696,7 +1699,7 @@ function isValidShape(id) {
 }
 
 // src/layout/geometry.ts
-var import_fabric9 = require("#fabric");
+var import_fabric10 = require("#fabric");
 function scaledSize(obj) {
   return {
     w: obj.width * (obj.scaleX || 1),
@@ -1710,7 +1713,7 @@ function setShapeSize(obj, w, h) {
 }
 
 // src/ImageFrame.ts
-var import_fabric10 = require("#fabric");
+var import_fabric11 = require("#fabric");
 
 // src/crop.ts
 var NO_CROP = { x: 0.5, y: 0.5, scale: 1 };
@@ -1779,7 +1782,7 @@ function rotatePoint(dx, dy, angleDeg) {
     y: dx * Math.sin(angle) + dy * Math.cos(angle)
   };
 }
-var ImageFrame = class _ImageFrame extends import_fabric10.Group {
+var ImageFrame = class _ImageFrame extends import_fabric11.Group {
   constructor(image, options = {}) {
     const frameScale = options.frameScale ?? 1;
     const frameWidth = options.frameWidth ?? image.width * frameScale;
@@ -1807,7 +1810,7 @@ var ImageFrame = class _ImageFrame extends import_fabric10.Group {
       height: frameHeight,
       subTargetCheck: false,
       interactive: false,
-      layoutManager: new import_fabric10.LayoutManager(new import_fabric10.FixedLayout()),
+      layoutManager: new import_fabric11.LayoutManager(new import_fabric11.FixedLayout()),
       // Désactiver le cache pour que le clipPath soit redessiné à chaque frame
       objectCaching: false
     });
@@ -1856,7 +1859,7 @@ var ImageFrame = class _ImageFrame extends import_fabric10.Group {
   }
   /** Un cadre en attente : l'image est le damier, aux dimensions du cadre. */
   static pending(options) {
-    const img = new import_fabric10.FabricImage(checkerCanvas(options.frameWidth, options.frameHeight));
+    const img = new import_fabric11.FabricImage(checkerCanvas(options.frameWidth, options.frameHeight));
     const frame = new _ImageFrame(img, options);
     frame._pending = true;
     return frame;
@@ -2116,6 +2119,13 @@ var ImageFrame = class _ImageFrame extends import_fabric10.Group {
         );
         let newWidth = Math.max(20, transform._startWidth + rotated.x * changeX);
         let newHeight = Math.max(20, transform._startHeight + rotated.y * changeY);
+        const corner = changeX !== 0 && changeY !== 0;
+        const ratio = transform._startHeight / transform._startWidth;
+        if (corner) {
+          const k = (newWidth + newHeight) / (transform._startWidth + transform._startHeight);
+          newWidth = transform._startWidth * k;
+          newHeight = transform._startHeight * k;
+        }
         const startCenterX = transform._startLeft;
         const startCenterY = transform._startTop;
         const startHalfWidth = transform._startWidth / 2;
@@ -2164,12 +2174,10 @@ var ImageFrame = class _ImageFrame extends import_fabric10.Group {
         const snappingManager = canvas.snappingManager;
         if (snappingManager) {
           const snapResult = snappingManager.calculateResizeSnap(bounds, changeX, changeY, pointer);
-          if (snapResult.width !== null) {
-            newWidth = snapResult.width;
-          }
-          if (snapResult.height !== null) {
-            newHeight = snapResult.height;
-          }
+          if (snapResult.width !== null) newWidth = snapResult.width;
+          if (snapResult.height !== null) newHeight = snapResult.height;
+          if (corner && snapResult.width !== null) newHeight = newWidth * ratio;
+          else if (corner && snapResult.height !== null) newWidth = newHeight / ratio;
         }
         target.resizeFrame(newWidth, newHeight);
         target.setPositionByOrigin(transform._anchor, anchorX, anchorY);
@@ -2254,7 +2262,7 @@ var ImageFrame = class _ImageFrame extends import_fabric10.Group {
       frameHeight: data.frameHeight,
       imageMeta: imageMetaOf(data.image)
     };
-    const img = src ? await import_fabric10.FabricImage.fromURL(src, { crossOrigin: "anonymous" }) : null;
+    const img = src ? await import_fabric11.FabricImage.fromURL(src, { crossOrigin: "anonymous" }) : null;
     options.crop = cropX !== void 0 || cropY !== void 0 ? { x: cropX, y: cropY, scale } : cropFromCenterOffset(
       data.frameWidth,
       data.frameHeight,
@@ -2305,8 +2313,8 @@ var ImageFrame = class _ImageFrame extends import_fabric10.Group {
     });
   }
 };
-import_fabric10.classRegistry.setClass(ImageFrame);
-import_fabric10.classRegistry.setClass(ImageFrame, "ImageFrame");
+import_fabric11.classRegistry.setClass(ImageFrame);
+import_fabric11.classRegistry.setClass(ImageFrame, "ImageFrame");
 
 // src/LayerManager.ts
 var BACKGROUND_LAYER_ID = "originalImage";
@@ -2338,7 +2346,7 @@ var LayerManager = class {
    * Charge l'image de fond
    */
   async loadBackgroundImage(url) {
-    const img = await import_fabric11.FabricImage.fromURL(url, { crossOrigin: "anonymous" });
+    const img = await import_fabric12.FabricImage.fromURL(url, { crossOrigin: "anonymous" });
     const scaleX = this.canvas.width / img.width;
     const scaleY = this.canvas.height / img.height;
     const scale = Math.max(scaleX, scaleY);
@@ -2393,7 +2401,7 @@ var LayerManager = class {
   }
   /** Le centre du document. */
   get center() {
-    return new import_fabric11.Point(this.canvas.width / 2, this.canvas.height / 2);
+    return new import_fabric12.Point(this.canvas.width / 2, this.canvas.height / 2);
   }
   /**
    * La boîte d'un calque neuf : la moitié du document dans chaque sens, un quart de sa
@@ -2491,7 +2499,7 @@ var LayerManager = class {
   async addImage(url, options = {}) {
     const center = this.center;
     const { left = center.x, top = center.y, layerId = this.generateId(), imageMeta } = options;
-    const img = await import_fabric11.FabricImage.fromURL(url, { crossOrigin: "anonymous" });
+    const img = await import_fabric12.FabricImage.fromURL(url, { crossOrigin: "anonymous" });
     const box = this.newLayerBox;
     const frameScale = Math.min(box.w / img.width, box.h / img.height);
     const frame = new ImageFrame(img, { left, top, layerId, frameScale, imageMeta });
@@ -2520,7 +2528,7 @@ var LayerManager = class {
   async replaceImageSource(target, newUrl, options) {
     if (kindOf(target) === "imageShape") {
       const frame = target;
-      const newImg = await import_fabric11.FabricImage.fromURL(newUrl, { crossOrigin: "anonymous" });
+      const newImg = await import_fabric12.FabricImage.fromURL(newUrl, { crossOrigin: "anonymous" });
       frame.replaceImage(newImg, options?.imageMeta);
       if (options?.opacity !== void 0) {
         frame.opacity = options.opacity;
@@ -2546,7 +2554,7 @@ var LayerManager = class {
       layerType: target.get("layerType")
     };
     const lockMode = getLockMode(target);
-    const newImg = await import_fabric11.FabricImage.fromURL(newUrl, { crossOrigin: "anonymous" });
+    const newImg = await import_fabric12.FabricImage.fromURL(newUrl, { crossOrigin: "anonymous" });
     const oldWidth = target.width * target.scaleX;
     const oldHeight = target.height * target.scaleY;
     const coverScale2 = Math.max(oldWidth / newImg.width, oldHeight / newImg.height);
@@ -2589,7 +2597,7 @@ var LayerManager = class {
     const { clipShape, clipData, cornerRadius } = clipOfShape(shape);
     const { w: displayedWidth, h: displayedHeight } = scaledSize(shape);
     const center = shape.getRelativeCenterPoint();
-    const img = await import_fabric11.FabricImage.fromURL(imageUrl, { crossOrigin: "anonymous" });
+    const img = await import_fabric12.FabricImage.fromURL(imageUrl, { crossOrigin: "anonymous" });
     const frame = new ImageFrame(img, {
       left: center.x,
       top: center.y,
@@ -2704,7 +2712,7 @@ var LayerManager = class {
    * libre, ses objets restent des calques).
    */
   groupObjects(objects) {
-    const group = new import_fabric11.Group(objects);
+    const group = new import_fabric12.Group(objects);
     objects.forEach((obj) => this.canvas.remove(obj));
     this.canvas.add(group);
     this.canvas.setActiveObject(group);
@@ -2741,7 +2749,7 @@ var LayerManager = class {
       }
       case "Image":
       case "image": {
-        const img = await import_fabric11.FabricImage.fromObject({
+        const img = await import_fabric12.FabricImage.fromObject({
           ...layer,
           crossOrigin: "anonymous"
         });
@@ -2755,7 +2763,7 @@ var LayerManager = class {
       }
       case "Group":
       case "group":
-        obj = await import_fabric11.Group.fromObject(layer);
+        obj = await import_fabric12.Group.fromObject(layer);
         break;
       case "Rect":
       case "rect":
@@ -2866,7 +2874,7 @@ function clipOfShape(shape) {
   if (shape instanceof FabCircle) return { clipShape: "circle", cornerRadius: 0 };
   if (shape instanceof FabPath) {
     const id = shape.id;
-    const clipData = { d: import_fabric11.util.joinPath(shape.path), width: shape.width, height: shape.height };
+    const clipData = { d: import_fabric12.util.joinPath(shape.path), width: shape.width, height: shape.height };
     return { clipShape: id && isValidShape(id) ? id : id || "custom", clipData, cornerRadius: 0 };
   }
   return { clipShape: "rect", cornerRadius: 0 };
@@ -3137,7 +3145,7 @@ var require2 = (0, import_module.createRequire)(import_meta.url);
 var _NodeEditor = class _NodeEditor {
   constructor(config) {
     this.config = config;
-    this.canvas = new import_fabric12.StaticCanvas(void 0, {
+    this.canvas = new import_fabric13.StaticCanvas(void 0, {
       width: config.width,
       height: config.height
     });
@@ -3196,8 +3204,8 @@ var _NodeEditor = class _NodeEditor {
   extendFabricObject() {
     if (_NodeEditor._toObjectExtended) return;
     _NodeEditor._toObjectExtended = true;
-    const originalToObject = import_fabric12.FabricObject.prototype.toObject;
-    import_fabric12.FabricObject.prototype.toObject = function(propertiesToInclude) {
+    const originalToObject = import_fabric13.FabricObject.prototype.toObject;
+    import_fabric13.FabricObject.prototype.toObject = function(propertiesToInclude) {
       return originalToObject.call(
         this,
         ["layerId"].concat(propertiesToInclude || [])

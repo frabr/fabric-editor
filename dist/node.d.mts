@@ -422,9 +422,9 @@ declare class CustomTextbox extends Textbox {
     handleEdgeResize(transform: any, x: number, y: number): boolean;
     /**
      * Coin : le texte et sa boîte grandissent ensemble, proportions gardées, le coin opposé
-     * immobile. Le facteur est celui de la poignée native de Fabric (distance au coin
-     * d'ancrage, en somme des deux axes), appliqué depuis l'état du début du geste : les
-     * modes de taille ne changent pas, la police absorbe tout.
+     * immobile. Le facteur est celui de toute poignée de coin (cornerScaleFactor), appliqué
+     * depuis l'état du début du geste : les modes de taille ne changent pas, la police
+     * absorbe tout.
      */
     handleCornerResize(transform: any, x: number, y: number): boolean;
     /** Le geste de coin en cours (un par objet `transform` de Fabric). */
