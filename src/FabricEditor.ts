@@ -27,6 +27,7 @@ import { installGhostRendering } from "./ghost";
 import { installDisplayStyleRendering } from "./displayStyle";
 import { CropMode } from "./CropMode";
 import { ShortcutManager } from "./shortcuts/ShortcutManager";
+import { GestureManager } from "./gestures";
 
 /**
  * Éditeur d'images basé sur Fabric.js
@@ -47,6 +48,8 @@ export class FabricEditor {
   readonly crop: CropMode;
   /** Les raccourcis : la table du canvas, plus ceux que l'hôte enregistre (ShortcutManager). */
   readonly shortcuts: ShortcutManager;
+  /** Les gestes de souris avec une touche (⌥-dupliquer, ⇧-axe, cran de rotation, Échap). */
+  readonly gestures: GestureManager;
 
   private config: EditorConfig;
   private _displayScale = 1;
@@ -108,6 +111,7 @@ export class FabricEditor {
     this.crop = new CropMode(this.canvas, gc);
     this.installCropOnDoubleClick();
     this.shortcuts = new ShortcutManager(this, config.shortcuts);
+    this.gestures = new GestureManager(this);
 
     // Stocker une référence au SnappingManager sur le canvas pour l'accès depuis ImageFrame
     (this.canvas.originalFabricCanvas as unknown as { snappingManager: SnappingManager }).snappingManager = this.snapping;
@@ -694,6 +698,7 @@ export class FabricEditor {
   deselect(): void { this.commands.deselect(); }
   nudgeSelection(dx: number, dy: number): boolean { return this.commands.nudgeSelection(dx, dy); }
   cutSelection(): void { this.clipboard.cutSelection(); }
+  cloneInPlace(objects: FabricObject[]): Promise<FabricObject[]> { return this.clipboard.cloneInPlace(objects); }
   duplicateSelection(): Promise<FabricObject[]> { return this.clipboard.duplicateSelection(); }
   ungroupSelection(): FabricObject[] { return this.commands.ungroupSelection(); }
   alignSelection(edge: AlignEdge): void { this.commands.alignSelection(edge); }
@@ -747,6 +752,7 @@ export class FabricEditor {
     this._resizeObserver?.disconnect();
     this._resizeObserver = null;
     this._resizeCallbacks = [];
+    this.gestures.dispose();
     this.shortcuts.dispose();
     this.crop.dispose();
     this.snapping.dispose();

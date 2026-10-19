@@ -29,6 +29,38 @@ export class Clipboard {
     );
   }
 
+  /**
+   * Une copie EN PLACE des objets donnés (descendance comprise), chacune juste derrière son
+   * original dans les plans, sans toucher à la sélection ni prévenir — ⌥-glisser la laisse
+   * là où l'original était. Rend les copies.
+   */
+  async cloneInPlace(roots: FabricObject[]): Promise<FabricObject[]> {
+    const canvas = this.editor.canvas;
+    const sources = subtreeOf(canvas.getObjects(), roots);
+    if (!sources.length) return [];
+
+    const idMap = new Map<string, string>();
+    sources.forEach((obj, i) => {
+      const id = obj.get("layerId") as string | undefined;
+      if (id) idMap.set(id, `layer_${Date.now()}_${i}_${Math.floor(Math.random() * 1000)}`);
+    });
+    const clones: FabricObject[] = [];
+    for (const source of sources) {
+      const data = JSON.parse(JSON.stringify(source.toObject(["layerId", "lockMode", "lockContent", "layout", "bindings"])));
+      if (data.layerId) data.layerId = idMap.get(data.layerId);
+      const parent = data.layout?.child?.parentId;
+      if (parent && idMap.has(parent)) data.layout.child.parentId = idMap.get(parent);
+      delete data.lockMode;
+      const clone = await this.editor.layers.deserialize(data);
+      if (!clone) continue;
+      this.editor.layers.add(clone);
+      canvas.moveObjectTo(clone, canvas.getObjects().indexOf(source));
+      clones.push(clone);
+    }
+    canvas.requestRenderAll();
+    return clones;
+  }
+
   /** Couper : copier, puis retirer la sélection (les objets verrouillés restent). */
   cutSelection(): void {
     this.copySelection();

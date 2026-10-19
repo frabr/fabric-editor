@@ -38,6 +38,7 @@ export { toolsFor, selectionKindOf, type ToolId, type SelectionKind } from "./to
 // Raccourcis : le gestionnaire, la table du canvas, les types d'entrée
 export { ShortcutManager, type ShortcutManagerOptions } from "./shortcuts/ShortcutManager";
 export { CANVAS_SHORTCUTS, isKeyShortcut } from "./shortcuts/table";
+export { GestureManager, ROTATION_STEP } from "./gestures";
 export type { ShortcutEntry, KeyShortcut, GestureShortcut, ShortcutContext, ShortcutGroup, ShortcutScope } from "./shortcuts/table";
 export { parseCombo, formatCombo, formatModifier, detectPlatform, type Platform, type Modifier } from "./shortcuts/keys";
 

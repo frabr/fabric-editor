@@ -68,8 +68,11 @@ export const CANVAS_SHORTCUTS: ShortcutEntry[] = [
     run: ({ editor }) => editor.selection.hasSelection && (editor.cutSelection(), true) },
   { id: "paste", keys: ["mod+v"], group: "edit", run: ({ editor }) => { void editor.pasteClipboard(); } },
   { id: "select-all", keys: ["mod+a"], group: "select", run: ({ editor }) => editor.selectAll().length > 0 },
+  // Échap : un geste en cours s'annule (tout revient en place, la sélection reste) ; sinon
+  // la sélection se défait
   { id: "deselect", keys: ["Escape"], group: "select",
-    run: ({ editor }) => editor.selection.hasSelection && (editor.deselect(), true) },
+    run: ({ editor }) => !editor.gestures.active && editor.selection.hasSelection && (editor.deselect(), true) },
+  { id: "cancel-gesture", keys: ["Escape"], group: "move", when: "always", run: ({ editor }) => editor.gestures.cancel() },
   { id: "group", keys: ["mod+g"], group: "edit", tool: "group", run: ({ editor }) => editor.groupSelection() !== null },
   { id: "ungroup", keys: ["mod+shift+g"], group: "edit", tool: "ungroup",
     run: ({ editor }) => editor.ungroupSelection().length > 0 },
@@ -77,4 +80,8 @@ export const CANVAS_SHORTCUTS: ShortcutEntry[] = [
   { id: "nudge-right", keys: ["ArrowRight", "shift+ArrowRight"], group: "move", run: nudge(1, 0) },
   { id: "nudge-up", keys: ["ArrowUp", "shift+ArrowUp"], group: "move", run: nudge(0, -1) },
   { id: "nudge-down", keys: ["ArrowDown", "shift+ArrowDown"], group: "move", run: nudge(0, 1) },
+  // Les gestes de souris (GestureManager les lit)
+  { id: "duplicate-on-drag", gesture: "drag", modifiers: ["alt"], group: "move" },
+  { id: "drag-axis", gesture: "drag", modifiers: ["shift"], group: "move" },
+  { id: "rotate-free", gesture: "rotate", modifiers: ["shift"], group: "move" },
 ];
