@@ -8,6 +8,7 @@ import { HistoryManager } from "./HistoryManager";
 import { SnappingManager } from "./SnappingManager";
 import { LayoutManager } from "./LayoutManager";
 import { registerShapes } from "./shapes";
+import { forgetFontMeasures } from "./fonts";
 import { ImageFrame } from "./ImageFrame";
 import { applyControlStyle } from "./ui/controls";
 import { hexAlpha, DEFAULT_GUIDE_COLOR } from "./ui/color";
@@ -621,8 +622,11 @@ export class FabricEditor {
     );
 
     results.forEach((r) => {
+      if (r.status !== "fulfilled") return;
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      if (r.status === "fulfilled") (document?.fonts as any)?.add(r.value);
+      (document?.fonts as any)?.add(r.value);
+      // Une preview a pu mesurer cette famille avant son arrivée (lib/fonts)
+      forgetFontMeasures(r.value.family);
     });
   }
 
