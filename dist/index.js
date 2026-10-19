@@ -154,6 +154,7 @@ __export(index_exports, {
   FabricEditor: () => FabricEditor,
   FreeResizeSession: () => FreeResizeSession,
   GHOST_OPACITY: () => GHOST_OPACITY,
+  GestureManager: () => GestureManager,
   HEART_PATH: () => HEART_PATH,
   HEXAGON_PATH: () => HEXAGON_PATH,
   HistoryManager: () => HistoryManager,
@@ -170,6 +171,7 @@ __export(index_exports, {
   PendingUploadsManager: () => PendingUploadsManager,
   PersistenceManager: () => PersistenceManager,
   PreviewCanvas: () => PreviewCanvas,
+  ROTATION_STEP: () => ROTATION_STEP,
   ResizeSession: () => ResizeSession,
   SelectionManager: () => SelectionManager,
   ShortcutManager: () => ShortcutManager,
@@ -7814,6 +7816,36 @@ var Clipboard = class {
       (obj) => obj.toObject(["layerId", "lockMode", "lockContent", "layout", "bindings"])
     );
   }
+  /**
+   * Une copie EN PLACE des objets donnés (descendance comprise), chacune juste derrière son
+   * original dans les plans, sans toucher à la sélection ni prévenir — ⌥-glisser la laisse
+   * là où l'original était. Rend les copies.
+   */
+  async cloneInPlace(roots) {
+    const canvas = this.editor.canvas;
+    const sources = subtreeOf(canvas.getObjects(), roots);
+    if (!sources.length) return [];
+    const idMap = /* @__PURE__ */ new Map();
+    sources.forEach((obj, i) => {
+      const id = obj.get("layerId");
+      if (id) idMap.set(id, `layer_${Date.now()}_${i}_${Math.floor(Math.random() * 1e3)}`);
+    });
+    const clones = [];
+    for (const source of sources) {
+      const data = JSON.parse(JSON.stringify(source.toObject(["layerId", "lockMode", "lockContent", "layout", "bindings"])));
+      if (data.layerId) data.layerId = idMap.get(data.layerId);
+      const parent = data.layout?.child?.parentId;
+      if (parent && idMap.has(parent)) data.layout.child.parentId = idMap.get(parent);
+      delete data.lockMode;
+      const clone = await this.editor.layers.deserialize(data);
+      if (!clone) continue;
+      this.editor.layers.add(clone);
+      canvas.moveObjectTo(clone, canvas.getObjects().indexOf(source));
+      clones.push(clone);
+    }
+    canvas.requestRenderAll();
+    return clones;
+  }
   /** Couper : copier, puis retirer la sélection (les objets verrouillés restent). */
   cutSelection() {
     this.copySelection();
@@ -8442,12 +8474,15 @@ var CANVAS_SHORTCUTS = [
     void editor.pasteClipboard();
   } },
   { id: "select-all", keys: ["mod+a"], group: "select", run: ({ editor }) => editor.selectAll().length > 0 },
+  // Échap : un geste en cours s'annule (tout revient en place, la sélection reste) ; sinon
+  // la sélection se défait
   {
     id: "deselect",
     keys: ["Escape"],
     group: "select",
-    run: ({ editor }) => editor.selection.hasSelection && (editor.deselect(), true)
+    run: ({ editor }) => !editor.gestures.active && editor.selection.hasSelection && (editor.deselect(), true)
   },
+  { id: "cancel-gesture", keys: ["Escape"], group: "move", when: "always", run: ({ editor }) => editor.gestures.cancel() },
   { id: "group", keys: ["mod+g"], group: "edit", tool: "group", run: ({ editor }) => editor.groupSelection() !== null },
   {
     id: "ungroup",
@@ -8459,7 +8494,11 @@ var CANVAS_SHORTCUTS = [
   { id: "nudge-left", keys: ["ArrowLeft", "shift+ArrowLeft"], group: "move", run: nudge(-1, 0) },
   { id: "nudge-right", keys: ["ArrowRight", "shift+ArrowRight"], group: "move", run: nudge(1, 0) },
   { id: "nudge-up", keys: ["ArrowUp", "shift+ArrowUp"], group: "move", run: nudge(0, -1) },
-  { id: "nudge-down", keys: ["ArrowDown", "shift+ArrowDown"], group: "move", run: nudge(0, 1) }
+  { id: "nudge-down", keys: ["ArrowDown", "shift+ArrowDown"], group: "move", run: nudge(0, 1) },
+  // Les gestes de souris (GestureManager les lit)
+  { id: "duplicate-on-drag", gesture: "drag", modifiers: ["alt"], group: "move" },
+  { id: "drag-axis", gesture: "drag", modifiers: ["shift"], group: "move" },
+  { id: "rotate-free", gesture: "rotate", modifiers: ["shift"], group: "move" }
 ];
 
 // src/shortcuts/ShortcutManager.ts
@@ -8557,6 +8596,97 @@ function scopeOf(e) {
   return target.closest(".canvas-container") ? "editing" : "field";
 }
 
+// src/gestures.ts
+var ROTATION_STEP = 15;
+var SNAPSHOT_KEYS = ["left", "top", "scaleX", "scaleY", "angle", "skewX", "skewY", "flipX", "flipY", "width", "height"];
+var GestureManager = class {
+  constructor(editor) {
+    this.editor = editor;
+    this.current = null;
+    this.onBeforeTransform = (e) => this.begin(e);
+    this.onMoving = (e) => this.moving(e);
+    this.onRotating = (e) => this.rotating(e);
+    this.onEnd = () => this.end();
+    const canvas = this.editor.canvas;
+    canvas.on("before:transform", this.onBeforeTransform);
+    canvas.on("object:moving", this.onMoving);
+    canvas.on("object:rotating", this.onRotating);
+    canvas.on("mouse:up", this.onEnd);
+  }
+  /** Un geste est en cours (entre le départ et le relâchement). */
+  get active() {
+    return this.current !== null;
+  }
+  /**
+   * Annule le geste en cours : l'objet reprend sa place, sa taille et son angle ; la copie
+   * de ⌥ s'efface ; la pile qui l'accueillait le rend. Faux sans geste.
+   */
+  cancel() {
+    const current = this.current;
+    if (!current) return false;
+    this.current = null;
+    const { target, transform, snapshot, clones } = current;
+    target.set(snapshot);
+    target.setCoords();
+    this.restoreSnap(current);
+    clones.forEach((clone) => this.editor.canvas.remove(clone));
+    this.editor.layout.rollbackExternalDrag();
+    transform.actionPerformed = false;
+    target.isMoving = false;
+    this.editor.canvas.originalFabricCanvas._currentTransform = null;
+    this.editor.canvas.requestRenderAll();
+    return true;
+  }
+  dispose() {
+    const canvas = this.editor.canvas;
+    canvas.off("before:transform", this.onBeforeTransform);
+    canvas.off("object:moving", this.onMoving);
+    canvas.off("object:rotating", this.onRotating);
+    canvas.off("mouse:up", this.onEnd);
+    this.current = null;
+  }
+  begin(e) {
+    const transform = e.transform;
+    if (!transform?.target) return;
+    const target = transform.target;
+    const snapshot = Object.fromEntries(SNAPSHOT_KEYS.map((key) => [key, target.get(key)]));
+    const current = { transform, target, snapshot, clones: [], snapAngleBefore: target.get("snapAngle") };
+    this.current = current;
+    if (transform.action === "rotate") target.set("snapAngle", ROTATION_STEP);
+    if (transform.action === "drag" && e.e && this.editor.shortcuts.gesture("duplicate-on-drag", e.e)) {
+      void this.editor.cloneInPlace(this.editor.selection.selected).then((clones) => {
+        if (this.current === current) current.clones = clones;
+        else clones.forEach((clone) => this.editor.canvas.remove(clone));
+      });
+    }
+  }
+  /** ⇧ pendant un glisser : l'axe dominant depuis le départ, l'autre coordonnée reste. */
+  moving(e) {
+    const target = e.target;
+    const original = e.transform?.original;
+    if (!target || !original || !e.e || !this.editor.shortcuts.gesture("drag-axis", e.e)) return;
+    const dx = (target.left ?? 0) - original.left;
+    const dy = (target.top ?? 0) - original.top;
+    if (Math.abs(dx) >= Math.abs(dy)) target.set("top", original.top);
+    else target.set("left", original.left);
+    target.setCoords();
+  }
+  /** Le cran de 15°, ou la rotation libre tant que ⇧ est tenu (lu au pas suivant). */
+  rotating(e) {
+    if (!e.target || !e.e) return;
+    e.target.set("snapAngle", this.editor.shortcuts.gesture("rotate-free", e.e) ? 0 : ROTATION_STEP);
+  }
+  end() {
+    const current = this.current;
+    if (!current) return;
+    this.current = null;
+    this.restoreSnap(current);
+  }
+  restoreSnap({ target, snapAngleBefore, transform }) {
+    if (transform.action === "rotate") target.set("snapAngle", snapAngleBefore);
+  }
+};
+
 // src/FabricEditor.ts
 var _FabricEditor = class _FabricEditor {
   constructor(canvasElement, config) {
@@ -8599,6 +8729,7 @@ var _FabricEditor = class _FabricEditor {
     this.crop = new CropMode(this.canvas, gc);
     this.installCropOnDoubleClick();
     this.shortcuts = new ShortcutManager(this, config.shortcuts);
+    this.gestures = new GestureManager(this);
     this.canvas.originalFabricCanvas.snappingManager = this.snapping;
     this.extendFabricObject();
     if (config.transparent) {
@@ -9137,6 +9268,9 @@ var _FabricEditor = class _FabricEditor {
   cutSelection() {
     this.clipboard.cutSelection();
   }
+  cloneInPlace(objects) {
+    return this.clipboard.cloneInPlace(objects);
+  }
   duplicateSelection() {
     return this.clipboard.duplicateSelection();
   }
@@ -9185,6 +9319,7 @@ var _FabricEditor = class _FabricEditor {
     this._resizeObserver?.disconnect();
     this._resizeObserver = null;
     this._resizeCallbacks = [];
+    this.gestures.dispose();
     this.shortcuts.dispose();
     this.crop.dispose();
     this.snapping.dispose();
@@ -10582,6 +10717,7 @@ function layerToHtmlStandalone(layer, zIndex) {
   FabricEditor,
   FreeResizeSession,
   GHOST_OPACITY,
+  GestureManager,
   HEART_PATH,
   HEXAGON_PATH,
   HistoryManager,
@@ -10598,6 +10734,7 @@ function layerToHtmlStandalone(layer, zIndex) {
   PendingUploadsManager,
   PersistenceManager,
   PreviewCanvas,
+  ROTATION_STEP,
   ResizeSession,
   SelectionManager,
   ShortcutManager,

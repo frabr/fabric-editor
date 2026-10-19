@@ -2612,6 +2612,32 @@ declare class CropMode {
     private paintOutline;
 }
 
+declare const ROTATION_STEP = 15;
+declare class GestureManager {
+    private readonly editor;
+    private current;
+    private readonly onBeforeTransform;
+    private readonly onMoving;
+    private readonly onRotating;
+    private readonly onEnd;
+    constructor(editor: FabricEditor);
+    /** Un geste est en cours (entre le départ et le relâchement). */
+    get active(): boolean;
+    /**
+     * Annule le geste en cours : l'objet reprend sa place, sa taille et son angle ; la copie
+     * de ⌥ s'efface ; la pile qui l'accueillait le rend. Faux sans geste.
+     */
+    cancel(): boolean;
+    dispose(): void;
+    private begin;
+    /** ⇧ pendant un glisser : l'axe dominant depuis le départ, l'autre coordonnée reste. */
+    private moving;
+    /** Le cran de 15°, ou la rotation libre tant que ⇧ est tenu (lu au pas suivant). */
+    private rotating;
+    private end;
+    private restoreSnap;
+}
+
 /**
  * Éditeur d'images basé sur Fabric.js
  *
@@ -2631,6 +2657,8 @@ declare class FabricEditor {
     readonly crop: CropMode;
     /** Les raccourcis : la table du canvas, plus ceux que l'hôte enregistre (ShortcutManager). */
     readonly shortcuts: ShortcutManager;
+    /** Les gestes de souris avec une touche (⌥-dupliquer, ⇧-axe, cran de rotation, Échap). */
+    readonly gestures: GestureManager;
     private config;
     private _displayScale;
     private _userZoom;
@@ -2818,6 +2846,7 @@ declare class FabricEditor {
     deselect(): void;
     nudgeSelection(dx: number, dy: number): boolean;
     cutSelection(): void;
+    cloneInPlace(objects: FabricObject[]): Promise<FabricObject[]>;
     duplicateSelection(): Promise<FabricObject[]>;
     ungroupSelection(): FabricObject[];
     alignSelection(edge: AlignEdge): void;
@@ -3643,4 +3672,4 @@ declare const DEFAULT_GUIDE_COLOR = "#d946ef";
  */
 declare const DEFAULT_SNAP_GUIDE_COLOR = "#ff00ff";
 
-export { type AlignEdge, type AlignItems, type AlignSelf, type Arrangement, type BadgeLabeler, type BindingSpec, type Bindings, type Box, CANVAS_SHORTCUTS, CanvasGuides, type CatalogShape, type CatalogShapeInput, type ChildData, type ClipData, type ContainerData, ContainerizeSession, type ControlOption, type Crop, CropMode, CustomTextbox, DEFAULT_GUIDE_COLOR, DEFAULT_SNAP_GUIDE_COLOR, type Delta, DesignCanvas, type DistributeAxis, type DragPayload, DropHandler, type DropHandlerConfig, type DropResult, type EditorConfig, FabCircle, FabPath, FabRect, FabricEditor, type FlexDirection, type FontConfig, type FontsConfig, type FrameRect, FreeResizeSession, GHOST_OPACITY, type GestureShortcut, type GradientStop, HEART_PATH, HEXAGON_PATH, type HistoryCallbacks, HistoryManager, type HistoryState, type HtmlLayerOutput, type HtmlRenderOptions, ImageFrame, type ImageLayerOptions, InsertChildSession, type JustifyContent, type KeyShortcut, LAYER_PROPS, type LayerData, LayerManager, type LayoutData, LayoutManager, type LayoutManagerCallbacks, type LayoutParents, type LayoutSession, type LockMode$1 as LockMode, type Lockable, MAX_CROP_SCALE, MIN_PAD, MIXED, MaskManager, type Modifier, NO_CROP, type ObjectControlsConfig, type ObjectKind, type ObjectRules, PendingUploadsManager, PersistenceManager, type Platform, PreviewCanvas, ResizeSession, type ResizeSnapResult, type SaveOptions, type SaveResult, type SelectionCallbacks, type SelectionKind, SelectionManager, type ShapeCatalogEntry, type ShapeLayerOptions, type ShapePathData, type ShapeType, type ShortcutContext, type ShortcutEntry, type ShortcutGroup, ShortcutManager, type ShortcutManagerOptions, type ShortcutScope, type SizeMode, type SizePreset, type SizingData, type SnappingConfig, SnappingManager, StackResizeSession, TEXT_STYLE_KEYS, type TextLayerOptions, type TextOverflow, type TextStyleKey, type TextStyleState, type TextStyleValue, type ToolId, type ToolboxImageReaction, type TreeLayer, USER_SCOPE, USER_SLOT_FIELD, type UserSlot, type WorkspaceOptions, addCircleClip, addCropControls, addHeartClip, addHexagonClip, alignAxis, alignDelta, antiScale, applyClip, applyLockMode, badgeLabel, bindingBadgeLabel, canvasImageSource, clampTopLeft, clipDataFor, collectUserSlots, createCircle, createDropSession, createHeart, createHexagon, createImage, createPathShape, createPathsShape, createRect, createShape, cropFromRect, detectPlatform, displayFill, distributeDeltas, drawBindingBadge, drawFrameBadge, fabricToHtml, fitFreeContainer, fontFamiliesOf, formatCombo, formatModifier, getAvailableShapes, getCatalogShape, getLockMode, getNextLockMode, getShapeCatalog, hasExceededOffset, hasPendingBindings, initYoga, isBold, isContentLocked, isCropped, isFreeContainer, isGhost, isKeyShortcut, isMonoPath, isPositionLocked, isStyleLocked, isUserSlot, isValidShape, kindOf, layerToHtmlStandalone, layoutChildren, layoutDescendants, layoutParents, layoutRoot, nextShape, panCrop, parseCombo, pendingBindings, photoRect, pointInObject, registerShapes, registeredShapes, removeCropControls, rulesOf, runLayout, scaledSize, selectionKindOf, setDisplayFill, setGhost, setTextContent, stackBlock, stackParentOf, summarizeObject, summarizeStyles, switchClip, switchShape, toolsFor, topLeft, unionBox, userSlotBinding, userSlotHint, wrapContainerAroundChild, yogaLayout, zoomCrop };
+export { type AlignEdge, type AlignItems, type AlignSelf, type Arrangement, type BadgeLabeler, type BindingSpec, type Bindings, type Box, CANVAS_SHORTCUTS, CanvasGuides, type CatalogShape, type CatalogShapeInput, type ChildData, type ClipData, type ContainerData, ContainerizeSession, type ControlOption, type Crop, CropMode, CustomTextbox, DEFAULT_GUIDE_COLOR, DEFAULT_SNAP_GUIDE_COLOR, type Delta, DesignCanvas, type DistributeAxis, type DragPayload, DropHandler, type DropHandlerConfig, type DropResult, type EditorConfig, FabCircle, FabPath, FabRect, FabricEditor, type FlexDirection, type FontConfig, type FontsConfig, type FrameRect, FreeResizeSession, GHOST_OPACITY, GestureManager, type GestureShortcut, type GradientStop, HEART_PATH, HEXAGON_PATH, type HistoryCallbacks, HistoryManager, type HistoryState, type HtmlLayerOutput, type HtmlRenderOptions, ImageFrame, type ImageLayerOptions, InsertChildSession, type JustifyContent, type KeyShortcut, LAYER_PROPS, type LayerData, LayerManager, type LayoutData, LayoutManager, type LayoutManagerCallbacks, type LayoutParents, type LayoutSession, type LockMode$1 as LockMode, type Lockable, MAX_CROP_SCALE, MIN_PAD, MIXED, MaskManager, type Modifier, NO_CROP, type ObjectControlsConfig, type ObjectKind, type ObjectRules, PendingUploadsManager, PersistenceManager, type Platform, PreviewCanvas, ROTATION_STEP, ResizeSession, type ResizeSnapResult, type SaveOptions, type SaveResult, type SelectionCallbacks, type SelectionKind, SelectionManager, type ShapeCatalogEntry, type ShapeLayerOptions, type ShapePathData, type ShapeType, type ShortcutContext, type ShortcutEntry, type ShortcutGroup, ShortcutManager, type ShortcutManagerOptions, type ShortcutScope, type SizeMode, type SizePreset, type SizingData, type SnappingConfig, SnappingManager, StackResizeSession, TEXT_STYLE_KEYS, type TextLayerOptions, type TextOverflow, type TextStyleKey, type TextStyleState, type TextStyleValue, type ToolId, type ToolboxImageReaction, type TreeLayer, USER_SCOPE, USER_SLOT_FIELD, type UserSlot, type WorkspaceOptions, addCircleClip, addCropControls, addHeartClip, addHexagonClip, alignAxis, alignDelta, antiScale, applyClip, applyLockMode, badgeLabel, bindingBadgeLabel, canvasImageSource, clampTopLeft, clipDataFor, collectUserSlots, createCircle, createDropSession, createHeart, createHexagon, createImage, createPathShape, createPathsShape, createRect, createShape, cropFromRect, detectPlatform, displayFill, distributeDeltas, drawBindingBadge, drawFrameBadge, fabricToHtml, fitFreeContainer, fontFamiliesOf, formatCombo, formatModifier, getAvailableShapes, getCatalogShape, getLockMode, getNextLockMode, getShapeCatalog, hasExceededOffset, hasPendingBindings, initYoga, isBold, isContentLocked, isCropped, isFreeContainer, isGhost, isKeyShortcut, isMonoPath, isPositionLocked, isStyleLocked, isUserSlot, isValidShape, kindOf, layerToHtmlStandalone, layoutChildren, layoutDescendants, layoutParents, layoutRoot, nextShape, panCrop, parseCombo, pendingBindings, photoRect, pointInObject, registerShapes, registeredShapes, removeCropControls, rulesOf, runLayout, scaledSize, selectionKindOf, setDisplayFill, setGhost, setTextContent, stackBlock, stackParentOf, summarizeObject, summarizeStyles, switchClip, switchShape, toolsFor, topLeft, unionBox, userSlotBinding, userSlotHint, wrapContainerAroundChild, yogaLayout, zoomCrop };
