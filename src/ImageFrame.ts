@@ -19,7 +19,7 @@ import {
 import { FabPath } from "./shapes/FabPath";
 import { clipDataFor, type ClipData } from "./shapes/registry";
 import type { SnappingManager } from "./SnappingManager";
-import { checkerCanvas } from "./userSlots";
+import { checkerCanvas, transparentCanvas } from "./userSlots";
 import {
   NO_CROP, centerOffset, coverScale, cropFromCenterOffset, cropFromRect, isCropped, normalizeCrop, panCrop,
   photoRect, zoomCrop, type Crop, type Rect as CropRect,
@@ -249,6 +249,15 @@ export class ImageFrame extends Group {
    *  upload) : le cadre se sauve sans `src` jusqu'à ce que la vraie source la remplace. */
   markSourcePending(): void {
     this._pending = true;
+  }
+
+  /** Un cadre en attente dont l'hôte montre lui-même l'aperçu sous le canvas : le damier
+   *  s'efface (transparent), le cadre reste en attente — rien ne change au save. */
+  concealPlaceholder(): void {
+    if (!this._pending) return;
+
+    this._image.setElement(transparentCanvas(this._image.width, this._image.height));
+    this.dirty = true;
   }
 
   // ─────────────────────────────────────────────────────────────

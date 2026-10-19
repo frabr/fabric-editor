@@ -72,6 +72,22 @@ describe("cadre en attente (sans src)", () => {
     expect(frame.toObject().image).toMatchObject({ content_medium_id: 3 });
   });
 
+  it("efface son damier quand l'hôte montre l'aperçu lui-même, sans sortir de l'attente", async () => {
+    const frame = await ImageFrame.fromObject(frameData({ content_medium_id: 7 }));
+    const checker = frame.image.getElement();
+    frame.concealPlaceholder();
+
+    expect(frame.pending).toBe(true);
+    expect(frame.image.getElement()).not.toBe(checker);
+    expect(frame.image.width).toBe(120);
+    expect("src" in frame.toObject().image).toBe(false);
+
+    const real = new ImageFrame(image(), { frameWidth: 40, frameHeight: 40 });
+    const element = real.image.getElement();
+    real.concealPlaceholder();
+    expect(real.image.getElement()).toBe(element);
+  });
+
   it("cesse d'être en attente quand une image arrive", async () => {
     const frame = await ImageFrame.fromObject(frameData({ content_medium_id: 7 }));
     frame.replaceImage(image(), { content_medium_id: 7 });

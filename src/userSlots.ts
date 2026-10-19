@@ -102,6 +102,15 @@ export function checkerCanvas(width: number, height: number): HTMLCanvasElement 
   return el;
 }
 
+/** Un canvas transparent aux dimensions données — le damier effacé d'un cadre en attente dont
+ *  l'hôte montre lui-même l'aperçu (ImageFrame#concealPlaceholder). */
+export function transparentCanvas(width: number, height: number): HTMLCanvasElement {
+  const el = util.createCanvasElement();
+  el.width = Math.max(1, Math.round(width));
+  el.height = Math.max(1, Math.round(height));
+  return el;
+}
+
 /** Le motif contre-scalé : un cercle ou un path se dimensionnent par leur scale, les cases restent carrées. */
 function checkerPattern(obj: FabricObject): Pattern {
   const sx = obj.scaleX || 1;

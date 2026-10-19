@@ -1677,6 +1677,12 @@ function checkerCanvas(width, height) {
   ctx.fillRect(0, 0, el.width, el.height);
   return el;
 }
+function transparentCanvas(width, height) {
+  const el = import_fabric3.util.createCanvasElement();
+  el.width = Math.max(1, Math.round(width));
+  el.height = Math.max(1, Math.round(height));
+  return el;
+}
 function checkerPattern(obj) {
   const sx = obj.scaleX || 1;
   const sy = obj.scaleY || 1;
@@ -2658,6 +2664,13 @@ var ImageFrame = class _ImageFrame extends import_fabric11.Group {
    *  upload) : le cadre se sauve sans `src` jusqu'à ce que la vraie source la remplace. */
   markSourcePending() {
     this._pending = true;
+  }
+  /** Un cadre en attente dont l'hôte montre lui-même l'aperçu sous le canvas : le damier
+   *  s'efface (transparent), le cadre reste en attente — rien ne change au save. */
+  concealPlaceholder() {
+    if (!this._pending) return;
+    this._image.setElement(transparentCanvas(this._image.width, this._image.height));
+    this.dirty = true;
   }
   // ─────────────────────────────────────────────────────────────
   // Recadrage (cf. crop.ts) : tout est dans le repère du cadre, origine en haut à gauche

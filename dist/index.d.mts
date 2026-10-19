@@ -1544,6 +1544,9 @@ declare class ImageFrame extends Group {
     /** L'image affichée n'est pas celle du document (une url de session, le temps d'un
      *  upload) : le cadre se sauve sans `src` jusqu'à ce que la vraie source la remplace. */
     markSourcePending(): void;
+    /** Un cadre en attente dont l'hôte montre lui-même l'aperçu sous le canvas : le damier
+     *  s'efface (transparent), le cadre reste en attente — rien ne change au save. */
+    concealPlaceholder(): void;
     get crop(): Crop;
     /** Se recadre : une vraie image (pas un damier d'attente). */
     get croppable(): boolean;
