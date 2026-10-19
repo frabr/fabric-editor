@@ -125,7 +125,6 @@ type Traceable = FabricObject & {
   rx?: number;
   ry?: number;
   radius?: number;
-  pathOffset?: { x: number; y: number };
   _renderPathCommands?: (ctx: CanvasRenderingContext2D) => void;
 };
 
@@ -140,7 +139,7 @@ function traceOutline(ctx: CanvasRenderingContext2D, obj: FabricObject): void {
 
   shape.transform(ctx);
   if (shape._renderPathCommands) {
-    ctx.translate(-(shape.pathOffset?.x ?? 0), -(shape.pathOffset?.y ?? 0));
+    // Le chemin se trace centré : _renderPathCommands retranche lui-même le pathOffset.
     shape._renderPathCommands(ctx);
   } else if (typeof shape.radius === "number") {
     ctx.arc(0, 0, shape.radius, 0, Math.PI * 2);
