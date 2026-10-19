@@ -11,7 +11,7 @@ import { FabRect } from "../../shapes/FabRect";
 import { initYoga } from "../stack/engine";
 import { runLayout } from "../run";
 import { fitFreeContainer } from "./fit";
-import { FreeResizeSession } from "./resize-session";
+import { ScaleSession } from "../scale-session";
 import { stackParentOf } from "../hierarchy";
 import { minSizeOf } from "../stack/min-size";
 import { availableRoom } from "../stack/room";
@@ -107,7 +107,7 @@ describe("groupe libre", () => {
     runLayout(canvas.getObjects());
     const start = box(g);
 
-    const session = new FreeResizeSession(g, canvas.getObjects(), { left: start.x, top: start.y, width: start.w, height: start.h });
+    const session = new ScaleSession(g, canvas.getObjects(), { left: start.x, top: start.y, width: start.w, height: start.h });
     session.apply(2, { x: start.x, y: start.y });
 
     expect(box(a)).toEqual({ x: 100, y: 100, w: 100, h: 100 });
@@ -133,7 +133,7 @@ describe("groupe libre", () => {
     runLayout(canvas.getObjects());
     const start = box(g);
 
-    const session = new FreeResizeSession(g, canvas.getObjects(), { left: start.x, top: start.y, width: start.w, height: start.h });
+    const session = new ScaleSession(g, canvas.getObjects(), { left: start.x, top: start.y, width: start.w, height: start.h });
     session.apply(2, { x: start.x, y: start.y });
     expect(t.fontSize).toBe(40);
     expect(t.width).toBe(400);
@@ -151,7 +151,7 @@ describe("redimensionner un groupe à la poignée", () => {
     const canvas = canvasWith(g, a, b);
     runLayout(canvas.getObjects());
 
-    const session = FreeResizeSession.begin(g, canvas.getObjects());
+    const session = ScaleSession.begin(g, canvas.getObjects());
     // La poignée bas-droite a porté le porteur à 200 × 200 (le haut-gauche reste)
     g.set({ width: 200, height: 200 });
     session.step({ originX: "left", originY: "top" });

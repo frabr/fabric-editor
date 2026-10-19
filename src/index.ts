@@ -102,7 +102,7 @@ export { addCropControls, removeCropControls, CustomTextbox } from "./controls";
 
 // Layout
 export { runLayout } from "./layout";
-export { ResizeSession, StackResizeSession, FreeResizeSession } from "./layout";
+export { ResizeSession, StackResizeSession, ScaleSession, FreeResizeSession } from "./layout";
 export type { LayoutData, SizingData, TextOverflow, ContainerData, ChildData, SizeMode, AlignSelf, AlignItems, JustifyContent, FlexDirection } from "./layout";
 export { MIN_PAD } from "./layout";
 // Les groupes (containers libres) : leur boîte suit leurs enfants

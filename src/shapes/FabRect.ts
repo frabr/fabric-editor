@@ -2,6 +2,7 @@ import { Rect, classRegistry, controlsUtils, type TOptions, type RectProps } fro
 import { installLockMethods, type Lockable } from "./lockMixin";
 import { installUserSlotRendering } from "../userSlots";
 import type { LockMode } from "../locking";
+import { cornerScaleFactor } from "./resizeUtils";
 
 const { changeObjectWidth, changeObjectHeight } = controlsUtils;
 
@@ -40,15 +41,22 @@ export class FabRect extends Rect implements Lockable {
   }
 
   /** Corner resize: free resize on both axes (no ratio lock). */
+  /**
+   * Coin : proportions gardées, le facteur passe dans width/height (jamais dans un scale),
+   * depuis la taille de départ du geste. Un container y ajoute son contenu (ScaleSession).
+   */
   handleCornerResize(transform: any, x: number, y: number): boolean {
     const { originX, originY } = transform;
     const anchor = this.getPositionByOrigin(originX, originY);
+    transform._startSize ??= { w: this.width, h: this.height };
+    const start: { w: number; h: number } = transform._startSize;
 
-    const changedW = changeObjectWidth({} as any, transform, x, y);
-    const changedH = changeObjectHeight({} as any, transform, x, y);
+    const k = cornerScaleFactor(this, transform, x, y);
+    const before = { w: this.width, h: this.height };
+    this.set({ width: start.w * k, height: start.h * k });
 
     this.setPositionByOrigin(anchor, originX, originY);
-    return changedW || changedH;
+    return before.w !== this.width || before.h !== this.height;
   }
 
   /** Edge resize: single-axis width or height change. */

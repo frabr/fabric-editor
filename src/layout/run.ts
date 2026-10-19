@@ -22,7 +22,7 @@
  * keep their place and its box follows them (see free.ts). Its child containers are
  * laid out as roots; inside a stack, a group is a rigid block (see yoga-engine).
  *
- * Note: user-initiated resize is handled by StackResizeSession / FreeResizeSession, not here.
+ * Note: user-initiated resize is handled by StackResizeSession / ScaleSession, not here.
  * This module only handles programmatic relayout (content changes, mode
  * changes, move, etc.).
  */

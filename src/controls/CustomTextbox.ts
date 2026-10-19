@@ -4,19 +4,15 @@ import { resolveTextBox, type TextConstraint, type TextMeasure } from "../layout
 import { layoutOf, parentIdOf, isFreeContainer } from "../layout/model";
 import { parentOf } from "../layout/hierarchy";
 import { scaleText, textScaleState, type TextScaleState } from "../layout/text";
-import { isTransformCentered } from "../shapes/resizeUtils";
+import { cornerScaleFactor } from "../shapes/resizeUtils";
 import { tokenColorOf } from "../tokens";
 
-const { changeObjectWidth, changeObjectHeight, getLocalPoint } = controlsUtils;
+const { changeObjectWidth, changeObjectHeight } = controlsUtils;
 
-/** Un texte ne se réduit jamais sous ce facteur de son état de départ (une poignée de coin). */
-const MIN_CORNER_SCALE = 0.05;
-
-/** Le début d'un geste de coin : le texte et sa boîte (contour compris) tels qu'on les a pris. */
+/** Le début d'un geste de coin : le texte tel qu'on l'a pris. */
 interface CornerStart {
   transform: unknown;
   state: TextScaleState;
-  distance: number;
 }
 
 /** Largeur de mesure « sans contrainte » (une ligne par paragraphe). */
@@ -411,24 +407,17 @@ export class CustomTextbox extends Textbox {
 
   /**
    * Coin : le texte et sa boîte grandissent ensemble, proportions gardées, le coin opposé
-   * immobile. Le facteur est celui de la poignée native de Fabric (distance au coin
-   * d'ancrage, en somme des deux axes), appliqué depuis l'état du début du geste : les
-   * modes de taille ne changent pas, la police absorbe tout.
+   * immobile. Le facteur est celui de toute poignée de coin (cornerScaleFactor), appliqué
+   * depuis l'état du début du geste : les modes de taille ne changent pas, la police
+   * absorbe tout.
    */
   handleCornerResize(transform: any, x: number, y: number): boolean {
     let start = this._cornerStart;
     if (!start || start.transform !== transform) {
-      const dim = this._getTransformedDimensions();
-      start = { transform, state: textScaleState(this), distance: Math.abs(dim.x) + Math.abs(dim.y) };
+      start = { transform, state: textScaleState(this) };
       this._cornerStart = start;
     }
-    if (start.distance === 0) return false;
-
-    const { originX, originY } = transform;
-    const local = getLocalPoint(transform, originX, originY, x, y);
-    let k = (Math.abs(local.x) + Math.abs(local.y)) / start.distance;
-    if (isTransformCentered(transform)) k *= 2;
-    k = Math.max(MIN_CORNER_SCALE, k);
+    const k = cornerScaleFactor(this, transform, x, y);
 
     return this._withAnchor(transform, () => {
       const before = { width: this.width, height: this.height, fontSize: this.fontSize };

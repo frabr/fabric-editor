@@ -23,10 +23,14 @@ import { clampToRoom } from "./layout/stack/room";
 import { fitFreeAncestors } from "./layout/free/fit";
 import { SubtreeDrag } from "./layout/subtree-drag";
 import { SubtreeRotate, inRootFrame } from "./layout/rotation";
-import { FreeResizeSession } from "./layout/free/resize-session";
+import { ScaleSession } from "./layout/scale-session";
 import { layoutOf, containerDataOf, childDataOf, isContainerObject, isFreeContainer, sizingOf, paddingOf, updateContainer, updateChild, updateLayout, uniformPadding } from "./layout/model";
 import { parentContainerOf, findById } from "./layout/hierarchy";
 import { isTextObject } from "./layout/text";
+
+/** tl / tr / bl / br — les poignées qui mettent à l'échelle (ml / mr / mt / mb règlent la boîte). */
+const isCornerHandle = (corner: unknown): boolean =>
+  typeof corner === "string" && corner.length === 2 && corner[0] !== "m";
 
 // ── Types ───────────────────────────────────────────────────────────
 
@@ -48,9 +52,10 @@ export interface LayoutManagerCallbacks {
  * 1. **Commands** of the layout panel: size mode, padding, gap, direction,
  *    alignment, free / stacked arrangement, "use as a block" (makeContainer).
  * 2. **Gestures** on existing containers, wired to the canvas events: a moved
- *    container or group takes its content along, a resized stack or group
- *    settles (StackResizeSession / FreeResizeSession), a child of a group moves
- *    freely, a text edit relayouts its ancestors.
+ *    container or group takes its content along, a container resized by a corner
+ *    scales with its content (ScaleSession), a stack resized by an edge settles
+ *    (StackResizeSession), a child of a group moves freely, a text edit relayouts
+ *    its ancestors.
  * 3. **Dropping into a stack**: delegated to DragToLayout (native drags through
  *    object:moving, toolbox drags through the external drag API below).
  */
@@ -60,8 +65,8 @@ export class LayoutManager {
   private guides: CanvasGuides;
   private readonly drag: DragToLayout;
   private resizeSession: StackResizeSession | null = null;
-  /** Le redimensionnement d'un groupe en cours (ouvert à before:transform). */
-  private freeResize: FreeResizeSession | null = null;
+  /** La mise à l'échelle d'un container par un coin, en cours (ouverte à before:transform). */
+  private scaling: ScaleSession | null = null;
   /** Les descendants qui suivent les objets déplacés (un groupe, une sélection multiple). */
   private followers: SubtreeDrag | null = null;
   /** Les descendants qui suivent les objets tournés (un container, une sélection multiple). */
@@ -363,12 +368,16 @@ export class LayoutManager {
     this.rotation.follow(target);
   }
 
-  /** Le début d'une transformation : un groupe qu'on redimensionne garde son état de départ. */
+  /**
+   * Le début d'une transformation : un container pris par un coin garde son état de départ,
+   * il va être mis à l'échelle avec son contenu (un bord règle sa boîte : StackResizeSession).
+   */
   private onBeforeTransform(e: any): void {
     const target = e.transform?.target;
-    this.freeResize = null;
-    if (!target || !isFreeContainer(target) || e.transform.action !== "resizing") return;
-    this.freeResize = FreeResizeSession.begin(target, this.canvas.getObjects());
+    this.scaling = null;
+    if (!target || !isContainerObject(target) || e.transform.action !== "resizing") return;
+    if (!isCornerHandle(e.transform.corner)) return;
+    this.scaling = ScaleSession.begin(target, this.canvas.getObjects());
   }
 
   /** A text inside a container was edited → its ancestors adapt. */
@@ -399,11 +408,11 @@ export class LayoutManager {
       return;
     }
 
-    // A group resized, or something moved / resized inside a group: everything settles
+    // A container scaled, or something moved / resized inside a group: everything settles
     const parent = parentContainerOf(obj, this.canvas.getObjects());
-    const resizedGroup = this.freeResize;
-    this.freeResize = null;
-    if (this.drag.isIdle && (resizedGroup || (parent && isFreeContainer(parent)))) {
+    const scaled = this.scaling;
+    this.scaling = null;
+    if (this.drag.isIdle && (scaled || (parent && isFreeContainer(parent)))) {
       this.changed();
       return;
     }
@@ -457,15 +466,15 @@ export class LayoutManager {
 
     if (!layout?.container) return;
 
-    // A group: its content absorbs the resize, uniformly, around the fixed corner
-    const groupResize = this.freeResize;
-    if (groupResize && groupResize.container === target) {
-      groupResize.step(e.transform);
+    // A corner: the content absorbs the resize, uniformly, around the fixed corner
+    const scaling = this.scaling;
+    if (scaling && scaling.container === target) {
+      scaling.step(e.transform);
       this.canvas.renderAll();
       return;
     }
 
-    // Create session on first resizing frame
+    // An edge: create session on first resizing frame
     if (!this.resizeSession) {
       this.resizeSession = new StackResizeSession(target, e.transform?.corner);
     }

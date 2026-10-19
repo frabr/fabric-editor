@@ -4,7 +4,7 @@
  * une pile, un groupe est un bloc rigide (cf. yoga-engine), que ses enfants suivent quand
  * la pile le déplace.
  *
- * Le redimensionner : free/resize-session.ts.
+ * Le redimensionner : scale-session.ts.
  */
 import type { FabricObject } from "#fabric";
 import { boxOf, outsetBox, placeTopLeft, setShapeSize, unionBox } from "../geometry";

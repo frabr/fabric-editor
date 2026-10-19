@@ -1,11 +1,11 @@
 /**
- * StackResizeSession — one user-initiated resize of a stack container (a group: see
- * free/resize-session).
+ * StackResizeSession — one user-initiated resize of a stack container by an edge handle
+ * (a corner scales the whole thing instead: see scale-session).
  *
  * Created by the LayoutManager on the first `object:resizing` event,
- * fed with each subsequent scaling frame, and dropped on `object:modified`.
+ * fed with each subsequent frame, and dropped on `object:modified`.
  *
- * Separates the user's resize intent (which axes, what size) from
+ * Separates the user's resize intent (which axis, what size) from
  * the programmatic layout reconciliation that runs on every frame.
  */
 import type { FabricObject } from "#fabric";
@@ -27,7 +27,8 @@ import { inRootFrame } from "../rotation";
  * - dragging a left/right edge fixes the width (hug → fixed);
  * - dragging a top/bottom edge on a hug height sets the floor `minSize.h`
  *   (the mode doesn't change); on a fixed height, sets the height;
- * - a corner applies both rules;
+ * - a corner never comes here (ScaleSession) — the axes still cover both for a
+ *   programmatic caller without a corner;
  * - the content stops the handle on the way in, the parent's room on the way
  *   out (see room.ts): a child never grows out of its container, and its
  *   ancestors follow on every frame (it stays in its flex slot, siblings move).

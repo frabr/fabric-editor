@@ -1,10 +1,10 @@
 import { Circle, classRegistry, controlsUtils, type TOptions, type CircleProps } from "#fabric";
 import { installLockMethods, type Lockable } from "./lockMixin";
 import { installUserSlotRendering } from "../userSlots";
-import { isTransformCentered } from "./resizeUtils";
+import { cornerScaleFactor } from "./resizeUtils";
 import type { LockMode } from "../locking";
 
-const { changeObjectWidth, changeObjectHeight, getLocalPoint } = controlsUtils;
+const { changeObjectWidth, changeObjectHeight } = controlsUtils;
 
 export class FabCircle extends Circle implements Lockable {
   static type = "Circle";
@@ -43,18 +43,7 @@ export class FabCircle extends Circle implements Lockable {
   handleCornerResize(transform: any, x: number, y: number): boolean {
     const { originX, originY } = transform;
     const anchor = this.getPositionByOrigin(originX, originY);
-    const localPoint = getLocalPoint(transform, originX, originY, x, y);
-    const dim = this._getTransformedDimensions();
-
-    const distance = Math.abs(localPoint.x) + Math.abs(localPoint.y);
-    const originalDistance =
-      Math.abs((dim.x * transform.original.scaleX) / this.scaleX) +
-      Math.abs((dim.y * transform.original.scaleY) / this.scaleY);
-
-    if (originalDistance === 0) return false;
-
-    let scale = distance / originalDistance;
-    if (isTransformCentered(transform)) scale *= 2;
+    const scale = cornerScaleFactor(this, transform, x, y);
 
     const oldScaleX = this.scaleX;
     const oldScaleY = this.scaleY;

@@ -553,6 +553,16 @@ export class ImageFrame extends Group {
         let newWidth = Math.max(20, transform._startWidth + rotated.x * changeX);
         let newHeight = Math.max(20, transform._startHeight! + rotated.y * changeY);
 
+        // Un coin garde les proportions (comme toute poignée de coin) : le facteur est la
+        // distance tirée en somme des deux axes, rapportée à la taille de départ
+        const corner = changeX !== 0 && changeY !== 0;
+        const ratio = transform._startHeight! / transform._startWidth;
+        if (corner) {
+          const k = (newWidth + newHeight) / (transform._startWidth + transform._startHeight!);
+          newWidth = transform._startWidth * k;
+          newHeight = transform._startHeight! * k;
+        }
+
         // === Snapping pendant le resize ===
         // Calculer les bounds actuels de l'objet pour le snapping
         // Le coin fixe reste à sa position de départ
@@ -618,12 +628,11 @@ export class ImageFrame extends Group {
         if (snappingManager) {
           const snapResult = snappingManager.calculateResizeSnap(bounds, changeX, changeY, pointer);
 
-          if (snapResult.width !== null) {
-            newWidth = snapResult.width;
-          }
-          if (snapResult.height !== null) {
-            newHeight = snapResult.height;
-          }
+          if (snapResult.width !== null) newWidth = snapResult.width;
+          if (snapResult.height !== null) newHeight = snapResult.height;
+          // Au coin, l'aimant pose un axe et l'autre suit
+          if (corner && snapResult.width !== null) newHeight = newWidth * ratio;
+          else if (corner && snapResult.height !== null) newWidth = newHeight / ratio;
         }
 
         target.resizeFrame(newWidth, newHeight);

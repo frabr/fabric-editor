@@ -10,7 +10,7 @@ import { runLayout } from "./run";
 import { fitFreeContainer } from "./free/fit";
 import { SubtreeRotate, inLocalFrame } from "./rotation";
 import { StackResizeSession } from "./stack/resize-session";
-import { FreeResizeSession } from "./free/resize-session";
+import { ScaleSession } from "./scale-session";
 import { scaledSize, setShapeSize } from "./geometry";
 import type { LayoutData } from "./types";
 
@@ -169,7 +169,7 @@ describe("redimensionner un container tourné", () => {
     session.follow(group);
     const corner = group.getPositionByOrigin("left", "top");
 
-    const resize = FreeResizeSession.begin(group, objects);
+    const resize = ScaleSession.begin(group, objects);
     setShapeSize(group, 200, 80);
     resize.step({ originX: "left", originY: "top" });
 
