@@ -1461,7 +1461,6 @@ function traceOutline(ctx, obj) {
   }
   shape.transform(ctx);
   if (shape._renderPathCommands) {
-    ctx.translate(-(shape.pathOffset?.x ?? 0), -(shape.pathOffset?.y ?? 0));
     shape._renderPathCommands(ctx);
   } else if (typeof shape.radius === "number") {
     ctx.arc(0, 0, shape.radius, 0, Math.PI * 2);
@@ -7132,6 +7131,12 @@ var LayoutManager2 = class {
   }
 };
 
+// src/fonts.ts
+import { cache } from "#fabric";
+function forgetFontMeasures(family) {
+  cache.clearFontCache(family);
+}
+
 // src/types.ts
 var DRAG_PREVIEW_KEY = "dragPreview";
 
@@ -9044,7 +9049,9 @@ var _FabricEditor = class _FabricEditor {
       })
     );
     results.forEach((r) => {
-      if (r.status === "fulfilled") document?.fonts?.add(r.value);
+      if (r.status !== "fulfilled") return;
+      document?.fonts?.add(r.value);
+      forgetFontMeasures(r.value.family);
     });
   }
   // ── Style de la sélection (editor/style-commands) ───────────────
@@ -10672,6 +10679,7 @@ export {
   fabricToHtml,
   fitFreeContainer,
   fontFamiliesOf,
+  forgetFontMeasures,
   formatCombo,
   formatModifier,
   getAvailableShapes,

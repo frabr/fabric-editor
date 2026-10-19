@@ -214,6 +214,7 @@ __export(index_exports, {
   fabricToHtml: () => fabricToHtml,
   fitFreeContainer: () => fitFreeContainer,
   fontFamiliesOf: () => fontFamiliesOf,
+  forgetFontMeasures: () => forgetFontMeasures,
   formatCombo: () => formatCombo,
   formatModifier: () => formatModifier,
   getAvailableShapes: () => getAvailableShapes,
@@ -275,7 +276,7 @@ __export(index_exports, {
 module.exports = __toCommonJS(index_exports);
 
 // src/FabricEditor.ts
-var import_fabric25 = require("#fabric");
+var import_fabric26 = require("#fabric");
 
 // src/DesignCanvas.ts
 var import_fabric = require("#fabric");
@@ -1621,7 +1622,6 @@ function traceOutline(ctx, obj) {
   }
   shape.transform(ctx);
   if (shape._renderPathCommands) {
-    ctx.translate(-(shape.pathOffset?.x ?? 0), -(shape.pathOffset?.y ?? 0));
     shape._renderPathCommands(ctx);
   } else if (typeof shape.radius === "number") {
     ctx.arc(0, 0, shape.radius, 0, Math.PI * 2);
@@ -7281,11 +7281,17 @@ var LayoutManager2 = class {
   }
 };
 
+// src/fonts.ts
+var import_fabric23 = require("#fabric");
+function forgetFontMeasures(family) {
+  import_fabric23.cache.clearFontCache(family);
+}
+
 // src/types.ts
 var DRAG_PREVIEW_KEY = "dragPreview";
 
 // src/editor/style-commands.ts
-var import_fabric23 = require("#fabric");
+var import_fabric24 = require("#fabric");
 
 // src/clipping/antiScale.ts
 function antiScale(obj) {
@@ -7606,7 +7612,7 @@ var StyleCommands = class {
       obj.nextClipShape();
       obj.dirty = true;
       this.editor.canvas.requestRenderAll();
-    } else if (obj instanceof import_fabric23.FabricImage) {
+    } else if (obj instanceof import_fabric24.FabricImage) {
       switchClip(obj);
       obj.dirty = true;
       this.editor.canvas.remove(obj);
@@ -7618,7 +7624,7 @@ var StyleCommands = class {
    */
   switchShape() {
     const obj = this.editor.selection.current;
-    if (!obj || obj instanceof import_fabric23.FabricImage) return;
+    if (!obj || obj instanceof import_fabric24.FabricImage) return;
     const currentShapeId = obj.id;
     const nextShapeType = nextShape(currentShapeId);
     this.changeShape(nextShapeType);
@@ -7633,7 +7639,7 @@ var StyleCommands = class {
       obj.applyClipShape(shapeType);
       obj.dirty = true;
       this.editor.canvas.requestRenderAll();
-    } else if (!(obj instanceof import_fabric23.FabricImage)) {
+    } else if (!(obj instanceof import_fabric24.FabricImage)) {
       const newObj = switchShape(obj, shapeType);
       const layerId = obj.get("layerId");
       const layerType = obj.get("layerType");
@@ -7756,7 +7762,7 @@ var StyleCommands = class {
     const rad = angleDeg * Math.PI / 180;
     const cos = Math.cos(rad);
     const sin = Math.sin(rad);
-    const gradient = new import_fabric23.Gradient({
+    const gradient = new import_fabric24.Gradient({
       type: "linear",
       gradientUnits: "percentage",
       coords: {
@@ -7825,7 +7831,7 @@ var StyleCommands = class {
     const obj = this.editor.selection.current;
     if (!obj) return;
     const existing = obj.shadow;
-    const shadow = new import_fabric23.Shadow({
+    const shadow = new import_fabric24.Shadow({
       color: opts.color ?? existing?.color ?? "rgba(0,0,0,0.5)",
       blur: opts.blur ?? existing?.blur ?? 10,
       offsetX: opts.offsetX ?? existing?.offsetX ?? 5,
@@ -8182,7 +8188,7 @@ function installDisplayStyleRendering(target) {
 }
 
 // src/CropMode.ts
-var import_fabric24 = require("#fabric");
+var import_fabric25 = require("#fabric");
 var HANDLE_RADIUS = 6;
 var HANDLE_GRAB = 12;
 var FALLBACK_VEIL = "#f3f4f6";
@@ -8287,13 +8293,13 @@ var CropMode = class {
   /** Le point de la scène dans le repère du cadre. */
   toFrame(scene) {
     const frame = this.frame;
-    const local = scene.transform(import_fabric24.util.invertTransform(frame.calcTransformMatrix()));
+    const local = scene.transform(import_fabric25.util.invertTransform(frame.calcTransformMatrix()));
     return { x: local.x + frame.frameWidth / 2, y: local.y + frame.frameHeight / 2 };
   }
   /** Le point du cadre à l'écran (pixels CSS du canvas). */
   toScreen(x, y) {
     const frame = this.frame;
-    return new import_fabric24.Point(x - frame.frameWidth / 2, y - frame.frameHeight / 2).transform(frame.calcTransformMatrix()).transform(this.fc.viewportTransform);
+    return new import_fabric25.Point(x - frame.frameWidth / 2, y - frame.frameHeight / 2).transform(frame.calcTransformMatrix()).transform(this.fc.viewportTransform);
   }
   /** Une unité d'écran en unités de cadre. */
   frameUnit() {
@@ -9193,7 +9199,9 @@ var _FabricEditor = class _FabricEditor {
       })
     );
     results.forEach((r) => {
-      if (r.status === "fulfilled") document?.fonts?.add(r.value);
+      if (r.status !== "fulfilled") return;
+      document?.fonts?.add(r.value);
+      forgetFontMeasures(r.value.family);
     });
   }
   // ── Style de la sélection (editor/style-commands) ───────────────
@@ -9347,7 +9355,7 @@ var _FabricEditor = class _FabricEditor {
    * remplacement, et l'image est ajoutée.
    */
   findDropTargetAtPoint(x, y, exclude) {
-    const point = new import_fabric25.Point(x, y);
+    const point = new import_fabric26.Point(x, y);
     const objects = this.canvas.getObjects().slice().reverse();
     for (const obj of objects) {
       if (obj === exclude || obj.get(DRAG_PREVIEW_KEY)) continue;
@@ -9374,15 +9382,15 @@ var _FabricEditor = class _FabricEditor {
   extendFabricObject() {
     if (_FabricEditor._toObjectExtended) return;
     _FabricEditor._toObjectExtended = true;
-    installGhostRendering(import_fabric25.FabricObject.prototype);
-    installDisplayStyleRendering(import_fabric25.FabricObject.prototype);
-    const originalToObject = import_fabric25.FabricObject.prototype.toObject;
-    import_fabric25.FabricObject.prototype.toObject = function(propertiesToInclude) {
+    installGhostRendering(import_fabric26.FabricObject.prototype);
+    installDisplayStyleRendering(import_fabric26.FabricObject.prototype);
+    const originalToObject = import_fabric26.FabricObject.prototype.toObject;
+    import_fabric26.FabricObject.prototype.toObject = function(propertiesToInclude) {
       const data = originalToObject.call(
         this,
         ["layerId", "layout", "bindings"].concat(propertiesToInclude || [])
       );
-      if (this.group instanceof import_fabric25.ActiveSelection) {
+      if (this.group instanceof import_fabric26.ActiveSelection) {
         const { x, y } = this.getXY();
         Object.assign(data, { left: x, top: y });
       }
@@ -9397,8 +9405,8 @@ _FabricEditor._toObjectExtended = false;
 var FabricEditor = _FabricEditor;
 
 // src/PreviewCanvas.ts
-var import_fabric26 = require("#fabric");
-var PreviewCanvas = class extends import_fabric26.StaticCanvas {
+var import_fabric27 = require("#fabric");
+var PreviewCanvas = class extends import_fabric27.StaticCanvas {
   constructor(el, opts) {
     const { width, height, ...canvasOpts } = opts;
     super(el, {
@@ -9458,7 +9466,7 @@ var PreviewCanvas = class extends import_fabric26.StaticCanvas {
 };
 
 // src/DropHandler.ts
-var import_fabric27 = require("#fabric");
+var import_fabric28 = require("#fabric");
 var HIGHLIGHT_COLOR = "#3b82f6";
 var KIND_CAPABILITIES = {
   image: { layout: false, replaceTarget: true },
@@ -9468,7 +9476,7 @@ var KIND_CAPABILITIES = {
 };
 function canvasImageSource(obj) {
   if (obj instanceof ImageFrame) return obj.imageSrc ? { url: obj.imageSrc, imageMeta: obj.imageMeta } : null;
-  if (obj instanceof import_fabric27.FabricImage) return obj.getSrc() ? { url: obj.getSrc(), imageMeta: {} } : null;
+  if (obj instanceof import_fabric28.FabricImage) return obj.getSrc() ? { url: obj.getSrc(), imageMeta: {} } : null;
   return null;
 }
 var DropHandler = class {
@@ -9645,7 +9653,7 @@ var DropHandler = class {
       if (!committed && object) {
         if (e) {
           const pointer = this.editor.canvas.getScenePoint(e);
-          object.setPositionByOrigin(new import_fabric27.Point(pointer.x, pointer.y), "center", "center");
+          object.setPositionByOrigin(new import_fabric28.Point(pointer.x, pointer.y), "center", "center");
           object.setCoords();
         }
         if (!this.editor.canvas.getObjects().includes(object)) {
@@ -9721,7 +9729,7 @@ var DropHandler = class {
         this.editor.layout.tickExternalDrag(object, pointer);
         return;
       }
-      object.setPositionByOrigin(new import_fabric27.Point(pointer.x, pointer.y), "center", "center");
+      object.setPositionByOrigin(new import_fabric28.Point(pointer.x, pointer.y), "center", "center");
       object.setCoords();
       this.editor.canvas.requestRenderAll();
     }
@@ -9929,7 +9937,7 @@ var DropHandler = class {
       height = target.height;
       clipPath = target.clipPath;
     }
-    const fabricOverlay = new import_fabric27.Rect({
+    const fabricOverlay = new import_fabric28.Rect({
       left: target.left,
       top: target.top,
       width,
@@ -10023,7 +10031,7 @@ var DropHandler = class {
    * drop-target detection.
    */
   async createImagePreview(url) {
-    const img = await import_fabric27.FabricImage.fromURL(url, { crossOrigin: "anonymous" });
+    const img = await import_fabric28.FabricImage.fromURL(url, { crossOrigin: "anonymous" });
     let scale = 1;
     if (img.width > 300 || img.height > 300) {
       scale = Math.min(300 / img.width, 300 / img.height);
@@ -10058,7 +10066,7 @@ var DropHandler = class {
     if (e && !this.intersectsCanvas(e, null)) return null;
     const pointer = e ? this.editor.canvas.getScenePoint(e) : null;
     const object = this.editor.layers.createUserSlot(opts);
-    if (pointer) object.setPositionByOrigin(new import_fabric27.Point(pointer.x, pointer.y), "center", "center");
+    if (pointer) object.setPositionByOrigin(new import_fabric28.Point(pointer.x, pointer.y), "center", "center");
     this.editor.layers.add(object);
     this.editor.canvas.setActiveObject(object);
     this.editor.canvas.renderAll();
@@ -10822,6 +10830,7 @@ function layerToHtmlStandalone(layer, zIndex) {
   fabricToHtml,
   fitFreeContainer,
   fontFamiliesOf,
+  forgetFontMeasures,
   formatCombo,
   formatModifier,
   getAvailableShapes,
