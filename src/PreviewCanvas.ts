@@ -1,3 +1,4 @@
+import { boxOf, unionBox } from "./layout/geometry";
 import { StaticCanvas } from "#fabric";
 import { LayerManager } from "./LayerManager";
 import { runLayout } from "./layout/run";
@@ -61,6 +62,30 @@ export class PreviewCanvas extends StaticCanvas {
     // se repose ici. "high" — un downscale 1080 -> 48 en un drawImage crénèle sinon.
     this.getContext().imageSmoothingQuality = "high";
     return scale;
+  }
+
+  /**
+   * Cadre la vue sur le CONTENU — l'union des boîtes des objets, avec une marge relative —
+   * dans le buffer tel que fitToSize l'a dimensionné. Pour un document dont la page est un
+   * espace de travail et non un format (un sticker) : la vignette montre le calque, pas le
+   * vide autour. Sans objet, la vue de la page reste.
+   */
+  fitToContent(padding = 0): void {
+    const objects = this.getObjects();
+    if (!objects.length) return;
+
+    const box = unionBox(objects.map((obj) => boxOf(obj)));
+    const width = this.getWidth();
+    const height = this.getHeight();
+    const scale = Math.min(width / (box.width * (1 + padding * 2)), height / (box.height * (1 + padding * 2)));
+    this.setViewportTransform([
+      scale,
+      0,
+      0,
+      scale,
+      (width - box.width * scale) / 2 - box.left * scale,
+      (height - box.height * scale) / 2 - box.top * scale,
+    ]);
   }
 
   /**

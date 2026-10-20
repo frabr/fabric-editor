@@ -1117,7 +1117,7 @@ declare function formatModifier(modifier: Modifier, platform: Platform): string;
  * Supprimer toujours en dernier. En multi-sélection, Grouper d'abord.
  */
 
-type ToolId = "group" | "align" | "distribute" | "arrangement" | "ungroup" | "fill" | "font" | "variables" | "crop" | "image" | "promoteBackground" | "clip" | "outline" | "effects" | "layout" | "containerize" | "animations" | "condition" | "lock" | "forward" | "backward" | "delete";
+type ToolId = "group" | "align" | "distribute" | "arrangement" | "ungroup" | "fill" | "font" | "variables" | "crop" | "image" | "promoteBackground" | "clip" | "outline" | "effects" | "layout" | "containerize" | "animations" | "condition" | "saveAsSticker" | "lock" | "forward" | "backward" | "delete";
 /**
  * - `text`, `shape`, `image` : un objet seul, d'après sa sorte ;
  * - `block` : une forme qui porte des éléments ;
@@ -2926,6 +2926,13 @@ declare class PreviewCanvas extends StaticCanvas {
      * le canvas lui-même (un object-fit CSS étirerait le bitmap).
      */
     fitToSize(containerW: number, containerH: number, fit?: "contain" | "cover"): number;
+    /**
+     * Cadre la vue sur le CONTENU — l'union des boîtes des objets, avec une marge relative —
+     * dans le buffer tel que fitToSize l'a dimensionné. Pour un document dont la page est un
+     * espace de travail et non un format (un sticker) : la vignette montre le calque, pas le
+     * vide autour. Sans objet, la vue de la page reste.
+     */
+    fitToContent(padding?: number): void;
     /**
      * Remplace le contenu par ces layers et rend — l'unique verbe d'une preview.
      *

@@ -136,4 +136,12 @@ describe("toolsFor", () => {
     applyLockMode(b, "full");
     expect(toolsFor([a, b], ALL)).toEqual(["group", "align"]);
   });
+
+  it("garder en calque : toute sélection, seule ou multiple, quand l'hôte l'offre", () => {
+    const offered: ToolId[] = [...ALL, "saveAsSticker"];
+    expect(toolsFor([rect("s")], offered)).toContain("saveAsSticker");
+    expect(toolsFor([text("t")], offered)).toContain("saveAsSticker");
+    expect(toolsFor([rect("a"), rect("b")], offered)).toContain("saveAsSticker");
+    expect(toolsFor([rect("s")], ALL)).not.toContain("saveAsSticker");
+  });
 });

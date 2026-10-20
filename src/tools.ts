@@ -21,7 +21,8 @@ import { ImageFrame } from "./ImageFrame";
 export type ToolId =
   | "group" | "align" | "distribute" | "arrangement" | "ungroup"
   | "fill" | "font" | "variables" | "crop" | "image" | "promoteBackground" | "clip" | "outline"
-  | "effects" | "layout" | "containerize" | "animations" | "condition" | "lock" | "forward" | "backward" | "delete";
+  | "effects" | "layout" | "containerize" | "animations" | "condition" | "saveAsSticker" | "lock" | "forward"
+  | "backward" | "delete";
 
 /**
  * - `text`, `shape`, `image` : un objet seul, d'après sa sorte ;
@@ -33,24 +34,27 @@ export type SelectionKind = "text" | "shape" | "image" | "block" | "group" | "ma
 
 /** L'ordre des outils, par sorte de sélection (Supprimer s'ajoute à la fin). */
 const ORDER: Record<SelectionKind, ToolId[]> = {
-  text: ["fill", "font", "animations", "effects", "variables", "layout", "condition", "lock", "forward", "backward"],
-  shape: [
-    "fill", "clip", "outline", "animations", "effects", "layout", "containerize", "condition", "lock", "forward",
+  text: [
+    "fill", "font", "animations", "effects", "variables", "layout", "condition", "saveAsSticker", "lock", "forward",
     "backward",
+  ],
+  shape: [
+    "fill", "clip", "outline", "animations", "effects", "layout", "containerize", "condition", "saveAsSticker",
+    "lock", "forward", "backward",
   ],
   image: [
     "crop", "image", "promoteBackground", "clip", "animations", "outline", "effects", "layout", "containerize",
-    "condition", "lock", "forward", "backward",
+    "condition", "saveAsSticker", "lock", "forward", "backward",
   ],
   block: [
-    "fill", "image", "layout", "animations", "outline", "effects", "ungroup", "condition",
+    "fill", "image", "layout", "animations", "outline", "effects", "ungroup", "condition", "saveAsSticker",
     "lock", "forward", "backward",
   ],
   group: [
-    "arrangement", "fill", "layout", "animations", "ungroup", "effects", "condition",
+    "arrangement", "fill", "layout", "animations", "ungroup", "effects", "condition", "saveAsSticker",
     "lock", "forward", "backward",
   ],
-  many: ["group", "align", "distribute", "forward", "backward"],
+  many: ["group", "align", "distribute", "saveAsSticker", "forward", "backward"],
 };
 
 /** La sorte d'une sélection, ou null si elle est vide. */
@@ -117,8 +121,9 @@ function oneAllows(obj: FabricObject, kind: SelectionKind): (tool: ToolId) => bo
       // Une forme (ou une image) simple devient un bloc : elle accueille, et n'en est pas un
       case "containerize": return rules.restyles && rules.hosts && !isContainerObject(obj);
       // Une condition de visibilité se pose sur tout calque sélectionnable, verrou compris :
-      // c'est un réglage d'auteur, pas de style
+      // c'est un réglage d'auteur, pas de style ; de même garder la sélection en calque
       case "condition":
+      case "saveAsSticker":
       case "lock": return true;
       case "forward":
       case "backward": return rules.restacks;
@@ -138,7 +143,8 @@ function manyAllows(selected: FabricObject[]): (tool: ToolId) => boolean {
   return (tool) => {
     switch (tool) {
       case "group":
-      case "align": return true;
+      case "align":
+      case "saveAsSticker": return true;
       case "distribute": return selected.filter((obj) => !stackParentOf(obj)).length >= 3;
       case "forward":
       case "backward": return rules.every((r) => r.restacks);

@@ -9295,6 +9295,28 @@ var PreviewCanvas = class extends StaticCanvas {
     return scale;
   }
   /**
+   * Cadre la vue sur le CONTENU — l'union des boîtes des objets, avec une marge relative —
+   * dans le buffer tel que fitToSize l'a dimensionné. Pour un document dont la page est un
+   * espace de travail et non un format (un sticker) : la vignette montre le calque, pas le
+   * vide autour. Sans objet, la vue de la page reste.
+   */
+  fitToContent(padding = 0) {
+    const objects = this.getObjects();
+    if (!objects.length) return;
+    const box = unionBox(objects.map((obj) => boxOf(obj)));
+    const width = this.getWidth();
+    const height = this.getHeight();
+    const scale = Math.min(width / (box.width * (1 + padding * 2)), height / (box.height * (1 + padding * 2)));
+    this.setViewportTransform([
+      scale,
+      0,
+      0,
+      scale,
+      (width - box.width * scale) / 2 - box.left * scale,
+      (height - box.height * scale) / 2 - box.top * scale
+    ]);
+  }
+  /**
    * Remplace le contenu par ces layers et rend — l'unique verbe d'une preview.
    *
    * Anti-flicker : la désérialisation (chargement d'images compris) se fait AVANT le clear,
@@ -9940,7 +9962,19 @@ init_PendingUploadsManager();
 
 // src/tools.ts
 var ORDER = {
-  text: ["fill", "font", "animations", "effects", "variables", "layout", "condition", "lock", "forward", "backward"],
+  text: [
+    "fill",
+    "font",
+    "animations",
+    "effects",
+    "variables",
+    "layout",
+    "condition",
+    "saveAsSticker",
+    "lock",
+    "forward",
+    "backward"
+  ],
   shape: [
     "fill",
     "clip",
@@ -9950,6 +9984,7 @@ var ORDER = {
     "layout",
     "containerize",
     "condition",
+    "saveAsSticker",
     "lock",
     "forward",
     "backward"
@@ -9965,6 +10000,7 @@ var ORDER = {
     "layout",
     "containerize",
     "condition",
+    "saveAsSticker",
     "lock",
     "forward",
     "backward"
@@ -9978,6 +10014,7 @@ var ORDER = {
     "effects",
     "ungroup",
     "condition",
+    "saveAsSticker",
     "lock",
     "forward",
     "backward"
@@ -9990,11 +10027,12 @@ var ORDER = {
     "ungroup",
     "effects",
     "condition",
+    "saveAsSticker",
     "lock",
     "forward",
     "backward"
   ],
-  many: ["group", "align", "distribute", "forward", "backward"]
+  many: ["group", "align", "distribute", "saveAsSticker", "forward", "backward"]
 };
 function selectionKindOf(selected) {
   if (selected.length === 0) return null;
@@ -10059,8 +10097,9 @@ function oneAllows(obj, kind) {
       case "containerize":
         return rules.restyles && rules.hosts && !isContainerObject(obj);
       // Une condition de visibilité se pose sur tout calque sélectionnable, verrou compris :
-      // c'est un réglage d'auteur, pas de style
+      // c'est un réglage d'auteur, pas de style ; de même garder la sélection en calque
       case "condition":
+      case "saveAsSticker":
       case "lock":
         return true;
       case "forward":
@@ -10079,6 +10118,7 @@ function manyAllows(selected) {
     switch (tool) {
       case "group":
       case "align":
+      case "saveAsSticker":
         return true;
       case "distribute":
         return selected.filter((obj) => !stackParentOf(obj)).length >= 3;
