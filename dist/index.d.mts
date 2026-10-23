@@ -1,5 +1,5 @@
 import * as _fabric from '#fabric';
-import { Canvas, FabricObject, TPointerEvent, Textbox, Group, FabricImage, StaticCanvas, Pattern, Rect as Rect$1, TOptions, RectProps, Circle, CircleProps, Path, PathProps } from '#fabric';
+import { Canvas, FabricObject, TPointerEvent, Textbox, Group, FabricImage, StaticCanvas, Pattern, Rect as Rect$1, TOptions, RectProps, Circle, CircleProps, Path, PathProps, TMat2D } from '#fabric';
 import * as fabric from 'fabric';
 
 /**
@@ -3681,6 +3681,114 @@ declare function drawFrameBadge(ctx: CanvasRenderingContext2D, obj: FabricObject
 declare function badgeLabel(obj: FabricObject, labelers: BadgeLabeler[]): string | null;
 
 /**
+ * Les unités d'un texte — ses lignes, ses mots ou ses caractères — et leur rendu séparé :
+ * ce qu'un moteur d'animation (creatorstudio) anime une par une, au lieu d'une image du
+ * texte entier.
+ *
+ * Fabric reste seul maître de la mise en page (retours à la ligne, alignement, styles
+ * mixtes, autofit) : les unités se lisent dans ses mesures (`__charBounds`), et une unité
+ * se rend en rejouant le rendu normal du texte, filtré sur sa plage de caractères. Les
+ * glyphes sont donc dessinés exactement comme dans l'image entière : l'union des tuiles,
+ * recomposée, est cette image au pixel près.
+ *
+ * Les unités PARTITIONNENT le texte : chaque caractère affiché appartient à une unité et
+ * une seule (un mot emporte les espaces qui le suivent, un caractère aussi ; les espaces
+ * d'ouverture vont à la première unité). Les boîtes d'une même ligne se touchent sans se
+ * recouvrir — c'est ce qui permet de découper aussi le fond de texte et les soulignés.
+ *
+ * Limites connues : une ligature (texte sans espacement de caractères — la lib en pose
+ * toujours un) est rompue par un découpage qui passe au milieu ; un fond de texte
+ * (`textBackgroundColor`, que l'éditeur n'offre pas) peut garder un liseré d'un pixel entre
+ * deux lignes. Un texte tourné se repose en rééchantillonnant ses tuiles : bords un peu
+ * plus doux qu'un rendu direct, que `resolution` compense.
+ *
+ * Coordonnées : le repère local du texte, origine en son centre (celui de `_render`), sans
+ * sa transformation. `textUnitTiles` renvoie la matrice qui y ramène le canvas.
+ */
+
+type TextUnitKind = "line" | "word" | "char";
+interface TextUnitBox {
+    x: number;
+    y: number;
+    w: number;
+    h: number;
+}
+/** Une unité : sa plage de graphèmes [start, end) et une boîte par ligne affichée. */
+interface TextUnit {
+    index: number;
+    start: number;
+    end: number;
+    text: string;
+    boxes: TextUnitBox[];
+}
+/** La tuile d'une boîte d'unité : son image, à `box` (marge comprise), en repère local. */
+interface TextTile {
+    box: TextUnitBox;
+    part: TextLayerPart;
+    canvas: HTMLCanvasElement;
+}
+interface TextUnitTiles {
+    units: (TextUnit & {
+        tiles: TextTile[];
+    })[];
+    /** Les couches peintes, dans l'ordre d'empilement. */
+    parts: TextLayerPart[];
+    /** Repère local du texte → canvas (la `calcTransformMatrix` de l'objet). */
+    matrix: TMat2D;
+    /** La résolution des tuiles (pixels de tuile par unité locale). */
+    resolution: number;
+}
+/**
+ * Les unités d'un texte, dans l'ordre de lecture. Un mot coupé par le retour à la ligne
+ * (mot trop long) reste un mot, avec une boîte par morceau.
+ */
+declare function textUnits(text: object, kind: TextUnitKind): TextUnit[];
+/**
+ * Les couches d'un texte, dans l'ordre où Fabric les peint : `under` (fond de texte,
+ * souligné), `glyphs`, `over` (surligné, barré). Une animation qui déplace ses unités garde
+ * l'ordre d'empilement en posant toutes les couches `under`, puis les `glyphs`, puis les
+ * `over` : le fond d'un mot ne passe jamais sur le débord d'un glyphe voisin.
+ */
+type TextLayerPart = "under" | "glyphs" | "over";
+/** Les couches que ce texte peint vraiment (les glyphes toujours). */
+declare function textParts(text: object): TextLayerPart[];
+interface RenderRangeOptions {
+    /** Les boîtes de la plage : le fond et les décorations y sont coupés. */
+    clip?: TextUnitBox[];
+    /** La couche à peindre (toutes par défaut). */
+    part?: TextLayerPart | "all";
+}
+/**
+ * Dessine la plage [start, end) d'un texte, comme `text.render(ctx)` dessinerait le texte
+ * entier (transformation, opacité, ombre, contour compris) : seuls les glyphes de la plage
+ * sont tracés ; le fond de texte et les décorations sont coupés aux boîtes de la plage.
+ *
+ * Le cache de l'objet est contourné le temps du rendu (il porte le texte entier).
+ */
+declare function renderTextRange(text: object, ctx: CanvasRenderingContext2D, start: number, end: number, { clip, part }?: RenderRangeOptions): void;
+/**
+ * La marge d'une tuile autour de sa boîte : ce qu'un glyphe peut déborder de sa chasse
+ * (italique, jambage, accent) — un tiers de la plus grande police du texte —, plus le
+ * contour et l'ombre.
+ */
+declare function tilePadding(text: object): number;
+/**
+ * Les tuiles d'un texte : par unité, une image par boîte et par couche peinte (`textParts`),
+ * marge comprise, rendue dans le repère local du texte (non tourné). Pour les poser, le
+ * consommateur applique `matrix` à un conteneur, y place chaque tuile à `tile.box`, et
+ * empile les couches dans l'ordre `under`, `glyphs`, `over`.
+ *
+ * Un texte ni tourné ni retourné a ses tuiles et ses coupes calées sur la grille de pixels
+ * du canvas : reposées telles quelles, elles redonnent son image au pixel près.
+ *
+ * `resolution` : pixels de tuile par unité locale (1 : la taille du document).
+ */
+declare function textUnitTiles(text: object, kind: TextUnitKind, { resolution, pad }?: {
+    resolution?: number;
+    pad?: number;
+}): TextUnitTiles;
+
+/**
  * Un fantôme : un objet rendu à 22 % — présent dans l'éditeur pour être réglé, absent de la
  * sortie. L'hôte le pose et le retire d'après ce qu'il sait (apibots : un calque masqué par
  * sa condition de visibilité pour le sujet d'aperçu, et ses descendants) ; la lib ne fait
@@ -3710,4 +3818,4 @@ declare const DEFAULT_GUIDE_COLOR = "#d946ef";
  */
 declare const DEFAULT_SNAP_GUIDE_COLOR = "#ff00ff";
 
-export { type AlignEdge, type AlignItems, type AlignSelf, type Arrangement, type BadgeLabeler, type BindingSpec, type Bindings, type Box, CANVAS_SHORTCUTS, CanvasGuides, type CatalogShape, type CatalogShapeInput, type ChildData, type ClipData, type ContainerData, ContainerizeSession, type ControlOption, type Crop, CropMode, CustomTextbox, DEFAULT_GUIDE_COLOR, DEFAULT_SNAP_GUIDE_COLOR, type Delta, DesignCanvas, type DistributeAxis, type DragPayload, DropHandler, type DropHandlerConfig, type DropResult, type EditorConfig, FabCircle, FabPath, FabRect, FabricEditor, type FlexDirection, type FontConfig, type FontsConfig, type FrameRect, FreeResizeSession, GHOST_OPACITY, GestureManager, type GestureShortcut, type GradientStop, HEART_PATH, HEXAGON_PATH, type HistoryCallbacks, HistoryManager, type HistoryState, type HtmlLayerOutput, type HtmlRenderOptions, ImageFrame, type ImageLayerOptions, InsertChildSession, type JustifyContent, type KeyShortcut, LAYER_PROPS, type LayerData, LayerManager, type LayoutData, LayoutManager, type LayoutManagerCallbacks, type LayoutParents, type LayoutSession, type LockMode$1 as LockMode, type Lockable, MAX_CROP_SCALE, MIN_PAD, MIXED, MaskManager, type Modifier, NO_CROP, type ObjectControlsConfig, type ObjectKind, type ObjectRules, PendingUploadsManager, PersistenceManager, type Platform, PreviewCanvas, ROTATION_STEP, ResizeSession, type ResizeSnapResult, type SaveOptions, type SaveResult, ScaleSession, type SelectionCallbacks, type SelectionKind, SelectionManager, type ShapeCatalogEntry, type ShapeLayerOptions, type ShapePathData, type ShapeType, type ShortcutContext, type ShortcutEntry, type ShortcutGroup, ShortcutManager, type ShortcutManagerOptions, type ShortcutScope, type SizeMode, type SizePreset, type SizingData, type SnappingConfig, SnappingManager, StackResizeSession, TEXT_STYLE_KEYS, type TextLayerOptions, type TextOverflow, type TextStyleKey, type TextStyleState, type TextStyleValue, type ToolId, type ToolboxImageReaction, type TreeLayer, USER_SCOPE, USER_SLOT_FIELD, type UserSlot, type WorkspaceOptions, addCircleClip, addCropControls, addHeartClip, addHexagonClip, alignAxis, alignDelta, antiScale, applyClip, applyLockMode, badgeLabel, bindingBadgeLabel, canvasImageSource, clampTopLeft, clipDataFor, collectUserSlots, createCircle, createDropSession, createHeart, createHexagon, createImage, createPathShape, createPathsShape, createRect, createShape, cropFromRect, detectPlatform, displayFill, distributeDeltas, drawBindingBadge, drawFrameBadge, fabricToHtml, fitFreeContainer, fontFamiliesOf, forgetFontMeasures, formatCombo, formatModifier, getAvailableShapes, getCatalogShape, getLockMode, getNextLockMode, getShapeCatalog, hasExceededOffset, hasPendingBindings, initYoga, isBold, isContentLocked, isCropped, isFreeContainer, isGhost, isKeyShortcut, isMonoPath, isPositionLocked, isStyleLocked, isUserSlot, isValidShape, kindOf, layerToHtmlStandalone, layoutChildren, layoutDescendants, layoutParents, layoutRoot, nextShape, panCrop, parseCombo, pendingBindings, photoRect, pointInObject, registerShapes, registeredShapes, removeCropControls, rulesOf, runLayout, scaledSize, selectionKindOf, setDisplayFill, setGhost, setTextContent, stackBlock, stackParentOf, summarizeObject, summarizeStyles, switchClip, switchShape, toolsFor, topLeft, unionBox, userSlotBinding, userSlotHint, wrapContainerAroundChild, yogaLayout, zoomCrop };
+export { type AlignEdge, type AlignItems, type AlignSelf, type Arrangement, type BadgeLabeler, type BindingSpec, type Bindings, type Box, CANVAS_SHORTCUTS, CanvasGuides, type CatalogShape, type CatalogShapeInput, type ChildData, type ClipData, type ContainerData, ContainerizeSession, type ControlOption, type Crop, CropMode, CustomTextbox, DEFAULT_GUIDE_COLOR, DEFAULT_SNAP_GUIDE_COLOR, type Delta, DesignCanvas, type DistributeAxis, type DragPayload, DropHandler, type DropHandlerConfig, type DropResult, type EditorConfig, FabCircle, FabPath, FabRect, FabricEditor, type FlexDirection, type FontConfig, type FontsConfig, type FrameRect, FreeResizeSession, GHOST_OPACITY, GestureManager, type GestureShortcut, type GradientStop, HEART_PATH, HEXAGON_PATH, type HistoryCallbacks, HistoryManager, type HistoryState, type HtmlLayerOutput, type HtmlRenderOptions, ImageFrame, type ImageLayerOptions, InsertChildSession, type JustifyContent, type KeyShortcut, LAYER_PROPS, type LayerData, LayerManager, type LayoutData, LayoutManager, type LayoutManagerCallbacks, type LayoutParents, type LayoutSession, type LockMode$1 as LockMode, type Lockable, MAX_CROP_SCALE, MIN_PAD, MIXED, MaskManager, type Modifier, NO_CROP, type ObjectControlsConfig, type ObjectKind, type ObjectRules, PendingUploadsManager, PersistenceManager, type Platform, PreviewCanvas, ROTATION_STEP, type RenderRangeOptions, ResizeSession, type ResizeSnapResult, type SaveOptions, type SaveResult, ScaleSession, type SelectionCallbacks, type SelectionKind, SelectionManager, type ShapeCatalogEntry, type ShapeLayerOptions, type ShapePathData, type ShapeType, type ShortcutContext, type ShortcutEntry, type ShortcutGroup, ShortcutManager, type ShortcutManagerOptions, type ShortcutScope, type SizeMode, type SizePreset, type SizingData, type SnappingConfig, SnappingManager, StackResizeSession, TEXT_STYLE_KEYS, type TextLayerOptions, type TextLayerPart, type TextOverflow, type TextStyleKey, type TextStyleState, type TextStyleValue, type TextTile, type TextUnit, type TextUnitBox, type TextUnitKind, type TextUnitTiles, type ToolId, type ToolboxImageReaction, type TreeLayer, USER_SCOPE, USER_SLOT_FIELD, type UserSlot, type WorkspaceOptions, addCircleClip, addCropControls, addHeartClip, addHexagonClip, alignAxis, alignDelta, antiScale, applyClip, applyLockMode, badgeLabel, bindingBadgeLabel, canvasImageSource, clampTopLeft, clipDataFor, collectUserSlots, createCircle, createDropSession, createHeart, createHexagon, createImage, createPathShape, createPathsShape, createRect, createShape, cropFromRect, detectPlatform, displayFill, distributeDeltas, drawBindingBadge, drawFrameBadge, fabricToHtml, fitFreeContainer, fontFamiliesOf, forgetFontMeasures, formatCombo, formatModifier, getAvailableShapes, getCatalogShape, getLockMode, getNextLockMode, getShapeCatalog, hasExceededOffset, hasPendingBindings, initYoga, isBold, isContentLocked, isCropped, isFreeContainer, isGhost, isKeyShortcut, isMonoPath, isPositionLocked, isStyleLocked, isUserSlot, isValidShape, kindOf, layerToHtmlStandalone, layoutChildren, layoutDescendants, layoutParents, layoutRoot, nextShape, panCrop, parseCombo, pendingBindings, photoRect, pointInObject, registerShapes, registeredShapes, removeCropControls, renderTextRange, rulesOf, runLayout, scaledSize, selectionKindOf, setDisplayFill, setGhost, setTextContent, stackBlock, stackParentOf, summarizeObject, summarizeStyles, switchClip, switchShape, textParts, textUnitTiles, textUnits, tilePadding, toolsFor, topLeft, unionBox, userSlotBinding, userSlotHint, wrapContainerAroundChild, yogaLayout, zoomCrop };

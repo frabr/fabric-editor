@@ -152,6 +152,9 @@ export {
 export { drawFrameBadge, badgeLabel, type BadgeLabeler } from "./ui/badges";
 export { fontFamiliesOf, isBold, summarizeStyles, summarizeObject, MIXED, TEXT_STYLE_KEYS } from "./text-styles";
 export type { TextStyleState, TextStyleKey, TextStyleValue } from "./text-styles";
+// Les unités d'un texte (lignes, mots, caractères) rendues séparément : animations de texte
+export { textUnits, renderTextRange, textUnitTiles, textParts, tilePadding } from "./text-units";
+export type { TextUnit, TextUnitBox, TextUnitKind, TextTile, TextUnitTiles, TextLayerPart, RenderRangeOptions } from "./text-units";
 export { isGhost, setGhost, GHOST_OPACITY } from "./ghost";
 export { displayFill, setDisplayFill } from "./displayStyle";
 export type { Bindings, BindingSpec } from "./bindings";

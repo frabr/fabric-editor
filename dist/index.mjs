@@ -10643,6 +10643,196 @@ function fabricToHtml(layers, options) {
 function layerToHtmlStandalone(layer, zIndex) {
   return layerToHtml(layer, zIndex);
 }
+
+// src/text-units.ts
+import { util as util6 } from "#fabric";
+var WHITESPACE = /\s/;
+function internals(text) {
+  return text;
+}
+function lineStarts(t) {
+  const starts = [];
+  let acc = 0;
+  for (let line = 0; line < t._textLines.length; line++) {
+    starts.push(acc);
+    acc += t._textLines[line].length + t.missingNewlineOffset(line);
+  }
+  return starts;
+}
+function boundsOf(t, line) {
+  if (!t.__charBounds[line]) t.measureLine(line);
+  return t.__charBounds[line];
+}
+function textUnits(text, kind) {
+  const t = internals(text);
+  const starts = lineStarts(t);
+  const units = [];
+  let current = null;
+  let leading = null;
+  let prevAbs = -2;
+  let prevSpace = true;
+  for (let line = 0; line < t._textLines.length; line++) {
+    const graphemes = t._textLines[line];
+    for (let ch = 0; ch < graphemes.length; ch++) {
+      const abs = starts[line] + ch;
+      const space = WHITESPACE.test(graphemes[ch]);
+      const contiguous = abs === prevAbs + 1;
+      const opens = kind === "line" ? ch === 0 : kind === "char" ? !space : !space && (prevSpace || !contiguous);
+      if (opens) {
+        current = { index: units.length, start: leading ?? abs, end: abs + 1, text: "", boxes: [] };
+        leading = null;
+        units.push(current);
+      } else if (current) {
+        current.end = abs + 1;
+      } else {
+        leading ?? (leading = abs);
+      }
+      prevAbs = abs;
+      prevSpace = space;
+    }
+  }
+  for (const unit of units) {
+    unit.boxes = rangeBoxes(t, starts, unit.start, unit.end);
+    unit.text = t.graphemeSplit(t.text).slice(unit.start, unit.end).join("");
+  }
+  return units;
+}
+function rangeBoxes(t, starts, start, end) {
+  const boxes = [];
+  let top = t._getTopOffset();
+  for (let line = 0; line < t._textLines.length; line++) {
+    const height = t.getHeightOfLine(line);
+    const from = Math.max(start - starts[line], 0);
+    const to = Math.min(end - starts[line], t._textLines[line].length);
+    if (to > from) {
+      const bounds = boundsOf(t, line);
+      const left = t._getLeftOffset() + t._getLineLeftOffset(line);
+      const x0 = left + bounds[from].left;
+      const x1 = left + (bounds[to]?.left ?? bounds[to - 1].left + bounds[to - 1].width);
+      boxes.push({ x: x0, y: top, w: x1 - x0, h: height });
+    }
+    top += height;
+  }
+  return boxes;
+}
+var PARTS = ["under", "glyphs", "over"];
+function textParts(text) {
+  const t = internals(text);
+  const has = (prop) => Boolean(t[prop]) || t.styleHas(prop);
+  return PARTS.filter((part) => part === "glyphs" ? true : part === "under" ? has("textBackgroundColor") || has("underline") : has("overline") || has("linethrough"));
+}
+function renderTextRange(text, ctx, start, end, { clip, part = "all" } = {}) {
+  const t = internals(text);
+  const starts = lineStarts(t);
+  const boxes = clip ?? rangeBoxes(t, starts, start, end);
+  const paints = (p) => part === "all" || part === p;
+  const inRange = (line, ch) => {
+    const abs = starts[line] + ch;
+    return abs >= start && abs < end;
+  };
+  const proto = Object.getPrototypeOf(t);
+  const clipped = (c, draw) => {
+    c.save();
+    c.beginPath();
+    for (const b of boxes) c.rect(b.x, b.y, b.w, b.h);
+    c.clip();
+    draw();
+    c.restore();
+  };
+  t._renderChar = function(method, c, line, charIndex, run, left, top) {
+    if (!paints("glyphs")) return;
+    const graphemes = t.graphemeSplit(run);
+    const last = graphemes.length > 1 && charIndex === 0 ? graphemes.length - 1 : charIndex;
+    const first = last - graphemes.length + 1;
+    const inside = graphemes.map((_, i) => inRange(line, first + i));
+    if (inside.every(Boolean)) return proto._renderChar.call(t, method, c, line, charIndex, run, left, top);
+    const bounds = boundsOf(t, line);
+    for (let i = 0; i < graphemes.length; i++) {
+      if (!inside[i]) continue;
+      let j = i;
+      while (j + 1 < graphemes.length && inside[j + 1]) j++;
+      const x = left + bounds[first + i].left - bounds[first].left;
+      proto._renderChar.call(t, method, c, line, first + j, graphemes.slice(i, j + 1).join(""), x, top);
+      i = j;
+    }
+  };
+  t._renderTextLinesBackground = (c) => {
+    if (paints("under")) clipped(c, () => proto._renderTextLinesBackground.call(t, c));
+  };
+  t._renderTextDecoration = (c, type) => {
+    if (paints(type === "underline" ? "under" : "over")) clipped(c, () => proto._renderTextDecoration.call(t, c, type));
+  };
+  const caching = t.objectCaching;
+  t.objectCaching = false;
+  try {
+    t.render(ctx);
+  } finally {
+    delete t._renderChar;
+    delete t._renderTextLinesBackground;
+    delete t._renderTextDecoration;
+    t.objectCaching = caching;
+    t.dirty = true;
+  }
+}
+function tilePadding(text) {
+  const t = internals(text);
+  let size = 0;
+  for (let line = 0; line < t._textLines.length; line++) size = Math.max(size, t.getHeightOfLine(line) / t.lineHeight);
+  const stroke = t.stroke ? t.strokeWidth || 0 : 0;
+  const s = t.shadow;
+  const shadow = s ? (s.blur || 0) + Math.max(Math.abs(s.offsetX || 0), Math.abs(s.offsetY || 0)) : 0;
+  return Math.ceil(Math.max(4, size / 3) + stroke + shadow);
+}
+function textUnitTiles(text, kind, { resolution = 1, pad = tilePadding(text) } = {}) {
+  const t = internals(text);
+  const matrix = t.calcTransformMatrix();
+  const toLocal = util6.invertTransform(matrix);
+  const parts = textParts(text);
+  const [a, b, c, d, e, f] = matrix;
+  const aligned = b === 0 && c === 0 && a > 0 && d > 0;
+  const snapX = (v, round) => aligned ? (round(v * a + e) - e) / a : v;
+  const snapY = (v, round) => aligned ? (round(v * d + f) - f) / d : v;
+  const all = textUnits(text, kind);
+  const flat = all.flatMap((u) => u.boxes);
+  const lineLeft = /* @__PURE__ */ new Map();
+  const lineRight = /* @__PURE__ */ new Map();
+  for (const r of flat) {
+    lineLeft.set(r.y, Math.min(lineLeft.get(r.y) ?? Infinity, r.x));
+    lineRight.set(r.y, Math.max(lineRight.get(r.y) ?? -Infinity, r.x + r.w));
+  }
+  const top = Math.min(...flat.map((r) => r.y));
+  const bottom = Math.max(...flat.map((r) => r.y + r.h));
+  const clipBox = (r) => {
+    const x0 = r.x === lineLeft.get(r.y) ? r.x - pad : snapX(r.x, Math.round);
+    const x1 = r.x + r.w === lineRight.get(r.y) ? r.x + r.w + pad : snapX(r.x + r.w, Math.round);
+    const y0 = r.y === top ? r.y - pad : snapY(r.y, Math.round);
+    const y1 = r.y + r.h === bottom ? r.y + r.h + pad : snapY(r.y + r.h, Math.round);
+    return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+  };
+  const units = all.map((unit) => {
+    const clip = unit.boxes.map(clipBox);
+    const tiles = unit.boxes.flatMap((r) => {
+      const x0 = snapX(r.x - pad, Math.floor);
+      const y0 = snapY(r.y - pad, Math.floor);
+      const box = { x: x0, y: y0, w: snapX(r.x + r.w + pad, Math.ceil) - x0, h: snapY(r.y + r.h + pad, Math.ceil) - y0 };
+      return parts.map((part) => {
+        const canvas = util6.createCanvasElement();
+        canvas.width = Math.max(1, Math.ceil(box.w * resolution));
+        canvas.height = Math.max(1, Math.ceil(box.h * resolution));
+        box.w = canvas.width / resolution;
+        box.h = canvas.height / resolution;
+        const ctx = canvas.getContext("2d");
+        ctx.scale(resolution, resolution);
+        ctx.translate(-box.x, -box.y);
+        ctx.transform(...toLocal);
+        renderTextRange(text, ctx, unit.start, unit.end, { clip, part });
+        return { box, part, canvas };
+      });
+    });
+    return { ...unit, tiles };
+  });
+  return { units, parts, matrix, resolution };
+}
 export {
   CANVAS_SHORTCUTS,
   CanvasGuides,
@@ -10756,6 +10946,7 @@ export {
   registerShapes,
   registeredShapes,
   removeCropControls,
+  renderTextRange,
   rulesOf,
   runLayout,
   scaledSize,
@@ -10769,6 +10960,10 @@ export {
   summarizeStyles,
   switchClip,
   switchShape,
+  textParts,
+  textUnitTiles,
+  textUnits,
+  tilePadding,
   toolsFor,
   topLeft,
   unionBox,
