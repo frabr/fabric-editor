@@ -326,6 +326,13 @@ declare class CustomTextbox extends Textbox {
     static customProperties: string[];
     /** Taille de police voulue — l'effective (`fontSize`) peut être réduite par l'autofit. */
     fontSizeIntent: number;
+    /**
+     * Le texte est encore l'exemple posé à sa création (« Tapez votre texte ici ») : personne
+     * n'a tapé dedans. L'hôte s'en sert pour qu'une variable insérée REMPLACE l'exemple au
+     * lieu de s'y ajouter. Levé à la première frappe qui change le texte, ou par
+     * `setTextContent` — jamais au simple focus. Sérialisé avec le calque.
+     */
+    placeholder?: boolean;
     /** Le contenu dépasse la boîte (overflow clip / visible). */
     _overflowing?: boolean;
     /** Dernière contrainte reçue du container (absente : jamais mis en page). */
@@ -374,6 +381,8 @@ declare class CustomTextbox extends Textbox {
      * touche jamais au flux de saisie de Fabric.
      */
     onKeyDown(e: KeyboardEvent): void;
+    /** Une frappe (ou un collage) qui change le texte : ce n'est plus l'exemple. */
+    onInput(e: Event): void;
     /** Fabric efface la zone du texte sur le calque du dessus à chaque clignotement du
      *  curseur : les pastilles du texte en édition sont repeintes avec lui. */
     renderCursorOrSelection(): void;
@@ -741,6 +750,8 @@ interface TextLayerOptions {
     fontWeight?: string;
     fill?: string;
     layerId?: string;
+    /** Le texte est un exemple à remplacer (CustomTextbox#placeholder). */
+    placeholder?: boolean;
 }
 interface ImageLayerOptions {
     left?: number;

@@ -441,6 +441,12 @@ var CustomTextbox = class extends import_fabric2.Textbox {
     }
     super.onKeyDown(e);
   }
+  /** Une frappe (ou un collage) qui change le texte : ce n'est plus l'exemple. */
+  onInput(e) {
+    const before = this.text;
+    super.onInput(e);
+    if (this.placeholder && this.text !== before) this.placeholder = false;
+  }
   /** Fabric efface la zone du texte sur le calque du dessus à chaque clignotement du
    *  curseur : les pastilles du texte en édition sont repeintes avec lui. */
   renderCursorOrSelection() {
@@ -866,7 +872,7 @@ var CustomTextbox = class extends import_fabric2.Textbox {
     };
   }
 };
-CustomTextbox.customProperties = ["fontSizeIntent"];
+CustomTextbox.customProperties = ["fontSizeIntent", "placeholder"];
 
 // src/layout/legacy.ts
 function migrateLegacyLayout(layout) {
@@ -2474,7 +2480,8 @@ var LayerManager = class {
       fontSize = 32,
       fontWeight = "normal",
       fill = "#000000",
-      layerId = this.generateId()
+      layerId = this.generateId(),
+      placeholder = false
     } = options;
     const textObj = new CustomTextbox(text, {
       left,
@@ -2485,6 +2492,7 @@ var LayerManager = class {
       fill
     });
     textObj.set("layerId", layerId);
+    if (placeholder) textObj.placeholder = true;
     return textObj;
   }
   addText(options = {}) {

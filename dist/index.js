@@ -1000,6 +1000,12 @@ var CustomTextbox = class extends import_fabric3.Textbox {
     }
     super.onKeyDown(e);
   }
+  /** Une frappe (ou un collage) qui change le texte : ce n'est plus l'exemple. */
+  onInput(e) {
+    const before = this.text;
+    super.onInput(e);
+    if (this.placeholder && this.text !== before) this.placeholder = false;
+  }
   /** Fabric efface la zone du texte sur le calque du dessus à chaque clignotement du
    *  curseur : les pastilles du texte en édition sont repeintes avec lui. */
   renderCursorOrSelection() {
@@ -1425,7 +1431,7 @@ var CustomTextbox = class extends import_fabric3.Textbox {
     };
   }
 };
-CustomTextbox.customProperties = ["fontSizeIntent"];
+CustomTextbox.customProperties = ["fontSizeIntent", "placeholder"];
 
 // src/layout/legacy.ts
 function migrateLegacyLayout(layout) {
@@ -1578,6 +1584,8 @@ function restoreBindings(obj, data) {
 }
 function setTextContent(obj, text) {
   if (!("text" in obj)) return;
+  const current = obj;
+  if (current.placeholder && current.text !== text) obj.set("placeholder", false);
   obj.set("text", text);
   obj.initDimensions?.();
   obj.setCoords();
@@ -3279,7 +3287,8 @@ var LayerManager = class {
       fontSize = 32,
       fontWeight = "normal",
       fill = "#000000",
-      layerId = this.generateId()
+      layerId = this.generateId(),
+      placeholder = false
     } = options;
     const textObj = new CustomTextbox(text, {
       left,
@@ -3290,6 +3299,7 @@ var LayerManager = class {
       fill
     });
     textObj.set("layerId", layerId);
+    if (placeholder) textObj.placeholder = true;
     return textObj;
   }
   addText(options = {}) {
@@ -8772,7 +8782,7 @@ var _FabricEditor = class _FabricEditor {
     applyControlStyle(this.canvas, gc, (obj) => this.selection.resolveTarget(obj), config.userSlotLabel);
     const slotStyle = { color: gc, prompt: config.userSlotPrompt };
     this.canvas.originalFabricCanvas[USER_SLOT_STYLE_KEY] = slotStyle;
-    this.canvas.originalFabricCanvas[TOKEN_COLOR_KEY] = gc;
+    this.canvas.originalFabricCanvas[TOKEN_COLOR_KEY] = config.tokenColor ?? gc;
     this.masks = new MaskManager(this.canvas);
     this.persistence = new PersistenceManager(this.canvas, this.layers);
     this.history = new HistoryManager(this.canvas, this.layers);
