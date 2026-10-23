@@ -59,10 +59,18 @@ type GraphemeData = {
 };
 
 export class CustomTextbox extends Textbox {
-  static customProperties = ["fontSizeIntent"];
+  static customProperties = ["fontSizeIntent", "placeholder"];
 
   /** Taille de police voulue — l'effective (`fontSize`) peut être réduite par l'autofit. */
   declare fontSizeIntent: number;
+
+  /**
+   * Le texte est encore l'exemple posé à sa création (« Tapez votre texte ici ») : personne
+   * n'a tapé dedans. L'hôte s'en sert pour qu'une variable insérée REMPLACE l'exemple au
+   * lieu de s'y ajouter. Levé à la première frappe qui change le texte, ou par
+   * `setTextContent` — jamais au simple focus. Sérialisé avec le calque.
+   */
+  declare placeholder?: boolean;
 
   /** Le contenu dépasse la boîte (overflow clip / visible). */
   declare _overflowing?: boolean;
@@ -210,6 +218,13 @@ export class CustomTextbox extends Textbox {
       }
     }
     super.onKeyDown(e);
+  }
+
+  /** Une frappe (ou un collage) qui change le texte : ce n'est plus l'exemple. */
+  onInput(e: Event): void {
+    const before = this.text;
+    super.onInput(e);
+    if (this.placeholder && this.text !== before) this.placeholder = false;
   }
 
   /** Fabric efface la zone du texte sur le calque du dessus à chaque clignotement du

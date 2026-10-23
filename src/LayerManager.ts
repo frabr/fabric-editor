@@ -216,6 +216,7 @@ export class LayerManager {
       fontWeight = "normal",
       fill = "#000000",
       layerId = this.generateId(),
+      placeholder = false,
     } = options;
 
     const textObj = new CustomTextbox(text, {
@@ -227,6 +228,7 @@ export class LayerManager {
       fill,
     });
     textObj.set("layerId" as keyof typeof textObj, layerId);
+    if (placeholder) textObj.placeholder = true;
     return textObj;
   }
 

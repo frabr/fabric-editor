@@ -43,6 +43,9 @@ export function restoreBindings(obj: FabricObject, data: { bindings?: Bindings }
 export function setTextContent(obj: FabricObject, text: string): void {
   if (!("text" in obj)) return;
 
+  // Un texte posé par programme n'est plus l'exemple de départ (CustomTextbox#placeholder).
+  const current = obj as unknown as { text?: string; placeholder?: boolean };
+  if (current.placeholder && current.text !== text) obj.set("placeholder", false);
   obj.set("text", text);
   // Remesure immédiate (fabric ne le fait qu'à l'édition interactive), puis on prévient les
   // écouteurs — c'est ce que la mise en page consomme pour se recalculer.

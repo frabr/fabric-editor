@@ -97,7 +97,7 @@ export class FabricEditor {
     applyControlStyle(this.canvas, gc, (obj) => this.selection.resolveTarget(obj), config.userSlotLabel);
     const slotStyle: UserSlotStyle = { color: gc, prompt: config.userSlotPrompt };
     (this.canvas.originalFabricCanvas as unknown as Record<string, UserSlotStyle>)[USER_SLOT_STYLE_KEY] = slotStyle;
-    (this.canvas.originalFabricCanvas as unknown as Record<string, string>)[TOKEN_COLOR_KEY] = gc;
+    (this.canvas.originalFabricCanvas as unknown as Record<string, string>)[TOKEN_COLOR_KEY] = config.tokenColor ?? gc;
     this.masks = new MaskManager(this.canvas);
     this.persistence = new PersistenceManager(this.canvas, this.layers);
     this.history = new HistoryManager(this.canvas, this.layers);

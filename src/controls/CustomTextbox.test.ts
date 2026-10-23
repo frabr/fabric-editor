@@ -4,6 +4,7 @@
  */
 import { describe, it, expect, beforeAll } from "vitest";
 import { CustomTextbox } from "./CustomTextbox";
+import { setTextContent } from "../bindings";
 import { FabRect } from "../shapes/FabRect";
 import { initYoga } from "../layout/stack/engine";
 import { runLayout } from "../layout/run";
@@ -566,5 +567,35 @@ describe("StackResizeSession — le contenu arrête la poignée", () => {
     expect(c.height).toBe(200);
     // centré dans 200 : (200 - 40) / 2, au trait de 1px près (sans le correctif : 10)
     expect(Math.abs(objects[1].top - 80)).toBeLessThanOrEqual(1);
+  });
+});
+
+describe("CustomTextbox — placeholder (le texte est encore l'exemple)", () => {
+  const sample = () => text("Tapez votre texte ici", { placeholder: true });
+
+  it("voyage avec le calque", () => {
+    const json = sample().toObject() as Record<string, unknown>;
+    expect(json.placeholder).toBe(true);
+    expect((text("Bonjour").toObject() as Record<string, unknown>).placeholder).toBeUndefined();
+  });
+
+  it("une frappe qui change le texte le lève, une frappe à vide non", () => {
+    const t = sample();
+    t.isEditing = true;
+    const typed = (value: string, at: number) => {
+      t.hiddenTextarea = { value, selectionStart: at, selectionEnd: at, style: {} } as unknown as HTMLTextAreaElement;
+      t.onInput(new Event("input"));
+    };
+    typed("Tapez votre texte ici", 3);
+    expect(t.placeholder).toBe(true);
+    typed("Tapez votre texte ici !", 23);
+    expect(t.placeholder).toBe(false);
+  });
+
+  it("un texte posé par programme le lève", () => {
+    const t = sample();
+    setTextContent(t, "$NOM");
+    expect(t.placeholder).toBe(false);
+    expect(t.text).toBe("$NOM");
   });
 });

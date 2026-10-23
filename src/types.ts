@@ -14,6 +14,8 @@ export interface EditorConfig {
   defaultColor?: string;
   /** Base color for all visual guides (snap lines, layout margins, hints). */
   guideColor?: string;
+  /** Les pastilles des variables d'un texte lié (tokens) — défaut : guideColor. */
+  tokenColor?: string;
   /** Badge des images à fournir (défaut : « À fournir ») — la traduction de l'hôte. */
   userSlotLabel?: string;
   /** Invite dans les images à fournir, sous l'icône (si elle tient) — la traduction de l'hôte. */
@@ -84,6 +86,8 @@ export interface TextLayerOptions {
   fontWeight?: string;
   fill?: string;
   layerId?: string;
+  /** Le texte est un exemple à remplacer (CustomTextbox#placeholder). */
+  placeholder?: boolean;
 }
 
 // Options pour créer un calque image
