@@ -1696,7 +1696,8 @@ import {
   FabricImage as FabricImage4,
   classRegistry as classRegistry4,
   LayoutManager,
-  FixedLayout
+  FixedLayout,
+  Shadow
 } from "#fabric";
 
 // src/crop.ts
@@ -2223,6 +2224,7 @@ var ImageFrame = class _ImageFrame extends Group3 {
       lockMode: base.lockMode,
       lockContent: base.lockContent,
       opacity: this.opacity,
+      shadow: this.shadow ? this.shadow.toObject() : void 0,
       stroke: this.stroke || void 0,
       strokeWidth: this.stroke ? this.strokeWidth : void 0,
       image: {
@@ -2275,6 +2277,7 @@ var ImageFrame = class _ImageFrame extends Group3 {
     if (data.opacity !== void 0) {
       frame.opacity = data.opacity;
     }
+    if (data.shadow) frame.set("shadow", new Shadow(data.shadow));
     return frame;
   }
   /**

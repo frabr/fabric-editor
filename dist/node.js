@@ -2245,6 +2245,7 @@ var ImageFrame = class _ImageFrame extends import_fabric11.Group {
       lockMode: base.lockMode,
       lockContent: base.lockContent,
       opacity: this.opacity,
+      shadow: this.shadow ? this.shadow.toObject() : void 0,
       stroke: this.stroke || void 0,
       strokeWidth: this.stroke ? this.strokeWidth : void 0,
       image: {
@@ -2297,6 +2298,7 @@ var ImageFrame = class _ImageFrame extends import_fabric11.Group {
     if (data.opacity !== void 0) {
       frame.opacity = data.opacity;
     }
+    if (data.shadow) frame.set("shadow", new import_fabric11.Shadow(data.shadow));
     return frame;
   }
   /**

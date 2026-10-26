@@ -879,6 +879,8 @@ interface ImageFrameData {
     lockMode?: LockMode$1;
     lockContent?: boolean;
     opacity?: number;
+    /** L'ombre portée (Shadow#toObject) : couleur, flou, décalages. */
+    shadow?: Record<string, unknown>;
     /**
      * `src` absent = cadre EN ATTENTE : le fichier n'existe pas encore (média en cours de
      * production côté hôte). Il se dessine en damier et se sauve tel quel, sans `src` — ses

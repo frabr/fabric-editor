@@ -2370,7 +2370,8 @@ import {
   FabricImage as FabricImage4,
   classRegistry as classRegistry4,
   LayoutManager,
-  FixedLayout
+  FixedLayout,
+  Shadow
 } from "#fabric";
 
 // src/crop.ts
@@ -2897,6 +2898,7 @@ var ImageFrame = class _ImageFrame extends Group3 {
       lockMode: base.lockMode,
       lockContent: base.lockContent,
       opacity: this.opacity,
+      shadow: this.shadow ? this.shadow.toObject() : void 0,
       stroke: this.stroke || void 0,
       strokeWidth: this.stroke ? this.strokeWidth : void 0,
       image: {
@@ -2949,6 +2951,7 @@ var ImageFrame = class _ImageFrame extends Group3 {
     if (data.opacity !== void 0) {
       frame.opacity = data.opacity;
     }
+    if (data.shadow) frame.set("shadow", new Shadow(data.shadow));
     return frame;
   }
   /**
@@ -7151,7 +7154,7 @@ function forgetFontMeasures(family) {
 var DRAG_PREVIEW_KEY = "dragPreview";
 
 // src/editor/style-commands.ts
-import { FabricImage as FabricImage7, Gradient, Shadow } from "#fabric";
+import { FabricImage as FabricImage7, Gradient, Shadow as Shadow2 } from "#fabric";
 
 // src/clipping/antiScale.ts
 function antiScale(obj) {
@@ -7579,13 +7582,13 @@ var StyleCommands = class {
     this.editor.canvas.renderAll();
   }
   /**
-   * Set stroke color on the selected object. Accepts any CSS color (hex, rgba).
-   * Resets global opacity to 1 so per-channel rgba alpha is authoritative.
+   * Set stroke color on the selected object. Accepts any CSS color (hex, rgba). L'opacité
+   * de l'objet est un réglage à part (changeOpacity) : la couleur ne la touche pas.
    */
   setStrokeColor(color) {
     const obj = this.editor.selection.current;
     if (!obj) return;
-    obj.set({ stroke: color, opacity: 1 });
+    obj.set({ stroke: color });
     if (!obj.strokeWidth) {
       obj.set({ strokeWidth: 4 });
     }
@@ -7594,27 +7597,25 @@ var StyleCommands = class {
   // ==================== Fill controls ====================
   /**
    * Set fill color (solid) on the selected object.
-   * Unlike changeColor(), always sets fill regardless of stroke state.
-   * Resets global opacity to 1 so per-channel rgba alpha is authoritative.
+   * Unlike changeColor(), always sets fill regardless of stroke state. L'opacité de l'objet
+   * est un réglage à part (changeOpacity) : la couleur ne la touche pas.
    */
   setFillColor(color) {
     const obj = this.editor.selection.current;
     if (!obj) return;
     if (isTextObject(obj)) {
-      if (!this.textTarget()?.range) obj.set({ opacity: 1 });
       this.applyTextStyle({ fill: color });
       return;
     }
     const previous = obj.fill;
-    obj.set({ fill: color, opacity: 1 });
+    obj.set({ fill: color });
     if (padGroupOnFirstFill(obj, previous)) this.editor.layout.relayout();
     this.editor.canvas.renderAll();
   }
   /**
    * Un dégradé linéaire sur l'objet sélectionné : ses stops (offset 0..1, dans l'ordre) et
    * son angle en degrés, dans la convention de la lib — 0° de gauche à droite, 90° de haut en
-   * bas (un quart de tour de moins que le CSS). L'opacité globale revient à 1 : les couleurs
-   * des stops la portent.
+   * bas (un quart de tour de moins que le CSS). L'opacité de l'objet est un réglage à part.
    */
   setFillGradient(stops, angleDeg) {
     const obj = this.editor.selection.current;
@@ -7634,8 +7635,20 @@ var StyleCommands = class {
       colorStops: stops.map(({ color, offset }) => ({ color, offset }))
     });
     const previous = obj.fill;
-    obj.set({ fill: gradient, opacity: 1 });
+    obj.set({ fill: gradient });
     if (padGroupOnFirstFill(obj, previous)) this.editor.layout.relayout();
+    this.editor.canvas.renderAll();
+  }
+  /**
+   * L'arrondi des coins de l'objet sélectionné, en pixels : un rectangle (rx / ry) ou un
+   * cadre d'image (sa découpe redevient un rectangle) ; rien pour le reste.
+   */
+  setCornerRadius(radius) {
+    const obj = this.editor.selection.current;
+    if (!obj) return;
+    if (obj instanceof FabRect) obj.setCornerRadius(radius);
+    else if (obj instanceof ImageFrame) obj.setCornerRadius(radius);
+    else return;
     this.editor.canvas.renderAll();
   }
   /** La police (famille et graisse) de la plage sélectionnée, ou du texte entier. */
@@ -7691,7 +7704,7 @@ var StyleCommands = class {
     const obj = this.editor.selection.current;
     if (!obj) return;
     const existing = obj.shadow;
-    const shadow = new Shadow({
+    const shadow = new Shadow2({
       color: opts.color ?? existing?.color ?? "rgba(0,0,0,0.5)",
       blur: opts.blur ?? existing?.blur ?? 10,
       offsetX: opts.offsetX ?? existing?.offsetX ?? 5,
@@ -9098,6 +9111,9 @@ var _FabricEditor = class _FabricEditor {
   setFillGradient(stops, angleDeg) {
     this.styles.setFillGradient(stops, angleDeg);
   }
+  setCornerRadius(radius) {
+    this.styles.setCornerRadius(radius);
+  }
   changeFont(fontFamily, fontWeight) {
     this.styles.changeFont(fontFamily, fontWeight);
   }
@@ -9973,6 +9989,7 @@ init_PendingUploadsManager();
 // src/tools.ts
 var ORDER = {
   text: [
+    "appearance",
     "fill",
     "font",
     "animations",
@@ -9986,6 +10003,7 @@ var ORDER = {
     "backward"
   ],
   shape: [
+    "appearance",
     "fill",
     "clip",
     "outline",
@@ -10003,6 +10021,7 @@ var ORDER = {
     "crop",
     "image",
     "promoteBackground",
+    "appearance",
     "clip",
     "animations",
     "outline",
@@ -10016,6 +10035,7 @@ var ORDER = {
     "backward"
   ],
   block: [
+    "appearance",
     "fill",
     "image",
     "layout",
@@ -10031,6 +10051,7 @@ var ORDER = {
   ],
   group: [
     "arrangement",
+    "appearance",
     "fill",
     "layout",
     "animations",
@@ -10060,7 +10081,7 @@ function selectionKindOf(selected) {
       return "shape";
   }
 }
-var EDITING_TOOLS = ["fill", "font"];
+var EDITING_TOOLS = ["appearance", "fill", "font"];
 function toolsFor(selected, offered) {
   const kind = selectionKindOf(selected);
   if (!kind) return [];
@@ -10078,6 +10099,10 @@ function oneAllows(obj, kind) {
   const laidOut = kind === "text" || isContainerObject(obj) || Boolean(parentIdOf(obj));
   return (tool) => {
     switch (tool) {
+      // Tout ce qui a une apparence à régler : une couleur, un contour, une police, un
+      // arrondi, une image — et le droit de la changer (un verrou le retire)
+      case "appearance":
+        return rules.restyles && (has("color") || has("outline") || has("font") || has("corner_radius") || has("image"));
       case "fill":
         return has("color");
       case "font":
