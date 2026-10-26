@@ -18,6 +18,7 @@ import { PersistenceManager } from "./PersistenceManager";
 import { HistoryManager } from "./HistoryManager";
 import type { LayerData } from "./types";
 import { initYoga } from "./layout/stack/engine";
+import { runLayout } from "./layout/run";
 
 /**
  * Configuration pour l'éditeur Node.js
@@ -90,6 +91,10 @@ export class NodeEditor {
 
     if (layers.length > 0) {
       await this.layers.loadLayers(layers);
+      // Le document stocke la géométrie du moment où il a été sauvé ; ses textes ont pu
+      // changer depuis (interpolation des bindings) : on relance le layout comme l'éditeur
+      // le fait à l'affichage, pour que le rendu serveur soit celui que l'éditeur montre.
+      runLayout(this.canvas.getObjects());
     }
 
     this.canvas.renderAll();
