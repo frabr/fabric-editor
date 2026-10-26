@@ -237,6 +237,11 @@ function sizingOf(obj) {
   return layoutOf(obj)?.sizing ?? DEFAULT_SIZING;
 }
 
+// src/ghost.ts
+function isEclipsed(obj) {
+  return obj.eclipsed === true;
+}
+
 // src/layout/hierarchy.ts
 function canvasObjects(obj) {
   return obj.canvas?.getObjects() ?? [];
@@ -272,7 +277,7 @@ function sortChildrenByOrder(children) {
   return [...children].sort((a, b) => (a.cl.order ?? Infinity) - (b.cl.order ?? Infinity));
 }
 function flowChildrenOf(objects, container) {
-  return sortChildrenByOrder(childrenOf(objects, container));
+  return sortChildrenByOrder(childrenOf(objects, container).filter(({ obj }) => !isEclipsed(obj)));
 }
 function descendantSet(objects, roots) {
   const byParent = /* @__PURE__ */ new Map();
@@ -3451,7 +3456,7 @@ function fitFreeContainer(container, objects) {
   inLocalFrame(container, objects, () => fitFreeContainerLocal(container, objects));
 }
 function fitFreeContainerLocal(container, objects) {
-  const children = childrenOf(objects, container).map((c) => c.obj);
+  const children = childrenOf(objects, container).map((c) => c.obj).filter((child) => !isEclipsed(child));
   if (children.length === 0) return;
   for (const child of children) if (isFreeContainer(child)) fitFreeContainer(child, objects);
   const box = outsetBox(unionBox(children.map(boxOf)), paddingOf(containerDataOf(container)));

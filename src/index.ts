@@ -155,7 +155,7 @@ export type { TextStyleState, TextStyleKey, TextStyleValue } from "./text-styles
 // Les unités d'un texte (lignes, mots, caractères) rendues séparément : animations de texte
 export { textUnits, renderTextRange, textUnitTiles, textParts, tilePadding } from "./text-units";
 export type { TextUnit, TextUnitBox, TextUnitKind, TextTile, TextUnitTiles, TextLayerPart, RenderRangeOptions } from "./text-units";
-export { isGhost, setGhost, GHOST_OPACITY } from "./ghost";
+export { isGhost, setGhost, isEclipsed, setEclipsed, GHOST_OPACITY } from "./ghost";
 export { displayFill, setDisplayFill } from "./displayStyle";
 export type { Bindings, BindingSpec } from "./bindings";
 export {

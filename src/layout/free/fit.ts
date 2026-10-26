@@ -11,6 +11,7 @@ import { boxOf, outsetBox, placeTopLeft, setShapeSize, unionBox } from "../geome
 import { containerDataOf, isFreeContainer, paddingOf } from "../model";
 import { childrenOf, parentContainerOf } from "../hierarchy";
 import { inLocalFrame } from "../rotation";
+import { isEclipsed } from "../../ghost";
 
 
 /**
@@ -24,7 +25,8 @@ export function fitFreeContainer(container: FabricObject, objects: FabricObject[
 }
 
 function fitFreeContainerLocal(container: FabricObject, objects: FabricObject[]): void {
-  const children = childrenOf(objects, container).map((c) => c.obj);
+  // Un enfant éclipsé (ghost.ts) ne compte pas dans la boîte, comme au rendu
+  const children = childrenOf(objects, container).map((c) => c.obj).filter((child) => !isEclipsed(child));
   if (children.length === 0) return;
   for (const child of children) if (isFreeContainer(child)) fitFreeContainer(child, objects);
 

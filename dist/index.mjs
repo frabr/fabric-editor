@@ -604,6 +604,44 @@ function cloneLayout(obj) {
   return layout ? JSON.parse(JSON.stringify(layout)) : void 0;
 }
 
+// src/ghost.ts
+var GHOST_OPACITY = 0.22;
+function isGhost(obj) {
+  return obj.ghost === true;
+}
+function setGhost(obj, ghost) {
+  if (isGhost(obj) === ghost) return false;
+  obj.ghost = ghost || void 0;
+  return true;
+}
+function isEclipsed(obj) {
+  return obj.eclipsed === true;
+}
+function setEclipsed(obj, eclipsed) {
+  if (isEclipsed(obj) === eclipsed) return false;
+  obj.eclipsed = eclipsed || void 0;
+  return true;
+}
+function installGhostRendering(target) {
+  const proto = target;
+  const original = proto.render;
+  const originalContains = proto.containsPoint;
+  proto.containsPoint = function(...args) {
+    return isEclipsed(this) ? false : originalContains.apply(this, args);
+  };
+  proto.render = function(ctx) {
+    if (isEclipsed(this)) return;
+    if (!isGhost(this)) return original.call(this, ctx);
+    ctx.save();
+    ctx.globalAlpha *= GHOST_OPACITY;
+    try {
+      original.call(this, ctx);
+    } finally {
+      ctx.restore();
+    }
+  };
+}
+
 // src/layout/hierarchy.ts
 function canvasObjects(obj) {
   return obj.canvas?.getObjects() ?? [];
@@ -646,7 +684,7 @@ function sortChildrenByOrder(children) {
   return [...children].sort((a, b) => (a.cl.order ?? Infinity) - (b.cl.order ?? Infinity));
 }
 function flowChildrenOf(objects, container) {
-  return sortChildrenByOrder(childrenOf(objects, container));
+  return sortChildrenByOrder(childrenOf(objects, container).filter(({ obj }) => !isEclipsed(obj)));
 }
 function descendantSet(objects, roots) {
   const byParent = /* @__PURE__ */ new Map();
@@ -5199,7 +5237,7 @@ function fitFreeContainer(container, objects) {
   inLocalFrame(container, objects, () => fitFreeContainerLocal(container, objects));
 }
 function fitFreeContainerLocal(container, objects) {
-  const children = childrenOf(objects, container).map((c) => c.obj);
+  const children = childrenOf(objects, container).map((c) => c.obj).filter((child) => !isEclipsed(child));
   if (children.length === 0) return;
   for (const child of children) if (isFreeContainer(child)) fitFreeContainer(child, objects);
   const box = outsetBox(unionBox(children.map(boxOf)), paddingOf(containerDataOf(container)));
@@ -8009,31 +8047,6 @@ var SelectionCommands = class {
     this.editor.selection.notifyModified(null);
   }
 };
-
-// src/ghost.ts
-var GHOST_OPACITY = 0.22;
-function isGhost(obj) {
-  return obj.ghost === true;
-}
-function setGhost(obj, ghost) {
-  if (isGhost(obj) === ghost) return false;
-  obj.ghost = ghost || void 0;
-  return true;
-}
-function installGhostRendering(target) {
-  const proto = target;
-  const original = proto.render;
-  proto.render = function(ctx) {
-    if (!isGhost(this)) return original.call(this, ctx);
-    ctx.save();
-    ctx.globalAlpha *= GHOST_OPACITY;
-    try {
-      original.call(this, ctx);
-    } finally {
-      ctx.restore();
-    }
-  };
-}
 
 // src/displayStyle.ts
 function displayFill(obj) {
@@ -10959,6 +10972,7 @@ export {
   isBold,
   isContentLocked,
   isCropped,
+  isEclipsed,
   isFreeContainer,
   isGhost,
   isKeyShortcut,
@@ -10988,6 +11002,7 @@ export {
   scaledSize,
   selectionKindOf,
   setDisplayFill,
+  setEclipsed,
   setGhost,
   setTextContent,
   stackBlock,

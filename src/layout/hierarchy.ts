@@ -6,6 +6,7 @@
  * qui se désigne lui-même ne font pas de lien. Sur des calques sérialisés (apibots,
  * creatorstudio), les mêmes questions se posent à tree.ts.
  */
+import { isEclipsed } from "../ghost";
 import type { FabricObject } from "#fabric";
 import type { ResolvedChild } from "./types";
 import { childDataOf, idOf, isContainerObject, isStackContainer, parentIdOf } from "./model";
@@ -73,9 +74,10 @@ export function sortChildrenByOrder(children: ResolvedChild[]): ResolvedChild[] 
   return [...children].sort((a, b) => (a.cl.order ?? Infinity) - (b.cl.order ?? Infinity));
 }
 
-/** Les enfants d'une pile dans l'ordre où elle les range. */
+/** Les enfants d'une pile dans l'ordre où elle les range — un enfant éclipsé n'y est pas
+ *  (ghost.ts) : ses voisins se resserrent, comme au rendu. */
 export function flowChildrenOf(objects: FabricObject[], container: FabricObject): ResolvedChild[] {
-  return sortChildrenByOrder(childrenOf(objects, container));
+  return sortChildrenByOrder(childrenOf(objects, container).filter(({ obj }) => !isEclipsed(obj)));
 }
 
 /** La descendance d'objets (eux exclus), à n'importe quelle profondeur, protégée des cycles. */
