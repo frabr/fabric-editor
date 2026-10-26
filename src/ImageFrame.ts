@@ -9,6 +9,7 @@ import {
   type Point,
   LayoutManager,
   FixedLayout,
+  Shadow,
 } from "#fabric";
 import type { ShapeType, LockMode } from "./types";
 import {
@@ -85,6 +86,8 @@ export interface ImageFrameData {
   lockMode?: LockMode;
   lockContent?: boolean;
   opacity?: number;
+  /** L'ombre portée (Shadow#toObject) : couleur, flou, décalages. */
+  shadow?: Record<string, unknown>;
   /**
    * `src` absent = cadre EN ATTENTE : le fichier n'existe pas encore (média en cours de
    * production côté hôte). Il se dessine en damier et se sauve tel quel, sans `src` — ses
@@ -708,6 +711,7 @@ export class ImageFrame extends Group {
       lockMode: base.lockMode,
       lockContent: base.lockContent,
       opacity: this.opacity,
+      shadow: this.shadow ? (this.shadow.toObject() as Record<string, unknown>) : undefined,
       stroke: this.stroke || undefined,
       strokeWidth: this.stroke ? this.strokeWidth : undefined,
       image: {
@@ -777,6 +781,7 @@ export class ImageFrame extends Group {
     if (data.opacity !== undefined) {
       frame.opacity = data.opacity;
     }
+    if (data.shadow) frame.set("shadow", new Shadow(data.shadow));
 
     return frame;
   }

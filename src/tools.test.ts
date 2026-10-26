@@ -13,7 +13,7 @@ import { applyLockMode } from "./locking";
 import type { LayoutData } from "./layout/types";
 
 const ALL: ToolId[] = [
-  "group", "align", "distribute", "arrangement", "ungroup", "fill", "font", "variables", "image",
+  "group", "align", "distribute", "arrangement", "ungroup", "appearance", "fill", "font", "variables", "image",
   "promoteBackground", "clip", "outline", "effects", "layout", "containerize", "animations", "lock", "forward",
   "backward", "delete",
 ];
@@ -69,43 +69,54 @@ describe("toolsFor", () => {
     expect(toolsFor([text("t")], ALL)).not.toContain("condition");
   });
 
-  it("texte : couleur et police d'abord, Supprimer en dernier", () => {
+  it("texte : apparence, couleur et police d'abord, Supprimer en dernier", () => {
     expect(toolsFor([text("t")], ALL)).toEqual([
-      "fill", "font", "animations", "effects", "variables", "layout", "lock", "forward", "backward", "delete",
+      "appearance", "fill", "font", "animations", "effects", "variables", "layout", "lock", "forward", "backward",
+      "delete",
     ]);
   });
 
   it("texte en édition : seulement ce qui se règle sur une plage", () => {
     const t = text("t");
     t.isEditing = true;
-    expect(toolsFor([t], ALL)).toEqual(["fill", "font"]);
+    expect(toolsFor([t], ALL)).toEqual(["appearance", "fill", "font"]);
     expect(toolsFor([t], ["font", "delete"])).toEqual(["font"]);
   });
 
   it("forme libre : pas de disposition ; enfant d'un bloc : disposition, mais pas de plans", () => {
     expect(toolsFor([rect("s")], ALL)).toEqual([
-      "fill", "clip", "outline", "animations", "effects", "containerize", "lock", "forward", "backward", "delete",
+      "appearance", "fill", "clip", "outline", "animations", "effects", "containerize", "lock", "forward",
+      "backward", "delete",
     ]);
     const [, child] = onCanvas(rect("b", { container: {} }), rect("c", { child: { parentId: "b" } }));
     expect(toolsFor([child], ALL)).toEqual([
-      "fill", "clip", "outline", "animations", "effects", "layout", "containerize", "lock", "delete",
+      "appearance", "fill", "clip", "outline", "animations", "effects", "layout", "containerize", "lock", "delete",
     ]);
   });
 
-  it("image : remplacer et passer en fond d'abord, pas de couleur", () => {
+  it("image : remplacer et passer en fond d'abord, pas de couleur, mais une apparence", () => {
     expect(toolsFor([imageFrame("i")], ALL)).toEqual([
-      "image", "promoteBackground", "clip", "animations", "outline", "effects", "containerize", "lock", "forward",
-      "backward", "delete",
+      "image", "promoteBackground", "appearance", "clip", "animations", "outline", "effects", "containerize",
+      "lock", "forward", "backward", "delete",
     ]);
   });
 
   it("bloc et groupe : disposition, dégrouper", () => {
     expect(toolsFor([rect("b", { container: {} })], ALL)).toEqual([
-      "fill", "layout", "animations", "outline", "effects", "ungroup", "lock", "forward", "backward", "delete",
+      "appearance", "fill", "layout", "animations", "outline", "effects", "ungroup", "lock", "forward", "backward",
+      "delete",
     ]);
     expect(toolsFor([rect("g", { container: { arrangement: "free", origin: "group" } })], ALL)).toEqual([
-      "arrangement", "fill", "layout", "animations", "ungroup", "effects", "lock", "forward", "backward", "delete",
+      "arrangement", "appearance", "fill", "layout", "animations", "ungroup", "effects", "lock", "forward",
+      "backward", "delete",
     ]);
+  });
+
+  it("apparence : l'hôte propose Apparence ou les anciens outils, la barre montre ce qu'on lui donne", () => {
+    const modern: ToolId[] = ["appearance", "variables", "layout", "delete"];
+    expect(toolsFor([text("t")], modern)).toEqual(["appearance", "variables", "layout", "delete"]);
+    expect(toolsFor([rect("s")], modern)).toEqual(["appearance", "delete"]);
+    expect(toolsFor([imageFrame("i")], modern)).toEqual(["appearance", "delete"]);
   });
 
   it("verrou de position : plus que le verrou ; image à fournir comprise", () => {

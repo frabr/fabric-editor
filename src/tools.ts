@@ -20,7 +20,7 @@ import { ImageFrame } from "./ImageFrame";
 
 export type ToolId =
   | "group" | "align" | "distribute" | "arrangement" | "ungroup"
-  | "fill" | "font" | "variables" | "crop" | "image" | "promoteBackground" | "clip" | "outline"
+  | "appearance" | "fill" | "font" | "variables" | "crop" | "image" | "promoteBackground" | "clip" | "outline"
   | "effects" | "layout" | "containerize" | "animations" | "condition" | "saveAsSticker" | "lock" | "forward"
   | "backward" | "delete";
 
@@ -32,26 +32,31 @@ export type ToolId =
  */
 export type SelectionKind = "text" | "shape" | "image" | "block" | "group" | "many";
 
-/** L'ordre des outils, par sorte de sélection (Supprimer s'ajoute à la fin). */
+/**
+ * L'ordre des outils, par sorte de sélection (Supprimer s'ajoute à la fin). `appearance`
+ * (le panneau Apparence : opacité, fond, contour, effets, police) remplace `fill`, `font`,
+ * `outline` et `effects`, gardés pour l'éditeur legacy qui n'a pas de sous-pages — l'hôte
+ * propose les uns ou les autres, jamais les deux.
+ */
 const ORDER: Record<SelectionKind, ToolId[]> = {
   text: [
-    "fill", "font", "animations", "effects", "variables", "layout", "condition", "saveAsSticker", "lock", "forward",
-    "backward",
+    "appearance", "fill", "font", "animations", "effects", "variables", "layout", "condition", "saveAsSticker",
+    "lock", "forward", "backward",
   ],
   shape: [
-    "fill", "clip", "outline", "animations", "effects", "layout", "containerize", "condition", "saveAsSticker",
-    "lock", "forward", "backward",
+    "appearance", "fill", "clip", "outline", "animations", "effects", "layout", "containerize", "condition",
+    "saveAsSticker", "lock", "forward", "backward",
   ],
   image: [
-    "crop", "image", "promoteBackground", "clip", "animations", "outline", "effects", "layout", "containerize",
-    "condition", "saveAsSticker", "lock", "forward", "backward",
+    "crop", "image", "promoteBackground", "appearance", "clip", "animations", "outline", "effects", "layout",
+    "containerize", "condition", "saveAsSticker", "lock", "forward", "backward",
   ],
   block: [
-    "fill", "image", "layout", "animations", "outline", "effects", "ungroup", "condition", "saveAsSticker",
-    "lock", "forward", "backward",
+    "appearance", "fill", "image", "layout", "animations", "outline", "effects", "ungroup", "condition",
+    "saveAsSticker", "lock", "forward", "backward",
   ],
   group: [
-    "arrangement", "fill", "layout", "animations", "ungroup", "effects", "condition", "saveAsSticker",
+    "arrangement", "appearance", "fill", "layout", "animations", "ungroup", "effects", "condition", "saveAsSticker",
     "lock", "forward", "backward",
   ],
   many: ["group", "align", "distribute", "saveAsSticker", "forward", "backward"],
@@ -74,7 +79,7 @@ export function selectionKindOf(selected: FabricObject[]): SelectionKind | null 
 }
 
 /** Les outils d'un texte en édition : ce qui s'applique à la plage sélectionnée. */
-const EDITING_TOOLS: ToolId[] = ["fill", "font"];
+const EDITING_TOOLS: ToolId[] = ["appearance", "fill", "font"];
 
 /**
  * Les outils de la sélection que l'éditeur propose, dans l'ordre de la barre. Un texte en
@@ -104,6 +109,11 @@ function oneAllows(obj: FabricObject, kind: SelectionKind): (tool: ToolId) => bo
 
   return (tool) => {
     switch (tool) {
+      // Tout ce qui a une apparence à régler : une couleur, un contour, une police, un
+      // arrondi, une image — et le droit de la changer (un verrou le retire)
+      case "appearance":
+        return rules.restyles &&
+          (has("color") || has("outline") || has("font") || has("corner_radius") || has("image"));
       case "fill": return has("color");
       case "font":
       case "variables": return has("font");

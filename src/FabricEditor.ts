@@ -643,6 +643,7 @@ export class FabricEditor {
   setStrokeColor(color: string): void { this.styles.setStrokeColor(color); }
   setFillColor(color: string): void { this.styles.setFillColor(color); }
   setFillGradient(stops: GradientStop[], angleDeg: number): void { this.styles.setFillGradient(stops, angleDeg); }
+  setCornerRadius(radius: number): void { this.styles.setCornerRadius(radius); }
   changeFont(fontFamily: string, fontWeight?: string): void { this.styles.changeFont(fontFamily, fontWeight); }
   setFontSize(size: number): void { this.styles.setFontSize(size); }
   setTextAlign(align: "left" | "center" | "right" | "justify"): void { this.styles.setTextAlign(align); }

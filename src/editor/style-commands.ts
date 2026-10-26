@@ -12,6 +12,7 @@ export interface GradientStop {
 import { switchClip } from "../clipping";
 import { switchShape, nextShape } from "../shapes";
 import { ImageFrame } from "../ImageFrame";
+import { FabRect } from "../shapes/FabRect";
 import type { ShapeType } from "../types";
 import { padGroupOnFirstFill } from "../layout/grouping";
 import { isTextObject } from "../layout/text";
@@ -228,13 +229,13 @@ export class StyleCommands {
   }
 
   /**
-   * Set stroke color on the selected object. Accepts any CSS color (hex, rgba).
-   * Resets global opacity to 1 so per-channel rgba alpha is authoritative.
+   * Set stroke color on the selected object. Accepts any CSS color (hex, rgba). L'opacité
+   * de l'objet est un réglage à part (changeOpacity) : la couleur ne la touche pas.
    */
   setStrokeColor(color: string): void {
     const obj = this.editor.selection.current;
     if (!obj) return;
-    obj.set({ stroke: color, opacity: 1 });
+    obj.set({ stroke: color });
     if (!obj.strokeWidth) {
       obj.set({ strokeWidth: 4 });
     }
@@ -245,21 +246,19 @@ export class StyleCommands {
 
   /**
    * Set fill color (solid) on the selected object.
-   * Unlike changeColor(), always sets fill regardless of stroke state.
-   * Resets global opacity to 1 so per-channel rgba alpha is authoritative.
+   * Unlike changeColor(), always sets fill regardless of stroke state. L'opacité de l'objet
+   * est un réglage à part (changeOpacity) : la couleur ne la touche pas.
    */
   setFillColor(color: string): void {
     const obj = this.editor.selection.current;
     if (!obj) return;
     if (isTextObject(obj)) {
-      // Un texte : la plage sélectionnée en édition, sinon le texte entier — dont l'opacité
-      // revient à 1, la couleur la porte (le panneau compose les deux)
-      if (!this.textTarget()?.range) obj.set({ opacity: 1 });
+      // Un texte : la plage sélectionnée en édition, sinon le texte entier
       this.applyTextStyle({ fill: color });
       return;
     }
     const previous = obj.fill;
-    obj.set({ fill: color, opacity: 1 });
+    obj.set({ fill: color });
     if (padGroupOnFirstFill(obj, previous)) this.editor.layout.relayout();
     this.editor.canvas.renderAll();
   }
@@ -267,8 +266,7 @@ export class StyleCommands {
   /**
    * Un dégradé linéaire sur l'objet sélectionné : ses stops (offset 0..1, dans l'ordre) et
    * son angle en degrés, dans la convention de la lib — 0° de gauche à droite, 90° de haut en
-   * bas (un quart de tour de moins que le CSS). L'opacité globale revient à 1 : les couleurs
-   * des stops la portent.
+   * bas (un quart de tour de moins que le CSS). L'opacité de l'objet est un réglage à part.
    */
   setFillGradient(stops: GradientStop[], angleDeg: number): void {
     const obj = this.editor.selection.current;
@@ -288,8 +286,21 @@ export class StyleCommands {
       colorStops: stops.map(({ color, offset }) => ({ color, offset })),
     });
     const previous = obj.fill;
-    obj.set({ fill: gradient, opacity: 1 });
+    obj.set({ fill: gradient });
     if (padGroupOnFirstFill(obj, previous)) this.editor.layout.relayout();
+    this.editor.canvas.renderAll();
+  }
+
+  /**
+   * L'arrondi des coins de l'objet sélectionné, en pixels : un rectangle (rx / ry) ou un
+   * cadre d'image (sa découpe redevient un rectangle) ; rien pour le reste.
+   */
+  setCornerRadius(radius: number): void {
+    const obj = this.editor.selection.current;
+    if (!obj) return;
+    if (obj instanceof FabRect) obj.setCornerRadius(radius);
+    else if (obj instanceof ImageFrame) obj.setCornerRadius(radius);
+    else return;
     this.editor.canvas.renderAll();
   }
 

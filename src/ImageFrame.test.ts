@@ -46,6 +46,21 @@ describe("imageMeta", () => {
   });
 });
 
+describe("ombre portée", () => {
+  it("fait l'aller-retour (le panneau Apparence la relit depuis le document)", async () => {
+    const shadow = { color: "rgba(0,0,0,0.3)", blur: 24, offsetX: 0, offsetY: 8 };
+    const frame = await ImageFrame.fromObject({ ...frameData({ src: PIXEL }), shadow });
+
+    expect(frame.shadow).toMatchObject(shadow);
+    expect(frame.toObject().shadow).toMatchObject(shadow);
+  });
+
+  it("absente, elle n'est pas écrite", () => {
+    const frame = new ImageFrame(image(), { frameWidth: 40, frameHeight: 40 });
+    expect(frame.toObject().shadow).toBeUndefined();
+  });
+});
+
 describe("cadre en attente (sans src)", () => {
   it("se charge en damier aux dimensions du cadre et se sauve sans src, identité comprise", async () => {
     const frame = await ImageFrame.fromObject(frameData({ content_medium_id: 7 }));
