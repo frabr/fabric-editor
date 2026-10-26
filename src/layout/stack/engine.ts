@@ -212,11 +212,13 @@ function buildChildren(
     const nested = nestedChildren(obj, allObjects);
 
     // flexShrink: only what has content to fold absorbs a lack of room — a text
-    // (it wraps, or autofits), a nested container hugging its main axis (its
-    // content folds inside, down to its floor); shapes, images and fixed
-    // containers keep their size and overflow
+    // that autofits (overflow "shrink" — a free-length message), a nested
+    // container hugging its main axis (its content folds inside, down to its
+    // floor); shapes, images, fixed containers and texts that keep their font
+    // (overflow "visible" / "clip" — a name, a date) keep their size and overflow
     const mainHug = nested && (isColumn ? sizingOf(obj).y : sizingOf(obj).x) === "hug";
-    node.setFlexShrink(isTextObject(obj) || mainHug ? 1 : 0);
+    const foldingText = isTextObject(obj) && (layoutOf(obj)?.overflow ?? "shrink") === "shrink";
+    node.setFlexShrink(foldingText || mainHug ? 1 : 0);
 
     if (isTextObject(obj)) {
       setupTextMeasure(node, obj, Y);

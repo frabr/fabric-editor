@@ -5159,7 +5159,8 @@ function buildChildren(parent, children, cd, sizing, allObjects, Y) {
     const entry = { obj, node };
     const nested = nestedChildren(obj, allObjects);
     const mainHug = nested && (isColumn ? sizingOf(obj).y : sizingOf(obj).x) === "hug";
-    node.setFlexShrink(isTextObject(obj) || mainHug ? 1 : 0);
+    const foldingText = isTextObject(obj) && (layoutOf(obj)?.overflow ?? "shrink") === "shrink";
+    node.setFlexShrink(foldingText || mainHug ? 1 : 0);
     if (isTextObject(obj)) {
       setupTextMeasure(node, obj, Y);
     } else if (isFreeContainer(obj)) {
