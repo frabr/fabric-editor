@@ -761,16 +761,16 @@ var CustomTextbox = class extends Textbox {
     return Math.ceil(this.calcTextWidth());
   }
   /**
-   * Largeur minimale du texte : son mot le plus long (le min-content de CSS). Le
-   * découpage des mots trop longs (break-word) n'est qu'un repli, pas un minimum :
-   * la mesure se fait hors contrainte (les lignes wrappées sont déjà découpées, un
-   * morceau passerait pour un mot), puis la boîte est remise telle quelle.
+   * Largeur minimale du texte : son graphème le plus large. Un mot trop long se découpe
+   * (break-word, `getGraphemeDataForRender`), donc rien n'arrête une poignée avant la
+   * lettre — le même plancher que Fabric impose de lui-même (`dynamicMinWidth`) une fois
+   * le texte wrappé à cette largeur. Mesuré en wrappant à 1 px, puis la boîte est remise
+   * telle quelle.
    */
   minContentWidth() {
     const { width, height } = this;
-    this.width = UNBOUNDED_WIDTH;
-    super.initDimensions();
-    const min = Math.ceil(super.getGraphemeDataForRender(this.textLines).largestWordWidth);
+    this._wrapAt(1);
+    const min = Math.ceil(this.dynamicMinWidth);
     this._wrapAt(width);
     this.height = height;
     return min;
