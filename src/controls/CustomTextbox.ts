@@ -117,11 +117,24 @@ export class CustomTextbox extends Textbox {
     this.setCoords();
   }
 
-  /** Largeur naturelle à la police courante : la plus longue ligne, sans wrap. */
+  /**
+   * Largeur naturelle à la police courante : la plus longue ligne, sans wrap. Mesurée d'un
+   * bloc, une ligne peut être un peu plus étroite que la somme de ses mots, que mesure le
+   * retour à la ligne (crénage d'une police comme Garet) : wrappé à cette largeur exacte, le
+   * texte se couperait. On élargit donc jusqu'à ce qu'il tienne sur ses lignes dures.
+   */
   naturalWidth(): number {
     this.width = UNBOUNDED_WIDTH;
     super.initDimensions();
-    return Math.ceil(this.calcTextWidth());
+    const hardLines = this._textLines.length;
+    let width = Math.ceil(this.calcTextWidth());
+    const step = Math.max(1, Math.ceil(this.fontSize / 40));
+    for (let tries = 0; tries < 40; tries++) {
+      this._wrapAt(width);
+      if (this._textLines.length <= hardLines) break;
+      width += step;
+    }
+    return width;
   }
 
   /**

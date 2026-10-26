@@ -347,7 +347,12 @@ declare class CustomTextbox extends Textbox {
     /** Remplace le bloc `sizing` (nouvel objet `layout`, jamais muté en place). */
     setSizing(sizing: SizingData): void;
     setTextOverflow(overflow: TextOverflow): void;
-    /** Largeur naturelle à la police courante : la plus longue ligne, sans wrap. */
+    /**
+     * Largeur naturelle à la police courante : la plus longue ligne, sans wrap. Mesurée d'un
+     * bloc, une ligne peut être un peu plus étroite que la somme de ses mots, que mesure le
+     * retour à la ligne (crénage d'une police comme Garet) : wrappé à cette largeur exacte, le
+     * texte se couperait. On élargit donc jusqu'à ce qu'il tienne sur ses lignes dures.
+     */
     naturalWidth(): number;
     /**
      * Largeur minimale du texte : son graphème le plus large. Un mot trop long se découpe
