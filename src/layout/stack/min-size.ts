@@ -1,5 +1,5 @@
 /**
- * The least room a stack's content needs: a text its longest word, a rigid shape or a
+ * The least room a stack's content needs: a text its widest grapheme, a rigid shape or a
  * group its size, a nested stack its own minimum. What stops resize handles (see
  * resize-session) and what siblings keep in a stack (see room).
  */
@@ -12,8 +12,8 @@ import { asLayoutText, isTextObject } from "../text";
 
 /**
  * Smallest container box its children fit in, without squeezing anything:
- * padding, gaps, rigid children at their size, texts at their longest word
- * (they can wrap) and at no height (they can autofit or clip), nested
+ * padding, gaps, rigid children at their size, texts at their widest grapheme
+ * (they wrap, words included) and at no height (they can autofit or clip), nested
  * containers at their own minimum on a hug axis (floored by their minSize)
  * and at their size on a fixed one.
  */

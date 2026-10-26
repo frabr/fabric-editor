@@ -5,7 +5,7 @@
  * room is the parent's inner size; on a hug axis it is whatever the parent may
  * itself grow to (unbounded at the top of the tree). On the parent's main axis
  * the siblings keep their place — at their minimum, the same one that stops the
- * parent's own handles (a text at its longest word, a rigid shape at its size,
+ * parent's own handles (a text at its widest grapheme, a rigid shape at its size,
  * a nested container at its own minimum) — and the gaps too. In a group (free
  * container) nothing is laid out: siblings take no room, the group follows.
  */

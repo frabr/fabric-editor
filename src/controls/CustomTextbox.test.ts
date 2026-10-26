@@ -151,19 +151,28 @@ describe("CustomTextbox — modes de taille", () => {
 });
 
 describe("CustomTextbox — largeur minimale", () => {
-  it("le mot le plus long, même quand la boîte l'a découpé, et la boîte ne bouge pas", () => {
+  it("le graphème le plus large (un mot se découpe), et la boîte ne bouge pas", () => {
     const t = text("court motextrêmementlong");
-    const word = t.naturalWidth() - t.set({ text: "court " }).naturalWidth();
+    const letter = t.set({ text: "m" }).naturalWidth();
     t.set({ text: "court motextrêmementlong" });
     t.setSizing({ x: "fixed", y: "hug" });
     t.set({ width: 180 });
     const lines = [...t.textLines];
     expect(lines.length).toBeGreaterThan(2);
 
-    expect(t.minContentWidth()).toBeCloseTo(word, -1);
-    expect(t.minContentWidth()).toBeGreaterThan(180);
+    expect(t.minContentWidth()).toBeCloseTo(letter, -1);
+    expect(t.minContentWidth()).toBeLessThan(60);
     expect(t.width).toBe(180);
     expect(t.textLines).toEqual(lines);
+  });
+
+  it("une boîte plus étroite que le mot le plus long le découpe, lettre par lettre au besoin", () => {
+    const t = text("Supercalifragilistic");
+    t.setSizing({ x: "fixed", y: "hug" });
+    t.set({ width: 60 });
+    expect(t.width).toBe(60);
+    expect(t.textLines.length).toBeGreaterThan(3);
+    expect(t.textLines.join("")).toBe("Supercalifragilistic");
   });
 });
 
@@ -531,7 +540,7 @@ describe("StackResizeSession — le contenu arrête la poignée", () => {
     expect(c.width).toBe(230);
   });
 
-  it("un texte compte pour son mot le plus long (il peut wrapper)", () => {
+  it("un texte ne compte que pour son graphème le plus large : son mot se découpe", () => {
     const c = row(600);
     const t = text("court motextrêmementlong", { layout: { child: { parentId: "c", order: 1 } } });
     const objects = [c, rect("a", 100, 0), t];
@@ -540,7 +549,9 @@ describe("StackResizeSession — le contenu arrête la poignée", () => {
     c.set({ width: 100 });
     session.handleResizing(objects);
     expect(c.width).toBe(20 + 100 + 10 + t.minContentWidth());
-    expect(t.minContentWidth()).toBeLessThan(t.naturalWidth());
+    expect(t.minContentWidth()).toBeLessThan(60);
+    expect(t.textLines.length).toBeGreaterThan(4);
+    expect(t.textLines.join("")).toBe("courtmotextrêmementlong");
   });
 
   it("bord gauche arrêté : c'est lui qui s'arrête, le bord droit ne bouge pas", () => {

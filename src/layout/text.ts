@@ -10,7 +10,7 @@ const TEXT_TYPES = ["i-text", "textbox"];
 
 /** Ce que le layout demande à un texte (implémenté par CustomTextbox). */
 export interface LayoutText {
-  /** Narrowest the text can get: its longest word. */
+  /** Narrowest the text can get: its widest grapheme (words break). */
   minContentWidth(): number;
   /** A layout pass: the container's constraint (null: the text left its container). */
   layoutWith(constraint: { maxW?: number; w?: number; h?: number } | null): void;

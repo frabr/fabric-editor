@@ -195,7 +195,7 @@ describe("container imbriqué, hors runLayout", () => {
     expect(parent.height).toBeCloseTo(child.height + 20, 0);
   });
 
-  it("la poignée de la racine s'arrête au minimum du sous-arbre (le mot le plus long)", () => {
+  it("la poignée de la racine s'arrête au minimum du sous-arbre (le graphème le plus large)", () => {
     const { parent, child } = family();
     const t = text("court motextrêmementlong", "c");
     const objects = [parent, child, t];
@@ -206,7 +206,7 @@ describe("container imbriqué, hors runLayout", () => {
     session.handleResizing(objects);
     expect(parent.width).toBeCloseTo(40 + t.minContentWidth(), 0);
     expect(child.width).toBeCloseTo(20 + t.minContentWidth(), 0);
-    expect(t.textLines).toEqual(["court", "motextrêmementlong"]);
+    expect(t.textLines.length).toBeGreaterThan(4);
     expect(right(child)).toBeLessThanOrEqual(right(parent) + 0.5);
   });
 });
