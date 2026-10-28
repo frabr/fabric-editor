@@ -715,6 +715,12 @@ function layoutOf(obj) {
 function idOf(obj) {
   return obj.get("layerId");
 }
+var BACKGROUND_ID = "bg";
+var LEGACY_BACKGROUND_ID = "originalImage";
+function isBackground(obj) {
+  const id = idOf(obj);
+  return id === BACKGROUND_ID || id === LEGACY_BACKGROUND_ID;
+}
 function containerDataOf(obj) {
   return layoutOf(obj)?.container;
 }
@@ -1506,7 +1512,7 @@ function stackBlock(objects, root) {
 }
 function siblingsOf(objects, obj) {
   const parentId = parentIdOf(obj);
-  return objects.filter((o) => parentIdOf(o) === parentId);
+  return objects.filter((o) => o === obj || parentIdOf(o) === parentId && !isEclipsed(o));
 }
 function placeBlockAbove(objects, root, above) {
   const block = stackBlock(objects, root);
@@ -1526,7 +1532,8 @@ function bringBlocksForward(objects, moved, overlaps) {
   let changed = false;
   for (const obj of [...moved].sort((a, b) => objects.indexOf(b) - objects.indexOf(a))) {
     const siblings = siblingsOf(order, obj);
-    const next = siblings.slice(siblings.indexOf(obj) + 1).find((s) => !moved.includes(s) && overlaps(obj, s));
+    const above = siblings.slice(siblings.indexOf(obj) + 1).filter((s) => !moved.includes(s));
+    const next = above.find((s) => overlaps(obj, s)) ?? above[0];
     if (!next) continue;
     order = placeBlockAbove(order, obj, next);
     changed = true;
@@ -1539,7 +1546,7 @@ function sendBlocksBackward(objects, moved) {
   for (const obj of [...moved].sort((a, b) => objects.indexOf(a) - objects.indexOf(b))) {
     const siblings = siblingsOf(order, obj);
     const prev = siblings.slice(0, siblings.indexOf(obj)).reverse().find((s) => !moved.includes(s));
-    if (!prev || prev === order[0]) continue;
+    if (!prev || isBackground(prev)) continue;
     order = placeBelow(order, obj, prev);
     changed = true;
   }
@@ -3185,7 +3192,7 @@ import_fabric12.classRegistry.setClass(ImageFrame);
 import_fabric12.classRegistry.setClass(ImageFrame, "ImageFrame");
 
 // src/LayerManager.ts
-var BACKGROUND_LAYER_ID = "originalImage";
+var BACKGROUND_LAYER_ID = LEGACY_BACKGROUND_ID;
 var DEFAULT_SHAPE_FILL = "#d9d9d9";
 var LAYER_PROPS = ["layerId", "lockMode", "lockContent", "layout", "bindings", "bindingSegments"];
 var LayerManager = class {
@@ -3242,9 +3249,9 @@ var LayerManager = class {
     objects.forEach((obj, i) => {
       if (!obj) return;
       const data = layers[i];
-      const isBackground = data.layerId === "bg";
-      if (isBackground || data.selectable === false) obj.selectable = false;
-      if (isBackground || data.evented === false) obj.evented = false;
+      const isBackground2 = data.layerId === BACKGROUND_ID;
+      if (isBackground2 || data.selectable === false) obj.selectable = false;
+      if (isBackground2 || data.evented === false) obj.evented = false;
       restoreBindings(obj, data);
     });
     return objects;
@@ -8995,7 +9002,7 @@ var _FabricEditor = class _FabricEditor {
   /** Le fond image de la page, si `point` tombe dans le cadre. */
   backgroundFrame(point) {
     if (!point || point.x < 0 || point.y < 0 || point.x > this.width || point.y > this.height) return null;
-    return this.layers.all.find((obj) => obj.get("layerId") === "bg") ?? null;
+    return this.layers.all.find(isBackground) ?? null;
   }
   /**
    * Observe the container for size changes and automatically re-fit.
