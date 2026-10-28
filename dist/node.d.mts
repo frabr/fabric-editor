@@ -703,6 +703,8 @@ interface ShapePathData {
     stroke?: string;
     /** Normalisé dans l'espace 100x100, comme le `d`. */
     strokeWidth?: number;
+    /** Les trous d'une icône pleine ; absent = nonzero (le défaut SVG et Fabric). */
+    fillRule?: "evenodd";
 }
 /**
  * Le clip inliné d'un ImageFrame : le `d` voyage DANS le document (autoporteur),
@@ -713,6 +715,8 @@ interface ClipData {
     d: string;
     width: number;
     height: number;
+    /** La règle du path d'origine : une découpe evenodd garde ses trous. */
+    fillRule?: "evenodd";
 }
 
 interface FontConfig {
@@ -1053,8 +1057,9 @@ declare class LayerManager {
     /** Le centre du document. */
     private get center();
     /**
-     * La boîte d'un calque neuf : la moitié du document dans chaque sens, un quart de sa
-     * surface. Un calque y entre en gardant ses proportions.
+     * La boîte d'un calque neuf (forme, image) : NEW_LAYER_RATIO du document dans chaque sens.
+     * Un calque y entre en gardant ses proportions. 40 % depuis le 2026-10-28 (c'était la
+     * moitié : trop grand, surtout pour une icône).
      */
     private get newLayerBox();
     private fitNewLayerBox;

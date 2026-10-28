@@ -2035,7 +2035,8 @@ function isMonoPath(shape) {
 function clipDataFor(id) {
   const shape = getCatalogShape(id);
   if (!shape || !isMonoPath(shape)) return void 0;
-  return { d: shape.paths[0].d, width: shape.width, height: shape.height };
+  const path = shape.paths[0];
+  return { d: path.d, width: shape.width, height: shape.height, ...path.fillRule ? { fillRule: path.fillRule } : {} };
 }
 function normalizeEntry(entry) {
   if ("paths" in entry && Array.isArray(entry.paths)) {
@@ -2106,7 +2107,8 @@ var _FabPath = class _FabPath extends import_fabric7.Path {
       ...options,
       ...fill != null ? { fill } : {},
       ...stroke != null ? { stroke } : {},
-      ...strokeWidth != null ? { strokeWidth } : {}
+      ...strokeWidth != null ? { strokeWidth } : {},
+      ...pathData.fillRule ? { fillRule: pathData.fillRule } : {}
     });
     path.fitTo(options?.width, options?.height);
     return path;
@@ -2403,7 +2405,8 @@ function createPathsShape(paths, options = {}) {
     const child = new FabPath(p.d, withoutUndefined({
       fill: p.fill ?? (p.stroke ? "" : fill),
       stroke: p.stroke ?? stroke,
-      strokeWidth: p.strokeWidth ?? strokeWidth
+      strokeWidth: p.strokeWidth ?? strokeWidth,
+      fillRule: p.fillRule
     }));
     child.set({ left: child.pathOffset.x, top: child.pathOffset.y });
     child.setCoords();
@@ -3192,6 +3195,7 @@ import_fabric12.classRegistry.setClass(ImageFrame);
 import_fabric12.classRegistry.setClass(ImageFrame, "ImageFrame");
 
 // src/LayerManager.ts
+var NEW_LAYER_RATIO = 0.4;
 var BACKGROUND_LAYER_ID = LEGACY_BACKGROUND_ID;
 var DEFAULT_SHAPE_FILL = "#d9d9d9";
 var LAYER_PROPS = ["layerId", "lockMode", "lockContent", "layout", "bindings", "bindingSegments"];
@@ -3279,11 +3283,12 @@ var LayerManager = class {
     return new import_fabric13.Point(this.canvas.width / 2, this.canvas.height / 2);
   }
   /**
-   * La boîte d'un calque neuf : la moitié du document dans chaque sens, un quart de sa
-   * surface. Un calque y entre en gardant ses proportions.
+   * La boîte d'un calque neuf (forme, image) : NEW_LAYER_RATIO du document dans chaque sens.
+   * Un calque y entre en gardant ses proportions. 40 % depuis le 2026-10-28 (c'était la
+   * moitié : trop grand, surtout pour une icône).
    */
   get newLayerBox() {
-    return { w: this.canvas.width / 2, h: this.canvas.height / 2 };
+    return { w: this.canvas.width * NEW_LAYER_RATIO, h: this.canvas.height * NEW_LAYER_RATIO };
   }
   fitNewLayerBox(obj) {
     const { w, h } = scaledSize(obj);
@@ -3751,7 +3756,12 @@ function clipOfShape(shape) {
   if (shape instanceof FabCircle) return { clipShape: "circle", cornerRadius: 0 };
   if (shape instanceof FabPath) {
     const id = shape.id;
-    const clipData = { d: import_fabric13.util.joinPath(shape.path), width: shape.width, height: shape.height };
+    const clipData = {
+      d: import_fabric13.util.joinPath(shape.path),
+      width: shape.width,
+      height: shape.height,
+      ...shape.fillRule === "evenodd" ? { fillRule: "evenodd" } : {}
+    };
     return { clipShape: id && isValidShape(id) ? id : id || "custom", clipData, cornerRadius: 0 };
   }
   return { clipShape: "rect", cornerRadius: 0 };
@@ -10640,6 +10650,7 @@ function pathToHtml(layer, zIndex) {
     fill = "transparent",
     stroke,
     strokeWidth = 1,
+    fillRule,
     originX = "center",
     originY = "center",
     pathCenterY = 0
@@ -10663,7 +10674,7 @@ function pathToHtml(layer, zIndex) {
   const halfHeight = height / 2;
   const html = `<div style="${stylesToString(containerStyles)}">
   <svg width="${width}" height="${height}" viewBox="${-halfWidth} ${-halfHeight + pathCenterY} ${width} ${height}" xmlns="http://www.w3.org/2000/svg">
-    <path d="${pathString}" fill="${fill || "none"}" stroke="${stroke || "none"}" stroke-width="${strokeWidth}" />
+    <path d="${pathString}" fill="${fill || "none"}"${fillRule === "evenodd" ? ' fill-rule="evenodd"' : ""} stroke="${stroke || "none"}" stroke-width="${strokeWidth}" />
   </svg>
 </div>`;
   return { html };
@@ -10691,11 +10702,12 @@ function getClipPathCss(shapeType, width, height, cornerRadius) {
 }
 function svgPathInfo(shapeType, clipData) {
   if (clipData) {
-    return { path: clipData.d, width: clipData.width, height: clipData.height, centerX: 50, centerY: 50 };
+    return { path: clipData.d, fillRule: clipData.fillRule, width: clipData.width, height: clipData.height, centerX: 50, centerY: 50 };
   }
   const shape = getCatalogShape(shapeType);
   if (!shape || !isMonoPath(shape)) return void 0;
-  return { path: shape.paths[0].d, width: shape.width, height: shape.height, centerX: 50, centerY: 50 };
+  const path = shape.paths[0];
+  return { path: path.d, fillRule: path.fillRule, width: shape.width, height: shape.height, centerX: 50, centerY: 50 };
 }
 function getInlineSvgClip(shapeType, frameWidth, frameHeight, clipId, clipData) {
   const pathInfo = svgPathInfo(shapeType, clipData);
@@ -10709,7 +10721,7 @@ function getInlineSvgClip(shapeType, frameWidth, frameHeight, clipId, clipData) 
   return `<svg width="${frameWidth}" height="${frameHeight}" style="position: absolute; top: 0; left: 0; pointer-events: none;">
   <defs>
     <clipPath id="${clipId}">
-      <path d="${pathInfo.path}" transform="${transform}" />
+      <path d="${pathInfo.path}" transform="${transform}"${pathInfo.fillRule ? ` clip-rule="${pathInfo.fillRule}"` : ""} />
     </clipPath>
   </defs>
 </svg>`;

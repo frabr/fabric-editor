@@ -1067,11 +1067,15 @@ function normalizeShape(id, svgContent, warn = console.warn) {
   const offsetX = (BOX - scaledW) / 2;
   const offsetY = (BOX - scaledH) / 2;
   const normalized = paths.map((p) => ({
-    d: (0, import_svgpath.default)(p.d).translate(-minX, -minY).scale(scale).translate(offsetX, offsetY).round(2).toString(),
+    // En absolu et à trois décimales : arrondir des segments relatifs cumule l'erreur le
+    // long du tracé, et deux décimales déforment les petits arcs d'une icône (3 % de
+    // surface en moins sur une flèche Heroicons, mesuré au pixel) ; à trois, zéro écart.
+    d: (0, import_svgpath.default)(p.d).translate(-minX, -minY).scale(scale).translate(offsetX, offsetY).abs().round(3).toString(),
     ...p.fill != null ? { fill: p.fill } : {},
     ...p.stroke != null ? { stroke: p.stroke } : {},
     // L'épaisseur vit dans le même espace que le `d`.
-    ...p.strokeWidth != null ? { strokeWidth: Math.round(p.strokeWidth * scale * 100) / 100 } : {}
+    ...p.strokeWidth != null ? { strokeWidth: Math.round(p.strokeWidth * scale * 100) / 100 } : {},
+    ...p.fillRule ? { fillRule: p.fillRule } : {}
   }));
   return { id, paths: normalized, width: scaledW, height: scaledH, viewBox: `0 0 ${BOX} ${BOX}` };
 }
@@ -1117,7 +1121,8 @@ function extractPaths(id, content, warn) {
           d: transform ? (0, import_svgpath.default)(d).transform(transform).toString() : d,
           ...resolved.fill != null && resolved.fill !== "none" ? { fill: resolved.fill } : {},
           ...resolved.stroke != null ? { stroke: resolved.stroke } : {},
-          ...resolved.stroke != null ? { strokeWidth: resolved.strokeWidth ?? 1 } : {}
+          ...resolved.stroke != null ? { strokeWidth: resolved.strokeWidth ?? 1 } : {},
+          ...resolved.fillRule ? { fillRule: resolved.fillRule } : {}
         });
       }
     }
@@ -1164,7 +1169,7 @@ function parseDeclarations(block) {
 function ownAppearance(id, attrs, classRules) {
   const layers = [];
   const presentation = {};
-  for (const prop of ["fill", "stroke", "stroke-width", ...UNSUPPORTED_PROPS]) {
+  for (const prop of ["fill", "stroke", "stroke-width", "fill-rule", ...UNSUPPORTED_PROPS]) {
     if (attrs[prop] != null) presentation[prop] = attrs[prop];
   }
   layers.push(presentation);
@@ -1181,6 +1186,7 @@ function ownAppearance(id, attrs, classRules) {
     fill: normalizeFillValue(id, merged.fill),
     stroke: normalizeStrokeValue(id, merged.stroke),
     strokeWidth: merged["stroke-width"] != null ? parseFloat(merged["stroke-width"]) : void 0,
+    fillRule: merged["fill-rule"]?.trim() === "evenodd" ? "evenodd" : void 0,
     unsupported
   };
 }
@@ -1235,6 +1241,7 @@ function resolveAppearance(own, stack) {
     resolved.fill ?? (resolved.fill = ancestor.fill);
     resolved.stroke ?? (resolved.stroke = ancestor.stroke);
     resolved.strokeWidth ?? (resolved.strokeWidth = ancestor.strokeWidth);
+    resolved.fillRule ?? (resolved.fillRule = ancestor.fillRule);
   }
   return resolved;
 }
@@ -1297,15 +1304,19 @@ function describeForbidden(tag) {
 
 // scripts/normalize-shapes.ts
 function main() {
-  const [svgDir, outFile] = process.argv.slice(2);
+  const args = process.argv.slice(2);
+  const prefixAt = args.indexOf("--id-prefix");
+  const prefix = prefixAt === -1 ? "" : args[prefixAt + 1] ?? "";
+  const positional = args.filter((a, i) => !a.startsWith("--") && !(prefixAt !== -1 && i === prefixAt + 1));
+  const [svgDir, outFile] = positional;
   if (!svgDir || !outFile) {
-    console.error("Usage: normalize-shapes <dossier-svg> <sortie.json>");
+    console.error("Usage: normalize-shapes <dossier-svg> <sortie.json> [--merge-colorless] [--id-prefix <pr\xE9fixe>]");
     process.exit(1);
   }
   const files = (0, import_node_fs.readdirSync)(svgDir).filter((f) => f.endsWith(".svg")).sort();
   console.log(`${svgDir}: ${files.length} SVG`);
   const shapes = files.map((file) => {
-    const id = (0, import_node_path.basename)(file, (0, import_node_path.extname)(file));
+    const id = prefix + (0, import_node_path.basename)(file, (0, import_node_path.extname)(file));
     const shape = normalizeShape(id, (0, import_node_fs.readFileSync)((0, import_node_path.join)(svgDir, file), "utf-8"));
     const fills = shape.paths.filter((p) => p.fill).length;
     console.log(`  ${id}: ${shape.paths.length} path(s), ${fills} fill(s) \u2014 ${shape.width}x${shape.height} in 100x100`);

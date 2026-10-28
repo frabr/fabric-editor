@@ -1325,7 +1325,8 @@ function isMonoPath(shape) {
 function clipDataFor(id) {
   const shape = getCatalogShape(id);
   if (!shape || !isMonoPath(shape)) return void 0;
-  return { d: shape.paths[0].d, width: shape.width, height: shape.height };
+  const path = shape.paths[0];
+  return { d: path.d, width: shape.width, height: shape.height, ...path.fillRule ? { fillRule: path.fillRule } : {} };
 }
 
 // src/shapes/FabPath.ts
@@ -1389,7 +1390,8 @@ var _FabPath = class _FabPath extends Path {
       ...options,
       ...fill != null ? { fill } : {},
       ...stroke != null ? { stroke } : {},
-      ...strokeWidth != null ? { strokeWidth } : {}
+      ...strokeWidth != null ? { strokeWidth } : {},
+      ...pathData.fillRule ? { fillRule: pathData.fillRule } : {}
     });
     path.fitTo(options?.width, options?.height);
     return path;
@@ -1675,7 +1677,8 @@ function createPathsShape(paths, options = {}) {
     const child = new FabPath(p.d, withoutUndefined({
       fill: p.fill ?? (p.stroke ? "" : fill),
       stroke: p.stroke ?? stroke,
-      strokeWidth: p.strokeWidth ?? strokeWidth
+      strokeWidth: p.strokeWidth ?? strokeWidth,
+      fillRule: p.fillRule
     }));
     child.set({ left: child.pathOffset.x, top: child.pathOffset.y });
     child.setCoords();
@@ -2411,6 +2414,7 @@ classRegistry4.setClass(ImageFrame);
 classRegistry4.setClass(ImageFrame, "ImageFrame");
 
 // src/LayerManager.ts
+var NEW_LAYER_RATIO = 0.4;
 var BACKGROUND_LAYER_ID = LEGACY_BACKGROUND_ID;
 var DEFAULT_SHAPE_FILL = "#d9d9d9";
 var LAYER_PROPS = ["layerId", "lockMode", "lockContent", "layout", "bindings", "bindingSegments"];
@@ -2498,11 +2502,12 @@ var LayerManager = class {
     return new Point3(this.canvas.width / 2, this.canvas.height / 2);
   }
   /**
-   * La boîte d'un calque neuf : la moitié du document dans chaque sens, un quart de sa
-   * surface. Un calque y entre en gardant ses proportions.
+   * La boîte d'un calque neuf (forme, image) : NEW_LAYER_RATIO du document dans chaque sens.
+   * Un calque y entre en gardant ses proportions. 40 % depuis le 2026-10-28 (c'était la
+   * moitié : trop grand, surtout pour une icône).
    */
   get newLayerBox() {
-    return { w: this.canvas.width / 2, h: this.canvas.height / 2 };
+    return { w: this.canvas.width * NEW_LAYER_RATIO, h: this.canvas.height * NEW_LAYER_RATIO };
   }
   fitNewLayerBox(obj) {
     const { w, h } = scaledSize(obj);
@@ -2970,7 +2975,12 @@ function clipOfShape(shape) {
   if (shape instanceof FabCircle) return { clipShape: "circle", cornerRadius: 0 };
   if (shape instanceof FabPath) {
     const id = shape.id;
-    const clipData = { d: util2.joinPath(shape.path), width: shape.width, height: shape.height };
+    const clipData = {
+      d: util2.joinPath(shape.path),
+      width: shape.width,
+      height: shape.height,
+      ...shape.fillRule === "evenodd" ? { fillRule: "evenodd" } : {}
+    };
     return { clipShape: id && isValidShape(id) ? id : id || "custom", clipData, cornerRadius: 0 };
   }
   return { clipShape: "rect", cornerRadius: 0 };
