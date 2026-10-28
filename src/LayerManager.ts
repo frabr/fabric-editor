@@ -16,10 +16,10 @@ import { ImageFrame, type ImageFrameData, type ImageMeta } from "./ImageFrame";
 import type { LayerData, TextLayerOptions, ImageLayerOptions, ShapeLayerOptions, ShapeType } from "./types";
 import { restoreBindings, type Bindings } from "./bindings";
 import { resolveUserSlot, USER_SCOPE, USER_SLOT_FIELD } from "./userSlots";
-import { layoutOf } from "./layout/model";
+import { BACKGROUND_ID, LEGACY_BACKGROUND_ID, layoutOf } from "./layout/model";
 import { findById } from "./layout/hierarchy";
 
-const BACKGROUND_LAYER_ID = "originalImage";
+const BACKGROUND_LAYER_ID = LEGACY_BACKGROUND_ID;
 
 /** Le fill d'une forme posée sans couleur : le gris placeholder, qui se lit « à remplacer ». */
 export const DEFAULT_SHAPE_FILL = "#d9d9d9";
@@ -101,7 +101,7 @@ export class LayerManager {
       // (layerId "bg") est inerte PAR CONVENTION — répare aussi les docs sauvés pendant que
       // ImageFrame#toObject perdait ces flags.
       const data = layers[i];
-      const isBackground = (data as any).layerId === "bg";
+      const isBackground = (data as any).layerId === BACKGROUND_ID;
       if (isBackground || (data as any).selectable === false) obj.selectable = false;
       if (isBackground || (data as any).evented === false) obj.evented = false;
       restoreBindings(obj, data);

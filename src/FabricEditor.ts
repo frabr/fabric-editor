@@ -16,6 +16,7 @@ import { DRAG_PREVIEW_KEY } from "./types";
 import type { EditorConfig, LayerData, FontsConfig, ShapeType } from "./types";
 import type { TextStyleState } from "./text-styles";
 import { initYoga } from "./layout/stack/engine";
+import { isBackground } from "./layout/model";
 import { StyleCommands, type GradientStop } from "./editor/style-commands";
 import { Clipboard } from "./editor/clipboard";
 import { SelectionCommands } from "./editor/selection-commands";
@@ -303,7 +304,7 @@ export class FabricEditor {
   /** Le fond image de la page, si `point` tombe dans le cadre. */
   private backgroundFrame(point?: Point): FabricObject | null {
     if (!point || point.x < 0 || point.y < 0 || point.x > this.width || point.y > this.height) return null;
-    return this.layers.all.find((obj) => obj.get("layerId") === "bg") ?? null;
+    return this.layers.all.find(isBackground) ?? null;
   }
 
   /**

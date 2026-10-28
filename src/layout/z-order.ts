@@ -6,18 +6,22 @@
  * Fonctions pures sur la liste ordonnée des objets (du fond vers le dessus).
  */
 import type { FabricObject } from "#fabric";
-import { parentIdOf } from "./model";
+import { isBackground, parentIdOf } from "./model";
 import { subtreeOf } from "./hierarchy";
+import { isEclipsed } from "../ghost";
 
 /** `root` et ses descendants, dans l'ordre de la pile. */
 export function stackBlock(objects: FabricObject[], root: FabricObject): FabricObject[] {
   return subtreeOf(objects, [root]);
 }
 
-/** Les objets de même niveau qu'`obj` (même container, ou racines), dans l'ordre de la pile. */
+/**
+ * Les objets de même niveau qu'`obj` (même container, ou racines), dans l'ordre de la pile.
+ * Un éclipsé n'y figure pas : passer devant ou derrière lui ne changerait rien à l'écran.
+ */
 function siblingsOf(objects: FabricObject[], obj: FabricObject): FabricObject[] {
   const parentId = parentIdOf(obj);
-  return objects.filter((o) => parentIdOf(o) === parentId);
+  return objects.filter((o) => o === obj || (parentIdOf(o) === parentId && !isEclipsed(o)));
 }
 
 /**
@@ -43,7 +47,7 @@ function placeBelow(objects: FabricObject[], root: FabricObject, below: FabricOb
 
 /**
  * Monte le bloc d'`obj` devant le premier bloc de même niveau au-dessus qui le
- * chevauche (comme `bringObjectForward(obj, true)` de Fabric). Null : rien ne bouge.
+ * chevauche, ou devant le voisin immédiat si aucun ne le chevauche. Null : rien ne bouge.
  */
 export function bringBlockForward(
   objects: FabricObject[],
@@ -55,8 +59,7 @@ export function bringBlockForward(
 
 /**
  * Descend le bloc d'`obj` sous le bloc de même niveau juste en dessous (comme
- * `sendObjectBackwards` de Fabric). Jamais sous le premier objet de la pile (le
- * fond). Null : rien ne bouge.
+ * `sendObjectBackwards` de Fabric). Jamais sous le fond de page. Null : rien ne bouge.
  */
 export function sendBlockBackward(objects: FabricObject[], obj: FabricObject): FabricObject[] | null {
   return sendBlocksBackward(objects, [obj]);
@@ -65,7 +68,8 @@ export function sendBlockBackward(objects: FabricObject[], obj: FabricObject): F
 /**
  * Monte plusieurs blocs d'un plan, chacun devant le premier bloc de même niveau qui le
  * chevauche et n'est pas lui-même monté — des objets sélectionnés ensemble ne se
- * doublent pas. Le plus haut d'abord. Null : rien ne bouge.
+ * doublent pas. Sans chevauchement, devant le voisin immédiat : le bouton fait toujours
+ * quelque chose, comme « reculer ». Le plus haut d'abord. Null : rien ne bouge.
  */
 export function bringBlocksForward(
   objects: FabricObject[],
@@ -76,9 +80,8 @@ export function bringBlocksForward(
   let changed = false;
   for (const obj of [...moved].sort((a, b) => objects.indexOf(b) - objects.indexOf(a))) {
     const siblings = siblingsOf(order, obj);
-    const next = siblings
-      .slice(siblings.indexOf(obj) + 1)
-      .find((s) => !moved.includes(s) && overlaps(obj, s));
+    const above = siblings.slice(siblings.indexOf(obj) + 1).filter((s) => !moved.includes(s));
+    const next = above.find((s) => overlaps(obj, s)) ?? above[0];
     if (!next) continue;
     order = placeBlockAbove(order, obj, next);
     changed = true;
@@ -97,7 +100,7 @@ export function sendBlocksBackward(objects: FabricObject[], moved: FabricObject[
   for (const obj of [...moved].sort((a, b) => objects.indexOf(a) - objects.indexOf(b))) {
     const siblings = siblingsOf(order, obj);
     const prev = siblings.slice(0, siblings.indexOf(obj)).reverse().find((s) => !moved.includes(s));
-    if (!prev || prev === order[0]) continue;
+    if (!prev || isBackground(prev)) continue;
     order = placeBelow(order, obj, prev);
     changed = true;
   }

@@ -6,9 +6,12 @@ import { describe, it, expect } from "vitest";
 import type { FabricObject } from "#fabric";
 import { bringBlockForward, bringBlocksForward, placeBlockAbove, sendBlockBackward, sendBlocksBackward, stackBlock } from "./z-order";
 
-function obj(id: string, parentId?: string): FabricObject {
+function obj(id: string, parentId?: string, eclipsed = false): FabricObject {
   const layout = parentId ? { child: { parentId } } : undefined;
-  return { get: (key: string) => (key === "layerId" ? id : key === "layout" ? layout : undefined) } as unknown as FabricObject;
+  return {
+    eclipsed: eclipsed || undefined,
+    get: (key: string) => (key === "layerId" ? id : key === "layout" ? layout : undefined),
+  } as unknown as FabricObject;
 }
 
 const ids = (list: FabricObject[] | null) => list?.map((o) => o.get("layerId"));
@@ -49,10 +52,11 @@ describe("stacking", () => {
     expect(bringBlockForward(stack, a2, always)).toBeNull();
   });
 
-  it("monter : saute au premier voisin qui chevauche, rien sinon", () => {
+  it("monter : saute au premier voisin qui chevauche, au voisin immédiat sinon", () => {
     const overlapsC = (_a: FabricObject, b: FabricObject) => b === C;
     expect(ids(bringBlockForward(stack, A, overlapsC))).toEqual(["bg", "B", "C", "c1", "A", "a1", "a2"]);
-    expect(bringBlockForward(stack, A, () => false)).toBeNull();
+    expect(ids(bringBlockForward(stack, A, () => false))).toEqual(["bg", "B", "A", "a1", "a2", "C", "c1"]);
+    expect(bringBlockForward(stack, C, () => false)).toBeNull();
   });
 
   it("descendre un container : il passe sous son voisin avec ses enfants", () => {
@@ -67,6 +71,19 @@ describe("stacking", () => {
     expect(sendBlockBackward(stack, A)).toBeNull();
     expect(sendBlockBackward(stack, a1)).toBeNull();
     expect(ids(sendBlockBackward(stack, a2))).toEqual(["bg", "A", "a2", "a1", "B", "C", "c1"]);
+  });
+
+  it("sans fond, le premier objet de la pile est un objet comme un autre", () => {
+    expect(ids(sendBlockBackward([A, a1, a2, B], B))).toEqual(["B", "A", "a1", "a2"]);
+    expect(sendBlockBackward([A, a1, a2, B], A)).toBeNull();
+  });
+
+  it("un voisin éclipsé est transparent : on ne passe ni devant ni derrière lui", () => {
+    const H = obj("H", undefined, true);
+    const withHidden = [bg, A, a1, a2, H, B];
+    expect(ids(sendBlockBackward(withHidden, B))).toEqual(["bg", "B", "A", "a1", "a2", "H"]);
+    expect(ids(bringBlockForward(withHidden, A, always))).toEqual(["bg", "H", "B", "A", "a1", "a2"]);
+    expect(bringBlockForward([bg, A, a1, a2, H], A, always)).toBeNull();
   });
 
   it("monter plusieurs objets : ils passent devant leur voisin sans se doubler", () => {

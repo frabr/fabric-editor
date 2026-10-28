@@ -23,6 +23,17 @@ export function idOf(obj: { get(key: string): unknown }): string {
   return obj.get("layerId") as string;
 }
 
+/** L'id du fond de page : par convention, un objet inerte, toujours au fond de la pile. */
+export const BACKGROUND_ID = "bg";
+
+/** L'id de l'image de fond de l'ancien éditeur, même convention. */
+export const LEGACY_BACKGROUND_ID = "originalImage";
+
+export function isBackground(obj: { get(key: string): unknown }): boolean {
+  const id = idOf(obj);
+  return id === BACKGROUND_ID || id === LEGACY_BACKGROUND_ID;
+}
+
 /** Le bloc « je suis un parent » — présent sur un container. */
 export function containerDataOf(obj: Readable): ContainerData | undefined {
   return layoutOf(obj)?.container;
