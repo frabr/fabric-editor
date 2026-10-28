@@ -101,6 +101,7 @@ export class FabPath extends Path implements Lockable {
       ...(fill != null ? { fill } : {}),
       ...(stroke != null ? { stroke } : {}),
       ...(strokeWidth != null ? { strokeWidth } : {}),
+      ...(pathData.fillRule ? { fillRule: pathData.fillRule } : {}),
     });
 
     path.fitTo(options?.width, options?.height);

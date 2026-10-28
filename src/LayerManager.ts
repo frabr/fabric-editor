@@ -764,7 +764,10 @@ function clipOfShape(shape: FabricObject): { clipShape: ShapeType; clipData?: Cl
   if (shape instanceof FabCircle) return { clipShape: "circle", cornerRadius: 0 };
   if (shape instanceof FabPath) {
     const id = (shape as { id?: string }).id;
-    const clipData: ClipData = { d: util.joinPath(shape.path), width: shape.width, height: shape.height };
+    const clipData: ClipData = {
+      d: util.joinPath(shape.path), width: shape.width, height: shape.height,
+      ...(shape.fillRule === "evenodd" ? { fillRule: "evenodd" as const } : {}),
+    };
     return { clipShape: id && isValidShape(id) ? id : (id || "custom"), clipData, cornerRadius: 0 };
   }
   return { clipShape: "rect", cornerRadius: 0 };

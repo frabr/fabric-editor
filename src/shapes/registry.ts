@@ -19,6 +19,8 @@ export interface ShapePathData {
   stroke?: string;
   /** Normalisé dans l'espace 100x100, comme le `d`. */
   strokeWidth?: number;
+  /** Les trous d'une icône pleine ; absent = nonzero (le défaut SVG et Fabric). */
+  fillRule?: "evenodd";
 }
 
 export interface CatalogShape {
@@ -69,6 +71,8 @@ export interface ClipData {
   d: string;
   width: number;
   height: number;
+  /** La règle du path d'origine : une découpe evenodd garde ses trous. */
+  fillRule?: "evenodd";
 }
 
 /** Le clip d'une forme du registre — mono-path uniquement (un clip veut UNE région). */
@@ -76,7 +80,8 @@ export function clipDataFor(id: string): ClipData | undefined {
   const shape = getCatalogShape(id);
   if (!shape || !isMonoPath(shape)) return undefined;
 
-  return { d: shape.paths[0].d, width: shape.width, height: shape.height };
+  const path = shape.paths[0];
+  return { d: path.d, width: shape.width, height: shape.height, ...(path.fillRule ? { fillRule: path.fillRule } : {}) };
 }
 
 function normalizeEntry(entry: CatalogShapeInput): CatalogShape {

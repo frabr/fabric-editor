@@ -17,6 +17,10 @@
  * compositions, pas des formes. `currentColor` et l'absence totale d'apparence =
  * path SANS couleur (recolorable côté éditeur) ; fill="none" sans stroke = path
  * ignoré (avec warning).
+ *
+ * `fill-rule` (attribut, style, classe, hérité) est porté par path quand il vaut
+ * evenodd — les trous des icônes pleines (Heroicons solid) en dépendent ; nonzero,
+ * le défaut SVG et Fabric, n'est pas écrit.
  */
 import svgpath from "svgpath";
 
@@ -26,6 +30,8 @@ export interface NormalizedShapePath {
   stroke?: string;
   /** Normalisé dans la boîte 100x100, comme le `d`. */
   strokeWidth?: number;
+  /** Seulement quand le path le déclare : nonzero est le défaut. */
+  fillRule?: "evenodd";
 }
 
 export interface NormalizedShape {
@@ -50,6 +56,7 @@ interface Appearance {
   fill?: string;
   stroke?: string;
   strokeWidth?: number;
+  fillRule?: "evenodd";
   /** Première propriété hors périmètre rencontrée (clip-path, opacity…). */
   unsupported?: string;
 }
@@ -81,16 +88,21 @@ export function normalizeShape(id: string, svgContent: string, warn: (msg: strin
   const offsetY = (BOX - scaledH) / 2;
 
   const normalized = paths.map((p) => ({
+    // En absolu et à trois décimales : arrondir des segments relatifs cumule l'erreur le
+    // long du tracé, et deux décimales déforment les petits arcs d'une icône (3 % de
+    // surface en moins sur une flèche Heroicons, mesuré au pixel) ; à trois, zéro écart.
     d: svgpath(p.d)
       .translate(-minX, -minY)
       .scale(scale)
       .translate(offsetX, offsetY)
-      .round(2)
+      .abs()
+      .round(3)
       .toString(),
     ...(p.fill != null ? { fill: p.fill } : {}),
     ...(p.stroke != null ? { stroke: p.stroke } : {}),
     // L'épaisseur vit dans le même espace que le `d`.
     ...(p.strokeWidth != null ? { strokeWidth: Math.round(p.strokeWidth * scale * 100) / 100 } : {}),
+    ...(p.fillRule ? { fillRule: p.fillRule } : {}),
   }));
 
   return { id, paths: normalized, width: scaledW, height: scaledH, viewBox: `0 0 ${BOX} ${BOX}` };
@@ -158,6 +170,7 @@ function extractPaths(
           ...(resolved.fill != null && resolved.fill !== "none" ? { fill: resolved.fill } : {}),
           ...(resolved.stroke != null ? { stroke: resolved.stroke } : {}),
           ...(resolved.stroke != null ? { strokeWidth: resolved.strokeWidth ?? 1 } : {}),
+          ...(resolved.fillRule ? { fillRule: resolved.fillRule } : {}),
         });
       }
     }
@@ -221,7 +234,7 @@ function ownAppearance(id: string, attrs: Record<string, string>, classRules: Cl
   const layers: Record<string, string>[] = [];
 
   const presentation: Record<string, string> = {};
-  for (const prop of ["fill", "stroke", "stroke-width", ...UNSUPPORTED_PROPS]) {
+  for (const prop of ["fill", "stroke", "stroke-width", "fill-rule", ...UNSUPPORTED_PROPS]) {
     if (attrs[prop] != null) presentation[prop] = attrs[prop];
   }
   layers.push(presentation);
@@ -241,6 +254,7 @@ function ownAppearance(id: string, attrs: Record<string, string>, classRules: Cl
     fill: normalizeFillValue(id, merged.fill),
     stroke: normalizeStrokeValue(id, merged.stroke),
     strokeWidth: merged["stroke-width"] != null ? parseFloat(merged["stroke-width"]) : undefined,
+    fillRule: merged["fill-rule"]?.trim() === "evenodd" ? "evenodd" : undefined,
     unsupported,
   };
 }
@@ -306,6 +320,7 @@ function resolveAppearance(own: Appearance, stack: OpenElement[]): Appearance {
     resolved.fill ??= ancestor.fill;
     resolved.stroke ??= ancestor.stroke;
     resolved.strokeWidth ??= ancestor.strokeWidth;
+    resolved.fillRule ??= ancestor.fillRule;
   }
   return resolved;
 }

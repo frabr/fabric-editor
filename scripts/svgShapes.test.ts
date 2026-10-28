@@ -112,4 +112,15 @@ describe("normalizeShape", () => {
     const attrs = _label === "missing viewBox" ? "" : 'viewBox="0 0 200 200"';
     expect(() => normalizeShape("bad", wrap(inner, attrs), () => {})).toThrow(message);
   });
+
+  it("carries fill-rule evenodd per path, own or inherited, and leaves nonzero implicit", () => {
+    const svg = wrap(
+      '<path d="M0 0H200V200H0Z" fill-rule="evenodd"/>' +
+      '<g style="fill-rule:evenodd"><path d="M0 0H100V100H0Z"/></g>' +
+      '<path d="M0 0H200V200H0Z" fill-rule="nonzero"/>' +
+      '<path d="M0 0H200V200H0Z"/>',
+    );
+    const shape = normalizeShape("holes", svg);
+    expect(shape.paths.map((p) => p.fillRule)).toEqual(["evenodd", "evenodd", undefined, undefined]);
+  });
 });

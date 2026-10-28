@@ -92,6 +92,8 @@ export interface CircleLayerData extends LayerData {
 export interface PathLayerData extends LayerData {
   type: "Path";
   path: string | unknown[];
+  /** La règle de remplissage du path (Fabric la sérialise) ; nonzero par défaut. */
+  fillRule?: string;
   originX?: string;
   originY?: string;
   width?: number;

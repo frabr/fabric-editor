@@ -125,6 +125,7 @@ export function createPathsShape(
       fill: p.fill ?? (p.stroke ? "" : fill),
       stroke: p.stroke ?? stroke,
       strokeWidth: p.strokeWidth ?? strokeWidth,
+      fillRule: p.fillRule,
     }));
     child.set({ left: child.pathOffset.x, top: child.pathOffset.y });
     child.setCoords();

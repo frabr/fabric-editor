@@ -45,6 +45,8 @@ export function getClipPathCss(
  */
 interface SvgPathInfo {
   path: string;
+  /** La règle du path : une découpe evenodd garde ses trous (clip-rule en SVG). */
+  fillRule?: "evenodd";
   /** Actual width of the path within the 100x100 box. */
   width: number;
   /** Actual height of the path within the 100x100 box. */
@@ -61,12 +63,13 @@ interface SvgPathInfo {
  */
 function svgPathInfo(shapeType: ShapeType, clipData?: ClipData): SvgPathInfo | undefined {
   if (clipData) {
-    return { path: clipData.d, width: clipData.width, height: clipData.height, centerX: 50, centerY: 50 };
+    return { path: clipData.d, fillRule: clipData.fillRule, width: clipData.width, height: clipData.height, centerX: 50, centerY: 50 };
   }
   const shape = getCatalogShape(shapeType);
   if (!shape || !isMonoPath(shape)) return undefined;
 
-  return { path: shape.paths[0].d, width: shape.width, height: shape.height, centerX: 50, centerY: 50 };
+  const path = shape.paths[0];
+  return { path: path.d, fillRule: path.fillRule, width: shape.width, height: shape.height, centerX: 50, centerY: 50 };
 }
 
 /**
@@ -110,7 +113,7 @@ export function getInlineSvgClip(
   return `<svg width="${frameWidth}" height="${frameHeight}" style="position: absolute; top: 0; left: 0; pointer-events: none;">
   <defs>
     <clipPath id="${clipId}">
-      <path d="${pathInfo.path}" transform="${transform}" />
+      <path d="${pathInfo.path}" transform="${transform}"${pathInfo.fillRule ? ` clip-rule="${pathInfo.fillRule}"` : ""} />
     </clipPath>
   </defs>
 </svg>`;
