@@ -19,6 +19,9 @@ import { resolveUserSlot, USER_SCOPE, USER_SLOT_FIELD } from "./userSlots";
 import { BACKGROUND_ID, LEGACY_BACKGROUND_ID, layoutOf } from "./layout/model";
 import { findById } from "./layout/hierarchy";
 
+/** La part du document (par côté) qu'occupe un calque neuf sans dimension. */
+const NEW_LAYER_RATIO = 0.4;
+
 const BACKGROUND_LAYER_ID = LEGACY_BACKGROUND_ID;
 
 /** Le fill d'une forme posée sans couleur : le gris placeholder, qui se lit « à remplacer ». */
@@ -137,11 +140,12 @@ export class LayerManager {
   }
 
   /**
-   * La boîte d'un calque neuf : la moitié du document dans chaque sens, un quart de sa
-   * surface. Un calque y entre en gardant ses proportions.
+   * La boîte d'un calque neuf (forme, image) : NEW_LAYER_RATIO du document dans chaque sens.
+   * Un calque y entre en gardant ses proportions. 40 % depuis le 2026-10-28 (c'était la
+   * moitié : trop grand, surtout pour une icône).
    */
   private get newLayerBox(): { w: number; h: number } {
-    return { w: this.canvas.width / 2, h: this.canvas.height / 2 };
+    return { w: this.canvas.width * NEW_LAYER_RATIO, h: this.canvas.height * NEW_LAYER_RATIO };
   }
 
   private fitNewLayerBox(obj: FabricObject): void {
