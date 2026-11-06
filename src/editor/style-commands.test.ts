@@ -7,6 +7,8 @@ import { StyleCommands } from "./style-commands";
 import { CustomTextbox } from "../controls/CustomTextbox";
 import { fontFamiliesOf, MIXED } from "../text-styles";
 import type { FabricEditor } from "../FabricEditor";
+import { createPathsShape } from "../shapes/factories";
+import type { FabGroup } from "../shapes/FabGroup";
 
 function setup(content = "Bonjour le monde", options: Record<string, unknown> = {}) {
   const text = new CustomTextbox(content, { fontSize: 32, fontFamily: "Arial", fill: "#000", ...options });
@@ -146,5 +148,23 @@ describe("StyleCommands — textStyle", () => {
     const { commands, editor } = setup();
     (editor.selection as { current: unknown }).current = null;
     expect(commands.textStyle()).toBeNull();
+  });
+});
+
+describe("StyleCommands — groupe de paths", () => {
+  it("la couleur va à chaque path du groupe, pas au groupe", () => {
+    const group = createPathsShape(
+      [{ d: "M0 0 H50 V50 H0 Z", fill: "#ec6525" }, { d: "M60 0 H100 V50 H60 Z", fill: "#fff" }], {},
+    ) as FabGroup;
+    const editor = {
+      selection: { current: group },
+      layout: { relayout: vi.fn() },
+      canvas: { requestRenderAll: vi.fn(), renderAll: vi.fn() },
+    } as unknown as FabricEditor;
+
+    new StyleCommands(editor).setFillColor("#123456");
+
+    expect(group.getObjects().map((child) => child.fill)).toEqual(["#123456", "#123456"]);
+    expect(group.commonFill()).toBe("#123456");
   });
 });

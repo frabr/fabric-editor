@@ -8,6 +8,9 @@ var __hasOwnProp = Object.prototype.hasOwnProperty;
 var __esm = (fn, res) => function __init() {
   return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
 };
+var __commonJS = (cb, mod) => function __require() {
+  return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
+};
 var __export = (target, all) => {
   for (var name in all)
     __defProp(target, name, { get: all[name], enumerable: true });
@@ -136,6 +139,1025 @@ var init_PendingUploadsManager = __esm({
   }
 });
 
+// node_modules/svgpath/lib/path_parse.js
+var require_path_parse = __commonJS({
+  "node_modules/svgpath/lib/path_parse.js"(exports2, module2) {
+    "use strict";
+    var paramCounts = { a: 7, c: 6, h: 1, l: 2, m: 2, r: 4, q: 4, s: 4, t: 2, v: 1, z: 0 };
+    var SPECIAL_SPACES = [
+      5760,
+      6158,
+      8192,
+      8193,
+      8194,
+      8195,
+      8196,
+      8197,
+      8198,
+      8199,
+      8200,
+      8201,
+      8202,
+      8239,
+      8287,
+      12288,
+      65279
+    ];
+    function isSpace(ch) {
+      return ch === 10 || ch === 13 || ch === 8232 || ch === 8233 || // Line terminators
+      // White spaces
+      ch === 32 || ch === 9 || ch === 11 || ch === 12 || ch === 160 || ch >= 5760 && SPECIAL_SPACES.indexOf(ch) >= 0;
+    }
+    function isCommand(code) {
+      switch (code | 32) {
+        case 109:
+        case 122:
+        case 108:
+        case 104:
+        case 118:
+        case 99:
+        case 115:
+        case 113:
+        case 116:
+        case 97:
+        case 114:
+          return true;
+      }
+      return false;
+    }
+    function isArc(code) {
+      return (code | 32) === 97;
+    }
+    function isDigit(code) {
+      return code >= 48 && code <= 57;
+    }
+    function isDigitStart(code) {
+      return code >= 48 && code <= 57 || /* 0..9 */
+      code === 43 || /* + */
+      code === 45 || /* - */
+      code === 46;
+    }
+    function State(path) {
+      this.index = 0;
+      this.path = path;
+      this.max = path.length;
+      this.result = [];
+      this.param = 0;
+      this.err = "";
+      this.segmentStart = 0;
+      this.data = [];
+    }
+    function skipSpaces(state) {
+      while (state.index < state.max && isSpace(state.path.charCodeAt(state.index))) {
+        state.index++;
+      }
+    }
+    function scanFlag(state) {
+      var ch = state.path.charCodeAt(state.index);
+      if (ch === 48) {
+        state.param = 0;
+        state.index++;
+        return;
+      }
+      if (ch === 49) {
+        state.param = 1;
+        state.index++;
+        return;
+      }
+      state.err = "SvgPath: arc flag can be 0 or 1 only (at pos " + state.index + ")";
+    }
+    function scanParam(state) {
+      var start = state.index, index = start, max = state.max, zeroFirst = false, hasCeiling = false, hasDecimal = false, hasDot = false, ch;
+      if (index >= max) {
+        state.err = "SvgPath: missed param (at pos " + index + ")";
+        return;
+      }
+      ch = state.path.charCodeAt(index);
+      if (ch === 43 || ch === 45) {
+        index++;
+        ch = index < max ? state.path.charCodeAt(index) : 0;
+      }
+      if (!isDigit(ch) && ch !== 46) {
+        state.err = "SvgPath: param should start with 0..9 or `.` (at pos " + index + ")";
+        return;
+      }
+      if (ch !== 46) {
+        zeroFirst = ch === 48;
+        index++;
+        ch = index < max ? state.path.charCodeAt(index) : 0;
+        if (zeroFirst && index < max) {
+          if (ch && isDigit(ch)) {
+            state.err = "SvgPath: numbers started with `0` such as `09` are illegal (at pos " + start + ")";
+            return;
+          }
+        }
+        while (index < max && isDigit(state.path.charCodeAt(index))) {
+          index++;
+          hasCeiling = true;
+        }
+        ch = index < max ? state.path.charCodeAt(index) : 0;
+      }
+      if (ch === 46) {
+        hasDot = true;
+        index++;
+        while (isDigit(state.path.charCodeAt(index))) {
+          index++;
+          hasDecimal = true;
+        }
+        ch = index < max ? state.path.charCodeAt(index) : 0;
+      }
+      if (ch === 101 || ch === 69) {
+        if (hasDot && !hasCeiling && !hasDecimal) {
+          state.err = "SvgPath: invalid float exponent (at pos " + index + ")";
+          return;
+        }
+        index++;
+        ch = index < max ? state.path.charCodeAt(index) : 0;
+        if (ch === 43 || ch === 45) {
+          index++;
+        }
+        if (index < max && isDigit(state.path.charCodeAt(index))) {
+          while (index < max && isDigit(state.path.charCodeAt(index))) {
+            index++;
+          }
+        } else {
+          state.err = "SvgPath: invalid float exponent (at pos " + index + ")";
+          return;
+        }
+      }
+      state.index = index;
+      state.param = parseFloat(state.path.slice(start, index)) + 0;
+    }
+    function finalizeSegment(state) {
+      var cmd, cmdLC;
+      cmd = state.path[state.segmentStart];
+      cmdLC = cmd.toLowerCase();
+      var params = state.data;
+      if (cmdLC === "m" && params.length > 2) {
+        state.result.push([cmd, params[0], params[1]]);
+        params = params.slice(2);
+        cmdLC = "l";
+        cmd = cmd === "m" ? "l" : "L";
+      }
+      if (cmdLC === "r") {
+        state.result.push([cmd].concat(params));
+      } else {
+        while (params.length >= paramCounts[cmdLC]) {
+          state.result.push([cmd].concat(params.splice(0, paramCounts[cmdLC])));
+          if (!paramCounts[cmdLC]) {
+            break;
+          }
+        }
+      }
+    }
+    function scanSegment(state) {
+      var max = state.max, cmdCode, is_arc, comma_found, need_params, i;
+      state.segmentStart = state.index;
+      cmdCode = state.path.charCodeAt(state.index);
+      is_arc = isArc(cmdCode);
+      if (!isCommand(cmdCode)) {
+        state.err = "SvgPath: bad command " + state.path[state.index] + " (at pos " + state.index + ")";
+        return;
+      }
+      need_params = paramCounts[state.path[state.index].toLowerCase()];
+      state.index++;
+      skipSpaces(state);
+      state.data = [];
+      if (!need_params) {
+        finalizeSegment(state);
+        return;
+      }
+      comma_found = false;
+      for (; ; ) {
+        for (i = need_params; i > 0; i--) {
+          if (is_arc && (i === 3 || i === 4)) scanFlag(state);
+          else scanParam(state);
+          if (state.err.length) {
+            finalizeSegment(state);
+            return;
+          }
+          state.data.push(state.param);
+          skipSpaces(state);
+          comma_found = false;
+          if (state.index < max && state.path.charCodeAt(state.index) === 44) {
+            state.index++;
+            skipSpaces(state);
+            comma_found = true;
+          }
+        }
+        if (comma_found) {
+          continue;
+        }
+        if (state.index >= state.max) {
+          break;
+        }
+        if (!isDigitStart(state.path.charCodeAt(state.index))) {
+          break;
+        }
+      }
+      finalizeSegment(state);
+    }
+    module2.exports = function pathParse(svgPath) {
+      var state = new State(svgPath);
+      var max = state.max;
+      skipSpaces(state);
+      while (state.index < max && !state.err.length) {
+        scanSegment(state);
+      }
+      if (state.result.length) {
+        if ("mM".indexOf(state.result[0][0]) < 0) {
+          state.err = "SvgPath: string should start with `M` or `m`";
+          state.result = [];
+        } else {
+          state.result[0][0] = "M";
+        }
+      }
+      return {
+        err: state.err,
+        segments: state.result
+      };
+    };
+  }
+});
+
+// node_modules/svgpath/lib/matrix.js
+var require_matrix = __commonJS({
+  "node_modules/svgpath/lib/matrix.js"(exports2, module2) {
+    "use strict";
+    function combine(m1, m2) {
+      return [
+        m1[0] * m2[0] + m1[2] * m2[1],
+        m1[1] * m2[0] + m1[3] * m2[1],
+        m1[0] * m2[2] + m1[2] * m2[3],
+        m1[1] * m2[2] + m1[3] * m2[3],
+        m1[0] * m2[4] + m1[2] * m2[5] + m1[4],
+        m1[1] * m2[4] + m1[3] * m2[5] + m1[5]
+      ];
+    }
+    function Matrix() {
+      if (!(this instanceof Matrix)) {
+        return new Matrix();
+      }
+      this.queue = [];
+      this.cache = null;
+    }
+    Matrix.prototype.matrix = function(m) {
+      if (m[0] === 1 && m[1] === 0 && m[2] === 0 && m[3] === 1 && m[4] === 0 && m[5] === 0) {
+        return this;
+      }
+      this.cache = null;
+      this.queue.push(m);
+      return this;
+    };
+    Matrix.prototype.translate = function(tx, ty) {
+      if (tx !== 0 || ty !== 0) {
+        this.cache = null;
+        this.queue.push([1, 0, 0, 1, tx, ty]);
+      }
+      return this;
+    };
+    Matrix.prototype.scale = function(sx, sy) {
+      if (sx !== 1 || sy !== 1) {
+        this.cache = null;
+        this.queue.push([sx, 0, 0, sy, 0, 0]);
+      }
+      return this;
+    };
+    Matrix.prototype.rotate = function(angle, rx, ry) {
+      var rad, cos, sin;
+      if (angle !== 0) {
+        this.translate(rx, ry);
+        rad = angle * Math.PI / 180;
+        cos = Math.cos(rad);
+        sin = Math.sin(rad);
+        this.queue.push([cos, sin, -sin, cos, 0, 0]);
+        this.cache = null;
+        this.translate(-rx, -ry);
+      }
+      return this;
+    };
+    Matrix.prototype.skewX = function(angle) {
+      if (angle !== 0) {
+        this.cache = null;
+        this.queue.push([1, 0, Math.tan(angle * Math.PI / 180), 1, 0, 0]);
+      }
+      return this;
+    };
+    Matrix.prototype.skewY = function(angle) {
+      if (angle !== 0) {
+        this.cache = null;
+        this.queue.push([1, Math.tan(angle * Math.PI / 180), 0, 1, 0, 0]);
+      }
+      return this;
+    };
+    Matrix.prototype.toArray = function() {
+      if (this.cache) {
+        return this.cache;
+      }
+      if (!this.queue.length) {
+        this.cache = [1, 0, 0, 1, 0, 0];
+        return this.cache;
+      }
+      this.cache = this.queue[0];
+      if (this.queue.length === 1) {
+        return this.cache;
+      }
+      for (var i = 1; i < this.queue.length; i++) {
+        this.cache = combine(this.cache, this.queue[i]);
+      }
+      return this.cache;
+    };
+    Matrix.prototype.calc = function(x, y, isRelative) {
+      var m;
+      if (!this.queue.length) {
+        return [x, y];
+      }
+      if (!this.cache) {
+        this.cache = this.toArray();
+      }
+      m = this.cache;
+      return [
+        x * m[0] + y * m[2] + (isRelative ? 0 : m[4]),
+        x * m[1] + y * m[3] + (isRelative ? 0 : m[5])
+      ];
+    };
+    module2.exports = Matrix;
+  }
+});
+
+// node_modules/svgpath/lib/transform_parse.js
+var require_transform_parse = __commonJS({
+  "node_modules/svgpath/lib/transform_parse.js"(exports2, module2) {
+    "use strict";
+    var Matrix = require_matrix();
+    var operations = {
+      matrix: true,
+      scale: true,
+      rotate: true,
+      translate: true,
+      skewX: true,
+      skewY: true
+    };
+    var CMD_SPLIT_RE = /\s*(matrix|translate|scale|rotate|skewX|skewY)\s*\(\s*(.+?)\s*\)[\s,]*/;
+    var PARAMS_SPLIT_RE = /[\s,]+/;
+    module2.exports = function transformParse(transformString) {
+      var matrix = new Matrix();
+      var cmd, params;
+      transformString.split(CMD_SPLIT_RE).forEach(function(item) {
+        if (!item.length) {
+          return;
+        }
+        if (typeof operations[item] !== "undefined") {
+          cmd = item;
+          return;
+        }
+        params = item.split(PARAMS_SPLIT_RE).map(function(i) {
+          return +i || 0;
+        });
+        switch (cmd) {
+          case "matrix":
+            if (params.length === 6) {
+              matrix.matrix(params);
+            }
+            return;
+          case "scale":
+            if (params.length === 1) {
+              matrix.scale(params[0], params[0]);
+            } else if (params.length === 2) {
+              matrix.scale(params[0], params[1]);
+            }
+            return;
+          case "rotate":
+            if (params.length === 1) {
+              matrix.rotate(params[0], 0, 0);
+            } else if (params.length === 3) {
+              matrix.rotate(params[0], params[1], params[2]);
+            }
+            return;
+          case "translate":
+            if (params.length === 1) {
+              matrix.translate(params[0], 0);
+            } else if (params.length === 2) {
+              matrix.translate(params[0], params[1]);
+            }
+            return;
+          case "skewX":
+            if (params.length === 1) {
+              matrix.skewX(params[0]);
+            }
+            return;
+          case "skewY":
+            if (params.length === 1) {
+              matrix.skewY(params[0]);
+            }
+            return;
+        }
+      });
+      return matrix;
+    };
+  }
+});
+
+// node_modules/svgpath/lib/a2c.js
+var require_a2c = __commonJS({
+  "node_modules/svgpath/lib/a2c.js"(exports2, module2) {
+    "use strict";
+    var TAU = Math.PI * 2;
+    function unit_vector_angle(ux, uy, vx, vy) {
+      var sign = ux * vy - uy * vx < 0 ? -1 : 1;
+      var dot = ux * vx + uy * vy;
+      if (dot > 1) {
+        dot = 1;
+      }
+      if (dot < -1) {
+        dot = -1;
+      }
+      return sign * Math.acos(dot);
+    }
+    function get_arc_center(x1, y1, x2, y2, fa, fs, rx, ry, sin_phi, cos_phi) {
+      var x1p = cos_phi * (x1 - x2) / 2 + sin_phi * (y1 - y2) / 2;
+      var y1p = -sin_phi * (x1 - x2) / 2 + cos_phi * (y1 - y2) / 2;
+      var rx_sq = rx * rx;
+      var ry_sq = ry * ry;
+      var x1p_sq = x1p * x1p;
+      var y1p_sq = y1p * y1p;
+      var radicant = rx_sq * ry_sq - rx_sq * y1p_sq - ry_sq * x1p_sq;
+      if (radicant < 0) {
+        radicant = 0;
+      }
+      radicant /= rx_sq * y1p_sq + ry_sq * x1p_sq;
+      radicant = Math.sqrt(radicant) * (fa === fs ? -1 : 1);
+      var cxp = radicant * rx / ry * y1p;
+      var cyp = radicant * -ry / rx * x1p;
+      var cx = cos_phi * cxp - sin_phi * cyp + (x1 + x2) / 2;
+      var cy = sin_phi * cxp + cos_phi * cyp + (y1 + y2) / 2;
+      var v1x = (x1p - cxp) / rx;
+      var v1y = (y1p - cyp) / ry;
+      var v2x = (-x1p - cxp) / rx;
+      var v2y = (-y1p - cyp) / ry;
+      var theta1 = unit_vector_angle(1, 0, v1x, v1y);
+      var delta_theta = unit_vector_angle(v1x, v1y, v2x, v2y);
+      if (fs === 0 && delta_theta > 0) {
+        delta_theta -= TAU;
+      }
+      if (fs === 1 && delta_theta < 0) {
+        delta_theta += TAU;
+      }
+      return [cx, cy, theta1, delta_theta];
+    }
+    function approximate_unit_arc(theta1, delta_theta) {
+      var alpha = 4 / 3 * Math.tan(delta_theta / 4);
+      var x1 = Math.cos(theta1);
+      var y1 = Math.sin(theta1);
+      var x2 = Math.cos(theta1 + delta_theta);
+      var y2 = Math.sin(theta1 + delta_theta);
+      return [x1, y1, x1 - y1 * alpha, y1 + x1 * alpha, x2 + y2 * alpha, y2 - x2 * alpha, x2, y2];
+    }
+    module2.exports = function a2c(x1, y1, x2, y2, fa, fs, rx, ry, phi) {
+      var sin_phi = Math.sin(phi * TAU / 360);
+      var cos_phi = Math.cos(phi * TAU / 360);
+      var x1p = cos_phi * (x1 - x2) / 2 + sin_phi * (y1 - y2) / 2;
+      var y1p = -sin_phi * (x1 - x2) / 2 + cos_phi * (y1 - y2) / 2;
+      if (x1p === 0 && y1p === 0) {
+        return [];
+      }
+      if (rx === 0 || ry === 0) {
+        return [];
+      }
+      rx = Math.abs(rx);
+      ry = Math.abs(ry);
+      var lambda = x1p * x1p / (rx * rx) + y1p * y1p / (ry * ry);
+      if (lambda > 1) {
+        rx *= Math.sqrt(lambda);
+        ry *= Math.sqrt(lambda);
+      }
+      var cc = get_arc_center(x1, y1, x2, y2, fa, fs, rx, ry, sin_phi, cos_phi);
+      var result = [];
+      var theta1 = cc[2];
+      var delta_theta = cc[3];
+      var segments = Math.max(Math.ceil(Math.abs(delta_theta) / (TAU / 4)), 1);
+      delta_theta /= segments;
+      for (var i = 0; i < segments; i++) {
+        result.push(approximate_unit_arc(theta1, delta_theta));
+        theta1 += delta_theta;
+      }
+      return result.map(function(curve) {
+        for (var i2 = 0; i2 < curve.length; i2 += 2) {
+          var x = curve[i2 + 0];
+          var y = curve[i2 + 1];
+          x *= rx;
+          y *= ry;
+          var xp = cos_phi * x - sin_phi * y;
+          var yp = sin_phi * x + cos_phi * y;
+          curve[i2 + 0] = xp + cc[0];
+          curve[i2 + 1] = yp + cc[1];
+        }
+        return curve;
+      });
+    };
+  }
+});
+
+// node_modules/svgpath/lib/ellipse.js
+var require_ellipse = __commonJS({
+  "node_modules/svgpath/lib/ellipse.js"(exports2, module2) {
+    "use strict";
+    var epsilon = 1e-10;
+    var torad = Math.PI / 180;
+    function Ellipse(rx, ry, ax) {
+      if (!(this instanceof Ellipse)) {
+        return new Ellipse(rx, ry, ax);
+      }
+      this.rx = rx;
+      this.ry = ry;
+      this.ax = ax;
+    }
+    Ellipse.prototype.transform = function(m) {
+      var c = Math.cos(this.ax * torad), s = Math.sin(this.ax * torad);
+      var ma = [
+        this.rx * (m[0] * c + m[2] * s),
+        this.rx * (m[1] * c + m[3] * s),
+        this.ry * (-m[0] * s + m[2] * c),
+        this.ry * (-m[1] * s + m[3] * c)
+      ];
+      var J = ma[0] * ma[0] + ma[2] * ma[2], K = ma[1] * ma[1] + ma[3] * ma[3];
+      var D = ((ma[0] - ma[3]) * (ma[0] - ma[3]) + (ma[2] + ma[1]) * (ma[2] + ma[1])) * ((ma[0] + ma[3]) * (ma[0] + ma[3]) + (ma[2] - ma[1]) * (ma[2] - ma[1]));
+      var JK = (J + K) / 2;
+      if (D < epsilon * JK) {
+        this.rx = this.ry = Math.sqrt(JK);
+        this.ax = 0;
+        return this;
+      }
+      var L = ma[0] * ma[1] + ma[2] * ma[3];
+      D = Math.sqrt(D);
+      var l1 = JK + D / 2, l2 = JK - D / 2;
+      this.ax = Math.abs(L) < epsilon && Math.abs(l1 - K) < epsilon ? 90 : Math.atan(
+        Math.abs(L) > Math.abs(l1 - K) ? (l1 - J) / L : L / (l1 - K)
+      ) * 180 / Math.PI;
+      if (this.ax >= 0) {
+        this.rx = Math.sqrt(l1);
+        this.ry = Math.sqrt(l2);
+      } else {
+        this.ax += 90;
+        this.rx = Math.sqrt(l2);
+        this.ry = Math.sqrt(l1);
+      }
+      return this;
+    };
+    Ellipse.prototype.isDegenerate = function() {
+      return this.rx < epsilon * this.ry || this.ry < epsilon * this.rx;
+    };
+    module2.exports = Ellipse;
+  }
+});
+
+// node_modules/svgpath/lib/svgpath.js
+var require_svgpath = __commonJS({
+  "node_modules/svgpath/lib/svgpath.js"(exports2, module2) {
+    "use strict";
+    var pathParse = require_path_parse();
+    var transformParse = require_transform_parse();
+    var matrix = require_matrix();
+    var a2c = require_a2c();
+    var ellipse = require_ellipse();
+    function SvgPath(path) {
+      if (!(this instanceof SvgPath)) {
+        return new SvgPath(path);
+      }
+      var pstate = pathParse(path);
+      this.segments = pstate.segments;
+      this.err = pstate.err;
+      this.__stack = [];
+    }
+    SvgPath.from = function(src) {
+      if (typeof src === "string") return new SvgPath(src);
+      if (src instanceof SvgPath) {
+        var s = new SvgPath("");
+        s.err = src.err;
+        s.segments = src.segments.map(function(sgm) {
+          return sgm.slice();
+        });
+        s.__stack = src.__stack.map(function(m) {
+          return matrix().matrix(m.toArray());
+        });
+        return s;
+      }
+      throw new Error("SvgPath.from: invalid param type " + src);
+    };
+    SvgPath.prototype.__matrix = function(m) {
+      var self = this, i;
+      if (!m.queue.length) {
+        return;
+      }
+      this.iterate(function(s, index, x, y) {
+        var p, result, name, isRelative;
+        switch (s[0]) {
+          // Process 'assymetric' commands separately
+          case "v":
+            p = m.calc(0, s[1], true);
+            result = p[0] === 0 ? ["v", p[1]] : ["l", p[0], p[1]];
+            break;
+          case "V":
+            p = m.calc(x, s[1], false);
+            result = p[0] === m.calc(x, y, false)[0] ? ["V", p[1]] : ["L", p[0], p[1]];
+            break;
+          case "h":
+            p = m.calc(s[1], 0, true);
+            result = p[1] === 0 ? ["h", p[0]] : ["l", p[0], p[1]];
+            break;
+          case "H":
+            p = m.calc(s[1], y, false);
+            result = p[1] === m.calc(x, y, false)[1] ? ["H", p[0]] : ["L", p[0], p[1]];
+            break;
+          case "a":
+          case "A":
+            var ma = m.toArray();
+            var e = ellipse(s[1], s[2], s[3]).transform(ma);
+            if (ma[0] * ma[3] - ma[1] * ma[2] < 0) {
+              s[5] = s[5] ? "0" : "1";
+            }
+            p = m.calc(s[6], s[7], s[0] === "a");
+            if (s[0] === "A" && s[6] === x && s[7] === y || s[0] === "a" && s[6] === 0 && s[7] === 0) {
+              result = [s[0] === "a" ? "l" : "L", p[0], p[1]];
+              break;
+            }
+            if (e.isDegenerate()) {
+              result = [s[0] === "a" ? "l" : "L", p[0], p[1]];
+            } else {
+              result = [s[0], e.rx, e.ry, e.ax, s[4], s[5], p[0], p[1]];
+            }
+            break;
+          case "m":
+            isRelative = index > 0;
+            p = m.calc(s[1], s[2], isRelative);
+            result = ["m", p[0], p[1]];
+            break;
+          default:
+            name = s[0];
+            result = [name];
+            isRelative = name.toLowerCase() === name;
+            for (i = 1; i < s.length; i += 2) {
+              p = m.calc(s[i], s[i + 1], isRelative);
+              result.push(p[0], p[1]);
+            }
+        }
+        self.segments[index] = result;
+      }, true);
+    };
+    SvgPath.prototype.__evaluateStack = function() {
+      var m, i;
+      if (!this.__stack.length) {
+        return;
+      }
+      if (this.__stack.length === 1) {
+        this.__matrix(this.__stack[0]);
+        this.__stack = [];
+        return;
+      }
+      m = matrix();
+      i = this.__stack.length;
+      while (--i >= 0) {
+        m.matrix(this.__stack[i].toArray());
+      }
+      this.__matrix(m);
+      this.__stack = [];
+    };
+    SvgPath.prototype.toString = function() {
+      var result = "", prevCmd = "", cmdSkipped = false;
+      this.__evaluateStack();
+      for (var i = 0, len = this.segments.length; i < len; i++) {
+        var segment = this.segments[i];
+        var cmd = segment[0];
+        if (cmd !== prevCmd || cmd === "m" || cmd === "M") {
+          if (cmd === "m" && prevCmd === "z") result += " ";
+          result += cmd;
+          cmdSkipped = false;
+        } else {
+          cmdSkipped = true;
+        }
+        for (var pos = 1; pos < segment.length; pos++) {
+          var val = segment[pos];
+          if (pos === 1) {
+            if (cmdSkipped && val >= 0) result += " ";
+          } else if (val >= 0) result += " ";
+          result += val;
+        }
+        prevCmd = cmd;
+      }
+      return result;
+    };
+    SvgPath.prototype.translate = function(x, y) {
+      this.__stack.push(matrix().translate(x, y || 0));
+      return this;
+    };
+    SvgPath.prototype.scale = function(sx, sy) {
+      this.__stack.push(matrix().scale(sx, !sy && sy !== 0 ? sx : sy));
+      return this;
+    };
+    SvgPath.prototype.rotate = function(angle, rx, ry) {
+      this.__stack.push(matrix().rotate(angle, rx || 0, ry || 0));
+      return this;
+    };
+    SvgPath.prototype.skewX = function(degrees) {
+      this.__stack.push(matrix().skewX(degrees));
+      return this;
+    };
+    SvgPath.prototype.skewY = function(degrees) {
+      this.__stack.push(matrix().skewY(degrees));
+      return this;
+    };
+    SvgPath.prototype.matrix = function(m) {
+      this.__stack.push(matrix().matrix(m));
+      return this;
+    };
+    SvgPath.prototype.transform = function(transformString) {
+      if (!transformString.trim()) {
+        return this;
+      }
+      this.__stack.push(transformParse(transformString));
+      return this;
+    };
+    SvgPath.prototype.round = function(d) {
+      var contourStartDeltaX = 0, contourStartDeltaY = 0, deltaX = 0, deltaY = 0, l;
+      d = d || 0;
+      this.__evaluateStack();
+      this.segments.forEach(function(s) {
+        var isRelative = s[0].toLowerCase() === s[0];
+        switch (s[0]) {
+          case "H":
+          case "h":
+            if (isRelative) {
+              s[1] += deltaX;
+            }
+            deltaX = s[1] - s[1].toFixed(d);
+            s[1] = +s[1].toFixed(d);
+            return;
+          case "V":
+          case "v":
+            if (isRelative) {
+              s[1] += deltaY;
+            }
+            deltaY = s[1] - s[1].toFixed(d);
+            s[1] = +s[1].toFixed(d);
+            return;
+          case "Z":
+          case "z":
+            deltaX = contourStartDeltaX;
+            deltaY = contourStartDeltaY;
+            return;
+          case "M":
+          case "m":
+            if (isRelative) {
+              s[1] += deltaX;
+              s[2] += deltaY;
+            }
+            deltaX = s[1] - s[1].toFixed(d);
+            deltaY = s[2] - s[2].toFixed(d);
+            contourStartDeltaX = deltaX;
+            contourStartDeltaY = deltaY;
+            s[1] = +s[1].toFixed(d);
+            s[2] = +s[2].toFixed(d);
+            return;
+          case "A":
+          case "a":
+            if (isRelative) {
+              s[6] += deltaX;
+              s[7] += deltaY;
+            }
+            deltaX = s[6] - s[6].toFixed(d);
+            deltaY = s[7] - s[7].toFixed(d);
+            s[1] = +s[1].toFixed(d);
+            s[2] = +s[2].toFixed(d);
+            s[3] = +s[3].toFixed(d + 2);
+            s[6] = +s[6].toFixed(d);
+            s[7] = +s[7].toFixed(d);
+            return;
+          default:
+            l = s.length;
+            if (isRelative) {
+              s[l - 2] += deltaX;
+              s[l - 1] += deltaY;
+            }
+            deltaX = s[l - 2] - s[l - 2].toFixed(d);
+            deltaY = s[l - 1] - s[l - 1].toFixed(d);
+            s.forEach(function(val, i) {
+              if (!i) {
+                return;
+              }
+              s[i] = +s[i].toFixed(d);
+            });
+            return;
+        }
+      });
+      return this;
+    };
+    SvgPath.prototype.iterate = function(iterator, keepLazyStack) {
+      var segments = this.segments, replacements = {}, needReplace = false, lastX = 0, lastY = 0, countourStartX = 0, countourStartY = 0;
+      var i, j, newSegments;
+      if (!keepLazyStack) {
+        this.__evaluateStack();
+      }
+      segments.forEach(function(s, index) {
+        var res = iterator(s, index, lastX, lastY);
+        if (Array.isArray(res)) {
+          replacements[index] = res;
+          needReplace = true;
+        }
+        var isRelative = s[0] === s[0].toLowerCase();
+        switch (s[0]) {
+          case "m":
+          case "M":
+            lastX = s[1] + (isRelative ? lastX : 0);
+            lastY = s[2] + (isRelative ? lastY : 0);
+            countourStartX = lastX;
+            countourStartY = lastY;
+            return;
+          case "h":
+          case "H":
+            lastX = s[1] + (isRelative ? lastX : 0);
+            return;
+          case "v":
+          case "V":
+            lastY = s[1] + (isRelative ? lastY : 0);
+            return;
+          case "z":
+          case "Z":
+            lastX = countourStartX;
+            lastY = countourStartY;
+            return;
+          default:
+            lastX = s[s.length - 2] + (isRelative ? lastX : 0);
+            lastY = s[s.length - 1] + (isRelative ? lastY : 0);
+        }
+      });
+      if (!needReplace) {
+        return this;
+      }
+      newSegments = [];
+      for (i = 0; i < segments.length; i++) {
+        if (typeof replacements[i] !== "undefined") {
+          for (j = 0; j < replacements[i].length; j++) {
+            newSegments.push(replacements[i][j]);
+          }
+        } else {
+          newSegments.push(segments[i]);
+        }
+      }
+      this.segments = newSegments;
+      return this;
+    };
+    SvgPath.prototype.abs = function() {
+      this.iterate(function(s, index, x, y) {
+        var name = s[0], nameUC = name.toUpperCase(), i;
+        if (name === nameUC) {
+          return;
+        }
+        s[0] = nameUC;
+        switch (name) {
+          case "v":
+            s[1] += y;
+            return;
+          case "a":
+            s[6] += x;
+            s[7] += y;
+            return;
+          default:
+            for (i = 1; i < s.length; i++) {
+              s[i] += i % 2 ? x : y;
+            }
+        }
+      }, true);
+      return this;
+    };
+    SvgPath.prototype.rel = function() {
+      this.iterate(function(s, index, x, y) {
+        var name = s[0], nameLC = name.toLowerCase(), i;
+        if (name === nameLC) {
+          return;
+        }
+        if (index === 0 && name === "M") {
+          return;
+        }
+        s[0] = nameLC;
+        switch (name) {
+          case "V":
+            s[1] -= y;
+            return;
+          case "A":
+            s[6] -= x;
+            s[7] -= y;
+            return;
+          default:
+            for (i = 1; i < s.length; i++) {
+              s[i] -= i % 2 ? x : y;
+            }
+        }
+      }, true);
+      return this;
+    };
+    SvgPath.prototype.unarc = function() {
+      this.iterate(function(s, index, x, y) {
+        var new_segments, nextX, nextY, result = [], name = s[0];
+        if (name !== "A" && name !== "a") {
+          return null;
+        }
+        if (name === "a") {
+          nextX = x + s[6];
+          nextY = y + s[7];
+        } else {
+          nextX = s[6];
+          nextY = s[7];
+        }
+        new_segments = a2c(x, y, nextX, nextY, s[4], s[5], s[1], s[2], s[3]);
+        if (new_segments.length === 0) {
+          return [[s[0] === "a" ? "l" : "L", s[6], s[7]]];
+        }
+        new_segments.forEach(function(s2) {
+          result.push(["C", s2[2], s2[3], s2[4], s2[5], s2[6], s2[7]]);
+        });
+        return result;
+      });
+      return this;
+    };
+    SvgPath.prototype.unshort = function() {
+      var segments = this.segments;
+      var prevControlX, prevControlY, prevSegment;
+      var curControlX, curControlY;
+      this.iterate(function(s, idx, x, y) {
+        var name = s[0], nameUC = name.toUpperCase(), isRelative;
+        if (!idx) {
+          return;
+        }
+        if (nameUC === "T") {
+          isRelative = name === "t";
+          prevSegment = segments[idx - 1];
+          if (prevSegment[0] === "Q") {
+            prevControlX = prevSegment[1] - x;
+            prevControlY = prevSegment[2] - y;
+          } else if (prevSegment[0] === "q") {
+            prevControlX = prevSegment[1] - prevSegment[3];
+            prevControlY = prevSegment[2] - prevSegment[4];
+          } else {
+            prevControlX = 0;
+            prevControlY = 0;
+          }
+          curControlX = -prevControlX;
+          curControlY = -prevControlY;
+          if (!isRelative) {
+            curControlX += x;
+            curControlY += y;
+          }
+          segments[idx] = [
+            isRelative ? "q" : "Q",
+            curControlX,
+            curControlY,
+            s[1],
+            s[2]
+          ];
+        } else if (nameUC === "S") {
+          isRelative = name === "s";
+          prevSegment = segments[idx - 1];
+          if (prevSegment[0] === "C") {
+            prevControlX = prevSegment[3] - x;
+            prevControlY = prevSegment[4] - y;
+          } else if (prevSegment[0] === "c") {
+            prevControlX = prevSegment[3] - prevSegment[5];
+            prevControlY = prevSegment[4] - prevSegment[6];
+          } else {
+            prevControlX = 0;
+            prevControlY = 0;
+          }
+          curControlX = -prevControlX;
+          curControlY = -prevControlY;
+          if (!isRelative) {
+            curControlX += x;
+            curControlY += y;
+          }
+          segments[idx] = [
+            isRelative ? "c" : "C",
+            curControlX,
+            curControlY,
+            s[1],
+            s[2],
+            s[3],
+            s[4]
+          ];
+        }
+      });
+      return this;
+    };
+    module2.exports = SvgPath;
+  }
+});
+
+// node_modules/svgpath/index.js
+var require_svgpath2 = __commonJS({
+  "node_modules/svgpath/index.js"(exports2, module2) {
+    "use strict";
+    module2.exports = require_svgpath();
+  }
+});
+
 // src/index.ts
 var index_exports = {};
 __export(index_exports, {
@@ -149,6 +1171,7 @@ __export(index_exports, {
   DesignCanvas: () => DesignCanvas,
   DropHandler: () => DropHandler,
   FabCircle: () => FabCircle,
+  FabGroup: () => FabGroup,
   FabPath: () => FabPath,
   FabRect: () => FabRect,
   FabricEditor: () => FabricEditor,
@@ -244,6 +1267,7 @@ __export(index_exports, {
   layoutParents: () => layoutParents,
   layoutRoot: () => layoutRoot,
   nextShape: () => nextShape,
+  normalizeShape: () => normalizeShape,
   panCrop: () => panCrop,
   parseCombo: () => parseCombo,
   pendingBindings: () => pendingBindings,
@@ -283,7 +1307,7 @@ __export(index_exports, {
 module.exports = __toCommonJS(index_exports);
 
 // src/FabricEditor.ts
-var import_fabric26 = require("#fabric");
+var import_fabric27 = require("#fabric");
 
 // src/DesignCanvas.ts
 var import_fabric = require("#fabric");
@@ -624,7 +1648,7 @@ var DesignCanvas = class {
 };
 
 // src/LayerManager.ts
-var import_fabric13 = require("#fabric");
+var import_fabric14 = require("#fabric");
 
 // src/controls/CustomTextbox.ts
 var import_fabric3 = require("#fabric");
@@ -1554,7 +2578,7 @@ function sendBlocksBackward(objects, moved) {
 }
 
 // src/capabilities.ts
-var import_fabric8 = require("#fabric");
+var import_fabric9 = require("#fabric");
 
 // src/locking.ts
 var LOCK_MODES = ["free", "position", "full"];
@@ -2159,13 +3183,36 @@ installLockMethods(FabPath.prototype);
 installUserSlotRendering(FabPath.prototype);
 import_fabric7.classRegistry.setClass(FabPath, "Path");
 
+// src/shapes/FabGroup.ts
+var import_fabric8 = require("#fabric");
+var FabGroup = class extends import_fabric8.Group {
+  /** La couleur commune des enfants ; null quand ils diffèrent (une œuvre polychrome). */
+  commonFill() {
+    const fills = this.getObjects().map((child) => child.fill);
+    const [first] = fills;
+    return fills.every((fill) => sameFill(fill, first)) ? first ?? null : null;
+  }
+  /** Une seule couleur pour tout le groupe : un logo bicolore s'aplatit, c'est le choix fait. */
+  setFill(fill) {
+    this.getObjects().forEach((child) => child.set({ fill }));
+    this.dirty = true;
+  }
+};
+FabGroup.customProperties = ["layerId", "layerType", "lockMode", "lockContent"];
+function sameFill(a, b) {
+  if (a === b) return true;
+  if (!a || !b || typeof a === "string" || typeof b === "string") return false;
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+import_fabric8.classRegistry.setClass(FabGroup, "Group");
+
 // src/capabilities.ts
 function kindOf(obj) {
   const layerType = obj.layerType;
   if (isTextObject(obj)) return "text";
   if (layerType === "imageFrame") return "imageShape";
-  if (obj instanceof import_fabric8.FabricImage) return "legacyImage";
-  if (layerType === "shape" || obj instanceof import_fabric8.Rect) return "shape";
+  if (obj instanceof import_fabric9.FabricImage) return "legacyImage";
+  if (layerType === "shape" || obj instanceof import_fabric9.Rect) return "shape";
   return "other";
 }
 function rulesOf(obj, { ignoreLock = false } = {}) {
@@ -2209,7 +3256,7 @@ function kindRules(obj, kind) {
     case "shape":
       return {
         kind,
-        onToolboxImage: obj instanceof import_fabric8.Group ? null : "fill",
+        onToolboxImage: obj instanceof import_fabric9.Group ? null : "fill",
         hosts: true,
         options: shapeOptions(obj),
         ...free
@@ -2231,6 +3278,7 @@ function kindRules(obj, kind) {
 function shapeOptions(obj) {
   if (obj instanceof FabRect) return ["outline", "clip", "color", "corner_radius"];
   if (obj instanceof FabCircle || obj instanceof FabPath) return ["outline", "clip", "color"];
+  if (obj instanceof FabGroup) return ["color"];
   return [];
 }
 function isOutOfPlay(obj) {
@@ -2238,10 +3286,10 @@ function isOutOfPlay(obj) {
 }
 
 // src/shapes/factories.ts
-var import_fabric10 = require("#fabric");
+var import_fabric11 = require("#fabric");
 
 // src/controls/cropControls.ts
-var import_fabric9 = require("#fabric");
+var import_fabric10 = require("#fabric");
 var CROP_CONFIGS = {
   left: {
     dimension: "width",
@@ -2335,7 +3383,7 @@ function addCropControls(obj) {
   sides.forEach((side) => {
     const position = CONTROL_POSITIONS[side];
     const controlName = CONTROL_NAMES[side];
-    obj.controls[controlName] = new import_fabric9.Control({
+    obj.controls[controlName] = new import_fabric10.Control({
       x: position.x,
       y: position.y,
       actionHandler: createCropActionHandler(side),
@@ -2369,7 +3417,7 @@ function createPathShape(shapeId, options) {
   return FabPath.createFromCatalog(shapeId, options);
 }
 async function createImage(url, options) {
-  const img = await import_fabric10.FabricImage.fromURL(url, { crossOrigin: "anonymous" });
+  const img = await import_fabric11.FabricImage.fromURL(url, { crossOrigin: "anonymous" });
   let scale = 1;
   if (img.width > 300 || img.height > 300) {
     scale = Math.min(300 / img.width, 300 / img.height);
@@ -2412,7 +3460,7 @@ function createPathsShape(paths, options = {}) {
     child.setCoords();
     return child;
   });
-  const group = new import_fabric10.Group(children, { originX: "center", originY: "center", ...withoutUndefined({ left, top }) });
+  const group = new FabGroup(children, { originX: "center", originY: "center", ...withoutUndefined({ left, top }) });
   if (id) group.set({ id });
   const target = targetDims(group.width, group.height, options.width, options.height);
   group.set({ scaleX: target.width / group.width, scaleY: target.height / group.height });
@@ -2513,7 +3561,7 @@ function getAvailableShapes() {
 }
 
 // src/layout/geometry.ts
-var import_fabric11 = require("#fabric");
+var import_fabric12 = require("#fabric");
 function scaledSize(obj) {
   return {
     w: obj.width * (obj.scaleX || 1),
@@ -2554,7 +3602,7 @@ function outsetBox(box, pad) {
   return insetBox(box, { top: -pad.top, right: -pad.right, bottom: -pad.bottom, left: -pad.left });
 }
 function placeTopLeft(obj, x, y) {
-  obj.setPositionByOrigin(new import_fabric11.Point(x, y), "left", "top");
+  obj.setPositionByOrigin(new import_fabric12.Point(x, y), "left", "top");
   obj.setCoords();
 }
 function pointInObject(point, obj, margin = 0) {
@@ -2589,7 +3637,7 @@ function cornerToAxes(corner) {
 }
 
 // src/ImageFrame.ts
-var import_fabric12 = require("#fabric");
+var import_fabric13 = require("#fabric");
 
 // src/crop.ts
 var NO_CROP = { x: 0.5, y: 0.5, scale: 1 };
@@ -2658,7 +3706,7 @@ function rotatePoint(dx, dy, angleDeg) {
     y: dx * Math.sin(angle) + dy * Math.cos(angle)
   };
 }
-var ImageFrame = class _ImageFrame extends import_fabric12.Group {
+var ImageFrame = class _ImageFrame extends import_fabric13.Group {
   constructor(image, options = {}) {
     const frameScale = options.frameScale ?? 1;
     const frameWidth = options.frameWidth ?? image.width * frameScale;
@@ -2686,7 +3734,7 @@ var ImageFrame = class _ImageFrame extends import_fabric12.Group {
       height: frameHeight,
       subTargetCheck: false,
       interactive: false,
-      layoutManager: new import_fabric12.LayoutManager(new import_fabric12.FixedLayout()),
+      layoutManager: new import_fabric13.LayoutManager(new import_fabric13.FixedLayout()),
       // Désactiver le cache pour que le clipPath soit redessiné à chaque frame
       objectCaching: false
     });
@@ -2735,7 +3783,7 @@ var ImageFrame = class _ImageFrame extends import_fabric12.Group {
   }
   /** Un cadre en attente : l'image est le damier, aux dimensions du cadre. */
   static pending(options) {
-    const img = new import_fabric12.FabricImage(checkerCanvas(options.frameWidth, options.frameHeight));
+    const img = new import_fabric13.FabricImage(checkerCanvas(options.frameWidth, options.frameHeight));
     const frame = new _ImageFrame(img, options);
     frame._pending = true;
     return frame;
@@ -3139,7 +4187,7 @@ var ImageFrame = class _ImageFrame extends import_fabric12.Group {
       frameHeight: data.frameHeight,
       imageMeta: imageMetaOf(data.image)
     };
-    const img = src ? await import_fabric12.FabricImage.fromURL(src, { crossOrigin: "anonymous" }) : null;
+    const img = src ? await import_fabric13.FabricImage.fromURL(src, { crossOrigin: "anonymous" }) : null;
     options.crop = cropX !== void 0 || cropY !== void 0 ? { x: cropX, y: cropY, scale } : cropFromCenterOffset(
       data.frameWidth,
       data.frameHeight,
@@ -3168,7 +4216,7 @@ var ImageFrame = class _ImageFrame extends import_fabric12.Group {
     if (data.opacity !== void 0) {
       frame.opacity = data.opacity;
     }
-    if (data.shadow) frame.set("shadow", new import_fabric12.Shadow(data.shadow));
+    if (data.shadow) frame.set("shadow", new import_fabric13.Shadow(data.shadow));
     return frame;
   }
   /**
@@ -3191,8 +4239,8 @@ var ImageFrame = class _ImageFrame extends import_fabric12.Group {
     });
   }
 };
-import_fabric12.classRegistry.setClass(ImageFrame);
-import_fabric12.classRegistry.setClass(ImageFrame, "ImageFrame");
+import_fabric13.classRegistry.setClass(ImageFrame);
+import_fabric13.classRegistry.setClass(ImageFrame, "ImageFrame");
 
 // src/LayerManager.ts
 var NEW_LAYER_RATIO = 0.4;
@@ -3225,7 +4273,7 @@ var LayerManager = class {
    * Charge l'image de fond
    */
   async loadBackgroundImage(url) {
-    const img = await import_fabric13.FabricImage.fromURL(url, { crossOrigin: "anonymous" });
+    const img = await import_fabric14.FabricImage.fromURL(url, { crossOrigin: "anonymous" });
     const scaleX = this.canvas.width / img.width;
     const scaleY = this.canvas.height / img.height;
     const scale = Math.max(scaleX, scaleY);
@@ -3280,7 +4328,7 @@ var LayerManager = class {
   }
   /** Le centre du document. */
   get center() {
-    return new import_fabric13.Point(this.canvas.width / 2, this.canvas.height / 2);
+    return new import_fabric14.Point(this.canvas.width / 2, this.canvas.height / 2);
   }
   /**
    * La boîte d'un calque neuf (forme, image) : NEW_LAYER_RATIO du document dans chaque sens.
@@ -3381,7 +4429,7 @@ var LayerManager = class {
   async addImage(url, options = {}) {
     const center = this.center;
     const { left = center.x, top = center.y, layerId = this.generateId(), imageMeta } = options;
-    const img = await import_fabric13.FabricImage.fromURL(url, { crossOrigin: "anonymous" });
+    const img = await import_fabric14.FabricImage.fromURL(url, { crossOrigin: "anonymous" });
     const box = this.newLayerBox;
     const frameScale = Math.min(box.w / img.width, box.h / img.height);
     const frame = new ImageFrame(img, { left, top, layerId, frameScale, imageMeta });
@@ -3410,7 +4458,7 @@ var LayerManager = class {
   async replaceImageSource(target, newUrl, options) {
     if (kindOf(target) === "imageShape") {
       const frame = target;
-      const newImg = await import_fabric13.FabricImage.fromURL(newUrl, { crossOrigin: "anonymous" });
+      const newImg = await import_fabric14.FabricImage.fromURL(newUrl, { crossOrigin: "anonymous" });
       frame.replaceImage(newImg, options?.imageMeta);
       if (options?.opacity !== void 0) {
         frame.opacity = options.opacity;
@@ -3436,7 +4484,7 @@ var LayerManager = class {
       layerType: target.get("layerType")
     };
     const lockMode = getLockMode(target);
-    const newImg = await import_fabric13.FabricImage.fromURL(newUrl, { crossOrigin: "anonymous" });
+    const newImg = await import_fabric14.FabricImage.fromURL(newUrl, { crossOrigin: "anonymous" });
     const oldWidth = target.width * target.scaleX;
     const oldHeight = target.height * target.scaleY;
     const coverScale2 = Math.max(oldWidth / newImg.width, oldHeight / newImg.height);
@@ -3479,7 +4527,7 @@ var LayerManager = class {
     const { clipShape, clipData, cornerRadius } = clipOfShape(shape);
     const { w: displayedWidth, h: displayedHeight } = scaledSize(shape);
     const center = shape.getRelativeCenterPoint();
-    const img = await import_fabric13.FabricImage.fromURL(imageUrl, { crossOrigin: "anonymous" });
+    const img = await import_fabric14.FabricImage.fromURL(imageUrl, { crossOrigin: "anonymous" });
     const frame = new ImageFrame(img, {
       left: center.x,
       top: center.y,
@@ -3594,7 +4642,7 @@ var LayerManager = class {
    * libre, ses objets restent des calques).
    */
   groupObjects(objects) {
-    const group = new import_fabric13.Group(objects);
+    const group = new import_fabric14.Group(objects);
     objects.forEach((obj) => this.canvas.remove(obj));
     this.canvas.add(group);
     this.canvas.setActiveObject(group);
@@ -3631,7 +4679,7 @@ var LayerManager = class {
       }
       case "Image":
       case "image": {
-        const img = await import_fabric13.FabricImage.fromObject({
+        const img = await import_fabric14.FabricImage.fromObject({
           ...layer,
           crossOrigin: "anonymous"
         });
@@ -3645,7 +4693,7 @@ var LayerManager = class {
       }
       case "Group":
       case "group":
-        obj = await import_fabric13.Group.fromObject(layer);
+        obj = await FabGroup.fromObject(layer);
         break;
       case "Rect":
       case "rect":
@@ -3757,7 +4805,7 @@ function clipOfShape(shape) {
   if (shape instanceof FabPath) {
     const id = shape.id;
     const clipData = {
-      d: import_fabric13.util.joinPath(shape.path),
+      d: import_fabric14.util.joinPath(shape.path),
       width: shape.width,
       height: shape.height,
       ...shape.fillRule === "evenodd" ? { fillRule: "evenodd" } : {}
@@ -3768,7 +4816,7 @@ function clipOfShape(shape) {
 }
 
 // src/SelectionManager.ts
-var import_fabric14 = require("#fabric");
+var import_fabric15 = require("#fabric");
 var SelectionManager = class {
   constructor(canvas) {
     this.canvas = canvas;
@@ -3941,7 +4989,7 @@ var SelectionManager = class {
     if (kept.length === 0) this.clear();
     else if (kept.length === 1) this.select(kept[0]);
     else {
-      this.canvas.setActiveObject(new import_fabric14.ActiveSelection(kept, { canvas: this.canvas.originalFabricCanvas }));
+      this.canvas.setActiveObject(new import_fabric15.ActiveSelection(kept, { canvas: this.canvas.originalFabricCanvas }));
       this.canvas.renderAll();
     }
   }
@@ -4030,7 +5078,7 @@ var SelectionManager = class {
     const id = idOf(container);
     this._enteredId = id;
     const child = this.canvas.getObjects().slice().reverse().find(
-      (o) => parentIdOf(o) === id && o.containsPoint(new import_fabric14.Point(point.x, point.y))
+      (o) => parentIdOf(o) === id && o.containsPoint(new import_fabric15.Point(point.x, point.y))
     );
     if (child) this.canvas.setActiveObject(child);
     this.canvas.requestRenderAll();
@@ -4057,7 +5105,7 @@ var SelectionManager = class {
     if (this._silenced) return;
     const activeObject = this.canvas.getActiveObject();
     if (!activeObject) return;
-    if (activeObject instanceof import_fabric14.ActiveSelection) {
+    if (activeObject instanceof import_fabric15.ActiveSelection) {
       this.handleMultipleSelection(activeObject);
       return;
     }
@@ -4100,7 +5148,7 @@ var SelectionManager = class {
       return;
     }
     if (kept.length !== members.length || kept.some((obj) => !members.includes(obj))) {
-      this.canvas.setActiveObject(new import_fabric14.ActiveSelection(kept, { canvas: this.canvas.originalFabricCanvas }));
+      this.canvas.setActiveObject(new import_fabric15.ActiveSelection(kept, { canvas: this.canvas.originalFabricCanvas }));
       this.canvas.requestRenderAll();
       return;
     }
@@ -4175,7 +5223,7 @@ var SelectionManager = class {
 };
 
 // src/MaskManager.ts
-var import_fabric15 = require("#fabric");
+var import_fabric16 = require("#fabric");
 var MASK_LAYER_ID = "mask";
 var BACKGROUND_LAYER_ID2 = "originalImage";
 var MaskManager = class {
@@ -4220,7 +5268,7 @@ var MaskManager = class {
     if (!bgImage) {
       throw new Error("Pas d'image de fond pour appliquer le masque");
     }
-    const maskImage = await import_fabric15.FabricImage.fromURL(maskUrl, {
+    const maskImage = await import_fabric16.FabricImage.fromURL(maskUrl, {
       crossOrigin: "anonymous"
     });
     this.cropCanvasToMask(maskImage, bgImage.height);
@@ -4526,10 +5574,10 @@ var HistoryManager = class {
 };
 
 // src/SnappingManager.ts
-var import_fabric17 = require("#fabric");
+var import_fabric18 = require("#fabric");
 
 // src/ui/guides.ts
-var import_fabric16 = require("#fabric");
+var import_fabric17 = require("#fabric");
 var CanvasGuides = class {
   constructor(canvas, color = DEFAULT_SNAP_GUIDE_COLOR) {
     this.objects = [];
@@ -4542,7 +5590,7 @@ var CanvasGuides = class {
   // ── Low-level primitives ──────────────────────────────────────────
   /** Add a line guide. */
   addLine(coords, opts = {}) {
-    const line = new import_fabric16.Line(coords, {
+    const line = new import_fabric17.Line(coords, {
       stroke: opts.stroke ?? this.color,
       strokeWidth: opts.strokeWidth ?? 1,
       strokeDashArray: opts.strokeDashArray ?? [5, 5],
@@ -4555,7 +5603,7 @@ var CanvasGuides = class {
   }
   /** Add a rectangle guide (highlight zone, margin indicator, etc.). */
   addRect(opts, insertAbove) {
-    const rect = new import_fabric16.Rect({
+    const rect = new import_fabric17.Rect({
       left: opts.left,
       top: opts.top,
       originX: "left",
@@ -4825,7 +5873,7 @@ function createHatchPattern(hex) {
   ctx.moveTo(size / 2, size + size / 2);
   ctx.lineTo(size + size / 2, size / 2);
   ctx.stroke();
-  return new import_fabric16.Pattern({ source: canvas, repeat: "repeat" });
+  return new import_fabric17.Pattern({ source: canvas, repeat: "repeat" });
 }
 
 // src/snap.ts
@@ -4939,9 +5987,9 @@ var SnappingManager = class {
   handleObjectMoving(obj) {
     if (!obj || !this.enabled) return;
     if (obj.get("layerId") === "originalImage") return;
-    const moving = obj instanceof import_fabric17.ActiveSelection ? obj.getObjects() : [obj];
+    const moving = obj instanceof import_fabric18.ActiveSelection ? obj.getObjects() : [obj];
     const objects = this.canvas.getObjects();
-    if (!(obj instanceof import_fabric17.ActiveSelection) && stackParentOf(obj, objects)) {
+    if (!(obj instanceof import_fabric18.ActiveSelection) && stackParentOf(obj, objects)) {
       this.guides.clearAndRender();
       return;
     }
@@ -5135,10 +6183,10 @@ function isSnapTarget(obj) {
 }
 
 // src/LayoutManager.ts
-var import_fabric22 = require("#fabric");
+var import_fabric23 = require("#fabric");
 
 // src/DragToLayout.ts
-var import_fabric19 = require("#fabric");
+var import_fabric20 = require("#fabric");
 
 // src/layout/stack/engine.ts
 var yoga = null;
@@ -5366,10 +6414,10 @@ function setupTextMeasure(node, obj, Y) {
 }
 
 // src/layout/rotation.ts
-var import_fabric18 = require("#fabric");
+var import_fabric19 = require("#fabric");
 function rotateAbout(obj, pivot, delta) {
   if (!delta) return;
-  const center = obj.getCenterPoint().rotate(import_fabric18.util.degreesToRadians(delta), pivot);
+  const center = obj.getCenterPoint().rotate(import_fabric19.util.degreesToRadians(delta), pivot);
   obj.set({ angle: (obj.angle || 0) + delta });
   obj.setPositionByOrigin(center, "center", "center");
   obj.setCoords();
@@ -5409,7 +6457,7 @@ var SubtreeRotate = class _SubtreeRotate {
   /** La descendance suit la rotation de `target` depuis le début. */
   follow(target) {
     const delta = (target.angle || 0) - this.startAngle;
-    const rad = import_fabric18.util.degreesToRadians(delta);
+    const rad = import_fabric19.util.degreesToRadians(delta);
     for (const f of this.followers) {
       f.obj.set({ angle: f.angle + delta });
       f.obj.setPositionByOrigin(f.center.rotate(rad, this.pivot), "center", "center");
@@ -6183,7 +7231,7 @@ var DragToLayout = class {
    * need to be on the canvas yet — it is added when the session anchors.
    */
   tick(source, cursor) {
-    source.setPositionByOrigin(new import_fabric19.Point(cursor.x, cursor.y), "center", "center");
+    source.setPositionByOrigin(new import_fabric20.Point(cursor.x, cursor.y), "center", "center");
     source.setCoords();
     this.move(source, cursor);
     if (this.canvas.getObjects().includes(source)) this.canvas.requestRenderAll();
@@ -6639,16 +7687,16 @@ function arrangeFree(container, objects) {
 }
 
 // src/ui/controls.ts
-var import_fabric20 = require("#fabric");
+var import_fabric21 = require("#fabric");
 function applyControlStyle(canvas, guideColor, resolveTarget, userSlotLabel) {
   const gc = guideColor;
-  import_fabric20.FabricObject.ownDefaults.borderColor = gc;
-  import_fabric20.FabricObject.ownDefaults.borderScaleFactor = 2;
-  import_fabric20.FabricObject.ownDefaults.borderOpacityWhenMoving = 1;
-  import_fabric20.FabricObject.ownDefaults.cornerColor = "#ffffff";
-  import_fabric20.FabricObject.ownDefaults.cornerStrokeColor = "#000000";
-  import_fabric20.FabricObject.ownDefaults.transparentCorners = false;
-  import_fabric20.FabricObject.ownDefaults.cornerSize = 16;
+  import_fabric21.FabricObject.ownDefaults.borderColor = gc;
+  import_fabric21.FabricObject.ownDefaults.borderScaleFactor = 2;
+  import_fabric21.FabricObject.ownDefaults.borderOpacityWhenMoving = 1;
+  import_fabric21.FabricObject.ownDefaults.cornerColor = "#ffffff";
+  import_fabric21.FabricObject.ownDefaults.cornerStrokeColor = "#000000";
+  import_fabric21.FabricObject.ownDefaults.transparentCorners = false;
+  import_fabric21.FabricObject.ownDefaults.cornerSize = 16;
   const hoverProgress = /* @__PURE__ */ new WeakMap();
   installControlRenderer(gc, hoverProgress);
   installControlHitAreas(canvas);
@@ -6663,7 +7711,7 @@ var ANIM_SPEED = 10;
 function installControlRenderer(gc, hoverProgress) {
   const [activeR, activeG, activeB] = parseHex(gc);
   const hoverStart = /* @__PURE__ */ new WeakMap();
-  import_fabric20.Control.prototype.render = function(ctx, left, top, styleOverride, fabricObject) {
+  import_fabric21.Control.prototype.render = function(ctx, left, top, styleOverride, fabricObject) {
     if (fabricObject.isMoving) return;
     const baseColor = styleOverride?.cornerColor ?? fabricObject.cornerColor;
     const isDefault = baseColor === DEFAULT_COLOR2;
@@ -6752,13 +7800,13 @@ var resizeEdge = (eventData, transform, x, y) => {
   return changed;
 };
 function installControlHitAreas(canvas) {
-  const createSideRotationControl = () => new import_fabric20.Control({
+  const createSideRotationControl = () => new import_fabric21.Control({
     x: 0.5,
     y: 0,
     offsetX: 30,
     offsetY: 0,
-    actionHandler: import_fabric20.controlsUtils.rotationWithSnapping,
-    cursorStyleHandler: import_fabric20.controlsUtils.rotationStyleHandler,
+    actionHandler: import_fabric21.controlsUtils.rotationWithSnapping,
+    cursorStyleHandler: import_fabric21.controlsUtils.rotationStyleHandler,
     withConnection: true,
     actionName: "rotate"
   });
@@ -6924,7 +7972,7 @@ var SubtreeDrag = class _SubtreeDrag {
 };
 
 // src/layout/scale-session.ts
-var import_fabric21 = require("#fabric");
+var import_fabric22 = require("#fabric");
 var scaleMin = (minSize, k) => minSize && { w: minSize.w * k, h: minSize.h * k };
 var ScaleSession = class _ScaleSession {
   constructor(container, objects, start) {
@@ -6955,7 +8003,7 @@ var ScaleSession = class _ScaleSession {
     const k = Math.min(this.maxK, Math.max(0.05, (w / start.width + h / start.height) / 2));
     const fx = transform.originX === "left" ? 0 : transform.originX === "right" ? 1 : 0.5;
     const fy = transform.originY === "top" ? 0 : transform.originY === "bottom" ? 1 : 0.5;
-    const corner = new import_fabric21.Point(start.width * fx, start.height * fy).rotate(import_fabric21.util.degreesToRadians(this.angle)).add(new import_fabric21.Point(start.left, start.top));
+    const corner = new import_fabric22.Point(start.width * fx, start.height * fy).rotate(import_fabric22.util.degreesToRadians(this.angle)).add(new import_fabric22.Point(start.left, start.top));
     this.apply(k, corner);
   }
   /**
@@ -7219,7 +8267,7 @@ var LayoutManager2 = class {
   // ── Canvas event handlers ─────────────────────────────────────────
   onMoving(e) {
     const obj = e.target;
-    if (obj instanceof import_fabric22.ActiveSelection) {
+    if (obj instanceof import_fabric23.ActiveSelection) {
       this.moveFollowers(obj, obj.getObjects(), e.transform);
       return;
     }
@@ -7271,7 +8319,7 @@ var LayoutManager2 = class {
    *  comme un bloc — autour du centre de départ, depuis le début du geste. */
   onRotating(e) {
     const obj = e.target;
-    const moved = obj instanceof import_fabric22.ActiveSelection ? obj.getObjects() : [obj];
+    const moved = obj instanceof import_fabric23.ActiveSelection ? obj.getObjects() : [obj];
     this.rotateFollowers(obj, moved, e.transform);
   }
   rotateFollowers(target, moved, transform) {
@@ -7300,16 +8348,16 @@ var LayoutManager2 = class {
   onModified(e) {
     const obj = e.target;
     if (this.followers) {
-      const moved = obj instanceof import_fabric22.ActiveSelection ? obj.getObjects() : [obj];
+      const moved = obj instanceof import_fabric23.ActiveSelection ? obj.getObjects() : [obj];
       this.moveFollowers(obj, moved, this.followers.transform);
     }
     this.followers = null;
     if (this.rotation) {
-      const moved = obj instanceof import_fabric22.ActiveSelection ? obj.getObjects() : [obj];
+      const moved = obj instanceof import_fabric23.ActiveSelection ? obj.getObjects() : [obj];
       this.rotateFollowers(obj, moved, this.rotation.transform);
     }
     this.rotation = null;
-    if (obj instanceof import_fabric22.ActiveSelection) {
+    if (obj instanceof import_fabric23.ActiveSelection) {
       this.drag.reset();
       return;
     }
@@ -7370,16 +8418,16 @@ var LayoutManager2 = class {
 };
 
 // src/fonts.ts
-var import_fabric23 = require("#fabric");
+var import_fabric24 = require("#fabric");
 function forgetFontMeasures(family) {
-  import_fabric23.cache.clearFontCache(family);
+  import_fabric24.cache.clearFontCache(family);
 }
 
 // src/types.ts
 var DRAG_PREVIEW_KEY = "dragPreview";
 
 // src/editor/style-commands.ts
-var import_fabric24 = require("#fabric");
+var import_fabric25 = require("#fabric");
 
 // src/clipping/antiScale.ts
 function antiScale(obj) {
@@ -7700,7 +8748,7 @@ var StyleCommands = class {
       obj.nextClipShape();
       obj.dirty = true;
       this.editor.canvas.requestRenderAll();
-    } else if (obj instanceof import_fabric24.FabricImage) {
+    } else if (obj instanceof import_fabric25.FabricImage) {
       switchClip(obj);
       obj.dirty = true;
       this.editor.canvas.remove(obj);
@@ -7712,7 +8760,7 @@ var StyleCommands = class {
    */
   switchShape() {
     const obj = this.editor.selection.current;
-    if (!obj || obj instanceof import_fabric24.FabricImage) return;
+    if (!obj || obj instanceof import_fabric25.FabricImage) return;
     const currentShapeId = obj.id;
     const nextShapeType = nextShape(currentShapeId);
     this.changeShape(nextShapeType);
@@ -7727,7 +8775,7 @@ var StyleCommands = class {
       obj.applyClipShape(shapeType);
       obj.dirty = true;
       this.editor.canvas.requestRenderAll();
-    } else if (!(obj instanceof import_fabric24.FabricImage)) {
+    } else if (!(obj instanceof import_fabric25.FabricImage)) {
       const newObj = switchShape(obj, shapeType);
       const layerId = obj.get("layerId");
       const layerType = obj.get("layerType");
@@ -7833,7 +8881,7 @@ var StyleCommands = class {
       return;
     }
     const previous = obj.fill;
-    obj.set({ fill: color });
+    applyFill(obj, color);
     if (padGroupOnFirstFill(obj, previous)) this.editor.layout.relayout();
     this.editor.canvas.renderAll();
   }
@@ -7848,7 +8896,7 @@ var StyleCommands = class {
     const rad = angleDeg * Math.PI / 180;
     const cos = Math.cos(rad);
     const sin = Math.sin(rad);
-    const gradient = new import_fabric24.Gradient({
+    const gradient = new import_fabric25.Gradient({
       type: "linear",
       gradientUnits: "percentage",
       coords: {
@@ -7860,7 +8908,7 @@ var StyleCommands = class {
       colorStops: stops.map(({ color, offset }) => ({ color, offset }))
     });
     const previous = obj.fill;
-    obj.set({ fill: gradient });
+    applyFill(obj, gradient);
     if (padGroupOnFirstFill(obj, previous)) this.editor.layout.relayout();
     this.editor.canvas.renderAll();
   }
@@ -7929,7 +8977,7 @@ var StyleCommands = class {
     const obj = this.editor.selection.current;
     if (!obj) return;
     const existing = obj.shadow;
-    const shadow = new import_fabric24.Shadow({
+    const shadow = new import_fabric25.Shadow({
       color: opts.color ?? existing?.color ?? "rgba(0,0,0,0.5)",
       blur: opts.blur ?? existing?.blur ?? 10,
       offsetX: opts.offsetX ?? existing?.offsetX ?? 5,
@@ -7945,6 +8993,10 @@ var StyleCommands = class {
     this.editor.canvas.requestRenderAll();
   }
 };
+function applyFill(obj, fill) {
+  if (obj instanceof FabGroup) obj.setFill(fill);
+  else obj.set({ fill });
+}
 
 // src/editor/clipboard.ts
 var Clipboard = class {
@@ -8261,7 +9313,7 @@ function installDisplayStyleRendering(target) {
 }
 
 // src/CropMode.ts
-var import_fabric25 = require("#fabric");
+var import_fabric26 = require("#fabric");
 var HANDLE_RADIUS = 6;
 var HANDLE_GRAB = 12;
 var FALLBACK_VEIL = "#f3f4f6";
@@ -8366,13 +9418,13 @@ var CropMode = class {
   /** Le point de la scène dans le repère du cadre. */
   toFrame(scene) {
     const frame = this.frame;
-    const local = scene.transform(import_fabric25.util.invertTransform(frame.calcTransformMatrix()));
+    const local = scene.transform(import_fabric26.util.invertTransform(frame.calcTransformMatrix()));
     return { x: local.x + frame.frameWidth / 2, y: local.y + frame.frameHeight / 2 };
   }
   /** Le point du cadre à l'écran (pixels CSS du canvas). */
   toScreen(x, y) {
     const frame = this.frame;
-    return new import_fabric25.Point(x - frame.frameWidth / 2, y - frame.frameHeight / 2).transform(frame.calcTransformMatrix()).transform(this.fc.viewportTransform);
+    return new import_fabric26.Point(x - frame.frameWidth / 2, y - frame.frameHeight / 2).transform(frame.calcTransformMatrix()).transform(this.fc.viewportTransform);
   }
   /** Une unité d'écran en unités de cadre. */
   frameUnit() {
@@ -9431,7 +10483,7 @@ var _FabricEditor = class _FabricEditor {
    * remplacement, et l'image est ajoutée.
    */
   findDropTargetAtPoint(x, y, exclude) {
-    const point = new import_fabric26.Point(x, y);
+    const point = new import_fabric27.Point(x, y);
     const objects = this.canvas.getObjects().slice().reverse();
     for (const obj of objects) {
       if (obj === exclude || obj.get(DRAG_PREVIEW_KEY)) continue;
@@ -9458,15 +10510,15 @@ var _FabricEditor = class _FabricEditor {
   extendFabricObject() {
     if (_FabricEditor._toObjectExtended) return;
     _FabricEditor._toObjectExtended = true;
-    installGhostRendering(import_fabric26.FabricObject.prototype);
-    installDisplayStyleRendering(import_fabric26.FabricObject.prototype);
-    const originalToObject = import_fabric26.FabricObject.prototype.toObject;
-    import_fabric26.FabricObject.prototype.toObject = function(propertiesToInclude) {
+    installGhostRendering(import_fabric27.FabricObject.prototype);
+    installDisplayStyleRendering(import_fabric27.FabricObject.prototype);
+    const originalToObject = import_fabric27.FabricObject.prototype.toObject;
+    import_fabric27.FabricObject.prototype.toObject = function(propertiesToInclude) {
       const data = originalToObject.call(
         this,
         ["layerId", "layout", "bindings"].concat(propertiesToInclude || [])
       );
-      if (this.group instanceof import_fabric26.ActiveSelection) {
+      if (this.group instanceof import_fabric27.ActiveSelection) {
         const { x, y } = this.getXY();
         Object.assign(data, { left: x, top: y });
       }
@@ -9481,8 +10533,8 @@ _FabricEditor._toObjectExtended = false;
 var FabricEditor = _FabricEditor;
 
 // src/PreviewCanvas.ts
-var import_fabric27 = require("#fabric");
-var PreviewCanvas = class extends import_fabric27.StaticCanvas {
+var import_fabric28 = require("#fabric");
+var PreviewCanvas = class extends import_fabric28.StaticCanvas {
   constructor(el, opts) {
     const { width, height, ...canvasOpts } = opts;
     super(el, {
@@ -9564,7 +10616,7 @@ var PreviewCanvas = class extends import_fabric27.StaticCanvas {
 };
 
 // src/DropHandler.ts
-var import_fabric28 = require("#fabric");
+var import_fabric29 = require("#fabric");
 var HIGHLIGHT_COLOR = "#3b82f6";
 var KIND_CAPABILITIES = {
   image: { layout: false, replaceTarget: true },
@@ -9574,7 +10626,7 @@ var KIND_CAPABILITIES = {
 };
 function canvasImageSource(obj) {
   if (obj instanceof ImageFrame) return obj.imageSrc ? { url: obj.imageSrc, imageMeta: obj.imageMeta } : null;
-  if (obj instanceof import_fabric28.FabricImage) return obj.getSrc() ? { url: obj.getSrc(), imageMeta: {} } : null;
+  if (obj instanceof import_fabric29.FabricImage) return obj.getSrc() ? { url: obj.getSrc(), imageMeta: {} } : null;
   return null;
 }
 var DropHandler = class {
@@ -9751,7 +10803,7 @@ var DropHandler = class {
       if (!committed && object) {
         if (e) {
           const pointer = this.editor.canvas.getScenePoint(e);
-          object.setPositionByOrigin(new import_fabric28.Point(pointer.x, pointer.y), "center", "center");
+          object.setPositionByOrigin(new import_fabric29.Point(pointer.x, pointer.y), "center", "center");
           object.setCoords();
         }
         if (!this.editor.canvas.getObjects().includes(object)) {
@@ -9827,7 +10879,7 @@ var DropHandler = class {
         this.editor.layout.tickExternalDrag(object, pointer);
         return;
       }
-      object.setPositionByOrigin(new import_fabric28.Point(pointer.x, pointer.y), "center", "center");
+      object.setPositionByOrigin(new import_fabric29.Point(pointer.x, pointer.y), "center", "center");
       object.setCoords();
       this.editor.canvas.requestRenderAll();
     }
@@ -10035,7 +11087,7 @@ var DropHandler = class {
       height = target.height;
       clipPath = target.clipPath;
     }
-    const fabricOverlay = new import_fabric28.Rect({
+    const fabricOverlay = new import_fabric29.Rect({
       left: target.left,
       top: target.top,
       width,
@@ -10129,7 +11181,7 @@ var DropHandler = class {
    * drop-target detection.
    */
   async createImagePreview(url) {
-    const img = await import_fabric28.FabricImage.fromURL(url, { crossOrigin: "anonymous" });
+    const img = await import_fabric29.FabricImage.fromURL(url, { crossOrigin: "anonymous" });
     let scale = 1;
     if (img.width > 300 || img.height > 300) {
       scale = Math.min(300 / img.width, 300 / img.height);
@@ -10164,7 +11216,7 @@ var DropHandler = class {
     if (e && !this.intersectsCanvas(e, null)) return null;
     const pointer = e ? this.editor.canvas.getScenePoint(e) : null;
     const object = this.editor.layers.createUserSlot(opts);
-    if (pointer) object.setPositionByOrigin(new import_fabric28.Point(pointer.x, pointer.y), "center", "center");
+    if (pointer) object.setPositionByOrigin(new import_fabric29.Point(pointer.x, pointer.y), "center", "center");
     this.editor.layers.add(object);
     this.editor.canvas.setActiveObject(object);
     this.editor.canvas.renderAll();
@@ -10366,6 +11418,259 @@ function manyAllows(selected) {
         return false;
     }
   };
+}
+
+// src/shapes/svgShapes.ts
+var import_svgpath = __toESM(require_svgpath2());
+var BOX = 100;
+var DRAWING_TAGS = /* @__PURE__ */ new Set(["path", "rect", "circle", "ellipse", "polygon", "polyline"]);
+var FORBIDDEN_TAGS = /* @__PURE__ */ new Set(["text", "image", "use", "foreignobject"]);
+var UNSUPPORTED_PROPS = ["clip-path", "mask", "filter", "opacity", "fill-opacity", "stroke-opacity"];
+function normalizeShape(id, svgContent, warn = console.warn) {
+  const { viewBox, paths } = extractPaths(id, svgContent, warn);
+  if (paths.length === 0) {
+    throw new Error(`${id}.svg: aucun path exploitable (fills "none" partout ?)`);
+  }
+  const [minX, minY, w, h] = viewBox;
+  const scale = BOX / Math.max(w, h);
+  const scaledW = Math.round(w * scale * 100) / 100;
+  const scaledH = Math.round(h * scale * 100) / 100;
+  const offsetX = (BOX - scaledW) / 2;
+  const offsetY = (BOX - scaledH) / 2;
+  const normalized = paths.map((p) => ({
+    // En absolu et à trois décimales : arrondir des segments relatifs cumule l'erreur le
+    // long du tracé, et deux décimales déforment les petits arcs d'une icône (3 % de
+    // surface en moins sur une flèche Heroicons, mesuré au pixel) ; à trois, zéro écart.
+    d: (0, import_svgpath.default)(p.d).translate(-minX, -minY).scale(scale).translate(offsetX, offsetY).abs().round(3).toString(),
+    ...p.fill != null ? { fill: p.fill } : {},
+    ...p.stroke != null ? { stroke: p.stroke } : {},
+    // L'épaisseur vit dans le même espace que le `d`.
+    ...p.strokeWidth != null ? { strokeWidth: Math.round(p.strokeWidth * scale * 100) / 100 } : {},
+    ...p.fillRule ? { fillRule: p.fillRule } : {}
+  }));
+  return { id, paths: normalized, width: scaledW, height: scaledH, viewBox: `0 0 ${BOX} ${BOX}` };
+}
+function extractPaths(id, content, warn) {
+  const cleaned = content.replace(/<!--[\s\S]*?-->/g, "").replace(/<!\[CDATA\[/g, "").replace(/\]\]>/g, "").replace(/<[?!][^>]*>/g, "");
+  const tagRe = /<(\/?)([a-zA-Z_][\w:.-]*)((?:"[^"]*"|'[^']*'|[^"'>])*?)(\/?)>/g;
+  const stack = [];
+  const paths = [];
+  const classRules = {};
+  let viewBox = null;
+  let match;
+  while ((match = tagRe.exec(cleaned)) !== null) {
+    const [, closing, rawTag, rawAttrs, selfClosing] = match;
+    const tag = rawTag.toLowerCase().replace(/^.*:/, "");
+    if (closing) {
+      stack.pop();
+      continue;
+    }
+    if (FORBIDDEN_TAGS.has(tag)) {
+      throw new Error(`${id}.svg: <${rawTag}> non support\xE9 \u2014 le format formes accepte des paths unis, pas ${describeForbidden(tag)}`);
+    }
+    if (tag === "style") {
+      const end = cleaned.indexOf("</style", tagRe.lastIndex);
+      if (end === -1) throw new Error(`${id}.svg: <style> non referm\xE9`);
+      parseStyleRules(id, cleaned.slice(tagRe.lastIndex, end), classRules);
+      tagRe.lastIndex = cleaned.indexOf(">", end) + 1;
+      continue;
+    }
+    const attrs = parseAttrs(rawAttrs);
+    const appearance = ownAppearance(id, attrs, classRules);
+    if (tag === "svg" && viewBox === null) {
+      viewBox = parseViewBox(id, attrs.viewbox);
+    }
+    if (DRAWING_TAGS.has(tag) && !insideIgnoredContainer(stack)) {
+      assertSupported(id, tag, appearance, stack);
+      const d = toPathD(id, tag, attrs);
+      const resolved = resolveAppearance(appearance, stack);
+      const transform = transformChain(stack, attrs.transform);
+      if (resolved.fill === "none" && resolved.stroke == null) {
+        warn(`${id}.svg: <${tag}> fill="none" sans stroke, ignor\xE9`);
+      } else {
+        paths.push({
+          d: transform ? (0, import_svgpath.default)(d).transform(transform).toString() : d,
+          ...resolved.fill != null && resolved.fill !== "none" ? { fill: resolved.fill } : {},
+          ...resolved.stroke != null ? { stroke: resolved.stroke } : {},
+          ...resolved.stroke != null ? { strokeWidth: resolved.strokeWidth ?? 1 } : {},
+          ...resolved.fillRule ? { fillRule: resolved.fillRule } : {}
+        });
+      }
+    }
+    if (!selfClosing) {
+      stack.push({ tag, appearance, transform: attrs.transform });
+    }
+  }
+  if (viewBox === null) {
+    throw new Error(`${id}.svg: attribut viewBox manquant sur <svg>`);
+  }
+  return { viewBox, paths };
+}
+function parseStyleRules(id, css, rules) {
+  const body = css.replace(/\/\*[\s\S]*?\*\//g, "").trim();
+  if (body === "") return;
+  const ruleRe = /([^{}]+)\{([^{}]*)\}/g;
+  let consumed = 0;
+  let m;
+  while ((m = ruleRe.exec(body)) !== null) {
+    consumed = ruleRe.lastIndex;
+    const selectors = m[1].split(",").map((s) => s.trim());
+    const props = parseDeclarations(m[2]);
+    for (const selector of selectors) {
+      const klass = selector.match(/^\.([A-Za-z_][\w-]*)$/)?.[1];
+      if (!klass) {
+        throw new Error(`${id}.svg: s\xE9lecteur CSS "${selector}" hors p\xE9rim\xE8tre (classes simples uniquement)`);
+      }
+      rules[klass] = { ...rules[klass], ...props };
+    }
+  }
+  if (body.slice(consumed).trim() !== "") {
+    throw new Error(`${id}.svg: CSS non reconnu dans <style> : "${body.slice(consumed).trim().slice(0, 40)}\u2026"`);
+  }
+}
+function parseDeclarations(block) {
+  const props = {};
+  for (const decl of block.split(";")) {
+    const idx = decl.indexOf(":");
+    if (idx === -1) continue;
+    props[decl.slice(0, idx).trim().toLowerCase()] = decl.slice(idx + 1).trim();
+  }
+  return props;
+}
+function ownAppearance(id, attrs, classRules) {
+  const layers = [];
+  const presentation = {};
+  for (const prop of ["fill", "stroke", "stroke-width", "fill-rule", ...UNSUPPORTED_PROPS]) {
+    if (attrs[prop] != null) presentation[prop] = attrs[prop];
+  }
+  layers.push(presentation);
+  const classes = (attrs.class || "").split(/\s+/).filter(Boolean);
+  const fromClasses = {};
+  for (const [klass, props] of Object.entries(classRules)) {
+    if (classes.includes(klass)) Object.assign(fromClasses, props);
+  }
+  layers.push(fromClasses);
+  if (attrs.style) layers.push(parseDeclarations(attrs.style));
+  const merged = Object.assign({}, ...layers);
+  const unsupported = UNSUPPORTED_PROPS.find((prop) => merged[prop] != null);
+  return {
+    fill: normalizeFillValue(id, merged.fill),
+    stroke: normalizeStrokeValue(id, merged.stroke),
+    strokeWidth: merged["stroke-width"] != null ? parseFloat(merged["stroke-width"]) : void 0,
+    fillRule: merged["fill-rule"]?.trim() === "evenodd" ? "evenodd" : void 0,
+    unsupported
+  };
+}
+function insideIgnoredContainer(stack) {
+  return stack.some((el) => el.tag === "defs" || el.tag === "clippath" || el.tag === "mask" || el.tag === "symbol");
+}
+function assertSupported(id, tag, appearance, stack) {
+  const unsupported = appearance.unsupported ?? stack.find((el) => el.appearance.unsupported)?.appearance.unsupported;
+  if (unsupported) {
+    throw new Error(`${id}.svg: "${unsupported}" sur un <${tag}> dessinant \u2014 ce fichier est une composition, pas une forme`);
+  }
+}
+function parseAttrs(raw) {
+  const attrs = {};
+  const attrRe = /([a-zA-Z_:][\w:.-]*)\s*=\s*(?:"([^"]*)"|'([^']*)')/g;
+  let m;
+  while ((m = attrRe.exec(raw)) !== null) {
+    attrs[m[1].toLowerCase()] = m[2] ?? m[3];
+  }
+  return attrs;
+}
+function parseViewBox(id, value) {
+  if (!value) throw new Error(`${id}.svg: attribut viewBox manquant sur <svg>`);
+  const parts = value.split(/[\s,]+/).map(Number);
+  if (parts.length !== 4 || parts.some(Number.isNaN)) {
+    throw new Error(`${id}.svg: viewBox invalide "${value}"`);
+  }
+  return parts;
+}
+function normalizeFillValue(id, fill) {
+  if (fill == null) return void 0;
+  const value = fill.trim();
+  if (value.startsWith("url(")) {
+    throw new Error(`${id}.svg: gradient ou pattern (fill="url(#\u2026)") non support\xE9`);
+  }
+  if (value === "currentColor" || value === "inherit" || value === "") return void 0;
+  return value;
+}
+function normalizeStrokeValue(id, stroke) {
+  if (stroke == null) return void 0;
+  const value = stroke.trim();
+  if (value.startsWith("url(")) {
+    throw new Error(`${id}.svg: gradient ou pattern (stroke="url(#\u2026)") non support\xE9`);
+  }
+  if (value === "none" || value === "currentColor" || value === "inherit" || value === "") return void 0;
+  return value;
+}
+function resolveAppearance(own, stack) {
+  const resolved = { ...own };
+  for (let i = stack.length - 1; i >= 0; i--) {
+    const ancestor = stack[i].appearance;
+    resolved.fill ?? (resolved.fill = ancestor.fill);
+    resolved.stroke ?? (resolved.stroke = ancestor.stroke);
+    resolved.strokeWidth ?? (resolved.strokeWidth = ancestor.strokeWidth);
+    resolved.fillRule ?? (resolved.fillRule = ancestor.fillRule);
+  }
+  return resolved;
+}
+function transformChain(stack, own) {
+  return [...stack.map((el) => el.transform), own].filter(Boolean).join(" ");
+}
+function toPathD(id, tag, attrs) {
+  const num = (key, fallback = 0) => {
+    const v = attrs[key];
+    return v == null || v === "" ? fallback : Number(v);
+  };
+  switch (tag) {
+    case "path": {
+      if (!attrs.d) throw new Error(`${id}.svg: <path> sans attribut d`);
+      return attrs.d;
+    }
+    case "rect": {
+      const x = num("x");
+      const y = num("y");
+      const w = num("width");
+      const h = num("height");
+      let rx = attrs.rx != null ? num("rx") : attrs.ry != null ? num("ry") : 0;
+      let ry = attrs.ry != null ? num("ry") : rx;
+      rx = Math.min(rx, w / 2);
+      ry = Math.min(ry, h / 2);
+      if (rx <= 0 || ry <= 0) return `M${x} ${y}H${x + w}V${y + h}H${x}Z`;
+      return `M${x + rx} ${y}H${x + w - rx}A${rx} ${ry} 0 0 1 ${x + w} ${y + ry}V${y + h - ry}A${rx} ${ry} 0 0 1 ${x + w - rx} ${y + h}H${x + rx}A${rx} ${ry} 0 0 1 ${x} ${y + h - ry}V${y + ry}A${rx} ${ry} 0 0 1 ${x + rx} ${y}Z`;
+    }
+    case "circle": {
+      const cx = num("cx");
+      const cy = num("cy");
+      const r = num("r");
+      return ellipseD(cx, cy, r, r);
+    }
+    case "ellipse":
+      return ellipseD(num("cx"), num("cy"), num("rx"), num("ry"));
+    case "polygon":
+    case "polyline": {
+      const points = (attrs.points || "").trim().split(/[\s,]+/).map(Number);
+      if (points.length < 4 || points.some(Number.isNaN)) {
+        throw new Error(`${id}.svg: <${tag}> points invalides`);
+      }
+      const [x0, y0, ...rest] = points;
+      const lines = [];
+      for (let i = 0; i < rest.length - 1; i += 2) lines.push(`L${rest[i]} ${rest[i + 1]}`);
+      return `M${x0} ${y0}${lines.join("")}${tag === "polygon" ? "Z" : ""}`;
+    }
+    default:
+      throw new Error(`${id}.svg: <${tag}> non convertible`);
+  }
+}
+function ellipseD(cx, cy, rx, ry) {
+  return `M${cx - rx} ${cy}A${rx} ${ry} 0 1 0 ${cx + rx} ${cy}A${rx} ${ry} 0 1 0 ${cx - rx} ${cy}Z`;
+}
+function describeForbidden(tag) {
+  if (tag === "text") return "de texte";
+  if (tag === "image") return "d'images embarqu\xE9es";
+  return "de r\xE9f\xE9rences externes";
 }
 
 // src/html/cssUtils.ts
@@ -10882,7 +12187,7 @@ function layerToHtmlStandalone(layer, zIndex) {
 }
 
 // src/text-units.ts
-var import_fabric29 = require("#fabric");
+var import_fabric30 = require("#fabric");
 var WHITESPACE = /\s/;
 function internals(text) {
   return text;
@@ -11023,7 +12328,7 @@ function tilePadding(text) {
 function textUnitTiles(text, kind, { resolution = 1, pad = tilePadding(text) } = {}) {
   const t = internals(text);
   const matrix = t.calcTransformMatrix();
-  const toLocal = import_fabric29.util.invertTransform(matrix);
+  const toLocal = import_fabric30.util.invertTransform(matrix);
   const parts = textParts(text);
   const [a, b, c, d, e, f] = matrix;
   const aligned = b === 0 && c === 0 && a > 0 && d > 0;
@@ -11053,7 +12358,7 @@ function textUnitTiles(text, kind, { resolution = 1, pad = tilePadding(text) } =
       const y0 = snapY(r.y - pad, Math.floor);
       const box = { x: x0, y: y0, w: snapX(r.x + r.w + pad, Math.ceil) - x0, h: snapY(r.y + r.h + pad, Math.ceil) - y0 };
       return parts.map((part) => {
-        const canvas = import_fabric29.util.createCanvasElement();
+        const canvas = import_fabric30.util.createCanvasElement();
         canvas.width = Math.max(1, Math.ceil(box.w * resolution));
         canvas.height = Math.max(1, Math.ceil(box.h * resolution));
         box.w = canvas.width / resolution;
@@ -11082,6 +12387,7 @@ function textUnitTiles(text, kind, { resolution = 1, pad = tilePadding(text) } =
   DesignCanvas,
   DropHandler,
   FabCircle,
+  FabGroup,
   FabPath,
   FabRect,
   FabricEditor,
@@ -11177,6 +12483,7 @@ function textUnitTiles(text, kind, { resolution = 1, pad = tilePadding(text) } =
   layoutParents,
   layoutRoot,
   nextShape,
+  normalizeShape,
   panCrop,
   parseCombo,
   pendingBindings,

@@ -8,6 +8,7 @@ import { createShape as createShapeObject, createPathsShape, createImage } from 
 import { FabRect } from "./shapes/FabRect";
 import { FabCircle } from "./shapes/FabCircle";
 import { FabPath } from "./shapes/FabPath";
+import { FabGroup } from "./shapes/FabGroup";
 import { isValidShape } from "./shapes";
 import { clipDataFor, type ClipData } from "./shapes/registry";
 import { scaledSize, setShapeSize } from "./layout/geometry";
@@ -610,7 +611,7 @@ export class LayerManager {
 
       case "Group":
       case "group":
-        obj = await Group.fromObject(layer);
+        obj = await FabGroup.fromObject(layer);
         break;
 
       case "Rect":

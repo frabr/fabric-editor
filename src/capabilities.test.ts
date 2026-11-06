@@ -8,6 +8,7 @@ import { rulesOf, kindOf } from "./capabilities";
 import { CustomTextbox } from "./controls/CustomTextbox";
 import { FabRect } from "./shapes/FabRect";
 import { FabCircle } from "./shapes/FabCircle";
+import { FabGroup } from "./shapes/FabGroup";
 import { ImageFrame } from "./ImageFrame";
 import { applyLockMode } from "./locking";
 import type { FabricObject } from "#fabric";
@@ -42,7 +43,12 @@ describe("rulesOf", () => {
     expect(rulesOf(shape(new FabCircle({ radius: 10 }))).options).not.toContain("corner_radius");
   });
 
-  it("groupe de paths (forme multi-régions) : accueille, mais ni options ni image en fond", () => {
+  it("groupe de paths (forme multi-régions) : accueille, une couleur pour tous, pas d'image en fond", () => {
+    const rules = rulesOf(shape(new FabGroup([])));
+    expect(rules).toMatchObject({ kind: "shape", hosts: true, options: ["color"], onToolboxImage: null });
+  });
+
+  it("un fabric.Group nu (fusion legacy) : accueille, sans option", () => {
     const rules = rulesOf(shape(new Group([])));
     expect(rules).toMatchObject({ kind: "shape", hosts: true, options: [], onToolboxImage: null });
   });

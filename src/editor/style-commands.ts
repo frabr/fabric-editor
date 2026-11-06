@@ -2,7 +2,7 @@
  * Le style de l'objet sélectionné : couleur, remplissage, contour, ombre, police, styles
  * du texte — et les bascules legacy de forme et de découpe.
  */
-import { FabricObject, FabricImage, Gradient, Shadow } from "#fabric";
+import { FabricObject, FabricImage, Gradient, Shadow, type TFiller } from "#fabric";
 
 /** Un arrêt de dégradé : sa couleur (hex ou rgba) et sa position, de 0 à 1. */
 export interface GradientStop {
@@ -13,6 +13,7 @@ import { switchClip } from "../clipping";
 import { switchShape, nextShape } from "../shapes";
 import { ImageFrame } from "../ImageFrame";
 import { FabRect } from "../shapes/FabRect";
+import { FabGroup } from "../shapes/FabGroup";
 import type { ShapeType } from "../types";
 import { padGroupOnFirstFill } from "../layout/grouping";
 import { isTextObject } from "../layout/text";
@@ -258,7 +259,7 @@ export class StyleCommands {
       return;
     }
     const previous = obj.fill;
-    obj.set({ fill: color });
+    applyFill(obj, color);
     if (padGroupOnFirstFill(obj, previous)) this.editor.layout.relayout();
     this.editor.canvas.renderAll();
   }
@@ -286,7 +287,7 @@ export class StyleCommands {
       colorStops: stops.map(({ color, offset }) => ({ color, offset })),
     });
     const previous = obj.fill;
-    obj.set({ fill: gradient });
+    applyFill(obj, gradient);
     if (padGroupOnFirstFill(obj, previous)) this.editor.layout.relayout();
     this.editor.canvas.renderAll();
   }
@@ -382,4 +383,10 @@ export class StyleCommands {
     obj.set("shadow", null);
     this.editor.canvas.requestRenderAll();
   }
+}
+
+/** Le remplissage d'un objet — d'un groupe de paths, celui de chacun de ses paths. */
+function applyFill(obj: FabricObject, fill: TFiller | string): void {
+  if (obj instanceof FabGroup) obj.setFill(fill);
+  else obj.set({ fill });
 }

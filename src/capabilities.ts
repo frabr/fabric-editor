@@ -26,6 +26,7 @@ import { isUserSlot } from "./userSlots";
 import { FabRect } from "./shapes/FabRect";
 import { FabCircle } from "./shapes/FabCircle";
 import { FabPath } from "./shapes/FabPath";
+import { FabGroup } from "./shapes/FabGroup";
 import type { ControlOption } from "./types";
 import { stackParentOf } from "./layout/hierarchy";
 import { isFreeContainer } from "./layout/model";
@@ -152,6 +153,8 @@ function kindRules(obj: FabricObject, kind: ObjectKind): ObjectRules {
 function shapeOptions(obj: FabricObject): ControlOption[] {
   if (obj instanceof FabRect) return ["outline", "clip", "color", "corner_radius"];
   if (obj instanceof FabCircle || obj instanceof FabPath) return ["outline", "clip", "color"];
+  // Un groupe de paths : une couleur pour tous ses paths, ni contour ni découpe (v1)
+  if (obj instanceof FabGroup) return ["color"];
   return [];
 }
 

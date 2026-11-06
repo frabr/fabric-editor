@@ -1049,7 +1049,7 @@ var require_svgpath2 = __commonJS({
 var import_node_fs = require("fs");
 var import_node_path = require("path");
 
-// scripts/svgShapes.ts
+// src/shapes/svgShapes.ts
 var import_svgpath = __toESM(require_svgpath2());
 var BOX = 100;
 var DRAWING_TAGS = /* @__PURE__ */ new Set(["path", "rect", "circle", "ellipse", "polygon", "polyline"]);

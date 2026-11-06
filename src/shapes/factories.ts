@@ -13,6 +13,7 @@ import { addCropControls } from "../controls/cropControls";
 import { FabRect } from "./FabRect";
 import { FabCircle } from "./FabCircle";
 import { FabPath } from "./FabPath";
+import { FabGroup } from "./FabGroup";
 
 /**
  * Crée un FabRect, optionnellement avec coins arrondis via rx/ry.
@@ -95,7 +96,7 @@ interface CreateShapeOptions {
  * inline — l'asset devient du contenu à l'insertion, jamais une référence).
  *
  * 1 path → FabPath ordinaire (fill d'auteur prioritaire, recolorable, cf.
- * FabPath.fromPathData). N paths → Group de FabPath : l'œuvre polychrome, figée à
+ * FabPath.fromPathData). N paths → FabGroup de FabPath : l'œuvre polychrome, recolorable d'un bloc, à
  * ses couleurs d'auteur, sélectionnée/scalée d'un bloc. Les positions relatives
  * viennent des coordonnées des paths (espace normalisé 100x100 partagé) : chaque
  * enfant est replacé sur son pathOffset — le centre de sa bbox dans cet espace.
@@ -103,7 +104,7 @@ interface CreateShapeOptions {
 export function createPathsShape(
   paths: ShapePathData[],
   options: CreateShapeOptions & { id?: string; strokeWidth?: number } = {},
-): FabPath | Group {
+): FabPath | FabGroup {
   if (paths.length === 0) throw new Error("createPathsShape: empty paths");
   const { fill, stroke, left, top, id } = options;
   // Même convention que createShape : sans stroke, pas d'épaisseur (le défaut
@@ -132,7 +133,7 @@ export function createPathsShape(
     return child;
   });
 
-  const group = new Group(children, { originX: "center", originY: "center", ...withoutUndefined({ left, top }) });
+  const group = new FabGroup(children, { originX: "center", originY: "center", ...withoutUndefined({ left, top }) });
   if (id) group.set({ id });
 
   const target = targetDims(group.width, group.height, options.width, options.height);

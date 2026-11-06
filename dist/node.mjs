@@ -119,7 +119,7 @@ import { createRequire } from "module";
 import { StaticCanvas, FabricObject as FabricObject4 } from "#fabric";
 
 // src/LayerManager.ts
-import { FabricImage as FabricImage5, Group as Group4, Point as Point3, util as util2 } from "#fabric";
+import { FabricImage as FabricImage5, Group as Group5, Point as Point3, util as util2 } from "#fabric";
 
 // src/controls/CustomTextbox.ts
 import { Textbox, Point, controlsUtils as controlsUtils2 } from "#fabric";
@@ -971,7 +971,7 @@ function sendBlocksBackward(objects, moved) {
 }
 
 // src/capabilities.ts
-import { FabricImage, Group, Rect as Rect2 } from "#fabric";
+import { FabricImage, Group as Group2, Rect as Rect2 } from "#fabric";
 
 // src/locking.ts
 function getLockMode(obj) {
@@ -1442,6 +1442,29 @@ installLockMethods(FabPath.prototype);
 installUserSlotRendering(FabPath.prototype);
 classRegistry3.setClass(FabPath, "Path");
 
+// src/shapes/FabGroup.ts
+import { Group, classRegistry as classRegistry4 } from "#fabric";
+var FabGroup = class extends Group {
+  /** La couleur commune des enfants ; null quand ils diffèrent (une œuvre polychrome). */
+  commonFill() {
+    const fills = this.getObjects().map((child) => child.fill);
+    const [first] = fills;
+    return fills.every((fill) => sameFill(fill, first)) ? first ?? null : null;
+  }
+  /** Une seule couleur pour tout le groupe : un logo bicolore s'aplatit, c'est le choix fait. */
+  setFill(fill) {
+    this.getObjects().forEach((child) => child.set({ fill }));
+    this.dirty = true;
+  }
+};
+FabGroup.customProperties = ["layerId", "layerType", "lockMode", "lockContent"];
+function sameFill(a, b) {
+  if (a === b) return true;
+  if (!a || !b || typeof a === "string" || typeof b === "string") return false;
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+classRegistry4.setClass(FabGroup, "Group");
+
 // src/capabilities.ts
 function kindOf(obj) {
   const layerType = obj.layerType;
@@ -1492,7 +1515,7 @@ function kindRules(obj, kind) {
     case "shape":
       return {
         kind,
-        onToolboxImage: obj instanceof Group ? null : "fill",
+        onToolboxImage: obj instanceof Group2 ? null : "fill",
         hosts: true,
         options: shapeOptions(obj),
         ...free
@@ -1514,6 +1537,7 @@ function kindRules(obj, kind) {
 function shapeOptions(obj) {
   if (obj instanceof FabRect) return ["outline", "clip", "color", "corner_radius"];
   if (obj instanceof FabCircle || obj instanceof FabPath) return ["outline", "clip", "color"];
+  if (obj instanceof FabGroup) return ["color"];
   return [];
 }
 function isOutOfPlay(obj) {
@@ -1522,8 +1546,7 @@ function isOutOfPlay(obj) {
 
 // src/shapes/factories.ts
 import {
-  FabricImage as FabricImage3,
-  Group as Group2
+  FabricImage as FabricImage3
 } from "#fabric";
 
 // src/controls/cropControls.ts
@@ -1684,7 +1707,7 @@ function createPathsShape(paths, options = {}) {
     child.setCoords();
     return child;
   });
-  const group = new Group2(children, { originX: "center", originY: "center", ...withoutUndefined({ left, top }) });
+  const group = new FabGroup(children, { originX: "center", originY: "center", ...withoutUndefined({ left, top }) });
   if (id) group.set({ id });
   const target = targetDims(group.width, group.height, options.width, options.height);
   group.set({ scaleX: target.width / group.width, scaleY: target.height / group.height });
@@ -1802,9 +1825,9 @@ function syncCoords(container, children) {
 
 // src/ImageFrame.ts
 import {
-  Group as Group3,
+  Group as Group4,
   FabricImage as FabricImage4,
-  classRegistry as classRegistry4,
+  classRegistry as classRegistry5,
   LayoutManager,
   FixedLayout,
   Shadow
@@ -1877,7 +1900,7 @@ function rotatePoint(dx, dy, angleDeg) {
     y: dx * Math.sin(angle) + dy * Math.cos(angle)
   };
 }
-var ImageFrame = class _ImageFrame extends Group3 {
+var ImageFrame = class _ImageFrame extends Group4 {
   constructor(image, options = {}) {
     const frameScale = options.frameScale ?? 1;
     const frameWidth = options.frameWidth ?? image.width * frameScale;
@@ -2410,8 +2433,8 @@ var ImageFrame = class _ImageFrame extends Group3 {
     });
   }
 };
-classRegistry4.setClass(ImageFrame);
-classRegistry4.setClass(ImageFrame, "ImageFrame");
+classRegistry5.setClass(ImageFrame);
+classRegistry5.setClass(ImageFrame, "ImageFrame");
 
 // src/LayerManager.ts
 var NEW_LAYER_RATIO = 0.4;
@@ -2813,7 +2836,7 @@ var LayerManager = class {
    * libre, ses objets restent des calques).
    */
   groupObjects(objects) {
-    const group = new Group4(objects);
+    const group = new Group5(objects);
     objects.forEach((obj) => this.canvas.remove(obj));
     this.canvas.add(group);
     this.canvas.setActiveObject(group);
@@ -2864,7 +2887,7 @@ var LayerManager = class {
       }
       case "Group":
       case "group":
-        obj = await Group4.fromObject(layer);
+        obj = await FabGroup.fromObject(layer);
         break;
       case "Rect":
       case "rect":

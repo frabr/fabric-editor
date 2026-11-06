@@ -1,5 +1,5 @@
 import * as _fabric from '#fabric';
-import { Canvas, FabricObject, TPointerEvent, Textbox, Group, FabricImage, StaticCanvas, Pattern, Rect as Rect$1, TOptions, RectProps, Circle, CircleProps, Path, PathProps, TMat2D } from '#fabric';
+import { Canvas, FabricObject, TPointerEvent, Textbox, Group, FabricImage, StaticCanvas, Pattern, Rect as Rect$1, TOptions, RectProps, Circle, CircleProps, Path, PathProps, TFiller, TMat2D } from '#fabric';
 import * as fabric from 'fabric';
 
 /**
@@ -3429,6 +3429,23 @@ declare class FabPath extends Path implements Lockable {
 }
 
 /**
+ * Un groupe de paths : une forme multi-régions (un SVG de charte, un logo) qui se déplace,
+ * se redimensionne et se colore d'un bloc — la couleur va à chaque path enfant, le groupe
+ * lui-même n'en peint aucune. Il porte les propriétés de calque comme les autres formes,
+ * pour que `layerType: "shape"` survive à la sérialisation : un `fabric.Group` nu les
+ * perdait au save, et la forme redevenait « autre » (sans couleur ni contour) au
+ * rechargement. Enregistré sous "Group" : tout groupe du stock se relit en FabGroup, le
+ * type dans les documents ne change pas.
+ */
+declare class FabGroup extends Group {
+    static customProperties: string[];
+    /** La couleur commune des enfants ; null quand ils diffèrent (une œuvre polychrome). */
+    commonFill(): TFiller | string | null;
+    /** Une seule couleur pour tout le groupe : un logo bicolore s'aplatit, c'est le choix fait. */
+    setFill(fill: TFiller | string): void;
+}
+
+/**
  * Crée un FabRect, optionnellement avec coins arrondis via rx/ry.
  */
 declare function createRect(options?: Partial<TOptions<RectProps>>): FabRect;
@@ -3466,7 +3483,7 @@ interface CreateShapeOptions {
  * inline — l'asset devient du contenu à l'insertion, jamais une référence).
  *
  * 1 path → FabPath ordinaire (fill d'auteur prioritaire, recolorable, cf.
- * FabPath.fromPathData). N paths → Group de FabPath : l'œuvre polychrome, figée à
+ * FabPath.fromPathData). N paths → FabGroup de FabPath : l'œuvre polychrome, recolorable d'un bloc, à
  * ses couleurs d'auteur, sélectionnée/scalée d'un bloc. Les positions relatives
  * viennent des coordonnées des paths (espace normalisé 100x100 partagé) : chaque
  * enfant est replacé sur son pathOffset — le centre de sa bbox dans cet espace.
@@ -3474,7 +3491,7 @@ interface CreateShapeOptions {
 declare function createPathsShape(paths: ShapePathData[], options?: CreateShapeOptions & {
     id?: string;
     strokeWidth?: number;
-}): FabPath | Group;
+}): FabPath | FabGroup;
 /**
  * Factory générique pour créer une forme par son type.
  *
@@ -3585,6 +3602,30 @@ interface RulesQuery {
 }
 declare function kindOf(obj: FabricObject): ObjectKind;
 declare function rulesOf(obj: FabricObject, { ignoreLock }?: RulesQuery): ObjectRules;
+
+interface NormalizedShapePath {
+    d: string;
+    fill?: string;
+    stroke?: string;
+    /** Normalisé dans la boîte 100x100, comme le `d`. */
+    strokeWidth?: number;
+    /** Seulement quand le path le déclare : nonzero est le défaut. */
+    fillRule?: "evenodd";
+}
+interface NormalizedShape {
+    id: string;
+    paths: NormalizedShapePath[];
+    /** Largeur réelle du dessin dans la boîte 100x100. */
+    width: number;
+    /** Hauteur réelle du dessin dans la boîte 100x100. */
+    height: number;
+    viewBox: string;
+}
+/**
+ * Parse + normalise un fichier SVG. `id` = nom de la forme (basename du fichier).
+ * Lève une Error au premier contenu hors périmètre.
+ */
+declare function normalizeShape(id: string, svgContent: string, warn?: (msg: string) => void): NormalizedShape;
 
 /**
  * Calcule les facteurs d'anti-scale pour maintenir les proportions d'un clip
@@ -3855,4 +3896,4 @@ declare const DEFAULT_GUIDE_COLOR = "#d946ef";
  */
 declare const DEFAULT_SNAP_GUIDE_COLOR = "#ff00ff";
 
-export { type AlignEdge, type AlignItems, type AlignSelf, type Arrangement, type BadgeLabeler, type BindingSpec, type Bindings, type Box, CANVAS_SHORTCUTS, CanvasGuides, type CatalogShape, type CatalogShapeInput, type ChildData, type ClipData, type ContainerData, ContainerizeSession, type ControlOption, type Crop, CropMode, CustomTextbox, DEFAULT_GUIDE_COLOR, DEFAULT_SNAP_GUIDE_COLOR, type Delta, DesignCanvas, type DistributeAxis, type DragPayload, DropHandler, type DropHandlerConfig, type DropResult, type EditorConfig, FabCircle, FabPath, FabRect, FabricEditor, type FlexDirection, type FontConfig, type FontsConfig, type FrameRect, FreeResizeSession, GHOST_OPACITY, GestureManager, type GestureShortcut, type GradientStop, HEART_PATH, HEXAGON_PATH, type HistoryCallbacks, HistoryManager, type HistoryState, type HtmlLayerOutput, type HtmlRenderOptions, ImageFrame, type ImageLayerOptions, InsertChildSession, type JustifyContent, type KeyShortcut, LAYER_PROPS, type LayerData, LayerManager, type LayoutData, LayoutManager, type LayoutManagerCallbacks, type LayoutParents, type LayoutSession, type LockMode$1 as LockMode, type Lockable, MAX_CROP_SCALE, MIN_PAD, MIXED, MaskManager, type Modifier, NO_CROP, type ObjectControlsConfig, type ObjectKind, type ObjectRules, PendingUploadsManager, PersistenceManager, type Platform, PreviewCanvas, ROTATION_STEP, type RenderRangeOptions, ResizeSession, type ResizeSnapResult, type SaveOptions, type SaveResult, ScaleSession, type SelectionCallbacks, type SelectionKind, SelectionManager, type ShapeCatalogEntry, type ShapeLayerOptions, type ShapePathData, type ShapeType, type ShortcutContext, type ShortcutEntry, type ShortcutGroup, ShortcutManager, type ShortcutManagerOptions, type ShortcutScope, type SizeMode, type SizePreset, type SizingData, type SnappingConfig, SnappingManager, StackResizeSession, TEXT_STYLE_KEYS, type TextLayerOptions, type TextLayerPart, type TextOverflow, type TextStyleKey, type TextStyleState, type TextStyleValue, type TextTile, type TextUnit, type TextUnitBox, type TextUnitKind, type TextUnitTiles, type ToolId, type ToolboxImageReaction, type TreeLayer, USER_SCOPE, USER_SLOT_FIELD, type UserSlot, type WorkspaceOptions, addCircleClip, addCropControls, addHeartClip, addHexagonClip, alignAxis, alignDelta, antiScale, applyClip, applyLockMode, badgeLabel, bindingBadgeLabel, canvasImageSource, clampTopLeft, clipDataFor, collectUserSlots, createCircle, createDropSession, createHeart, createHexagon, createImage, createPathShape, createPathsShape, createRect, createShape, cropFromRect, detectPlatform, displayFill, distributeDeltas, drawBindingBadge, drawFrameBadge, fabricToHtml, fitFreeContainer, fontFamiliesOf, forgetFontMeasures, formatCombo, formatModifier, getAvailableShapes, getCatalogShape, getLockMode, getNextLockMode, getShapeCatalog, hasExceededOffset, hasPendingBindings, initYoga, isBold, isContentLocked, isCropped, isEclipsed, isFreeContainer, isGhost, isKeyShortcut, isMonoPath, isPositionLocked, isStyleLocked, isUserSlot, isValidShape, kindOf, layerToHtmlStandalone, layoutChildren, layoutDescendants, layoutParents, layoutRoot, nextShape, panCrop, parseCombo, pendingBindings, photoRect, pointInObject, registerShapes, registeredShapes, removeCropControls, renderTextRange, rulesOf, runLayout, scaledSize, selectionKindOf, setDisplayFill, setEclipsed, setGhost, setTextContent, stackBlock, stackParentOf, summarizeObject, summarizeStyles, switchClip, switchShape, textParts, textUnitTiles, textUnits, tilePadding, toolsFor, topLeft, unionBox, userSlotBinding, userSlotHint, wrapContainerAroundChild, yogaLayout, zoomCrop };
+export { type AlignEdge, type AlignItems, type AlignSelf, type Arrangement, type BadgeLabeler, type BindingSpec, type Bindings, type Box, CANVAS_SHORTCUTS, CanvasGuides, type CatalogShape, type CatalogShapeInput, type ChildData, type ClipData, type ContainerData, ContainerizeSession, type ControlOption, type Crop, CropMode, CustomTextbox, DEFAULT_GUIDE_COLOR, DEFAULT_SNAP_GUIDE_COLOR, type Delta, DesignCanvas, type DistributeAxis, type DragPayload, DropHandler, type DropHandlerConfig, type DropResult, type EditorConfig, FabCircle, FabGroup, FabPath, FabRect, FabricEditor, type FlexDirection, type FontConfig, type FontsConfig, type FrameRect, FreeResizeSession, GHOST_OPACITY, GestureManager, type GestureShortcut, type GradientStop, HEART_PATH, HEXAGON_PATH, type HistoryCallbacks, HistoryManager, type HistoryState, type HtmlLayerOutput, type HtmlRenderOptions, ImageFrame, type ImageLayerOptions, InsertChildSession, type JustifyContent, type KeyShortcut, LAYER_PROPS, type LayerData, LayerManager, type LayoutData, LayoutManager, type LayoutManagerCallbacks, type LayoutParents, type LayoutSession, type LockMode$1 as LockMode, type Lockable, MAX_CROP_SCALE, MIN_PAD, MIXED, MaskManager, type Modifier, NO_CROP, type NormalizedShape, type NormalizedShapePath, type ObjectControlsConfig, type ObjectKind, type ObjectRules, PendingUploadsManager, PersistenceManager, type Platform, PreviewCanvas, ROTATION_STEP, type RenderRangeOptions, ResizeSession, type ResizeSnapResult, type SaveOptions, type SaveResult, ScaleSession, type SelectionCallbacks, type SelectionKind, SelectionManager, type ShapeCatalogEntry, type ShapeLayerOptions, type ShapePathData, type ShapeType, type ShortcutContext, type ShortcutEntry, type ShortcutGroup, ShortcutManager, type ShortcutManagerOptions, type ShortcutScope, type SizeMode, type SizePreset, type SizingData, type SnappingConfig, SnappingManager, StackResizeSession, TEXT_STYLE_KEYS, type TextLayerOptions, type TextLayerPart, type TextOverflow, type TextStyleKey, type TextStyleState, type TextStyleValue, type TextTile, type TextUnit, type TextUnitBox, type TextUnitKind, type TextUnitTiles, type ToolId, type ToolboxImageReaction, type TreeLayer, USER_SCOPE, USER_SLOT_FIELD, type UserSlot, type WorkspaceOptions, addCircleClip, addCropControls, addHeartClip, addHexagonClip, alignAxis, alignDelta, antiScale, applyClip, applyLockMode, badgeLabel, bindingBadgeLabel, canvasImageSource, clampTopLeft, clipDataFor, collectUserSlots, createCircle, createDropSession, createHeart, createHexagon, createImage, createPathShape, createPathsShape, createRect, createShape, cropFromRect, detectPlatform, displayFill, distributeDeltas, drawBindingBadge, drawFrameBadge, fabricToHtml, fitFreeContainer, fontFamiliesOf, forgetFontMeasures, formatCombo, formatModifier, getAvailableShapes, getCatalogShape, getLockMode, getNextLockMode, getShapeCatalog, hasExceededOffset, hasPendingBindings, initYoga, isBold, isContentLocked, isCropped, isEclipsed, isFreeContainer, isGhost, isKeyShortcut, isMonoPath, isPositionLocked, isStyleLocked, isUserSlot, isValidShape, kindOf, layerToHtmlStandalone, layoutChildren, layoutDescendants, layoutParents, layoutRoot, nextShape, normalizeShape, panCrop, parseCombo, pendingBindings, photoRect, pointInObject, registerShapes, registeredShapes, removeCropControls, renderTextRange, rulesOf, runLayout, scaledSize, selectionKindOf, setDisplayFill, setEclipsed, setGhost, setTextContent, stackBlock, stackParentOf, summarizeObject, summarizeStyles, switchClip, switchShape, textParts, textUnitTiles, textUnits, tilePadding, toolsFor, topLeft, unionBox, userSlotBinding, userSlotHint, wrapContainerAroundChild, yogaLayout, zoomCrop };

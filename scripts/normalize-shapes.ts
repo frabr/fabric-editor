@@ -1,6 +1,6 @@
 /**
  * CLI du normaliseur de formes — la lib garde l'outil, l'application hôte possède
- * les SVG sources et les catalogues produits (cf. scripts/svgShapes.ts).
+ * les SVG sources et les catalogues produits (cf. src/shapes/svgShapes.ts).
  *
  * Usage : normalize-shapes <dossier-svg> <sortie.json> [--id-prefix <préfixe>]
  *   Lit tous les *.svg du dossier (id = nom de fichier, préfixé si demandé — un jeu
@@ -13,7 +13,7 @@
  */
 import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, basename, extname } from "node:path";
-import { normalizeShape, type NormalizedShape } from "./svgShapes";
+import { normalizeShape, type NormalizedShape } from "../src/shapes/svgShapes";
 
 function main(): void {
   const args = process.argv.slice(2);

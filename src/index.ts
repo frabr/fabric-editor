@@ -32,7 +32,7 @@ export { NO_CROP, MAX_CROP_SCALE, isCropped, photoRect, cropFromRect, panCrop, z
 export type { Crop } from "./crop";
 
 // OOP shape classes
-export { FabRect, FabCircle, FabPath, type Lockable } from "./shapes";
+export { FabRect, FabCircle, FabPath, FabGroup, type Lockable } from "./shapes";
 export { rulesOf, kindOf, type ObjectRules, type ObjectKind, type ToolboxImageReaction } from "./capabilities";
 export { toolsFor, selectionKindOf, type ToolId, type SelectionKind } from "./tools";
 
@@ -67,6 +67,10 @@ export {
   type ShapePathData,
   type ClipData,
 } from "./shapes";
+
+// Normalisation d'un SVG « forme » (paths dans une boîte 100x100) : le mécanisme que la
+// lib garde pour les catalogues de l'hôte, utilisable aussi dans le navigateur (dépôt de SVG).
+export { normalizeShape, type NormalizedShape, type NormalizedShapePath } from "./shapes/svgShapes";
 
 // @legacy — shape switching, old path strings, standalone clip functions
 export {

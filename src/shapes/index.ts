@@ -4,6 +4,7 @@
 export { FabRect } from "./FabRect";
 export { FabCircle } from "./FabCircle";
 export { FabPath } from "./FabPath";
+export { FabGroup } from "./FabGroup";
 export { type Lockable } from "./lockMixin";
 
 // Factory functions (return Fab* instances)
