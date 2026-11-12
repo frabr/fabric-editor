@@ -63,6 +63,23 @@ describe("resolveTextBox", () => {
     expect(box.overflowing).toBe(false);
   });
 
+  it("un mot plus long que la largeur fixe (sans espace où couper) : la police réduit", () => {
+    // Un seul mot de 40 caractères : jamais coupé, il ressort à sa largeur naturelle
+    const word: TextMeasure = {
+      natural: (fontSize) => CHARS * fontSize / 2,
+      wrapped: (width, fontSize) => ({ width: Math.max(width, CHARS * fontSize / 2), height: fontSize }),
+    };
+    const hug = resolveTextBox(input({ sizing: { x: "fixed", y: "hug" }, width: 200 }), word);
+    expect(hug.width).toBe(200);
+    expect(hug.fontSize).toBeGreaterThanOrEqual(9.5);
+    expect(hug.fontSize).toBeLessThanOrEqual(10);
+    expect(hug.overflowing).toBe(false);
+
+    const clip = resolveTextBox(input({ sizing: { x: "fixed", y: "hug" }, overflow: "clip", width: 200 }), word);
+    expect(clip.fontSize).toBe(20);
+    expect(clip.width).toBe(400);
+  });
+
   it("l'autofit repart toujours de l'intention, pas de la taille effective", () => {
     const box = resolveTextBox(input({ sizing: { x: "fixed", y: "fixed" }, width: 400, height: 100, fontSize: 9 }), measure);
     expect(box.fontSize).toBe(20);

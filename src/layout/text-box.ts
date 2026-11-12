@@ -67,7 +67,7 @@ export function resolveTextBox(input: TextBoxInput, measure: TextMeasure): TextB
 
   let fontSize = input.fontSizeIntent;
   let m = measure.wrapped(width, fontSize);
-  if (boundH != null && m.height > boundH + 0.5 && overflow === "shrink") {
+  if (overflow === "shrink" && !fits(m, width, boundH)) {
     fontSize = largestFittingFont(width, boundH, input.fontSizeIntent, measure);
     m = measure.wrapped(width, fontSize);
   }
@@ -77,13 +77,22 @@ export function resolveTextBox(input: TextBoxInput, measure: TextMeasure): TextB
   return { width: m.width, height, fontSize, overflowing: m.height > height + 0.5 };
 }
 
-/** Plus grande police (pas de 0,5, plancher MIN_FONT_SIZE) dont le texte tient dans `boundH`. */
-function largestFittingFont(width: number, boundH: number, intent: number, measure: TextMeasure): number {
+/**
+ * Le texte tient dans sa boîte : en hauteur quand elle est bornée, et toujours en largeur.
+ * Fabric ne coupe qu'aux espaces : un mot plus long que la largeur (« Saint-Rémy-de-Provence »,
+ * sans espace) ressort plus large que demandé — c'est un débordement comme un autre.
+ */
+function fits(m: { width: number; height: number }, width: number, boundH: number | undefined): boolean {
+  return m.width <= width + 0.5 && (boundH == null || m.height <= boundH + 0.5);
+}
+
+/** Plus grande police (pas de 0,5, plancher MIN_FONT_SIZE) dont le texte tient dans sa boîte. */
+function largestFittingFont(width: number, boundH: number | undefined, intent: number, measure: TextMeasure): number {
   let lo = Math.min(MIN_FONT_SIZE, intent);
   let hi = intent;
   while (hi - lo > 0.5) {
     const mid = (lo + hi) / 2;
-    if (measure.wrapped(width, mid).height <= boundH + 0.5) lo = mid;
+    if (fits(measure.wrapped(width, mid), width, boundH)) lo = mid;
     else hi = mid;
   }
   return Math.floor(lo * 2) / 2;

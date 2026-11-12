@@ -139,7 +139,7 @@ function resolveTextBox(input, measure) {
   const boundH = constraint.h ?? (sizing.y === "fixed" ? input.height : void 0);
   let fontSize = input.fontSizeIntent;
   let m = measure.wrapped(width, fontSize);
-  if (boundH != null && m.height > boundH + 0.5 && overflow === "shrink") {
+  if (overflow === "shrink" && !fits(m, width, boundH)) {
     fontSize = largestFittingFont(width, boundH, input.fontSizeIntent, measure);
     m = measure.wrapped(width, fontSize);
   }
@@ -147,12 +147,15 @@ function resolveTextBox(input, measure) {
   const height = boundH ?? Math.max(m.height, minH);
   return { width: m.width, height, fontSize, overflowing: m.height > height + 0.5 };
 }
+function fits(m, width, boundH) {
+  return m.width <= width + 0.5 && (boundH == null || m.height <= boundH + 0.5);
+}
 function largestFittingFont(width, boundH, intent, measure) {
   let lo = Math.min(MIN_FONT_SIZE, intent);
   let hi = intent;
   while (hi - lo > 0.5) {
     const mid = (lo + hi) / 2;
-    if (measure.wrapped(width, mid).height <= boundH + 0.5) lo = mid;
+    if (fits(measure.wrapped(width, mid), width, boundH)) lo = mid;
     else hi = mid;
   }
   return Math.floor(lo * 2) / 2;
