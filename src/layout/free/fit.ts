@@ -12,6 +12,7 @@ import { containerDataOf, isFreeContainer, paddingOf } from "../model";
 import { childrenOf, parentContainerOf } from "../hierarchy";
 import { inLocalFrame } from "../rotation";
 import { isEclipsed } from "../../ghost";
+import { isTextObject } from "../text";
 
 
 /**
@@ -28,7 +29,12 @@ function fitFreeContainerLocal(container: FabricObject, objects: FabricObject[])
   // Un enfant éclipsé (ghost.ts) ne compte pas dans la boîte, comme au rendu
   const children = childrenOf(objects, container).map((c) => c.obj).filter((child) => !isEclipsed(child));
   if (children.length === 0) return;
-  for (const child of children) if (isFreeContainer(child)) fitFreeContainer(child, objects);
+  for (const child of children) {
+    if (isFreeContainer(child)) fitFreeContainer(child, objects);
+    // Un groupe ne contraint pas ses textes : chacun suit son propre mode de taille, comme un
+    // texte posé sur la page (autofit compris) — pas la boîte stockée qu'attend un enfant de pile
+    else if (isTextObject(child)) (child as unknown as { layoutWith(c: object): void }).layoutWith({});
+  }
 
   const box = outsetBox(unionBox(children.map(boxOf)), paddingOf(containerDataOf(container)));
   setShapeSize(container, box.width, box.height);

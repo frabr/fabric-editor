@@ -3536,7 +3536,10 @@ function fitFreeContainer(container, objects) {
 function fitFreeContainerLocal(container, objects) {
   const children = childrenOf(objects, container).map((c) => c.obj).filter((child) => !isEclipsed(child));
   if (children.length === 0) return;
-  for (const child of children) if (isFreeContainer(child)) fitFreeContainer(child, objects);
+  for (const child of children) {
+    if (isFreeContainer(child)) fitFreeContainer(child, objects);
+    else if (isTextObject(child)) child.layoutWith({});
+  }
   const box = outsetBox(unionBox(children.map(boxOf)), paddingOf(containerDataOf(container)));
   setShapeSize(container, box.width, box.height);
   placeTopLeft(container, box.left, box.top);

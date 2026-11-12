@@ -51,6 +51,18 @@ const box = (obj: FabricObject) => {
 const ids = (objects: FabricObject[]) => objects.map((o) => o.get("layerId"));
 
 describe("groupe libre", () => {
+  it("ses textes suivent leur propre mode de taille : un texte à une ligne replie sa police", () => {
+    const g = group("g");
+    const city = new CustomTextbox("Saint-Rémy-de-Provence", { fontSize: 40, fontFamily: "Arial", width: 200, left: 0, top: 0 });
+    city.set({ layerId: "city", layout: { child: { parentId: "g" }, sizing: { x: "fixed", y: "fixed" } } } as never);
+    city.height = 46;
+    runLayout([g, city]);
+
+    expect(city.fontSize).toBeLessThan(40);
+    expect(Math.round(city.width)).toBe(200);
+    expect(city.height).toBe(46);
+  });
+
   it("sa boîte est l'union de ses enfants, plus sa marge ; les enfants ne bougent pas", () => {
     const g = group("g", { top: 10, right: 20, bottom: 10, left: 20 });
     const a = rect("a", 100, 100, 50, 50, { child: { parentId: "g" } });
