@@ -10536,7 +10536,7 @@ var FabricEditor = _FabricEditor;
 var import_fabric28 = require("#fabric");
 var PreviewCanvas = class extends import_fabric28.StaticCanvas {
   constructor(el, opts) {
-    const { width, height, ...canvasOpts } = opts;
+    const { width, height, guideColor, ...canvasOpts } = opts;
     super(el, {
       width,
       height,
@@ -10549,6 +10549,9 @@ var PreviewCanvas = class extends import_fabric28.StaticCanvas {
     this._showToken = {};
     this.designWidth = width;
     this.designHeight = height;
+    if (guideColor) {
+      this[USER_SLOT_STYLE_KEY] = { color: guideColor };
+    }
   }
   /**
    * `contain` : le buffer épouse le design réduit (letterbox géré par le parent).

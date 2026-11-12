@@ -5,6 +5,7 @@ import { runLayout } from "./layout/run";
 import { initYoga } from "./layout/stack/engine";
 import type { DesignCanvas } from "./DesignCanvas";
 import type { LayerData } from "./types";
+import { USER_SLOT_STYLE_KEY, type UserSlotStyle } from "./userSlots";
 
 /**
  * Canvas de preview readonly — la version dépouillée, pour vignettes et posters.
@@ -16,6 +17,9 @@ import type { LayerData } from "./types";
  *
  * Comme DesignCanvas, sépare l'espace design (celui des layers) de la taille d'affichage :
  * fitToSize dimensionne le buffer et pose le viewportTransform.
+ *
+ * `guideColor` : la couleur d'édition de l'hôte, la même que celle de FabricEditor — les images
+ * à fournir s'y dessinent (icône seule, pas d'invite). Sans elle, la couleur par défaut.
  */
 export class PreviewCanvas extends StaticCanvas {
   readonly designWidth: number;
@@ -23,9 +27,9 @@ export class PreviewCanvas extends StaticCanvas {
 
   constructor(
     el: HTMLCanvasElement,
-    opts: { width: number; height: number } & Record<string, any>,
+    opts: { width: number; height: number; guideColor?: string } & Record<string, any>,
   ) {
-    const { width, height, ...canvasOpts } = opts;
+    const { width, height, guideColor, ...canvasOpts } = opts;
     super(el, {
       width,
       height,
@@ -37,6 +41,9 @@ export class PreviewCanvas extends StaticCanvas {
     });
     this.designWidth = width;
     this.designHeight = height;
+    if (guideColor) {
+      (this as unknown as Record<string, UserSlotStyle>)[USER_SLOT_STYLE_KEY] = { color: guideColor };
+    }
   }
 
   /**

@@ -2939,6 +2939,9 @@ declare function forgetFontMeasures(family: string): void;
  *
  * Comme DesignCanvas, sépare l'espace design (celui des layers) de la taille d'affichage :
  * fitToSize dimensionne le buffer et pose le viewportTransform.
+ *
+ * `guideColor` : la couleur d'édition de l'hôte, la même que celle de FabricEditor — les images
+ * à fournir s'y dessinent (icône seule, pas d'invite). Sans elle, la couleur par défaut.
  */
 declare class PreviewCanvas extends StaticCanvas {
     readonly designWidth: number;
@@ -2946,6 +2949,7 @@ declare class PreviewCanvas extends StaticCanvas {
     constructor(el: HTMLCanvasElement, opts: {
         width: number;
         height: number;
+        guideColor?: string;
     } & Record<string, any>);
     /**
      * `contain` : le buffer épouse le design réduit (letterbox géré par le parent).

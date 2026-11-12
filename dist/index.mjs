@@ -10397,7 +10397,7 @@ var FabricEditor = _FabricEditor;
 import { StaticCanvas } from "#fabric";
 var PreviewCanvas = class extends StaticCanvas {
   constructor(el, opts) {
-    const { width, height, ...canvasOpts } = opts;
+    const { width, height, guideColor, ...canvasOpts } = opts;
     super(el, {
       width,
       height,
@@ -10410,6 +10410,9 @@ var PreviewCanvas = class extends StaticCanvas {
     this._showToken = {};
     this.designWidth = width;
     this.designHeight = height;
+    if (guideColor) {
+      this[USER_SLOT_STYLE_KEY] = { color: guideColor };
+    }
   }
   /**
    * `contain` : le buffer épouse le design réduit (letterbox géré par le parent).
