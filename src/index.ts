@@ -152,6 +152,7 @@ export type { SnappingConfig, ResizeSnapResult } from "./SnappingManager";
 export type { LayoutManagerCallbacks, SizePreset } from "./LayoutManager";
 export {
   pendingBindings, hasPendingBindings, setTextContent, drawBindingBadge, bindingBadgeLabel,
+  mediaLabel,
 } from "./bindings";
 export { drawFrameBadge, badgeLabel, type BadgeLabeler } from "./ui/badges";
 export { fontFamiliesOf, isBold, summarizeStyles, summarizeObject, MIXED, TEXT_STYLE_KEYS } from "./text-styles";
@@ -166,4 +167,6 @@ export {
   isUserSlot, userSlotHint, userSlotBinding, collectUserSlots, USER_SCOPE, USER_SLOT_FIELD,
 } from "./userSlots";
 export type { UserSlot } from "./userSlots";
+export { imageSlotBinding, slotMark, drawImageSlot, imageSlotDataUrl, IMAGE_SLOT_FIELD, EACH_MEDIA } from "./imageSlots";
+export type { SlotGlyph, SlotMark } from "./imageSlots";
 export { DEFAULT_GUIDE_COLOR, DEFAULT_SNAP_GUIDE_COLOR } from "./ui/color";

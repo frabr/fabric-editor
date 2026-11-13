@@ -1535,7 +1535,8 @@ interface ImageFrameData {
     shadow?: Record<string, unknown>;
     /**
      * `src` absent = cadre EN ATTENTE : le fichier n'existe pas encore (média en cours de
-     * production côté hôte). Il se dessine en damier et se sauve tel quel, sans `src` — ses
+     * production côté hôte), ou la source est liée (imageSlots : le binding la donnera). Il se
+     * dessine en damier — en emplacement s'il est lié — et se sauve tel quel, sans `src` ; ses
      * autres clés (l'identité du média) survivent au tour éditeur.
      *
      * Le recadrage est `cropX`, `cropY` (0 → 1) et `scale` (≥ 1) — voir crop.ts. Les
@@ -1570,14 +1571,22 @@ declare class ImageFrame extends Group {
     private _crop;
     private _image;
     private _imageMeta;
-    private _pending;
+    private _source;
+    /** Le damier est effacé (concealPlaceholder) : l'hôte montre son propre aperçu dessous. */
+    private _concealed;
+    /** L'emplacement au dernier rendu, par sa clé (isCacheDirty). */
+    private _drawnSlot;
     constructor(image: FabricImage, options?: ImageFrameOptions);
     get image(): FabricImage;
+    /** La source du DOCUMENT — vide pour un cadre en attente, quoi qu'il affiche. */
     get imageSrc(): string;
+    /** La source AFFICHÉE : celle du document, un aperçu de session, la valeur d'une liaison —
+     *  vide pour un cadre qui ne montre rien. */
+    get displayedSrc(): string;
     /** Les clés de `image` qui ne sont pas à la lib (cf. ImageFrameOptions.imageMeta). */
     get imageMeta(): ImageMeta;
-    /** Cadre en attente de son fichier : pas de `src` au save (damier, ou l'aperçu de session
-     *  d'un upload en cours). `replaceImage` le sort de l'attente. */
+    /** Cadre en attente de sa source : pas de `src` au save (cf. ImageSource). `replaceImage`
+     *  le sort de l'attente. */
     get pending(): boolean;
     /** Un cadre en attente : l'image est le damier, aux dimensions du cadre. */
     static pending(options: ImageFrameOptions & {
@@ -1587,11 +1596,25 @@ declare class ImageFrame extends Group {
     /** L'image affichée n'est pas celle du document (une url de session, le temps d'un
      *  upload) : le cadre se sauve sans `src` jusqu'à ce que la vraie source la remplace. */
     markSourcePending(): void;
+    /**
+     * Le cadre montre la VALEUR de sa source liée pour le lecteur du moment (son avatar, son
+     * logo) : affichée, recadrable, jamais sauvée — le document garde le binding, sans `src`.
+     * Le recadrage du document s'applique à elle. Sans `image`, celle déjà affichée devient
+     * cette valeur (une carte posée avec l'image du lecteur, puis liée).
+     */
+    showValue(image?: FabricImage): void;
+    /**
+     * Le cadre lâche sa source : il redevient vide (en attente), son recadrage gardé pour
+     * l'image qui viendra. Lié, il se dessine en emplacement (imageSlots) ; sinon en damier.
+     */
+    clearSource(): void;
     /** Un cadre en attente dont l'hôte montre lui-même l'aperçu sous le canvas : le damier
-     *  s'efface (transparent), le cadre reste en attente — rien ne change au save. */
+     *  s'efface (transparent, et pas d'emplacement dessiné), le cadre reste en attente — rien
+     *  ne change au save. */
     concealPlaceholder(): void;
     get crop(): Crop;
-    /** Se recadre : une vraie image (pas un damier d'attente). */
+    /** Se recadre : une vraie image, en place pour de bon — celle du document, ou la valeur
+     *  d'une source liée ; ni un damier, ni un emplacement, ni un aperçu d'upload. */
     get croppable(): boolean;
     get isCropped(): boolean;
     /** La taille native de l'image. */
@@ -1615,6 +1638,8 @@ declare class ImageFrame extends Group {
      * est exactement le bug qu'elles servent à éviter.
      */
     replaceImage(newImage: FabricImage, imageMeta?: ImageMeta): void;
+    /** L'image du groupe change, en cover, au recadrage courant ; le cadre ne bouge pas. */
+    private _swapImage;
     /**
      * Redimensionne le frame : l'image reste en cover, le recadrage (normalisé) garde la même
      * zone autant que possible.
@@ -1641,6 +1666,14 @@ declare class ImageFrame extends Group {
      * de découpe par-dessus, hors clip, trait centré sur le bord comme pour une forme.
      */
     render(ctx: CanvasRenderingContext2D): void;
+    /** Le binding de l'emplacement à dessiner — null dès que le cadre montre une image, ou que
+     *  l'hôte a pris l'aperçu à sa charge. */
+    private _slot;
+    /** Le cadre a toujours son cache (clipPath) : poser, changer ou retirer le binding ne le
+     *  salit pas aux yeux de fabric — c'est le changement d'emplacement qui le fait. */
+    isCacheDirty(skipCanvas?: boolean): boolean;
+    /** Le contenu du cadre : son image — ou, vide et lié, l'emplacement, sous la même découpe. */
+    drawObject(ctx: CanvasRenderingContext2D, forClipping: boolean | undefined, context: any): void;
     /** L'image dans le groupe (origine au centre) : cover × échelle, centre décalé selon le recadrage. */
     private _applyCrop;
     private _applyClip;
@@ -1676,6 +1709,9 @@ declare class ImageFrame extends Group {
 declare const LAYER_PROPS: readonly ["layerId", "lockMode", "lockContent", "layout", "bindings", "bindingSegments"];
 declare class LayerManager {
     private canvas;
+    /** La dernière valeur demandée pour chaque cadre lié (showImageValue) : un chargement
+     *  dépassé ne s'affiche pas. */
+    private valueRequests;
     constructor(canvas: DesignCanvas);
     /**
      * Retourne tous les calques (excluant l'image de fond)
@@ -1763,14 +1799,25 @@ declare class LayerManager {
      *
      * @param options.opacity - Opacité à appliquer (utile si target.opacity est temporairement modifiée)
      * @param options.imageMeta - Les clés de la nouvelle source (une forme-image seulement)
-     * @param options.select - Sélectionner l'image remplacée (défaut) — faux pour un remplacement
-     *   d'affichage (un champ lié interpolé pour ce lecteur), qui ne doit pas toucher la sélection
+     * @param options.select - Sélectionner l'image remplacée (défaut)
+     *
+     * C'est un geste d'auteur : « cette image-ci, ici ». Un cadre dont la source était liée
+     * (imageSlots) se délie — sinon la liaison reprendrait la main au prochain affichage, et à
+     * l'expansion. L'hôte qui pose une image liée relie après (son binding), et montre la valeur
+     * d'une liaison par showImageValue, jamais par ici.
      */
     replaceImageSource(target: ImageFrame | FabricImage, newUrl: string, options?: {
         opacity?: number;
         imageMeta?: ImageMeta;
         select?: boolean;
     }): Promise<ImageFrame | FabricImage>;
+    /**
+     * Montre dans une forme-image la VALEUR de sa source liée (imageSlots) pour le lecteur du
+     * moment — ou, sans valeur (`null`), la vide : le cadre se dessine alors en emplacement.
+     * Affichage seul : rien n'entre dans le document (le cadre reste en attente, sauvé sans
+     * `src`), la sélection ne bouge pas. Sans effet sur ce qui n'est pas une forme-image.
+     */
+    showImageValue(target: FabricObject, url: string | null): Promise<void>;
     /**
      * Remplace la source d'une image legacy (FabricImage sans frame)
      * @internal
@@ -2561,12 +2608,15 @@ declare function distributeDeltas(boxes: Box[], axis: DistributeAxis): Delta[];
  * - le lien se voit : un badge au coin du cadre (survol, sélection), dans la couleur d'édition
  *   (guideColor), et un liseré permanent sur les médias dynamiques.
  */
-/** `hint` : la consigne d'une image à fournir (scope `user`, cf. userSlots). */
+/** `media` : ce qu'une image liée désigne — le rang d'une photo du sujet, `"each"`, ou le nom
+ *  d'une image du lecteur (cf. imageSlots). `hint` : la consigne d'une image à fournir (scope
+ *  `user`, cf. userSlots). */
 type BindingSpec = {
     expr?: string;
     scope?: string;
     resolved?: boolean;
     hint?: string;
+    media?: number | string;
 };
 type Bindings = Record<string, BindingSpec>;
 declare function pendingBindings(obj: FabricObject): Bindings;
@@ -2580,11 +2630,14 @@ declare function hasPendingBindings(obj: FabricObject): boolean;
 declare function setTextContent(obj: FabricObject, text: string): void;
 /**
  * Le badge de liaison (cf. ui/badges : sous les poignées, avec le cadre) : il nomme les
- * tokens liés ($NOM), les slots (media[i]) et les images à fournir du calque.
+ * tokens liés ($NOM), les images liées (`media 3`, `avatar`) et les images à fournir du calque.
  */
 declare function bindingBadgeLabel(obj: FabricObject, userSlotLabel?: string): string | null;
 /** Peint le badge de liaison d'un calque (la couche des badges le fait pour l'éditeur). */
 declare function drawBindingBadge(ctx: CanvasRenderingContext2D, obj: FabricObject, color: string, userSlotLabel?: string): void;
+/** Le nom d'une image liée : `media 3`, `media i` (l'itération), ou le nom de l'image du
+ *  lecteur (`avatar`). C'est ce que le badge et la timeline de l'hôte affichent. */
+declare function mediaLabel(spec: BindingSpec): string;
 
 /**
  * Les images à fournir (apibots, plan user-image-slots) : un cadre que l'utilisateur final
@@ -2884,6 +2937,12 @@ declare class FabricEditor {
     removeShadow(): void;
     copySelection(): void;
     pasteClipboard(): Promise<FabricObject[]>;
+    /**
+     * Le dessin de l'emplacement d'une image liée (imageSlots), dans la couleur de cet éditeur,
+     * en data-URL : ce que l'hôte tient en main le temps de poser un cadre lié qui n'a pas de
+     * valeur à montrer (aperçu de glisser, image de départ). Jamais une source de document.
+     */
+    imageSlotUrl(spec: BindingSpec): string;
     /** Les images à fournir de la page (userSlots), boîtes en coordonnées scène. */
     userSlots(): UserSlot[];
     /**
@@ -3165,7 +3224,8 @@ interface DropHandlerConfig {
      * Le bord de l'artboard pendant qu'on glisse une image DU CANVAS : l'hôte dit si le
      * pointeur est dans sa bande du fond (`near` — le remplacement ne s'arme pas là), montre
      * son cue (`cue`), et prend le lâcher (`take` : l'image devient le fond ; vrai si prise —
-     * le calque glissé est alors retiré du canvas).
+     * le calque glissé est alors retiré du canvas). Un emplacement d'image (imageSlots) n'a
+     * que la bande : `take` reçoit un cadre sans image, son binding fait le fond.
      */
     canvasEdge?: {
         near: (e: MouseEvent) => boolean;
@@ -3890,6 +3950,55 @@ declare function displayFill(obj: FabricObject): string | null;
 declare function setDisplayFill(obj: FabricObject, fill: string | null): boolean;
 
 /**
+ * Les emplacements d'image (apibots : les médias dynamiques) : un cadre dont la source est
+ * LIÉE. Le binding dit ce que l'image sera, par `media` — le rang d'une photo du sujet (compté
+ * à partir de 1), `"each"` pour celle de l'itération, ou le nom d'une image du lecteur
+ * (`"avatar"`, `"logo"`) :
+ *
+ *   bindings: { "image.src": { scope: "subject", media: 3 } }
+ *   bindings: { "image.src": { scope: "company", media: "avatar" } }
+ *
+ * Le binding EST l'information « ici viendra telle image » : le document ne stocke aucune
+ * source à côté, et surtout pas un dessin d'exemple. Le rendu s'en déduit — tant que rien ne
+ * vient remplir le cadre (ImageFrame#showValue, l'expansion côté hôte), il se dessine
+ * lui-même : un aplat dans la couleur d'édition, un disque, et le repère de ce qu'il attend
+ * (le rang de la photo, `i` pour l'itération, un pictogramme pour une image nommée).
+ *
+ * Comme les images à fournir (userSlots, le scope `user`), le dessin est dans le rendu de
+ * l'objet, pas en overlay : les aperçus (PreviewCanvas, vignettes) le montrent aussi.
+ *
+ * Une source liée par une expression de l'hôte (`expr`, sans `media`) est aussi un
+ * emplacement : la lib n'en sait rien de plus, elle la dessine en photo.
+ */
+declare const IMAGE_SLOT_FIELD = "image.src";
+/** `media` de l'image de l'itération courante (page ou séquence répétée). */
+declare const EACH_MEDIA = "each";
+type SlotGlyph = "photo" | "person";
+/** Ce qu'un emplacement affiche en son centre. */
+type SlotMark = {
+    label: string;
+} | {
+    glyph: SlotGlyph;
+};
+/** Le binding d'image liée en attente — hors images à fournir (scope `user`, cf. userSlots). */
+declare function imageSlotBinding(obj: FabricObject): BindingSpec | null;
+/** Le repère d'un emplacement : le rang d'une photo, `i` pour l'itération, sinon un
+ *  pictogramme — une personne pour l'avatar, une photo par défaut. */
+declare function slotMark(spec: BindingSpec): SlotMark;
+/**
+ * Dessine un emplacement de `width` × `height` centré sur l'origine du repère courant : le
+ * dégradé de la couleur d'édition (clair en haut à gauche), un disque, le repère en blanc.
+ * Proportionnel au cadre : un emplacement se lit pareil en vignette et plein écran.
+ */
+declare function drawImageSlot(ctx: CanvasRenderingContext2D, width: number, height: number, mark: SlotMark, color?: string): void;
+/**
+ * Le dessin d'un emplacement en image (data-URL carrée) : ce qu'un geste de l'hôte tient en
+ * main le temps de poser le cadre (aperçu de glisser, image de départ) — jamais une source
+ * de document, le cadre posé la lâche (ImageFrame#clearSource).
+ */
+declare function imageSlotDataUrl(mark: SlotMark, color?: string, size?: number): string;
+
+/**
  * La couleur de l'éditeur quand l'hôte n'en donne pas (`guideColor`) : sélection, liseré du
  * cadre, médias à fournir, recadrage.
  */
@@ -3900,4 +4009,4 @@ declare const DEFAULT_GUIDE_COLOR = "#d946ef";
  */
 declare const DEFAULT_SNAP_GUIDE_COLOR = "#ff00ff";
 
-export { type AlignEdge, type AlignItems, type AlignSelf, type Arrangement, type BadgeLabeler, type BindingSpec, type Bindings, type Box, CANVAS_SHORTCUTS, CanvasGuides, type CatalogShape, type CatalogShapeInput, type ChildData, type ClipData, type ContainerData, ContainerizeSession, type ControlOption, type Crop, CropMode, CustomTextbox, DEFAULT_GUIDE_COLOR, DEFAULT_SNAP_GUIDE_COLOR, type Delta, DesignCanvas, type DistributeAxis, type DragPayload, DropHandler, type DropHandlerConfig, type DropResult, type EditorConfig, FabCircle, FabGroup, FabPath, FabRect, FabricEditor, type FlexDirection, type FontConfig, type FontsConfig, type FrameRect, FreeResizeSession, GHOST_OPACITY, GestureManager, type GestureShortcut, type GradientStop, HEART_PATH, HEXAGON_PATH, type HistoryCallbacks, HistoryManager, type HistoryState, type HtmlLayerOutput, type HtmlRenderOptions, ImageFrame, type ImageLayerOptions, InsertChildSession, type JustifyContent, type KeyShortcut, LAYER_PROPS, type LayerData, LayerManager, type LayoutData, LayoutManager, type LayoutManagerCallbacks, type LayoutParents, type LayoutSession, type LockMode$1 as LockMode, type Lockable, MAX_CROP_SCALE, MIN_PAD, MIXED, MaskManager, type Modifier, NO_CROP, type NormalizedShape, type NormalizedShapePath, type ObjectControlsConfig, type ObjectKind, type ObjectRules, PendingUploadsManager, PersistenceManager, type Platform, PreviewCanvas, ROTATION_STEP, type RenderRangeOptions, ResizeSession, type ResizeSnapResult, type SaveOptions, type SaveResult, ScaleSession, type SelectionCallbacks, type SelectionKind, SelectionManager, type ShapeCatalogEntry, type ShapeLayerOptions, type ShapePathData, type ShapeType, type ShortcutContext, type ShortcutEntry, type ShortcutGroup, ShortcutManager, type ShortcutManagerOptions, type ShortcutScope, type SizeMode, type SizePreset, type SizingData, type SnappingConfig, SnappingManager, StackResizeSession, TEXT_STYLE_KEYS, type TextLayerOptions, type TextLayerPart, type TextOverflow, type TextStyleKey, type TextStyleState, type TextStyleValue, type TextTile, type TextUnit, type TextUnitBox, type TextUnitKind, type TextUnitTiles, type ToolId, type ToolboxImageReaction, type TreeLayer, USER_SCOPE, USER_SLOT_FIELD, type UserSlot, type WorkspaceOptions, addCircleClip, addCropControls, addHeartClip, addHexagonClip, alignAxis, alignDelta, antiScale, applyClip, applyLockMode, badgeLabel, bindingBadgeLabel, canvasImageSource, clampTopLeft, clipDataFor, collectUserSlots, createCircle, createDropSession, createHeart, createHexagon, createImage, createPathShape, createPathsShape, createRect, createShape, cropFromRect, detectPlatform, displayFill, distributeDeltas, drawBindingBadge, drawFrameBadge, fabricToHtml, fitFreeContainer, fontFamiliesOf, forgetFontMeasures, formatCombo, formatModifier, getAvailableShapes, getCatalogShape, getLockMode, getNextLockMode, getShapeCatalog, hasExceededOffset, hasPendingBindings, initYoga, isBold, isContentLocked, isCropped, isEclipsed, isFreeContainer, isGhost, isKeyShortcut, isMonoPath, isPositionLocked, isStyleLocked, isUserSlot, isValidShape, kindOf, layerToHtmlStandalone, layoutChildren, layoutDescendants, layoutParents, layoutRoot, nextShape, normalizeShape, panCrop, parseCombo, pendingBindings, photoRect, pointInObject, registerShapes, registeredShapes, removeCropControls, renderTextRange, rulesOf, runLayout, scaledSize, selectionKindOf, setDisplayFill, setEclipsed, setGhost, setTextContent, stackBlock, stackParentOf, summarizeObject, summarizeStyles, switchClip, switchShape, textParts, textUnitTiles, textUnits, tilePadding, toolsFor, topLeft, unionBox, userSlotBinding, userSlotHint, wrapContainerAroundChild, yogaLayout, zoomCrop };
+export { type AlignEdge, type AlignItems, type AlignSelf, type Arrangement, type BadgeLabeler, type BindingSpec, type Bindings, type Box, CANVAS_SHORTCUTS, CanvasGuides, type CatalogShape, type CatalogShapeInput, type ChildData, type ClipData, type ContainerData, ContainerizeSession, type ControlOption, type Crop, CropMode, CustomTextbox, DEFAULT_GUIDE_COLOR, DEFAULT_SNAP_GUIDE_COLOR, type Delta, DesignCanvas, type DistributeAxis, type DragPayload, DropHandler, type DropHandlerConfig, type DropResult, EACH_MEDIA, type EditorConfig, FabCircle, FabGroup, FabPath, FabRect, FabricEditor, type FlexDirection, type FontConfig, type FontsConfig, type FrameRect, FreeResizeSession, GHOST_OPACITY, GestureManager, type GestureShortcut, type GradientStop, HEART_PATH, HEXAGON_PATH, type HistoryCallbacks, HistoryManager, type HistoryState, type HtmlLayerOutput, type HtmlRenderOptions, IMAGE_SLOT_FIELD, ImageFrame, type ImageLayerOptions, InsertChildSession, type JustifyContent, type KeyShortcut, LAYER_PROPS, type LayerData, LayerManager, type LayoutData, LayoutManager, type LayoutManagerCallbacks, type LayoutParents, type LayoutSession, type LockMode$1 as LockMode, type Lockable, MAX_CROP_SCALE, MIN_PAD, MIXED, MaskManager, type Modifier, NO_CROP, type NormalizedShape, type NormalizedShapePath, type ObjectControlsConfig, type ObjectKind, type ObjectRules, PendingUploadsManager, PersistenceManager, type Platform, PreviewCanvas, ROTATION_STEP, type RenderRangeOptions, ResizeSession, type ResizeSnapResult, type SaveOptions, type SaveResult, ScaleSession, type SelectionCallbacks, type SelectionKind, SelectionManager, type ShapeCatalogEntry, type ShapeLayerOptions, type ShapePathData, type ShapeType, type ShortcutContext, type ShortcutEntry, type ShortcutGroup, ShortcutManager, type ShortcutManagerOptions, type ShortcutScope, type SizeMode, type SizePreset, type SizingData, type SlotGlyph, type SlotMark, type SnappingConfig, SnappingManager, StackResizeSession, TEXT_STYLE_KEYS, type TextLayerOptions, type TextLayerPart, type TextOverflow, type TextStyleKey, type TextStyleState, type TextStyleValue, type TextTile, type TextUnit, type TextUnitBox, type TextUnitKind, type TextUnitTiles, type ToolId, type ToolboxImageReaction, type TreeLayer, USER_SCOPE, USER_SLOT_FIELD, type UserSlot, type WorkspaceOptions, addCircleClip, addCropControls, addHeartClip, addHexagonClip, alignAxis, alignDelta, antiScale, applyClip, applyLockMode, badgeLabel, bindingBadgeLabel, canvasImageSource, clampTopLeft, clipDataFor, collectUserSlots, createCircle, createDropSession, createHeart, createHexagon, createImage, createPathShape, createPathsShape, createRect, createShape, cropFromRect, detectPlatform, displayFill, distributeDeltas, drawBindingBadge, drawFrameBadge, drawImageSlot, fabricToHtml, fitFreeContainer, fontFamiliesOf, forgetFontMeasures, formatCombo, formatModifier, getAvailableShapes, getCatalogShape, getLockMode, getNextLockMode, getShapeCatalog, hasExceededOffset, hasPendingBindings, imageSlotBinding, imageSlotDataUrl, initYoga, isBold, isContentLocked, isCropped, isEclipsed, isFreeContainer, isGhost, isKeyShortcut, isMonoPath, isPositionLocked, isStyleLocked, isUserSlot, isValidShape, kindOf, layerToHtmlStandalone, layoutChildren, layoutDescendants, layoutParents, layoutRoot, mediaLabel, nextShape, normalizeShape, panCrop, parseCombo, pendingBindings, photoRect, pointInObject, registerShapes, registeredShapes, removeCropControls, renderTextRange, rulesOf, runLayout, scaledSize, selectionKindOf, setDisplayFill, setEclipsed, setGhost, setTextContent, slotMark, stackBlock, stackParentOf, summarizeObject, summarizeStyles, switchClip, switchShape, textParts, textUnitTiles, textUnits, tilePadding, toolsFor, topLeft, unionBox, userSlotBinding, userSlotHint, wrapContainerAroundChild, yogaLayout, zoomCrop };

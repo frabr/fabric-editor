@@ -119,9 +119,10 @@ function checkerPattern(obj: FabricObject): Pattern {
 }
 
 /**
- * Ce que l'éditeur fait dire aux cadres de SON canvas : la couleur d'édition (guideColor) et
- * la phrase d'invite, fournie par l'hôte (traduite). Posé par FabricEditor sur le canvas
- * fabric ; sans lui (aperçus), l'icône seule, dans la couleur par défaut.
+ * Ce que l'éditeur fait dire aux cadres de SON canvas : la couleur d'édition (guideColor), la
+ * phrase d'invite des images à fournir, fournie par l'hôte (traduite). Les emplacements d'image
+ * (imageSlots) y prennent leur couleur. Posé par FabricEditor sur le canvas fabric ; sans lui
+ * (aperçus), l'icône seule, dans la couleur par défaut.
  */
 export interface UserSlotStyle {
   color: string;

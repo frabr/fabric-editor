@@ -1498,7 +1498,7 @@ var DesignCanvas = class {
 };
 
 // src/LayerManager.ts
-import { FabricImage as FabricImage5, Group as Group5, Point as Point4, util as util2 } from "#fabric";
+import { FabricImage as FabricImage5, Group as Group5, Point as Point4, util as util3 } from "#fabric";
 
 // src/controls/CustomTextbox.ts
 import { Textbox, Point as Point2, controlsUtils as controlsUtils2 } from "#fabric";
@@ -2537,12 +2537,15 @@ function drawBindingBadge(ctx, obj, color, userSlotLabel = DEFAULT_USER_SLOT_LAB
   if (label) drawFrameBadge(ctx, obj, label, color);
 }
 var DEFAULT_USER_SLOT_LABEL = "\xC0 fournir";
+function mediaLabel(spec) {
+  if (typeof spec.media === "number") return `media ${spec.media}`;
+  return spec.media === "each" ? "media i" : String(spec.media ?? "");
+}
 function bindingLabel(obj, userSlotLabel) {
   const labels = Object.values(pendingBindings(obj)).flatMap((spec) => {
     if (spec?.scope === "user") return [userSlotLabel];
-    const expr = String(spec?.expr ?? "");
-    const tokens = expr.match(/\$\w+/g) || [];
-    return tokens.length ? tokens : expr.match(/^media\[/) ? [expr] : [];
+    if (spec?.media !== void 0) return [mediaLabel(spec)];
+    return String(spec?.expr ?? "").match(/\$\w+/g) || [];
   });
   return labels.length ? [...new Set(labels)].join(" ") : "$";
 }
@@ -3503,6 +3506,120 @@ import {
   Shadow
 } from "#fabric";
 
+// src/imageSlots.ts
+import { util as util2 } from "#fabric";
+var IMAGE_SLOT_FIELD = "image.src";
+var EACH_MEDIA = "each";
+function imageSlotBinding(obj) {
+  const spec = pendingBindings(obj)[IMAGE_SLOT_FIELD];
+  if (!spec || spec.scope === USER_SCOPE) return null;
+  return spec.media !== void 0 || spec.expr ? spec : null;
+}
+var NAMED_GLYPHS = { avatar: "person" };
+function slotMark(spec) {
+  const { media } = spec;
+  if (typeof media === "number") return { label: String(media) };
+  if (media === EACH_MEDIA) return { label: "i" };
+  return { glyph: NAMED_GLYPHS[String(media)] ?? "photo" };
+}
+function slotKey(spec) {
+  return spec.media !== void 0 ? `media:${spec.media}` : `expr:${spec.expr}`;
+}
+function slotColorOf(obj) {
+  const style = obj.canvas?.[USER_SLOT_STYLE_KEY];
+  return style?.color ?? DEFAULT_GUIDE_COLOR;
+}
+var UNIT = 1080;
+var DISC_RADIUS = 300;
+var DISC = "rgba(255, 255, 255, 0.22)";
+var INK = "#ffffff";
+var LIGHT = 0.72;
+function tint(color, amount) {
+  const rgb = parseHex(color);
+  if (rgb.some(Number.isNaN)) return color;
+  const [r, g, b] = rgb.map((channel) => Math.round(channel + (255 - channel) * amount));
+  return `rgb(${r}, ${g}, ${b})`;
+}
+function drawImageSlot(ctx, width, height, mark, color = DEFAULT_GUIDE_COLOR) {
+  ctx.save();
+  const gradient = ctx.createLinearGradient(-width / 2, -height / 2, width / 2, height / 2);
+  gradient.addColorStop(0, tint(color, LIGHT));
+  gradient.addColorStop(1, color);
+  ctx.fillStyle = gradient;
+  ctx.fillRect(-width / 2, -height / 2, width, height);
+  const scale = Math.min(width, height) / UNIT;
+  ctx.scale(scale, scale);
+  ctx.fillStyle = DISC;
+  ctx.beginPath();
+  ctx.arc(0, 0, DISC_RADIUS, 0, Math.PI * 2);
+  ctx.fill();
+  if ("label" in mark) drawLabel(ctx, mark.label);
+  else GLYPHS[mark.glyph](ctx);
+  ctx.restore();
+}
+function drawLabel(ctx, label) {
+  const size = label.length > 1 ? 240 : 320;
+  ctx.fillStyle = INK;
+  ctx.font = `700 ${size}px Helvetica, Arial, sans-serif`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "alphabetic";
+  ctx.fillText(label, 0, size * 0.36);
+}
+var GLYPHS = {
+  // Une silhouette : la tête et les épaules
+  person(ctx) {
+    ctx.fillStyle = INK;
+    ctx.beginPath();
+    ctx.arc(0, -90, 115, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(-205, 215);
+    ctx.bezierCurveTo(-205, 80, -110, 45, 0, 45);
+    ctx.bezierCurveTo(110, 45, 205, 80, 205, 215);
+    ctx.closePath();
+    ctx.fill();
+  },
+  // Une photo (heroicons photo) : le cadre, deux reliefs, le soleil
+  photo(ctx) {
+    ctx.save();
+    ctx.scale(15, 15);
+    ctx.translate(-12, -12);
+    ctx.strokeStyle = INK;
+    ctx.fillStyle = INK;
+    ctx.lineWidth = 1.5;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.beginPath();
+    ctx.moveTo(3.75, 4.5);
+    ctx.arcTo(21.75, 4.5, 21.75, 19.5, 1.5);
+    ctx.arcTo(21.75, 19.5, 2.25, 19.5, 1.5);
+    ctx.arcTo(2.25, 19.5, 2.25, 4.5, 1.5);
+    ctx.arcTo(2.25, 4.5, 21.75, 4.5, 1.5);
+    ctx.closePath();
+    ctx.moveTo(2.25, 15.75);
+    ctx.lineTo(7.409, 10.591);
+    ctx.quadraticCurveTo(9, 9, 10.591, 10.591);
+    ctx.lineTo(15.75, 15.75);
+    ctx.moveTo(14.25, 14.25);
+    ctx.lineTo(15.659, 12.841);
+    ctx.quadraticCurveTo(17.25, 11.25, 18.841, 12.841);
+    ctx.lineTo(21.75, 15.75);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(14.6, 8.25, 0.9, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+};
+function imageSlotDataUrl(mark, color = DEFAULT_GUIDE_COLOR, size = UNIT) {
+  const el = util2.createCanvasElement();
+  el.width = el.height = size;
+  const ctx = el.getContext("2d");
+  ctx.translate(size / 2, size / 2);
+  drawImageSlot(ctx, size, size, mark, color);
+  return el.toDataURL("image/png");
+}
+
 // src/crop.ts
 var NO_CROP = { x: 0.5, y: 0.5, scale: 1 };
 var MAX_CROP_SCALE = 4;
@@ -3606,7 +3723,11 @@ var ImageFrame = class _ImageFrame extends Group4 {
     this.cornerRadius = 0;
     this._crop = NO_CROP;
     this._imageMeta = {};
-    this._pending = false;
+    this._source = "document";
+    /** Le damier est effacé (concealPlaceholder) : l'hôte montre son propre aperçu dessous. */
+    this._concealed = false;
+    /** L'emplacement au dernier rendu, par sa clé (isCacheDirty). */
+    this._drawnSlot = null;
     this._image = image;
     this.frameWidth = frameWidth;
     this.frameHeight = frameHeight;
@@ -3633,35 +3754,67 @@ var ImageFrame = class _ImageFrame extends Group4 {
   get image() {
     return this._image;
   }
+  /** La source du DOCUMENT — vide pour un cadre en attente, quoi qu'il affiche. */
   get imageSrc() {
-    return this._pending ? "" : this._image.getSrc() || "";
+    return this.pending ? "" : this._image.getSrc() || "";
+  }
+  /** La source AFFICHÉE : celle du document, un aperçu de session, la valeur d'une liaison —
+   *  vide pour un cadre qui ne montre rien. */
+  get displayedSrc() {
+    return this._source === "none" ? "" : this._image.getSrc() || "";
   }
   /** Les clés de `image` qui ne sont pas à la lib (cf. ImageFrameOptions.imageMeta). */
   get imageMeta() {
     return this._imageMeta;
   }
-  /** Cadre en attente de son fichier : pas de `src` au save (damier, ou l'aperçu de session
-   *  d'un upload en cours). `replaceImage` le sort de l'attente. */
+  /** Cadre en attente de sa source : pas de `src` au save (cf. ImageSource). `replaceImage`
+   *  le sort de l'attente. */
   get pending() {
-    return this._pending;
+    return this._source !== "document";
   }
   /** Un cadre en attente : l'image est le damier, aux dimensions du cadre. */
   static pending(options) {
     const img = new FabricImage4(checkerCanvas(options.frameWidth, options.frameHeight));
     const frame = new _ImageFrame(img, options);
-    frame._pending = true;
+    frame._source = "none";
     return frame;
   }
   /** L'image affichée n'est pas celle du document (une url de session, le temps d'un
    *  upload) : le cadre se sauve sans `src` jusqu'à ce que la vraie source la remplace. */
   markSourcePending() {
-    this._pending = true;
+    this._source = "session";
+  }
+  /**
+   * Le cadre montre la VALEUR de sa source liée pour le lecteur du moment (son avatar, son
+   * logo) : affichée, recadrable, jamais sauvée — le document garde le binding, sans `src`.
+   * Le recadrage du document s'applique à elle. Sans `image`, celle déjà affichée devient
+   * cette valeur (une carte posée avec l'image du lecteur, puis liée).
+   */
+  showValue(image) {
+    this._imageMeta = {};
+    this._source = "value";
+    if (image) this._swapImage(image);
+    this.dirty = true;
+    this.canvas?.requestRenderAll();
+  }
+  /**
+   * Le cadre lâche sa source : il redevient vide (en attente), son recadrage gardé pour
+   * l'image qui viendra. Lié, il se dessine en emplacement (imageSlots) ; sinon en damier.
+   */
+  clearSource() {
+    this._imageMeta = {};
+    this._source = "none";
+    this._swapImage(new FabricImage4(checkerCanvas(this.frameWidth, this.frameHeight)));
+    this.dirty = true;
+    this.canvas?.requestRenderAll();
   }
   /** Un cadre en attente dont l'hôte montre lui-même l'aperçu sous le canvas : le damier
-   *  s'efface (transparent), le cadre reste en attente — rien ne change au save. */
+   *  s'efface (transparent, et pas d'emplacement dessiné), le cadre reste en attente — rien
+   *  ne change au save. */
   concealPlaceholder() {
-    if (!this._pending) return;
+    if (!this.pending) return;
     this._image.setElement(transparentCanvas(this._image.width, this._image.height));
+    this._concealed = true;
     this.dirty = true;
   }
   // ─────────────────────────────────────────────────────────────
@@ -3670,9 +3823,10 @@ var ImageFrame = class _ImageFrame extends Group4 {
   get crop() {
     return this._crop;
   }
-  /** Se recadre : une vraie image (pas un damier d'attente). */
+  /** Se recadre : une vraie image, en place pour de bon — celle du document, ou la valeur
+   *  d'une source liée ; ni un damier, ni un emplacement, ni un aperçu d'upload. */
   get croppable() {
-    return !this._pending;
+    return this._source === "document" || this._source === "value";
   }
   get isCropped() {
     return isCropped(this._crop);
@@ -3711,18 +3865,18 @@ var ImageFrame = class _ImageFrame extends Group4 {
    * est exactement le bug qu'elles servent à éviter.
    */
   replaceImage(newImage, imageMeta = {}) {
-    const savedClipShape = this.clipShape || "rect";
     this._imageMeta = { ...imageMeta };
-    this._pending = false;
-    const coverScale2 = Math.max(this.frameWidth / newImage.width, this.frameHeight / newImage.height);
-    newImage.set({
-      scaleX: coverScale2,
-      scaleY: coverScale2,
-      originX: "center",
-      originY: "center",
-      left: 0,
-      top: 0
-    });
+    this._source = "document";
+    this._crop = NO_CROP;
+    this._swapImage(newImage);
+    this.dirty = true;
+    this.canvas?.requestRenderAll();
+  }
+  /** L'image du groupe change, en cover, au recadrage courant ; le cadre ne bouge pas. */
+  _swapImage(newImage) {
+    const savedClipShape = this.clipShape || "rect";
+    this._concealed = false;
+    newImage.set({ originX: "center", originY: "center" });
     const index = this._objects.indexOf(this._image);
     this._image.group = void 0;
     if (index !== -1) {
@@ -3736,10 +3890,7 @@ var ImageFrame = class _ImageFrame extends Group4 {
     this.height = this.frameHeight;
     this._applyClip(savedClipShape);
     this.setCoords();
-    this._crop = NO_CROP;
     this._applyCrop();
-    this.dirty = true;
-    this.canvas?.requestRenderAll();
   }
   /**
    * Redimensionne le frame : l'image reste en cover, le recadrage (normalisé) garde la même
@@ -3810,6 +3961,36 @@ var ImageFrame = class _ImageFrame extends Group4 {
     outline.render(ctx);
     outline.set(saved);
     ctx.restore();
+  }
+  // ─────────────────────────────────────────────────────────────
+  // Emplacement d'image (cf. imageSlots) : un cadre lié qui ne montre rien se dessine
+  // lui-même, d'après son binding
+  // ─────────────────────────────────────────────────────────────
+  /** Le binding de l'emplacement à dessiner — null dès que le cadre montre une image, ou que
+   *  l'hôte a pris l'aperçu à sa charge. */
+  _slot() {
+    if (this._source !== "none" || this._concealed) return null;
+    return imageSlotBinding(this);
+  }
+  /** Le cadre a toujours son cache (clipPath) : poser, changer ou retirer le binding ne le
+   *  salit pas aux yeux de fabric — c'est le changement d'emplacement qui le fait. */
+  isCacheDirty(skipCanvas = false) {
+    const slot = this._slot();
+    const key = slot && slotKey(slot);
+    if (key !== this._drawnSlot) {
+      this._drawnSlot = key;
+      this.dirty = true;
+    }
+    return super.isCacheDirty(skipCanvas);
+  }
+  /** Le contenu du cadre : son image — ou, vide et lié, l'emplacement, sous la même découpe. */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  drawObject(ctx, forClipping, context) {
+    const slot = this._slot();
+    if (!slot) return super.drawObject(ctx, forClipping, context);
+    this._renderBackground(ctx);
+    drawImageSlot(ctx, this.width, this.height, slotMark(slot), slotColorOf(this));
+    this._drawClipPath(ctx, this.clipPath, context);
   }
   // ─────────────────────────────────────────────────────────────
   // Méthodes privées
@@ -4032,7 +4213,7 @@ var ImageFrame = class _ImageFrame extends Group4 {
       strokeWidth: this.stroke ? this.strokeWidth : void 0,
       image: {
         ...this._imageMeta,
-        ...this._pending ? {} : { src: this.imageSrc },
+        ...this.pending ? {} : { src: this.imageSrc },
         cropX: this._crop.x,
         cropY: this._crop.y,
         scale: this._crop.scale
@@ -4114,6 +4295,9 @@ var LAYER_PROPS = ["layerId", "lockMode", "lockContent", "layout", "bindings", "
 var LayerManager = class {
   constructor(canvas) {
     this.canvas = canvas;
+    /** La dernière valeur demandée pour chaque cadre lié (showImageValue) : un chargement
+     *  dépassé ne s'affiche pas. */
+    this.valueRequests = /* @__PURE__ */ new WeakMap();
   }
   /**
    * Retourne tous les calques (excluant l'image de fond)
@@ -4316,14 +4500,22 @@ var LayerManager = class {
    *
    * @param options.opacity - Opacité à appliquer (utile si target.opacity est temporairement modifiée)
    * @param options.imageMeta - Les clés de la nouvelle source (une forme-image seulement)
-   * @param options.select - Sélectionner l'image remplacée (défaut) — faux pour un remplacement
-   *   d'affichage (un champ lié interpolé pour ce lecteur), qui ne doit pas toucher la sélection
+   * @param options.select - Sélectionner l'image remplacée (défaut)
+   *
+   * C'est un geste d'auteur : « cette image-ci, ici ». Un cadre dont la source était liée
+   * (imageSlots) se délie — sinon la liaison reprendrait la main au prochain affichage, et à
+   * l'expansion. L'hôte qui pose une image liée relie après (son binding), et montre la valeur
+   * d'une liaison par showImageValue, jamais par ici.
    */
   async replaceImageSource(target, newUrl, options) {
     if (kindOf(target) === "imageShape") {
       const frame = target;
       const newImg = await FabricImage5.fromURL(newUrl, { crossOrigin: "anonymous" });
       frame.replaceImage(newImg, options?.imageMeta);
+      if (imageSlotBinding(frame)) {
+        const { [IMAGE_SLOT_FIELD]: _unbound, ...bindings } = frame.get("bindings") ?? {};
+        frame.set("bindings", bindings);
+      }
       if (options?.opacity !== void 0) {
         frame.opacity = options.opacity;
       }
@@ -4332,6 +4524,27 @@ var LayerManager = class {
       return frame;
     }
     return this._replaceImageSourceLegacy(target, newUrl, options);
+  }
+  /**
+   * Montre dans une forme-image la VALEUR de sa source liée (imageSlots) pour le lecteur du
+   * moment — ou, sans valeur (`null`), la vide : le cadre se dessine alors en emplacement.
+   * Affichage seul : rien n'entre dans le document (le cadre reste en attente, sauvé sans
+   * `src`), la sélection ne bouge pas. Sans effet sur ce qui n'est pas une forme-image.
+   */
+  async showImageValue(target, url) {
+    if (kindOf(target) !== "imageShape") return;
+    const frame = target;
+    this.valueRequests.set(frame, url);
+    if (!url) {
+      if (frame.displayedSrc) frame.clearSource();
+    } else if (url === frame.displayedSrc) {
+      if (!frame.pending) frame.showValue();
+    } else {
+      const image = await FabricImage5.fromURL(url, { crossOrigin: "anonymous" });
+      if (this.valueRequests.get(frame) !== url || !imageSlotBinding(target)) return;
+      frame.showValue(image);
+    }
+    this.canvas.requestRenderAll();
   }
   /**
    * Remplace la source d'une image legacy (FabricImage sans frame)
@@ -4669,7 +4882,7 @@ function clipOfShape(shape) {
   if (shape instanceof FabPath) {
     const id = shape.id;
     const clipData = {
-      d: util2.joinPath(shape.path),
+      d: util3.joinPath(shape.path),
       width: shape.width,
       height: shape.height,
       ...shape.fillRule === "evenodd" ? { fillRule: "evenodd" } : {}
@@ -6278,10 +6491,10 @@ function setupTextMeasure(node, obj, Y) {
 }
 
 // src/layout/rotation.ts
-import { util as util3 } from "#fabric";
+import { util as util4 } from "#fabric";
 function rotateAbout(obj, pivot, delta) {
   if (!delta) return;
-  const center = obj.getCenterPoint().rotate(util3.degreesToRadians(delta), pivot);
+  const center = obj.getCenterPoint().rotate(util4.degreesToRadians(delta), pivot);
   obj.set({ angle: (obj.angle || 0) + delta });
   obj.setPositionByOrigin(center, "center", "center");
   obj.setCoords();
@@ -6321,7 +6534,7 @@ var SubtreeRotate = class _SubtreeRotate {
   /** La descendance suit la rotation de `target` depuis le début. */
   follow(target) {
     const delta = (target.angle || 0) - this.startAngle;
-    const rad = util3.degreesToRadians(delta);
+    const rad = util4.degreesToRadians(delta);
     for (const f of this.followers) {
       f.obj.set({ angle: f.angle + delta });
       f.obj.setPositionByOrigin(f.center.rotate(rad, this.pivot), "center", "center");
@@ -7839,7 +8052,7 @@ var SubtreeDrag = class _SubtreeDrag {
 };
 
 // src/layout/scale-session.ts
-import { Point as Point8, util as util4 } from "#fabric";
+import { Point as Point8, util as util5 } from "#fabric";
 var scaleMin = (minSize, k) => minSize && { w: minSize.w * k, h: minSize.h * k };
 var ScaleSession = class _ScaleSession {
   constructor(container, objects, start) {
@@ -7870,7 +8083,7 @@ var ScaleSession = class _ScaleSession {
     const k = Math.min(this.maxK, Math.max(0.05, (w / start.width + h / start.height) / 2));
     const fx = transform.originX === "left" ? 0 : transform.originX === "right" ? 1 : 0.5;
     const fy = transform.originY === "top" ? 0 : transform.originY === "bottom" ? 1 : 0.5;
-    const corner = new Point8(start.width * fx, start.height * fy).rotate(util4.degreesToRadians(this.angle)).add(new Point8(start.left, start.top));
+    const corner = new Point8(start.width * fx, start.height * fy).rotate(util5.degreesToRadians(this.angle)).add(new Point8(start.left, start.top));
     this.apply(k, corner);
   }
   /**
@@ -9180,7 +9393,7 @@ function installDisplayStyleRendering(target) {
 }
 
 // src/CropMode.ts
-import { Point as Point9, util as util5 } from "#fabric";
+import { Point as Point9, util as util6 } from "#fabric";
 var HANDLE_RADIUS = 6;
 var HANDLE_GRAB = 12;
 var FALLBACK_VEIL = "#f3f4f6";
@@ -9285,7 +9498,7 @@ var CropMode = class {
   /** Le point de la scène dans le repère du cadre. */
   toFrame(scene) {
     const frame = this.frame;
-    const local = scene.transform(util5.invertTransform(frame.calcTransformMatrix()));
+    const local = scene.transform(util6.invertTransform(frame.calcTransformMatrix()));
     return { x: local.x + frame.frameWidth / 2, y: local.y + frame.frameHeight / 2 };
   }
   /** Le point du cadre à l'écran (pixels CSS du canvas). */
@@ -10262,6 +10475,15 @@ var _FabricEditor = class _FabricEditor {
   pasteClipboard() {
     return this.clipboard.pasteClipboard();
   }
+  /**
+   * Le dessin de l'emplacement d'une image liée (imageSlots), dans la couleur de cet éditeur,
+   * en data-URL : ce que l'hôte tient en main le temps de poser un cadre lié qui n'a pas de
+   * valeur à montrer (aperçu de glisser, image de départ). Jamais une source de document.
+   */
+  imageSlotUrl(spec) {
+    const gc = this.config.guideColor ?? DEFAULT_GUIDE_COLOR;
+    return imageSlotDataUrl(slotMark(spec), gc);
+  }
   /** Les images à fournir de la page (userSlots), boîtes en coordonnées scène. */
   userSlots() {
     return collectUserSlots(this.layers.all.filter((obj) => !obj.get(DRAG_PREVIEW_KEY)));
@@ -10772,7 +10994,9 @@ var DropHandler = class {
   /** Un pas de glisser natif : une image du canvas au-dessus d'une cible, ou dans la bande du fond. */
   onCanvasMoving(e) {
     const source = e.target;
-    if (this.drag || !source || !canvasImageSource(source)) return;
+    if (this.drag || !source) return;
+    const slot = !canvasImageSource(source) && Boolean(imageSlotBinding(source));
+    if (!slot && !canvasImageSource(source)) return;
     if (rulesOf(source).onToolboxImage !== "replaceImage") return;
     if (!this.editor.layout.isIdle) {
       this.leaveCanvasDrag();
@@ -10785,7 +11009,7 @@ var DropHandler = class {
       this.moving.inEdge = inEdge;
       this.config.canvasEdge?.cue?.(inEdge);
     }
-    if (inEdge) {
+    if (inEdge || slot) {
       this.trackHoverTarget(null, false);
       return;
     }
@@ -12057,7 +12281,7 @@ function layerToHtmlStandalone(layer, zIndex) {
 }
 
 // src/text-units.ts
-import { util as util6 } from "#fabric";
+import { util as util7 } from "#fabric";
 var WHITESPACE = /\s/;
 function internals(text) {
   return text;
@@ -12198,7 +12422,7 @@ function tilePadding(text) {
 function textUnitTiles(text, kind, { resolution = 1, pad = tilePadding(text) } = {}) {
   const t = internals(text);
   const matrix = t.calcTransformMatrix();
-  const toLocal = util6.invertTransform(matrix);
+  const toLocal = util7.invertTransform(matrix);
   const parts = textParts(text);
   const [a, b, c, d, e, f] = matrix;
   const aligned = b === 0 && c === 0 && a > 0 && d > 0;
@@ -12228,7 +12452,7 @@ function textUnitTiles(text, kind, { resolution = 1, pad = tilePadding(text) } =
       const y0 = snapY(r.y - pad, Math.floor);
       const box = { x: x0, y: y0, w: snapX(r.x + r.w + pad, Math.ceil) - x0, h: snapY(r.y + r.h + pad, Math.ceil) - y0 };
       return parts.map((part) => {
-        const canvas = util6.createCanvasElement();
+        const canvas = util7.createCanvasElement();
         canvas.width = Math.max(1, Math.ceil(box.w * resolution));
         canvas.height = Math.max(1, Math.ceil(box.h * resolution));
         box.w = canvas.width / resolution;
@@ -12255,6 +12479,7 @@ export {
   DEFAULT_SNAP_GUIDE_COLOR,
   DesignCanvas,
   DropHandler,
+  EACH_MEDIA,
   FabCircle,
   FabGroup,
   FabPath,
@@ -12266,6 +12491,7 @@ export {
   HEART_PATH,
   HEXAGON_PATH,
   HistoryManager,
+  IMAGE_SLOT_FIELD,
   ImageFrame,
   InsertChildSession,
   LAYER_PROPS,
@@ -12319,6 +12545,7 @@ export {
   distributeDeltas,
   drawBindingBadge,
   drawFrameBadge,
+  drawImageSlot,
   fabricToHtml,
   fitFreeContainer,
   fontFamiliesOf,
@@ -12332,6 +12559,8 @@ export {
   getShapeCatalog,
   hasExceededOffset,
   hasPendingBindings,
+  imageSlotBinding,
+  imageSlotDataUrl,
   initYoga,
   isBold,
   isContentLocked,
@@ -12351,6 +12580,7 @@ export {
   layoutDescendants,
   layoutParents,
   layoutRoot,
+  mediaLabel,
   nextShape,
   normalizeShape,
   panCrop,
@@ -12370,6 +12600,7 @@ export {
   setEclipsed,
   setGhost,
   setTextContent,
+  slotMark,
   stackBlock,
   stackParentOf,
   summarizeObject,

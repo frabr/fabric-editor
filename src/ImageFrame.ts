@@ -21,6 +21,8 @@ import { FabPath } from "./shapes/FabPath";
 import { clipDataFor, type ClipData } from "./shapes/registry";
 import type { SnappingManager } from "./SnappingManager";
 import { checkerCanvas, transparentCanvas } from "./userSlots";
+import type { BindingSpec } from "./bindings";
+import { drawImageSlot, imageSlotBinding, slotColorOf, slotKey, slotMark } from "./imageSlots";
 import {
   NO_CROP, centerOffset, coverScale, cropFromCenterOffset, cropFromRect, isCropped, normalizeCrop, panCrop,
   photoRect, zoomCrop, type Crop, type Rect as CropRect,
@@ -90,7 +92,8 @@ export interface ImageFrameData {
   shadow?: Record<string, unknown>;
   /**
    * `src` absent = cadre EN ATTENTE : le fichier n'existe pas encore (média en cours de
-   * production côté hôte). Il se dessine en damier et se sauve tel quel, sans `src` — ses
+   * production côté hôte), ou la source est liée (imageSlots : le binding la donnera). Il se
+   * dessine en damier — en emplacement s'il est lié — et se sauve tel quel, sans `src` ; ses
    * autres clés (l'identité du média) survivent au tour éditeur.
    *
    * Le recadrage est `cropX`, `cropY` (0 → 1) et `scale` (≥ 1) — voir crop.ts. Les
@@ -116,6 +119,16 @@ function imageMetaOf(image: ImageFrameData["image"]): ImageMeta {
   IMAGE_KEYS.forEach((key) => delete meta[key]);
   return meta;
 }
+
+/**
+ * D'où vient l'image qu'un cadre affiche. Seule `document` est sauvée (`image.src`) ; les
+ * autres laissent le cadre en attente :
+ *
+ * - `session` : l'aperçu d'un fichier en cours d'upload (markSourcePending) ;
+ * - `value` : la valeur d'une source liée pour le lecteur du moment (showValue) ;
+ * - `none` : rien — le damier, ou l'emplacement dessiné d'une image liée (imageSlots).
+ */
+type ImageSource = "document" | "session" | "value" | "none";
 
 /** Interface pour stocker l'état des transformations de resize */
 interface TransformState extends Transform {
@@ -159,7 +172,11 @@ export class ImageFrame extends Group {
   private _crop: Crop = NO_CROP;
   private _image: FabricImage;
   private _imageMeta: ImageMeta = {};
-  private _pending = false;
+  private _source: ImageSource = "document";
+  /** Le damier est effacé (concealPlaceholder) : l'hôte montre son propre aperçu dessous. */
+  private _concealed = false;
+  /** L'emplacement au dernier rendu, par sa clé (isCacheDirty). */
+  private _drawnSlot: string | null = null;
 
   constructor(image: FabricImage, options: ImageFrameOptions = {}) {
     // Dimensions du frame : explicites > calculées via frameScale
@@ -225,8 +242,15 @@ export class ImageFrame extends Group {
     return this._image;
   }
 
+  /** La source du DOCUMENT — vide pour un cadre en attente, quoi qu'il affiche. */
   get imageSrc(): string {
-    return this._pending ? "" : this._image.getSrc() || "";
+    return this.pending ? "" : this._image.getSrc() || "";
+  }
+
+  /** La source AFFICHÉE : celle du document, un aperçu de session, la valeur d'une liaison —
+   *  vide pour un cadre qui ne montre rien. */
+  get displayedSrc(): string {
+    return this._source === "none" ? "" : this._image.getSrc() || "";
   }
 
   /** Les clés de `image` qui ne sont pas à la lib (cf. ImageFrameOptions.imageMeta). */
@@ -234,32 +258,60 @@ export class ImageFrame extends Group {
     return this._imageMeta;
   }
 
-  /** Cadre en attente de son fichier : pas de `src` au save (damier, ou l'aperçu de session
-   *  d'un upload en cours). `replaceImage` le sort de l'attente. */
+  /** Cadre en attente de sa source : pas de `src` au save (cf. ImageSource). `replaceImage`
+   *  le sort de l'attente. */
   get pending(): boolean {
-    return this._pending;
+    return this._source !== "document";
   }
 
   /** Un cadre en attente : l'image est le damier, aux dimensions du cadre. */
   static pending(options: ImageFrameOptions & { frameWidth: number; frameHeight: number }): ImageFrame {
     const img = new FabricImage(checkerCanvas(options.frameWidth, options.frameHeight));
     const frame = new ImageFrame(img, options);
-    frame._pending = true;
+    frame._source = "none";
     return frame;
   }
 
   /** L'image affichée n'est pas celle du document (une url de session, le temps d'un
    *  upload) : le cadre se sauve sans `src` jusqu'à ce que la vraie source la remplace. */
   markSourcePending(): void {
-    this._pending = true;
+    this._source = "session";
+  }
+
+  /**
+   * Le cadre montre la VALEUR de sa source liée pour le lecteur du moment (son avatar, son
+   * logo) : affichée, recadrable, jamais sauvée — le document garde le binding, sans `src`.
+   * Le recadrage du document s'applique à elle. Sans `image`, celle déjà affichée devient
+   * cette valeur (une carte posée avec l'image du lecteur, puis liée).
+   */
+  showValue(image?: FabricImage): void {
+    this._imageMeta = {};
+    this._source = "value";
+    if (image) this._swapImage(image);
+    this.dirty = true;
+    this.canvas?.requestRenderAll();
+  }
+
+  /**
+   * Le cadre lâche sa source : il redevient vide (en attente), son recadrage gardé pour
+   * l'image qui viendra. Lié, il se dessine en emplacement (imageSlots) ; sinon en damier.
+   */
+  clearSource(): void {
+    this._imageMeta = {};
+    this._source = "none";
+    this._swapImage(new FabricImage(checkerCanvas(this.frameWidth, this.frameHeight)));
+    this.dirty = true;
+    this.canvas?.requestRenderAll();
   }
 
   /** Un cadre en attente dont l'hôte montre lui-même l'aperçu sous le canvas : le damier
-   *  s'efface (transparent), le cadre reste en attente — rien ne change au save. */
+   *  s'efface (transparent, et pas d'emplacement dessiné), le cadre reste en attente — rien
+   *  ne change au save. */
   concealPlaceholder(): void {
-    if (!this._pending) return;
+    if (!this.pending) return;
 
     this._image.setElement(transparentCanvas(this._image.width, this._image.height));
+    this._concealed = true;
     this.dirty = true;
   }
 
@@ -271,9 +323,10 @@ export class ImageFrame extends Group {
     return this._crop;
   }
 
-  /** Se recadre : une vraie image (pas un damier d'attente). */
+  /** Se recadre : une vraie image, en place pour de bon — celle du document, ou la valeur
+   *  d'une source liée ; ni un damier, ni un emplacement, ni un aperçu d'upload. */
   get croppable(): boolean {
-    return !this._pending;
+    return this._source === "document" || this._source === "value";
   }
 
   get isCropped(): boolean {
@@ -321,19 +374,21 @@ export class ImageFrame extends Group {
    * est exactement le bug qu'elles servent à éviter.
    */
   replaceImage(newImage: FabricImage, imageMeta: ImageMeta = {}): void {
-    const savedClipShape = this.clipShape || "rect";
     this._imageMeta = { ...imageMeta };
-    this._pending = false;
-    const coverScale = Math.max(this.frameWidth / newImage.width, this.frameHeight / newImage.height);
+    this._source = "document";
+    // Une autre image : son recadrage repart de zéro
+    this._crop = NO_CROP;
+    this._swapImage(newImage);
 
-    newImage.set({
-      scaleX: coverScale,
-      scaleY: coverScale,
-      originX: "center",
-      originY: "center",
-      left: 0,
-      top: 0,
-    });
+    this.dirty = true;
+    this.canvas?.requestRenderAll();
+  }
+
+  /** L'image du groupe change, en cover, au recadrage courant ; le cadre ne bouge pas. */
+  private _swapImage(newImage: FabricImage): void {
+    const savedClipShape = this.clipShape || "rect";
+    this._concealed = false;
+    newImage.set({ originX: "center", originY: "center" });
 
     // Remplacer directement dans _objects pour éviter les effets de bord du LayoutManager
     const index = this._objects.indexOf(this._image);
@@ -350,13 +405,7 @@ export class ImageFrame extends Group {
     this.height = this.frameHeight;
     this._applyClip(savedClipShape);
     this.setCoords();
-
-    // Une autre image : son recadrage repart de zéro
-    this._crop = NO_CROP;
     this._applyCrop();
-
-    this.dirty = true;
-    this.canvas?.requestRenderAll();
   }
 
   /**
@@ -436,6 +485,42 @@ export class ImageFrame extends Group {
     outline.render(ctx);
     outline.set(saved);
     ctx.restore();
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // Emplacement d'image (cf. imageSlots) : un cadre lié qui ne montre rien se dessine
+  // lui-même, d'après son binding
+  // ─────────────────────────────────────────────────────────────
+
+  /** Le binding de l'emplacement à dessiner — null dès que le cadre montre une image, ou que
+   *  l'hôte a pris l'aperçu à sa charge. */
+  private _slot(): BindingSpec | null {
+    if (this._source !== "none" || this._concealed) return null;
+
+    return imageSlotBinding(this);
+  }
+
+  /** Le cadre a toujours son cache (clipPath) : poser, changer ou retirer le binding ne le
+   *  salit pas aux yeux de fabric — c'est le changement d'emplacement qui le fait. */
+  isCacheDirty(skipCanvas = false): boolean {
+    const slot = this._slot();
+    const key = slot && slotKey(slot);
+    if (key !== this._drawnSlot) {
+      this._drawnSlot = key;
+      this.dirty = true;
+    }
+    return super.isCacheDirty(skipCanvas);
+  }
+
+  /** Le contenu du cadre : son image — ou, vide et lié, l'emplacement, sous la même découpe. */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  drawObject(ctx: CanvasRenderingContext2D, forClipping: boolean | undefined, context: any): void {
+    const slot = this._slot();
+    if (!slot) return super.drawObject(ctx, forClipping, context);
+
+    this._renderBackground(ctx);
+    drawImageSlot(ctx, this.width, this.height, slotMark(slot), slotColorOf(this));
+    this._drawClipPath(ctx, this.clipPath, context);
   }
 
   // ─────────────────────────────────────────────────────────────
@@ -716,7 +801,7 @@ export class ImageFrame extends Group {
       strokeWidth: this.stroke ? this.strokeWidth : undefined,
       image: {
         ...this._imageMeta,
-        ...(this._pending ? {} : { src: this.imageSrc }),
+        ...(this.pending ? {} : { src: this.imageSrc }),
         cropX: this._crop.x,
         cropY: this._crop.y,
         scale: this._crop.scale,

@@ -893,7 +893,8 @@ interface ImageFrameData {
     shadow?: Record<string, unknown>;
     /**
      * `src` absent = cadre EN ATTENTE : le fichier n'existe pas encore (média en cours de
-     * production côté hôte). Il se dessine en damier et se sauve tel quel, sans `src` — ses
+     * production côté hôte), ou la source est liée (imageSlots : le binding la donnera). Il se
+     * dessine en damier — en emplacement s'il est lié — et se sauve tel quel, sans `src` ; ses
      * autres clés (l'identité du média) survivent au tour éditeur.
      *
      * Le recadrage est `cropX`, `cropY` (0 → 1) et `scale` (≥ 1) — voir crop.ts. Les
@@ -928,14 +929,22 @@ declare class ImageFrame extends Group {
     private _crop;
     private _image;
     private _imageMeta;
-    private _pending;
+    private _source;
+    /** Le damier est effacé (concealPlaceholder) : l'hôte montre son propre aperçu dessous. */
+    private _concealed;
+    /** L'emplacement au dernier rendu, par sa clé (isCacheDirty). */
+    private _drawnSlot;
     constructor(image: FabricImage, options?: ImageFrameOptions);
     get image(): FabricImage;
+    /** La source du DOCUMENT — vide pour un cadre en attente, quoi qu'il affiche. */
     get imageSrc(): string;
+    /** La source AFFICHÉE : celle du document, un aperçu de session, la valeur d'une liaison —
+     *  vide pour un cadre qui ne montre rien. */
+    get displayedSrc(): string;
     /** Les clés de `image` qui ne sont pas à la lib (cf. ImageFrameOptions.imageMeta). */
     get imageMeta(): ImageMeta;
-    /** Cadre en attente de son fichier : pas de `src` au save (damier, ou l'aperçu de session
-     *  d'un upload en cours). `replaceImage` le sort de l'attente. */
+    /** Cadre en attente de sa source : pas de `src` au save (cf. ImageSource). `replaceImage`
+     *  le sort de l'attente. */
     get pending(): boolean;
     /** Un cadre en attente : l'image est le damier, aux dimensions du cadre. */
     static pending(options: ImageFrameOptions & {
@@ -945,11 +954,25 @@ declare class ImageFrame extends Group {
     /** L'image affichée n'est pas celle du document (une url de session, le temps d'un
      *  upload) : le cadre se sauve sans `src` jusqu'à ce que la vraie source la remplace. */
     markSourcePending(): void;
+    /**
+     * Le cadre montre la VALEUR de sa source liée pour le lecteur du moment (son avatar, son
+     * logo) : affichée, recadrable, jamais sauvée — le document garde le binding, sans `src`.
+     * Le recadrage du document s'applique à elle. Sans `image`, celle déjà affichée devient
+     * cette valeur (une carte posée avec l'image du lecteur, puis liée).
+     */
+    showValue(image?: FabricImage): void;
+    /**
+     * Le cadre lâche sa source : il redevient vide (en attente), son recadrage gardé pour
+     * l'image qui viendra. Lié, il se dessine en emplacement (imageSlots) ; sinon en damier.
+     */
+    clearSource(): void;
     /** Un cadre en attente dont l'hôte montre lui-même l'aperçu sous le canvas : le damier
-     *  s'efface (transparent), le cadre reste en attente — rien ne change au save. */
+     *  s'efface (transparent, et pas d'emplacement dessiné), le cadre reste en attente — rien
+     *  ne change au save. */
     concealPlaceholder(): void;
     get crop(): Crop;
-    /** Se recadre : une vraie image (pas un damier d'attente). */
+    /** Se recadre : une vraie image, en place pour de bon — celle du document, ou la valeur
+     *  d'une source liée ; ni un damier, ni un emplacement, ni un aperçu d'upload. */
     get croppable(): boolean;
     get isCropped(): boolean;
     /** La taille native de l'image. */
@@ -973,6 +996,8 @@ declare class ImageFrame extends Group {
      * est exactement le bug qu'elles servent à éviter.
      */
     replaceImage(newImage: FabricImage, imageMeta?: ImageMeta): void;
+    /** L'image du groupe change, en cover, au recadrage courant ; le cadre ne bouge pas. */
+    private _swapImage;
     /**
      * Redimensionne le frame : l'image reste en cover, le recadrage (normalisé) garde la même
      * zone autant que possible.
@@ -999,6 +1024,14 @@ declare class ImageFrame extends Group {
      * de découpe par-dessus, hors clip, trait centré sur le bord comme pour une forme.
      */
     render(ctx: CanvasRenderingContext2D): void;
+    /** Le binding de l'emplacement à dessiner — null dès que le cadre montre une image, ou que
+     *  l'hôte a pris l'aperçu à sa charge. */
+    private _slot;
+    /** Le cadre a toujours son cache (clipPath) : poser, changer ou retirer le binding ne le
+     *  salit pas aux yeux de fabric — c'est le changement d'emplacement qui le fait. */
+    isCacheDirty(skipCanvas?: boolean): boolean;
+    /** Le contenu du cadre : son image — ou, vide et lié, l'emplacement, sous la même découpe. */
+    drawObject(ctx: CanvasRenderingContext2D, forClipping: boolean | undefined, context: any): void;
     /** L'image dans le groupe (origine au centre) : cover × échelle, centre décalé selon le recadrage. */
     private _applyCrop;
     private _applyClip;
@@ -1023,6 +1056,9 @@ declare class ImageFrame extends Group {
 
 declare class LayerManager {
     private canvas;
+    /** La dernière valeur demandée pour chaque cadre lié (showImageValue) : un chargement
+     *  dépassé ne s'affiche pas. */
+    private valueRequests;
     constructor(canvas: DesignCanvas);
     /**
      * Retourne tous les calques (excluant l'image de fond)
@@ -1110,14 +1146,25 @@ declare class LayerManager {
      *
      * @param options.opacity - Opacité à appliquer (utile si target.opacity est temporairement modifiée)
      * @param options.imageMeta - Les clés de la nouvelle source (une forme-image seulement)
-     * @param options.select - Sélectionner l'image remplacée (défaut) — faux pour un remplacement
-     *   d'affichage (un champ lié interpolé pour ce lecteur), qui ne doit pas toucher la sélection
+     * @param options.select - Sélectionner l'image remplacée (défaut)
+     *
+     * C'est un geste d'auteur : « cette image-ci, ici ». Un cadre dont la source était liée
+     * (imageSlots) se délie — sinon la liaison reprendrait la main au prochain affichage, et à
+     * l'expansion. L'hôte qui pose une image liée relie après (son binding), et montre la valeur
+     * d'une liaison par showImageValue, jamais par ici.
      */
     replaceImageSource(target: ImageFrame | FabricImage, newUrl: string, options?: {
         opacity?: number;
         imageMeta?: ImageMeta;
         select?: boolean;
     }): Promise<ImageFrame | FabricImage>;
+    /**
+     * Montre dans une forme-image la VALEUR de sa source liée (imageSlots) pour le lecteur du
+     * moment — ou, sans valeur (`null`), la vide : le cadre se dessine alors en emplacement.
+     * Affichage seul : rien n'entre dans le document (le cadre reste en attente, sauvé sans
+     * `src`), la sélection ne bouge pas. Sans effet sur ce qui n'est pas une forme-image.
+     */
+    showImageValue(target: FabricObject, url: string | null): Promise<void>;
     /**
      * Remplace la source d'une image legacy (FabricImage sans frame)
      * @internal

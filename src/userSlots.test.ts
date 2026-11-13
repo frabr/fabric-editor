@@ -54,7 +54,7 @@ describe("détection", () => {
 
   it("ni un média dynamique, ni une image déjà fournie", () => {
     const dynamic = slot();
-    dynamic.set({ bindings: { "image.src": { expr: "media[0]", scope: "subject" } } });
+    dynamic.set({ bindings: { "image.src": { scope: "subject", media: 1 } } });
     const filled = slot();
     filled.set({ bindings: resolveUserSlot(USER_SLOT) });
     expect(isUserSlot(dynamic)).toBe(false);

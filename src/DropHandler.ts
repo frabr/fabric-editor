@@ -5,6 +5,7 @@ import type { ImageLayerOptions, ShapeType, TextLayerOptions, ShapeLayerOptions 
 import { kindOf, rulesOf } from "./capabilities";
 import { isStackContainer } from "./layout/model";
 import { ImageFrame, type ImageMeta } from "./ImageFrame";
+import { imageSlotBinding } from "./imageSlots";
 
 /** Couleur pour le feedback drag & drop via les contrôles de sélection */
 const HIGHLIGHT_COLOR = "#3b82f6";
@@ -105,7 +106,8 @@ export interface DropHandlerConfig {
    * Le bord de l'artboard pendant qu'on glisse une image DU CANVAS : l'hôte dit si le
    * pointeur est dans sa bande du fond (`near` — le remplacement ne s'arme pas là), montre
    * son cue (`cue`), et prend le lâcher (`take` : l'image devient le fond ; vrai si prise —
-   * le calque glissé est alors retiré du canvas).
+   * le calque glissé est alors retiré du canvas). Un emplacement d'image (imageSlots) n'a
+   * que la bande : `take` reçoit un cadre sans image, son binding fait le fond.
    */
   canvasEdge?: {
     near: (e: MouseEvent) => boolean;
@@ -489,7 +491,11 @@ export class DropHandler {
   /** Un pas de glisser natif : une image du canvas au-dessus d'une cible, ou dans la bande du fond. */
   private onCanvasMoving(e: { target?: FabricObject; e?: Event; scenePoint?: Point }): void {
     const source = e.target;
-    if (this.drag || !source || !canvasImageSource(source)) return;
+    if (this.drag || !source) return;
+    // Un emplacement (imageSlots) n'a pas d'image à donner : seule la bande du fond le prend,
+    // avec son binding
+    const slot = !canvasImageSource(source) && Boolean(imageSlotBinding(source));
+    if (!slot && !canvasImageSource(source)) return;
     // Une image verrouillée ou hors-jeu ne se glisse pas dans une autre
     if (rulesOf(source).onToolboxImage !== "replaceImage") return;
     // Une pile a pris l'objet (session d'insertion) : rien à proposer ici
@@ -505,7 +511,7 @@ export class DropHandler {
       this.moving.inEdge = inEdge;
       this.config.canvasEdge?.cue?.(inEdge);
     }
-    if (inEdge) {
+    if (inEdge || slot) {
       this.trackHoverTarget(null, false);
       return;
     }

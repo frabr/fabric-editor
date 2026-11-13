@@ -17,6 +17,7 @@ import { ImageFrame, type ImageFrameData, type ImageMeta } from "./ImageFrame";
 import type { LayerData, TextLayerOptions, ImageLayerOptions, ShapeLayerOptions, ShapeType } from "./types";
 import { restoreBindings, type Bindings } from "./bindings";
 import { resolveUserSlot, USER_SCOPE, USER_SLOT_FIELD } from "./userSlots";
+import { imageSlotBinding, IMAGE_SLOT_FIELD } from "./imageSlots";
 import { BACKGROUND_ID, LEGACY_BACKGROUND_ID, layoutOf } from "./layout/model";
 import { findById } from "./layout/hierarchy";
 
@@ -41,6 +42,10 @@ export const DEFAULT_SHAPE_FILL = "#d9d9d9";
 export const LAYER_PROPS = ["layerId", "lockMode", "lockContent", "layout", "bindings", "bindingSegments"] as const;
 
 export class LayerManager {
+  /** La dernière valeur demandée pour chaque cadre lié (showImageValue) : un chargement
+   *  dépassé ne s'affiche pas. */
+  private valueRequests = new WeakMap<ImageFrame, string | null>();
+
   constructor(private canvas: DesignCanvas) { }
 
   /**
@@ -280,8 +285,12 @@ export class LayerManager {
    *
    * @param options.opacity - Opacité à appliquer (utile si target.opacity est temporairement modifiée)
    * @param options.imageMeta - Les clés de la nouvelle source (une forme-image seulement)
-   * @param options.select - Sélectionner l'image remplacée (défaut) — faux pour un remplacement
-   *   d'affichage (un champ lié interpolé pour ce lecteur), qui ne doit pas toucher la sélection
+   * @param options.select - Sélectionner l'image remplacée (défaut)
+   *
+   * C'est un geste d'auteur : « cette image-ci, ici ». Un cadre dont la source était liée
+   * (imageSlots) se délie — sinon la liaison reprendrait la main au prochain affichage, et à
+   * l'expansion. L'hôte qui pose une image liée relie après (son binding), et montre la valeur
+   * d'une liaison par showImageValue, jamais par ici.
    */
   async replaceImageSource(
     target: ImageFrame | FabricImage,
@@ -293,6 +302,10 @@ export class LayerManager {
       const frame = target as ImageFrame;
       const newImg = await FabricImage.fromURL(newUrl, { crossOrigin: "anonymous" });
       frame.replaceImage(newImg, options?.imageMeta);
+      if (imageSlotBinding(frame as unknown as FabricObject)) {
+        const { [IMAGE_SLOT_FIELD]: _unbound, ...bindings } = (frame.get("bindings") ?? {}) as Bindings;
+        frame.set("bindings", bindings);
+      }
 
       if (options?.opacity !== undefined) {
         frame.opacity = options.opacity;
@@ -306,6 +319,32 @@ export class LayerManager {
 
     // Fallback pour les images legacy (FabricImage directe)
     return this._replaceImageSourceLegacy(target as FabricImage, newUrl, options);
+  }
+
+  /**
+   * Montre dans une forme-image la VALEUR de sa source liée (imageSlots) pour le lecteur du
+   * moment — ou, sans valeur (`null`), la vide : le cadre se dessine alors en emplacement.
+   * Affichage seul : rien n'entre dans le document (le cadre reste en attente, sauvé sans
+   * `src`), la sélection ne bouge pas. Sans effet sur ce qui n'est pas une forme-image.
+   */
+  async showImageValue(target: FabricObject, url: string | null): Promise<void> {
+    if (kindOf(target) !== "imageShape") return;
+    const frame = target as unknown as ImageFrame;
+    this.valueRequests.set(frame, url);
+
+    if (!url) {
+      if (frame.displayedSrc) frame.clearSource();
+    } else if (url === frame.displayedSrc) {
+      // Déjà à l'écran (une carte posée avec l'image du lecteur) : elle devient la valeur
+      if (!frame.pending) frame.showValue();
+    } else {
+      const image = await FabricImage.fromURL(url, { crossOrigin: "anonymous" });
+      // Le temps du chargement, une autre valeur a été demandée, ou l'auteur a repris la
+      // main (image posée, cadre délié) : celle-ci n'a plus cours
+      if (this.valueRequests.get(frame) !== url || !imageSlotBinding(target)) return;
+      frame.showValue(image);
+    }
+    this.canvas.requestRenderAll();
   }
 
   /**

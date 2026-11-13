@@ -24,6 +24,8 @@ import { SelectionCommands } from "./editor/selection-commands";
 import { type AlignEdge, type DistributeAxis } from "./align";
 import { rulesOf } from "./capabilities";
 import { collectUserSlots, USER_SLOT_STYLE_KEY, type UserSlot, type UserSlotStyle } from "./userSlots";
+import type { BindingSpec } from "./bindings";
+import { imageSlotDataUrl, slotMark } from "./imageSlots";
 import { TOKEN_COLOR_KEY } from "./tokens";
 import { installGhostRendering } from "./ghost";
 import { installDisplayStyleRendering } from "./displayStyle";
@@ -658,6 +660,16 @@ export class FabricEditor {
 
   copySelection(): void { this.clipboard.copySelection(); }
   pasteClipboard(): Promise<FabricObject[]> { return this.clipboard.pasteClipboard(); }
+
+  /**
+   * Le dessin de l'emplacement d'une image liée (imageSlots), dans la couleur de cet éditeur,
+   * en data-URL : ce que l'hôte tient en main le temps de poser un cadre lié qui n'a pas de
+   * valeur à montrer (aperçu de glisser, image de départ). Jamais une source de document.
+   */
+  imageSlotUrl(spec: BindingSpec): string {
+    const gc = this.config.guideColor ?? DEFAULT_GUIDE_COLOR;
+    return imageSlotDataUrl(slotMark(spec), gc);
+  }
 
   /** Les images à fournir de la page (userSlots), boîtes en coordonnées scène. */
   userSlots(): UserSlot[] {

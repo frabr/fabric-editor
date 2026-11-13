@@ -14,8 +14,10 @@ import { drawFrameBadge } from "./ui/badges";
  *   (guideColor), et un liseré permanent sur les médias dynamiques.
  */
 
-/** `hint` : la consigne d'une image à fournir (scope `user`, cf. userSlots). */
-export type BindingSpec = { expr?: string; scope?: string; resolved?: boolean; hint?: string };
+/** `media` : ce qu'une image liée désigne — le rang d'une photo du sujet, `"each"`, ou le nom
+ *  d'une image du lecteur (cf. imageSlots). `hint` : la consigne d'une image à fournir (scope
+ *  `user`, cf. userSlots). */
+export type BindingSpec = { expr?: string; scope?: string; resolved?: boolean; hint?: string; media?: number | string };
 export type Bindings = Record<string, BindingSpec>;
 
 export function pendingBindings(obj: FabricObject): Bindings {
@@ -56,7 +58,7 @@ export function setTextContent(obj: FabricObject, text: string): void {
 
 /**
  * Le badge de liaison (cf. ui/badges : sous les poignées, avec le cadre) : il nomme les
- * tokens liés ($NOM), les slots (media[i]) et les images à fournir du calque.
+ * tokens liés ($NOM), les images liées (`media 3`, `avatar`) et les images à fournir du calque.
  */
 export function bindingBadgeLabel(obj: FabricObject, userSlotLabel = DEFAULT_USER_SLOT_LABEL): string | null {
   if (!hasPendingBindings(obj)) return null;
@@ -78,20 +80,26 @@ export function drawBindingBadge(
 /** Le badge d'une image à fournir — l'hôte passe sa traduction (`EditorConfig.userSlotLabel`). */
 export const DEFAULT_USER_SLOT_LABEL = "À fournir";
 
+/** Le nom d'une image liée : `media 3`, `media i` (l'itération), ou le nom de l'image du
+ *  lecteur (`avatar`). C'est ce que le badge et la timeline de l'hôte affichent. */
+export function mediaLabel(spec: BindingSpec): string {
+  if (typeof spec.media === "number") return `media ${spec.media}`;
+  return spec.media === "each" ? "media i" : String(spec.media ?? "");
+}
+
 function bindingLabel(obj: FabricObject, userSlotLabel: string): string {
   const labels = Object.values(pendingBindings(obj)).flatMap((spec) => {
     if (spec?.scope === "user") return [userSlotLabel];
-    const expr = String(spec?.expr ?? "");
-    const tokens = expr.match(/\$\w+/g) || [];
-    return tokens.length ? tokens : expr.match(/^media\[/) ? [expr] : [];
+    if (spec?.media !== undefined) return [mediaLabel(spec)];
+    return String(spec?.expr ?? "").match(/\$\w+/g) || [];
   });
   return labels.length ? [...new Set(labels)].join(" ") : "$";
 }
 
 /**
  * Le liseré des MÉDIAS dynamiques : un pointillé permanent dans la couleur d'édition autour
- * des calques dont un champ image est lié — l'aperçu montre la vraie image d'exemple, le
- * liseré dit « celle-ci sera remplie à la publication ».
+ * des calques dont un champ image est lié — le cadre dessine son emplacement ou montre la
+ * valeur du lecteur (imageSlots), le liseré dit « celle-ci sera remplie à la publication ».
  *
  * Il suit le calque tel qu'il est peint : rien pour un calque masqué (hors de sa fenêtre de
  * temps dans l'éditeur vidéo), la forme de découpe d'une ImageFrame (un cercle reste un
