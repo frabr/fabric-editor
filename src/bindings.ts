@@ -16,7 +16,7 @@ import { drawFrameBadge } from "./ui/badges";
 
 /** `media` : ce qu'une image liée désigne — le rang d'une photo du sujet, `"each"`, ou le nom
  *  d'une image du lecteur (cf. imageSlots). `hint` : la consigne d'une image à fournir (scope
- *  `user`, cf. userSlots). */
+ *  `user`, cf. userSlots). Un `text` de scope `user` est un texte à personnaliser (userTexts). */
 export type BindingSpec = { expr?: string; scope?: string; resolved?: boolean; hint?: string; media?: number | string };
 export type Bindings = Record<string, BindingSpec>;
 
@@ -58,12 +58,13 @@ export function setTextContent(obj: FabricObject, text: string): void {
 
 /**
  * Le badge de liaison (cf. ui/badges : sous les poignées, avec le cadre) : il nomme les
- * tokens liés ($NOM), les images liées (`media 3`, `avatar`) et les images à fournir du calque.
+ * tokens liés ($NOM), les images liées (`media 3`, `avatar`), les images à fournir et les
+ * textes à personnaliser du calque.
  */
-export function bindingBadgeLabel(obj: FabricObject, userSlotLabel = DEFAULT_USER_SLOT_LABEL): string | null {
+export function bindingBadgeLabel(obj: FabricObject, labels: UserInputLabels = {}): string | null {
   if (!hasPendingBindings(obj)) return null;
 
-  return bindingLabel(obj, userSlotLabel);
+  return bindingLabel(obj, labels);
 }
 
 /** Peint le badge de liaison d'un calque (la couche des badges le fait pour l'éditeur). */
@@ -71,14 +72,21 @@ export function drawBindingBadge(
   ctx: CanvasRenderingContext2D,
   obj: FabricObject,
   color: string,
-  userSlotLabel = DEFAULT_USER_SLOT_LABEL,
+  labels: UserInputLabels = {},
 ): void {
-  const label = bindingBadgeLabel(obj, userSlotLabel);
+  const label = bindingBadgeLabel(obj, labels);
   if (label) drawFrameBadge(ctx, obj, label, color);
 }
 
-/** Le badge d'une image à fournir — l'hôte passe sa traduction (`EditorConfig.userSlotLabel`). */
+/** Les badges des entrées à fournir — l'hôte passe ses traductions (`EditorConfig.userSlotLabel`,
+ *  `userTextLabel`). */
+export interface UserInputLabels {
+  userSlot?: string;
+  userText?: string;
+}
+
 export const DEFAULT_USER_SLOT_LABEL = "À fournir";
+export const DEFAULT_USER_TEXT_LABEL = "À personnaliser";
 
 /** Le nom d'une image liée : `media 3`, `media i` (l'itération), ou le nom de l'image du
  *  lecteur (`avatar`). C'est ce que le badge et la timeline de l'hôte affichent. */
@@ -87,9 +95,11 @@ export function mediaLabel(spec: BindingSpec): string {
   return spec.media === "each" ? "media i" : String(spec.media ?? "");
 }
 
-function bindingLabel(obj: FabricObject, userSlotLabel: string): string {
-  const labels = Object.values(pendingBindings(obj)).flatMap((spec) => {
-    if (spec?.scope === "user") return [userSlotLabel];
+function bindingLabel(obj: FabricObject, { userSlot, userText }: UserInputLabels): string {
+  const labels = Object.entries(pendingBindings(obj)).flatMap(([field, spec]) => {
+    if (spec?.scope === "user") {
+      return [field === "text" ? userText ?? DEFAULT_USER_TEXT_LABEL : userSlot ?? DEFAULT_USER_SLOT_LABEL];
+    }
     if (spec?.media !== undefined) return [mediaLabel(spec)];
     return String(spec?.expr ?? "").match(/\$\w+/g) || [];
   });

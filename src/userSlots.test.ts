@@ -4,7 +4,8 @@
 import { describe, it, expect, vi } from "vitest";
 import { FabricImage, StaticCanvas, type Canvas, type FabricObject } from "#fabric";
 import { createCanvas } from "canvas";
-import { isUserSlot, userSlotHint, resolveUserSlot, collectUserSlots, USER_SLOT_STYLE_KEY } from "./userSlots";
+import { isUserSlot, userSlotHint, resolveUserSlot, USER_SLOT_STYLE_KEY } from "./userSlots";
+import { collectUserInputs } from "./userInputs";
 import { rulesOf } from "./capabilities";
 import { LayerManager } from "./LayerManager";
 import { CustomTextbox } from "./controls/CustomTextbox";
@@ -61,10 +62,10 @@ describe("détection", () => {
     expect(isUserSlot(filled)).toBe(false);
   });
 
-  it("collectUserSlots rend la consigne et la boîte scène", () => {
+  it("collectUserInputs rend la sorte, la consigne et la boîte scène", () => {
     const obj = slot(new FabRect({ width: 100, height: 60, left: 200, top: 100, strokeWidth: 0 }));
-    const [found] = collectUserSlots([obj, new FabRect({ width: 10, height: 10 })]);
-    expect(found).toMatchObject({ layerId: "slot", hint: "Photo de l'équipe" });
+    const [found] = collectUserInputs([obj, new FabRect({ width: 10, height: 10 })]);
+    expect(found).toMatchObject({ layerId: "slot", kind: "image", hint: "Photo de l'équipe" });
     expect(found.rect).toMatchObject({ left: 150, top: 70 });
     expect(found.rect.width).toBe(100);
   });

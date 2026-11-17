@@ -309,6 +309,9 @@ interface TextConstraint {
  * document s'affiche juste sans relayout) ; `fontSizeIntent` est la taille voulue par
  * l'utilisateur, d'où repart l'autofit à chaque calcul.
  *
+ * Un texte à personnaliser (binding `text` de scope `user`, cf. userTexts) se dessine avec son
+ * liseré tant qu'il est en attente, et se règle à la première frappe de l'utilisateur final.
+ *
  * Hérite de Textbox (et non IText) pour le line-wrapping natif. Place aussi le textarea
  * caché dans le container du canvas, pour le focus dans les modales (`showModal()`
  * piège le focus hors du dialog).
@@ -387,7 +390,10 @@ declare class CustomTextbox extends Textbox {
      * touche jamais au flux de saisie de Fabric.
      */
     onKeyDown(e: KeyboardEvent): void;
-    /** Une frappe (ou un collage) qui change le texte : ce n'est plus l'exemple. */
+    /**
+     * Une frappe (ou un collage) qui change le texte : ce n'est plus l'exemple — et un texte à
+     * personnaliser l'est, sauf sous la main de son auteur, qui en écrit l'exemple.
+     */
     onInput(e: Event): void;
     /** Fabric efface la zone du texte sur le calque du dessus à chaque clignotement du
      *  curseur : les pastilles du texte en édition sont repeintes avec lui. */
@@ -427,8 +433,14 @@ declare class CustomTextbox extends Textbox {
     private _wrapAt;
     /** Toute nouvelle `fontSize` posée via set() est une intention de l'utilisateur. */
     _set(key: string, value: any): this;
-    /** overflow "clip" : le texte est coupé au bord de sa boîte. */
+    /** Le texte, puis le liseré d'un texte à personnaliser encore en attente. */
     _render(ctx: CanvasRenderingContext2D): void;
+    /** overflow "clip" : le texte est coupé au bord de sa boîte. */
+    private _renderClipped;
+    /** Le liseré suit l'état : poser ou régler le binding ne salit pas le cache aux yeux de
+     *  Fabric, c'est le passage en attente (ou sa fin) qui le fait. */
+    isCacheDirty(skipCanvas?: boolean): boolean;
+    private _wasUserText?;
     /**
      * Bord gauche/droit : la largeur passe en fixe et prend la valeur tirée.
      * Bord haut/bas : en hauteur contenu, pose le plancher `minSize.h` ; en hauteur fixe,
@@ -513,6 +525,30 @@ declare class CustomTextbox extends Textbox {
  * - full: position ET contenu verrouillés
  */
 type LockMode$1 = "free" | "position" | "full";
+
+/**
+ * Les bindings du dialecte template (apibots, plan media-template-generators §4) : un calque
+ * peut porter `bindings` — { champ: { expr, scope, resolved } } — et le champ stocké reste
+ * une valeur plate (le sample), donc le canvas rend le calque tel quel. L'éditeur, lui, doit
+ * SAVOIR qu'un champ est lié :
+ *
+ * - la donnée voyage avec le calque (sérialisation/désérialisation, comme layerId) ;
+ * - un texte lié s'édite dans sa textbox, valeurs affichées : l'hôte reporte les frappes dans
+ *   l'expression et pose ses variables comme plages atomiques (`tokenSpans`, CustomTextbox) ;
+ * - le lien se voit : un badge au coin du cadre (survol, sélection), dans la couleur d'édition
+ *   (guideColor), et un liseré permanent sur les médias dynamiques.
+ */
+/** `media` : ce qu'une image liée désigne — le rang d'une photo du sujet, `"each"`, ou le nom
+ *  d'une image du lecteur (cf. imageSlots). `hint` : la consigne d'une image à fournir (scope
+ *  `user`, cf. userSlots). Un `text` de scope `user` est un texte à personnaliser (userTexts). */
+type BindingSpec = {
+    expr?: string;
+    scope?: string;
+    resolved?: boolean;
+    hint?: string;
+    media?: number | string;
+};
+type Bindings = Record<string, BindingSpec>;
 
 /**
  * Gère les fichiers en attente d'upload vers Cloudinary
@@ -744,11 +780,7 @@ interface LayerData {
     /** Layout data (container or child) — see layout/types.ts */
     layout?: LayoutData;
     /** Bindings du dialecte template (apibots) : { champ: { expr, scope, resolved } } */
-    bindings?: Record<string, {
-        expr?: string;
-        scope?: string;
-        resolved?: boolean;
-    }>;
+    bindings?: Bindings;
     [key: string]: unknown;
 }
 interface TextLayerOptions {
@@ -1185,6 +1217,15 @@ declare class LayerManager {
      * Rend la forme, ou null si le calque ne peut pas recevoir d'image (texte, groupe de paths).
      */
     requestUserImage(obj: FabricObject, hint?: string): FabricObject | null;
+    /**
+     * Donne un texte à personnaliser à l'utilisateur final (userTexts), ou le reprend
+     * (`requested: false`) : le texte du calque devient — ou cesse d'être — l'exemple. Un texte
+     * lié à une expression cesse de l'être. Son verrou est réappliqué : un texte à personnaliser
+     * s'édite même verrouillé.
+     *
+     * Rend le texte, ou null si le calque n'en est pas un.
+     */
+    setUserText(obj: FabricObject, requested?: boolean): FabricObject | null;
     /**
      * Un calque en remplace un autre à sa place : son layout (container, enfant) et son
      * verrouillage — sinon ses enfants restent orphelins, ou il sort de son container — et

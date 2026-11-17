@@ -1,7 +1,6 @@
 import { Pattern, util, type FabricObject } from "#fabric";
 import { DEFAULT_GUIDE_COLOR } from "./ui/color";
 import { pendingBindings, type BindingSpec, type Bindings } from "./bindings";
-import { idOf } from "./layout/model";
 
 /**
  * Les images à fournir (apibots, plan user-image-slots) : un cadre que l'utilisateur final
@@ -23,14 +22,6 @@ import { idOf } from "./layout/model";
 export const USER_SCOPE = "user";
 export const USER_SLOT_FIELD = "image.src";
 
-/** Un cadre en attente, et sa boîte en coordonnées scène (le repère de getBoundingRect). */
-export interface UserSlot {
-  object: FabricObject;
-  layerId?: string;
-  hint: string;
-  rect: { left: number; top: number; width: number; height: number };
-}
-
 /** Le binding d'image à fournir, s'il est en attente. */
 export function userSlotBinding(obj: FabricObject): BindingSpec | null {
   const spec = pendingBindings(obj)[USER_SLOT_FIELD];
@@ -51,19 +42,6 @@ export function resolveUserSlot(bindings: Bindings | undefined): Bindings | unde
   if (spec?.scope !== USER_SCOPE) return bindings;
 
   return { ...bindings, [USER_SLOT_FIELD]: { ...spec, resolved: true } };
-}
-
-/** Les cadres en attente parmi des objets, dans l'ordre de la pile. */
-export function collectUserSlots(objects: FabricObject[]): UserSlot[] {
-  return objects.filter(isUserSlot).map((object) => {
-    const { left, top, width, height } = object.getBoundingRect();
-    return {
-      object,
-      layerId: idOf(object),
-      hint: userSlotHint(object),
-      rect: { left, top, width, height },
-    };
-  });
 }
 
 // ── Rendu ──────────────────────────────────────────────────────────
@@ -119,14 +97,17 @@ function checkerPattern(obj: FabricObject): Pattern {
 }
 
 /**
- * Ce que l'éditeur fait dire aux cadres de SON canvas : la couleur d'édition (guideColor), la
- * phrase d'invite des images à fournir, fournie par l'hôte (traduite). Les emplacements d'image
- * (imageSlots) y prennent leur couleur. Posé par FabricEditor sur le canvas fabric ; sans lui
- * (aperçus), l'icône seule, dans la couleur par défaut.
+ * Ce que l'éditeur fait dire aux entrées à fournir de SON canvas : la couleur d'édition
+ * (guideColor), la phrase d'invite des images à fournir, fournie par l'hôte (traduite), et qui
+ * est le lecteur — l'auteur des entrées (`authoring`), dont les frappes ne personnalisent pas
+ * un texte (cf. userTexts). Les emplacements d'image (imageSlots) y prennent leur couleur. Posé
+ * par FabricEditor sur le canvas fabric ; sans lui (aperçus), l'icône seule, dans la couleur
+ * par défaut.
  */
 export interface UserSlotStyle {
   color: string;
   prompt?: string;
+  authoring?: boolean;
 }
 
 export const USER_SLOT_STYLE_KEY = "userSlotStyle";

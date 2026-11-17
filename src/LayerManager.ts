@@ -17,6 +17,8 @@ import { ImageFrame, type ImageFrameData, type ImageMeta } from "./ImageFrame";
 import type { LayerData, TextLayerOptions, ImageLayerOptions, ShapeLayerOptions, ShapeType } from "./types";
 import { restoreBindings, type Bindings } from "./bindings";
 import { resolveUserSlot, USER_SCOPE, USER_SLOT_FIELD } from "./userSlots";
+import { releaseUserText, requestUserText } from "./userTexts";
+import { isTextObject } from "./layout/text";
 import { imageSlotBinding, IMAGE_SLOT_FIELD } from "./imageSlots";
 import { BACKGROUND_ID, LEGACY_BACKGROUND_ID, layoutOf } from "./layout/model";
 import { findById } from "./layout/hierarchy";
@@ -113,7 +115,6 @@ export class LayerManager {
       const isBackground = (data as any).layerId === BACKGROUND_ID;
       if (isBackground || (data as any).selectable === false) obj.selectable = false;
       if (isBackground || (data as any).evented === false) obj.evented = false;
-      restoreBindings(obj, data);
     });
     return objects;
   }
@@ -505,6 +506,24 @@ export class LayerManager {
   }
 
   /**
+   * Donne un texte à personnaliser à l'utilisateur final (userTexts), ou le reprend
+   * (`requested: false`) : le texte du calque devient — ou cesse d'être — l'exemple. Un texte
+   * lié à une expression cesse de l'être. Son verrou est réappliqué : un texte à personnaliser
+   * s'édite même verrouillé.
+   *
+   * Rend le texte, ou null si le calque n'en est pas un.
+   */
+  setUserText(obj: FabricObject, requested = true): FabricObject | null {
+    if (!isTextObject(obj)) return null;
+
+    const bindings = obj.get("bindings") as Bindings | undefined;
+    obj.set({ bindings: requested ? requestUserText(bindings) : releaseUserText(bindings) });
+    applyLockMode(obj, getLockMode(obj));
+    this.canvas.requestRenderAll();
+    return obj;
+  }
+
+  /**
    * Un calque en remplace un autre à sa place : son layout (container, enfant) et son
    * verrouillage — sinon ses enfants restent orphelins, ou il sort de son container — et
    * son rang dans la pile (sous ses enfants).
@@ -677,6 +696,9 @@ export class LayerManager {
     // Données de layout d'avant layout.sizing
     const migrated = obj && migrateLegacyLayout(layoutOf(obj));
     if (obj && migrated) obj.set("layout", migrated);
+
+    // Les bindings avant le verrou : un texte à personnaliser s'édite même verrouillé
+    if (obj) restoreBindings(obj, layer);
 
     // Appliquer les propriétés de verrouillage si présentes
     if (obj && layer.lockMode) {

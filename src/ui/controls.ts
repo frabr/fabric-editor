@@ -8,7 +8,7 @@
 import { FabricObject, Control, controlsUtils, type TPointerEvent } from "#fabric";
 import type { DesignCanvas } from "../DesignCanvas";
 import { parseHex } from "./color";
-import { bindingBadgeLabel, drawDynamicMediaOutline } from "../bindings";
+import { bindingBadgeLabel, drawDynamicMediaOutline, type UserInputLabels } from "../bindings";
 import { drawActiveTokenPills } from "../tokens";
 import { installBadgeLayer } from "./badges";
 
@@ -24,7 +24,7 @@ export function applyControlStyle(
   canvas: DesignCanvas,
   guideColor: string,
   resolveTarget?: ResolveTargetFn,
-  userSlotLabel?: string,
+  userInputLabels?: UserInputLabels,
 ): void {
   const gc = guideColor;
 
@@ -44,7 +44,7 @@ export function applyControlStyle(
   // Wire up canvas events
   installControlHitAreas(canvas);
   installHoverAnimation(canvas, hoverProgress);
-  installHoverBorder(canvas, gc, resolveTarget, userSlotLabel);
+  installHoverBorder(canvas, gc, resolveTarget, userInputLabels);
 }
 
 // ── Custom control renderer ────────────────────────────────────────
@@ -311,7 +311,7 @@ function installHoverBorder(
   canvas: DesignCanvas,
   guideColor: string,
   resolveTarget?: ResolveTargetFn,
-  userSlotLabel?: string,
+  userInputLabels?: UserInputLabels,
 ): void {
   let hoveredObj: FabricObject | null = null;
 
@@ -376,7 +376,7 @@ function installHoverBorder(
   installBadgeLayer(
     canvas.originalFabricCanvas as any,
     guideColor,
-    [(obj) => bindingBadgeLabel(obj, userSlotLabel)],
+    [(obj) => bindingBadgeLabel(obj, userInputLabels)],
     () => {
       const active = canvas.getActiveObject();
       return [active, hoveredObj !== active ? hoveredObj : null].filter((obj): obj is FabricObject => Boolean(obj));

@@ -6,6 +6,8 @@ import { parentOf } from "../layout/hierarchy";
 import { scaleText, textScaleState, type TextScaleState } from "../layout/text";
 import { cornerScaleFactor } from "../shapes/resizeUtils";
 import { tokenColorOf } from "../tokens";
+import { authorsUserInputs, drawUserTextOutline, isUserText, resolveUserText } from "../userTexts";
+import type { Bindings } from "../bindings";
 
 const { changeObjectWidth, changeObjectHeight } = controlsUtils;
 
@@ -47,6 +49,9 @@ const UNBOUNDED_WIDTH = 10000;
  * `fontSize` est la taille effective (celle qui est rendue et sauvegardée, pour qu'un
  * document s'affiche juste sans relayout) ; `fontSizeIntent` est la taille voulue par
  * l'utilisateur, d'où repart l'autofit à chaque calcul.
+ *
+ * Un texte à personnaliser (binding `text` de scope `user`, cf. userTexts) se dessine avec son
+ * liseré tant qu'il est en attente, et se règle à la première frappe de l'utilisateur final.
  *
  * Hérite de Textbox (et non IText) pour le line-wrapping natif. Place aussi le textarea
  * caché dans le container du canvas, pour le focus dans les modales (`showModal()`
@@ -233,11 +238,19 @@ export class CustomTextbox extends Textbox {
     super.onKeyDown(e);
   }
 
-  /** Une frappe (ou un collage) qui change le texte : ce n'est plus l'exemple. */
+  /**
+   * Une frappe (ou un collage) qui change le texte : ce n'est plus l'exemple — et un texte à
+   * personnaliser l'est, sauf sous la main de son auteur, qui en écrit l'exemple.
+   */
   onInput(e: Event): void {
     const before = this.text;
     super.onInput(e);
-    if (this.placeholder && this.text !== before) this.placeholder = false;
+    if (this.text === before) return;
+
+    if (this.placeholder) this.placeholder = false;
+    if (isUserText(this) && !authorsUserInputs(this)) {
+      this.set("bindings", resolveUserText(this.get("bindings") as Bindings | undefined));
+    }
   }
 
   /** Fabric efface la zone du texte sur le calque du dessus à chaque clignotement du
@@ -405,8 +418,14 @@ export class CustomTextbox extends Textbox {
     return super._set(key, value);
   }
 
-  /** overflow "clip" : le texte est coupé au bord de sa boîte. */
+  /** Le texte, puis le liseré d'un texte à personnaliser encore en attente. */
   _render(ctx: CanvasRenderingContext2D): void {
+    this._renderClipped(ctx);
+    if (isUserText(this)) drawUserTextOutline(ctx, this);
+  }
+
+  /** overflow "clip" : le texte est coupé au bord de sa boîte. */
+  private _renderClipped(ctx: CanvasRenderingContext2D): void {
     if (!this._overflowing || this.textOverflow !== "clip") {
       super._render(ctx);
       return;
@@ -418,6 +437,19 @@ export class CustomTextbox extends Textbox {
     super._render(ctx);
     ctx.restore();
   }
+
+  /** Le liseré suit l'état : poser ou régler le binding ne salit pas le cache aux yeux de
+   *  Fabric, c'est le passage en attente (ou sa fin) qui le fait. */
+  isCacheDirty(skipCanvas?: boolean): boolean {
+    const awaiting = isUserText(this);
+    if (awaiting !== Boolean(this._wasUserText)) {
+      this._wasUserText = awaiting;
+      this.dirty = true;
+    }
+    return super.isCacheDirty(skipCanvas);
+  }
+
+  private _wasUserText?: boolean;
 
   // ── Poignées ───────────────────────────────────────────────────────
 

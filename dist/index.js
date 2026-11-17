@@ -1206,6 +1206,7 @@ __export(index_exports, {
   TEXT_STYLE_KEYS: () => TEXT_STYLE_KEYS,
   USER_SCOPE: () => USER_SCOPE,
   USER_SLOT_FIELD: () => USER_SLOT_FIELD,
+  USER_TEXT_FIELD: () => USER_TEXT_FIELD,
   addCircleClip: () => addCircleClip,
   addCropControls: () => addCropControls,
   addHeartClip: () => addHeartClip,
@@ -1220,7 +1221,7 @@ __export(index_exports, {
   canvasImageSource: () => canvasImageSource,
   clampTopLeft: () => clampTopLeft,
   clipDataFor: () => clipDataFor,
-  collectUserSlots: () => collectUserSlots,
+  collectUserInputs: () => collectUserInputs,
   createCircle: () => createCircle,
   createDropSession: () => createDropSession,
   createHeart: () => createHeart,
@@ -1263,7 +1264,9 @@ __export(index_exports, {
   isMonoPath: () => isMonoPath,
   isPositionLocked: () => isPositionLocked,
   isStyleLocked: () => isStyleLocked,
+  isUserOwnedText: () => isUserOwnedText,
   isUserSlot: () => isUserSlot,
+  isUserText: () => isUserText,
   isValidShape: () => isValidShape,
   kindOf: () => kindOf,
   layerToHtmlStandalone: () => layerToHtmlStandalone,
@@ -1305,8 +1308,10 @@ __export(index_exports, {
   toolsFor: () => toolsFor,
   topLeft: () => topLeft,
   unionBox: () => unionBox,
+  userInputKindOf: () => userInputKindOf,
   userSlotBinding: () => userSlotBinding,
   userSlotHint: () => userSlotHint,
+  userTextBinding: () => userTextBinding,
   wrapContainerAroundChild: () => wrapContainerAroundChild,
   yogaLayout: () => yogaLayout,
   zoomCrop: () => zoomCrop
@@ -1658,7 +1663,7 @@ var DesignCanvas = class {
 var import_fabric15 = require("#fabric");
 
 // src/controls/CustomTextbox.ts
-var import_fabric3 = require("#fabric");
+var import_fabric4 = require("#fabric");
 
 // src/layout/types.ts
 var MIN_PAD = 8;
@@ -1961,10 +1966,325 @@ function drawActiveTokenPills(ctx, active) {
   text.drawTokenPills(ctx);
 }
 
+// src/userSlots.ts
+var import_fabric3 = require("#fabric");
+
+// src/ui/badges.ts
+var BADGE_HEIGHT = 15;
+var BADGE_PAD = 5;
+var BADGE_FONT = "500 10px ui-sans-serif, system-ui, sans-serif";
+function drawFrameBadge(ctx, obj, label, color) {
+  const corner = obj.oCoords?.tl;
+  if (!corner) return;
+  ctx.save();
+  ctx.font = BADGE_FONT;
+  const width = ctx.measureText(label).width + BADGE_PAD * 2;
+  const left = corner.x - 1;
+  const top = corner.y - BADGE_HEIGHT;
+  ctx.fillStyle = color;
+  ctx.fillRect(left, top, width, BADGE_HEIGHT);
+  ctx.fillStyle = "#ffffff";
+  ctx.textAlign = "left";
+  ctx.textBaseline = "middle";
+  ctx.fillText(label, left + BADGE_PAD, top + BADGE_HEIGHT / 2);
+  ctx.restore();
+}
+function badgeLabel(obj, labelers) {
+  const labels = labelers.map((labeler) => labeler(obj)).filter((label) => Boolean(label));
+  return labels.length ? [...new Set(labels)].join(" ") : null;
+}
+function installBadgeLayer(fabricCanvas, color, labelers, targets) {
+  const drawControls = fabricCanvas.drawControls.bind(fabricCanvas);
+  fabricCanvas.drawControls = (ctx) => {
+    targets().forEach((obj) => {
+      const label = badgeLabel(obj, labelers);
+      if (label) drawFrameBadge(ctx, obj, label, color);
+    });
+    drawControls(ctx);
+  };
+}
+
+// src/bindings.ts
+function pendingBindings(obj) {
+  const bindings = obj.get("bindings") || {};
+  return Object.fromEntries(Object.entries(bindings).filter(([, spec]) => spec?.resolved !== true));
+}
+function hasPendingBindings(obj) {
+  return Object.keys(pendingBindings(obj)).length > 0;
+}
+function restoreBindings(obj, data) {
+  if (!data.bindings) return;
+  obj.set("bindings", data.bindings);
+}
+function setTextContent(obj, text) {
+  if (!("text" in obj)) return;
+  const current = obj;
+  if (current.placeholder && current.text !== text) obj.set("placeholder", false);
+  obj.set("text", text);
+  obj.initDimensions?.();
+  obj.setCoords();
+  obj.fire("changed");
+}
+function bindingBadgeLabel(obj, labels = {}) {
+  if (!hasPendingBindings(obj)) return null;
+  return bindingLabel(obj, labels);
+}
+function drawBindingBadge(ctx, obj, color, labels = {}) {
+  const label = bindingBadgeLabel(obj, labels);
+  if (label) drawFrameBadge(ctx, obj, label, color);
+}
+var DEFAULT_USER_SLOT_LABEL = "\xC0 fournir";
+var DEFAULT_USER_TEXT_LABEL = "\xC0 personnaliser";
+function mediaLabel(spec) {
+  if (typeof spec.media === "number") return `media ${spec.media}`;
+  return spec.media === "each" ? "media i" : String(spec.media ?? "");
+}
+function bindingLabel(obj, { userSlot, userText }) {
+  const labels = Object.entries(pendingBindings(obj)).flatMap(([field, spec]) => {
+    if (spec?.scope === "user") {
+      return [field === "text" ? userText ?? DEFAULT_USER_TEXT_LABEL : userSlot ?? DEFAULT_USER_SLOT_LABEL];
+    }
+    if (spec?.media !== void 0) return [mediaLabel(spec)];
+    return String(spec?.expr ?? "").match(/\$\w+/g) || [];
+  });
+  return labels.length ? [...new Set(labels)].join(" ") : "$";
+}
+function drawDynamicMediaOutline(ctx, obj, color) {
+  if (!obj.visible || !obj.canvas) return;
+  const pending = pendingBindings(obj);
+  if (!Object.keys(pending).some((field) => field.startsWith("image."))) return;
+  const screen = ctx.getTransform();
+  ctx.save();
+  ctx.transform(...obj.canvas.viewportTransform);
+  obj.transform(ctx);
+  ctx.beginPath();
+  traceOutline(ctx, obj);
+  ctx.setTransform(screen);
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1.5;
+  ctx.setLineDash([6, 4]);
+  ctx.globalAlpha = 0.9;
+  ctx.stroke();
+  ctx.restore();
+}
+function traceOutline(ctx, obj) {
+  const shape = obj.clipPath;
+  if (!shape) {
+    ctx.rect(-obj.width / 2, -obj.height / 2, obj.width, obj.height);
+    return;
+  }
+  shape.transform(ctx);
+  if (shape._renderPathCommands) {
+    shape._renderPathCommands(ctx);
+  } else if (typeof shape.radius === "number") {
+    ctx.arc(0, 0, shape.radius, 0, Math.PI * 2);
+  } else {
+    const radius = Math.min(shape.rx ?? 0, shape.width / 2, shape.height / 2);
+    ctx.roundRect(-shape.width / 2, -shape.height / 2, shape.width, shape.height, radius);
+  }
+}
+
+// src/userSlots.ts
+var USER_SCOPE = "user";
+var USER_SLOT_FIELD = "image.src";
+function userSlotBinding(obj) {
+  const spec = pendingBindings(obj)[USER_SLOT_FIELD];
+  return spec?.scope === USER_SCOPE ? spec : null;
+}
+function isUserSlot(obj) {
+  return userSlotBinding(obj) !== null;
+}
+function userSlotHint(obj) {
+  return String(userSlotBinding(obj)?.hint ?? "");
+}
+function resolveUserSlot(bindings) {
+  const spec = bindings?.[USER_SLOT_FIELD];
+  if (spec?.scope !== USER_SCOPE) return bindings;
+  return { ...bindings, [USER_SLOT_FIELD]: { ...spec, resolved: true } };
+}
+var CELL = 16;
+var CHECKER_LIGHT = "#f9fafb";
+var CHECKER_DARK = "#e5e7eb";
+var checkerSource = null;
+function checkerTile() {
+  if (checkerSource) return checkerSource;
+  const tile = import_fabric3.util.createCanvasElement();
+  tile.width = tile.height = CELL * 2;
+  const ctx = tile.getContext("2d");
+  ctx.fillStyle = CHECKER_LIGHT;
+  ctx.fillRect(0, 0, CELL * 2, CELL * 2);
+  ctx.fillStyle = CHECKER_DARK;
+  ctx.fillRect(0, 0, CELL, CELL);
+  ctx.fillRect(CELL, CELL, CELL, CELL);
+  checkerSource = tile;
+  return tile;
+}
+function checkerCanvas(width, height) {
+  const el = import_fabric3.util.createCanvasElement();
+  el.width = Math.max(1, Math.round(width));
+  el.height = Math.max(1, Math.round(height));
+  const ctx = el.getContext("2d");
+  ctx.fillStyle = ctx.createPattern(checkerTile(), "repeat") ?? CHECKER_LIGHT;
+  ctx.fillRect(0, 0, el.width, el.height);
+  return el;
+}
+function transparentCanvas(width, height) {
+  const el = import_fabric3.util.createCanvasElement();
+  el.width = Math.max(1, Math.round(width));
+  el.height = Math.max(1, Math.round(height));
+  return el;
+}
+function checkerPattern(obj) {
+  const sx = obj.scaleX || 1;
+  const sy = obj.scaleY || 1;
+  return new import_fabric3.Pattern({ source: checkerTile(), repeat: "repeat", patternTransform: [1 / sx, 0, 0, 1 / sy, 0, 0] });
+}
+var USER_SLOT_STYLE_KEY = "userSlotStyle";
+var DEFAULT_COLOR = DEFAULT_GUIDE_COLOR;
+var BASE = { icon: 20, font: 10, line: 13, gap: 6, pad: 8 };
+var SCALES = [4, 3.5, 3, 2.5, 2, 1.6];
+var fontAt = (scale) => `500 ${BASE.font * scale}px ui-sans-serif, system-ui, sans-serif`;
+function slotLayout(ctx, text, w, h) {
+  for (const scale2 of text ? SCALES : []) {
+    ctx.font = fontAt(scale2);
+    const pad = BASE.pad * scale2;
+    const lines = wrapLines(ctx, text, w - pad * 2);
+    const height = (BASE.icon + BASE.gap + lines.length * BASE.line) * scale2 + pad * 2;
+    if (lines.length && height <= h) return { scale: scale2, lines };
+  }
+  const scale = SCALES.find((s) => (BASE.icon + BASE.pad * 2) * s <= Math.min(w, h));
+  return scale ? { scale, lines: [] } : null;
+}
+function drawSlotContent(ctx, obj) {
+  const style = obj.canvas?.[USER_SLOT_STYLE_KEY];
+  const { x: zx, y: zy } = obj.getTotalObjectScaling();
+  ctx.save();
+  ctx.scale(1 / zx, 1 / zy);
+  const layout = slotLayout(ctx, userSlotHint(obj) || style?.prompt || "", obj.width * zx, obj.height * zy);
+  if (!layout) return ctx.restore();
+  const { scale, lines } = layout;
+  const icon = BASE.icon * scale;
+  const line = BASE.line * scale;
+  const gap = BASE.gap * scale;
+  const top = -(icon + (lines.length ? gap + lines.length * line : 0)) / 2;
+  const color = style?.color ?? DEFAULT_COLOR;
+  drawUploadIcon(ctx, top, icon, color);
+  ctx.font = fontAt(scale);
+  ctx.fillStyle = color;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  lines.forEach((text, i) => ctx.fillText(text, 0, top + icon + gap + line * (i + 0.5)));
+  ctx.restore();
+}
+function wrapLines(ctx, text, maxWidth) {
+  const lines = [];
+  for (const word of text.split(/\s+/).filter(Boolean)) {
+    if (ctx.measureText(word).width > maxWidth) return [];
+    const last = lines[lines.length - 1];
+    const joined = last ? `${last} ${word}` : word;
+    if (last && ctx.measureText(joined).width <= maxWidth) lines[lines.length - 1] = joined;
+    else lines.push(word);
+  }
+  return lines;
+}
+function drawUploadIcon(ctx, top, size, color) {
+  ctx.save();
+  ctx.translate(-size / 2, top);
+  ctx.scale(size / 24, size / 24);
+  ctx.lineWidth = 1.5;
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  ctx.strokeStyle = color;
+  ctx.beginPath();
+  ctx.moveTo(3, 16.5);
+  ctx.lineTo(3, 18.75);
+  ctx.quadraticCurveTo(3, 21, 5.25, 21);
+  ctx.lineTo(18.75, 21);
+  ctx.quadraticCurveTo(21, 21, 21, 18.75);
+  ctx.lineTo(21, 16.5);
+  ctx.moveTo(7.5, 7.5);
+  ctx.lineTo(12, 3);
+  ctx.lineTo(16.5, 7.5);
+  ctx.moveTo(12, 3);
+  ctx.lineTo(12, 16.5);
+  ctx.stroke();
+  ctx.restore();
+}
+function installUserSlotRendering(target) {
+  const proto = target;
+  const original = proto._render;
+  const originalIsCacheDirty = proto.isCacheDirty;
+  proto.isCacheDirty = function(skipCanvas) {
+    const slot = isUserSlot(this);
+    if (slot !== Boolean(this._wasUserSlot)) {
+      this._wasUserSlot = slot;
+      this.dirty = true;
+    }
+    return originalIsCacheDirty.call(this, skipCanvas);
+  };
+  proto._render = function(ctx) {
+    if (!isUserSlot(this)) return original.call(this, ctx);
+    const fill = this.fill;
+    this.fill = checkerPattern(this);
+    try {
+      original.call(this, ctx);
+    } finally {
+      this.fill = fill;
+    }
+    drawSlotContent(ctx, this);
+  };
+}
+
+// src/userTexts.ts
+var USER_TEXT_FIELD = "text";
+function textBinding(obj) {
+  const spec = obj.get("bindings")?.[USER_TEXT_FIELD];
+  return spec?.scope === USER_SCOPE ? spec : null;
+}
+function userTextBinding(obj) {
+  const spec = textBinding(obj);
+  return spec && spec.resolved !== true ? spec : null;
+}
+function isUserText(obj) {
+  return userTextBinding(obj) !== null;
+}
+function isUserOwnedText(obj) {
+  return textBinding(obj) !== null;
+}
+function requestUserText(bindings) {
+  return { ...bindings, [USER_TEXT_FIELD]: { scope: USER_SCOPE } };
+}
+function releaseUserText(bindings) {
+  const { [USER_TEXT_FIELD]: spec, ...rest } = bindings ?? {};
+  return spec?.scope === USER_SCOPE ? rest : { ...bindings };
+}
+function resolveUserText(bindings) {
+  const spec = bindings?.[USER_TEXT_FIELD];
+  if (spec?.scope !== USER_SCOPE) return bindings;
+  return { ...bindings, [USER_TEXT_FIELD]: { ...spec, resolved: true } };
+}
+function styleOf(obj) {
+  return obj.canvas?.[USER_SLOT_STYLE_KEY];
+}
+function authorsUserInputs(obj) {
+  return styleOf(obj)?.authoring === true;
+}
+function drawUserTextOutline(ctx, obj) {
+  const { x: zx, y: zy } = obj.getTotalObjectScaling();
+  ctx.save();
+  ctx.scale(1 / zx, 1 / zy);
+  ctx.strokeStyle = styleOf(obj)?.color ?? DEFAULT_GUIDE_COLOR;
+  ctx.lineWidth = 1.5;
+  ctx.setLineDash([6, 4]);
+  ctx.globalAlpha = 0.9;
+  ctx.strokeRect(-obj.width / 2 * zx, -obj.height / 2 * zy, obj.width * zx, obj.height * zy);
+  ctx.restore();
+}
+
 // src/controls/CustomTextbox.ts
-var { changeObjectWidth, changeObjectHeight } = import_fabric3.controlsUtils;
+var { changeObjectWidth, changeObjectHeight } = import_fabric4.controlsUtils;
 var UNBOUNDED_WIDTH = 1e4;
-var CustomTextbox = class extends import_fabric3.Textbox {
+var CustomTextbox = class extends import_fabric4.Textbox {
   constructor(text, options) {
     super(text, options);
     /** La sélection d'avant le dernier mouvement : dit dans quel sens on traverse un token. */
@@ -2093,11 +2413,18 @@ var CustomTextbox = class extends import_fabric3.Textbox {
     }
     super.onKeyDown(e);
   }
-  /** Une frappe (ou un collage) qui change le texte : ce n'est plus l'exemple. */
+  /**
+   * Une frappe (ou un collage) qui change le texte : ce n'est plus l'exemple — et un texte à
+   * personnaliser l'est, sauf sous la main de son auteur, qui en écrit l'exemple.
+   */
   onInput(e) {
     const before = this.text;
     super.onInput(e);
-    if (this.placeholder && this.text !== before) this.placeholder = false;
+    if (this.text === before) return;
+    if (this.placeholder) this.placeholder = false;
+    if (isUserText(this) && !authorsUserInputs(this)) {
+      this.set("bindings", resolveUserText(this.get("bindings")));
+    }
   }
   /** Fabric efface la zone du texte sur le calque du dessus à chaque clignotement du
    *  curseur : les pastilles du texte en édition sont repeintes avec lui. */
@@ -2242,8 +2569,13 @@ var CustomTextbox = class extends import_fabric3.Textbox {
     if (key === "fontSize") this.fontSizeIntent = value;
     return super._set(key, value);
   }
-  /** overflow "clip" : le texte est coupé au bord de sa boîte. */
+  /** Le texte, puis le liseré d'un texte à personnaliser encore en attente. */
   _render(ctx) {
+    this._renderClipped(ctx);
+    if (isUserText(this)) drawUserTextOutline(ctx, this);
+  }
+  /** overflow "clip" : le texte est coupé au bord de sa boîte. */
+  _renderClipped(ctx) {
     if (!this._overflowing || this.textOverflow !== "clip") {
       super._render(ctx);
       return;
@@ -2254,6 +2586,16 @@ var CustomTextbox = class extends import_fabric3.Textbox {
     ctx.clip();
     super._render(ctx);
     ctx.restore();
+  }
+  /** Le liseré suit l'état : poser ou régler le binding ne salit pas le cache aux yeux de
+   *  Fabric, c'est le passage en attente (ou sa fin) qui le fait. */
+  isCacheDirty(skipCanvas) {
+    const awaiting = isUserText(this);
+    if (awaiting !== Boolean(this._wasUserText)) {
+      this._wasUserText = awaiting;
+      this.dirty = true;
+    }
+    return super.isCacheDirty(skipCanvas);
   }
   // ── Poignées ───────────────────────────────────────────────────────
   /**
@@ -2505,11 +2847,11 @@ var CustomTextbox = class extends import_fabric3.Textbox {
     const upperCanvas = this.canvas.upperCanvasEl;
     const upperCanvasWidth = upperCanvas.width / retinaScaling;
     const upperCanvasHeight = upperCanvas.height / retinaScaling;
-    const p = new import_fabric3.Point(
+    const p = new import_fabric4.Point(
       boundaries.left + leftOffset,
       boundaries.top + boundaries.topOffset + charHeight
     ).transform(this.calcTransformMatrix()).transform(this.canvas.viewportTransform).multiply(
-      new import_fabric3.Point(
+      new import_fabric4.Point(
         upperCanvas.clientWidth / upperCanvasWidth,
         upperCanvas.clientHeight / upperCanvasHeight
       )
@@ -2611,7 +2953,7 @@ function applyLockMode(obj, mode) {
   obj.hasControls = mode === "free";
   obj.lockContent = mode === "full";
   if (obj.type === "i-text" || obj.type === "textbox") {
-    obj.editable = mode !== "full";
+    obj.editable = mode !== "full" || isUserOwnedText(obj);
   }
 }
 function isStyleLocked(obj) {
@@ -2624,283 +2966,6 @@ function isContentLocked(obj) {
 function isPositionLocked(obj) {
   const mode = getLockMode(obj);
   return mode === "position" || mode === "full";
-}
-
-// src/userSlots.ts
-var import_fabric4 = require("#fabric");
-
-// src/ui/badges.ts
-var BADGE_HEIGHT = 15;
-var BADGE_PAD = 5;
-var BADGE_FONT = "500 10px ui-sans-serif, system-ui, sans-serif";
-function drawFrameBadge(ctx, obj, label, color) {
-  const corner = obj.oCoords?.tl;
-  if (!corner) return;
-  ctx.save();
-  ctx.font = BADGE_FONT;
-  const width = ctx.measureText(label).width + BADGE_PAD * 2;
-  const left = corner.x - 1;
-  const top = corner.y - BADGE_HEIGHT;
-  ctx.fillStyle = color;
-  ctx.fillRect(left, top, width, BADGE_HEIGHT);
-  ctx.fillStyle = "#ffffff";
-  ctx.textAlign = "left";
-  ctx.textBaseline = "middle";
-  ctx.fillText(label, left + BADGE_PAD, top + BADGE_HEIGHT / 2);
-  ctx.restore();
-}
-function badgeLabel(obj, labelers) {
-  const labels = labelers.map((labeler) => labeler(obj)).filter((label) => Boolean(label));
-  return labels.length ? [...new Set(labels)].join(" ") : null;
-}
-function installBadgeLayer(fabricCanvas, color, labelers, targets) {
-  const drawControls = fabricCanvas.drawControls.bind(fabricCanvas);
-  fabricCanvas.drawControls = (ctx) => {
-    targets().forEach((obj) => {
-      const label = badgeLabel(obj, labelers);
-      if (label) drawFrameBadge(ctx, obj, label, color);
-    });
-    drawControls(ctx);
-  };
-}
-
-// src/bindings.ts
-function pendingBindings(obj) {
-  const bindings = obj.get("bindings") || {};
-  return Object.fromEntries(Object.entries(bindings).filter(([, spec]) => spec?.resolved !== true));
-}
-function hasPendingBindings(obj) {
-  return Object.keys(pendingBindings(obj)).length > 0;
-}
-function restoreBindings(obj, data) {
-  if (!data.bindings) return;
-  obj.set("bindings", data.bindings);
-}
-function setTextContent(obj, text) {
-  if (!("text" in obj)) return;
-  const current = obj;
-  if (current.placeholder && current.text !== text) obj.set("placeholder", false);
-  obj.set("text", text);
-  obj.initDimensions?.();
-  obj.setCoords();
-  obj.fire("changed");
-}
-function bindingBadgeLabel(obj, userSlotLabel = DEFAULT_USER_SLOT_LABEL) {
-  if (!hasPendingBindings(obj)) return null;
-  return bindingLabel(obj, userSlotLabel);
-}
-function drawBindingBadge(ctx, obj, color, userSlotLabel = DEFAULT_USER_SLOT_LABEL) {
-  const label = bindingBadgeLabel(obj, userSlotLabel);
-  if (label) drawFrameBadge(ctx, obj, label, color);
-}
-var DEFAULT_USER_SLOT_LABEL = "\xC0 fournir";
-function mediaLabel(spec) {
-  if (typeof spec.media === "number") return `media ${spec.media}`;
-  return spec.media === "each" ? "media i" : String(spec.media ?? "");
-}
-function bindingLabel(obj, userSlotLabel) {
-  const labels = Object.values(pendingBindings(obj)).flatMap((spec) => {
-    if (spec?.scope === "user") return [userSlotLabel];
-    if (spec?.media !== void 0) return [mediaLabel(spec)];
-    return String(spec?.expr ?? "").match(/\$\w+/g) || [];
-  });
-  return labels.length ? [...new Set(labels)].join(" ") : "$";
-}
-function drawDynamicMediaOutline(ctx, obj, color) {
-  if (!obj.visible || !obj.canvas) return;
-  const pending = pendingBindings(obj);
-  if (!Object.keys(pending).some((field) => field.startsWith("image."))) return;
-  const screen = ctx.getTransform();
-  ctx.save();
-  ctx.transform(...obj.canvas.viewportTransform);
-  obj.transform(ctx);
-  ctx.beginPath();
-  traceOutline(ctx, obj);
-  ctx.setTransform(screen);
-  ctx.strokeStyle = color;
-  ctx.lineWidth = 1.5;
-  ctx.setLineDash([6, 4]);
-  ctx.globalAlpha = 0.9;
-  ctx.stroke();
-  ctx.restore();
-}
-function traceOutline(ctx, obj) {
-  const shape = obj.clipPath;
-  if (!shape) {
-    ctx.rect(-obj.width / 2, -obj.height / 2, obj.width, obj.height);
-    return;
-  }
-  shape.transform(ctx);
-  if (shape._renderPathCommands) {
-    shape._renderPathCommands(ctx);
-  } else if (typeof shape.radius === "number") {
-    ctx.arc(0, 0, shape.radius, 0, Math.PI * 2);
-  } else {
-    const radius = Math.min(shape.rx ?? 0, shape.width / 2, shape.height / 2);
-    ctx.roundRect(-shape.width / 2, -shape.height / 2, shape.width, shape.height, radius);
-  }
-}
-
-// src/userSlots.ts
-var USER_SCOPE = "user";
-var USER_SLOT_FIELD = "image.src";
-function userSlotBinding(obj) {
-  const spec = pendingBindings(obj)[USER_SLOT_FIELD];
-  return spec?.scope === USER_SCOPE ? spec : null;
-}
-function isUserSlot(obj) {
-  return userSlotBinding(obj) !== null;
-}
-function userSlotHint(obj) {
-  return String(userSlotBinding(obj)?.hint ?? "");
-}
-function resolveUserSlot(bindings) {
-  const spec = bindings?.[USER_SLOT_FIELD];
-  if (spec?.scope !== USER_SCOPE) return bindings;
-  return { ...bindings, [USER_SLOT_FIELD]: { ...spec, resolved: true } };
-}
-function collectUserSlots(objects) {
-  return objects.filter(isUserSlot).map((object) => {
-    const { left, top, width, height } = object.getBoundingRect();
-    return {
-      object,
-      layerId: idOf(object),
-      hint: userSlotHint(object),
-      rect: { left, top, width, height }
-    };
-  });
-}
-var CELL = 16;
-var CHECKER_LIGHT = "#f9fafb";
-var CHECKER_DARK = "#e5e7eb";
-var checkerSource = null;
-function checkerTile() {
-  if (checkerSource) return checkerSource;
-  const tile = import_fabric4.util.createCanvasElement();
-  tile.width = tile.height = CELL * 2;
-  const ctx = tile.getContext("2d");
-  ctx.fillStyle = CHECKER_LIGHT;
-  ctx.fillRect(0, 0, CELL * 2, CELL * 2);
-  ctx.fillStyle = CHECKER_DARK;
-  ctx.fillRect(0, 0, CELL, CELL);
-  ctx.fillRect(CELL, CELL, CELL, CELL);
-  checkerSource = tile;
-  return tile;
-}
-function checkerCanvas(width, height) {
-  const el = import_fabric4.util.createCanvasElement();
-  el.width = Math.max(1, Math.round(width));
-  el.height = Math.max(1, Math.round(height));
-  const ctx = el.getContext("2d");
-  ctx.fillStyle = ctx.createPattern(checkerTile(), "repeat") ?? CHECKER_LIGHT;
-  ctx.fillRect(0, 0, el.width, el.height);
-  return el;
-}
-function transparentCanvas(width, height) {
-  const el = import_fabric4.util.createCanvasElement();
-  el.width = Math.max(1, Math.round(width));
-  el.height = Math.max(1, Math.round(height));
-  return el;
-}
-function checkerPattern(obj) {
-  const sx = obj.scaleX || 1;
-  const sy = obj.scaleY || 1;
-  return new import_fabric4.Pattern({ source: checkerTile(), repeat: "repeat", patternTransform: [1 / sx, 0, 0, 1 / sy, 0, 0] });
-}
-var USER_SLOT_STYLE_KEY = "userSlotStyle";
-var DEFAULT_COLOR = DEFAULT_GUIDE_COLOR;
-var BASE = { icon: 20, font: 10, line: 13, gap: 6, pad: 8 };
-var SCALES = [4, 3.5, 3, 2.5, 2, 1.6];
-var fontAt = (scale) => `500 ${BASE.font * scale}px ui-sans-serif, system-ui, sans-serif`;
-function slotLayout(ctx, text, w, h) {
-  for (const scale2 of text ? SCALES : []) {
-    ctx.font = fontAt(scale2);
-    const pad = BASE.pad * scale2;
-    const lines = wrapLines(ctx, text, w - pad * 2);
-    const height = (BASE.icon + BASE.gap + lines.length * BASE.line) * scale2 + pad * 2;
-    if (lines.length && height <= h) return { scale: scale2, lines };
-  }
-  const scale = SCALES.find((s) => (BASE.icon + BASE.pad * 2) * s <= Math.min(w, h));
-  return scale ? { scale, lines: [] } : null;
-}
-function drawSlotContent(ctx, obj) {
-  const style = obj.canvas?.[USER_SLOT_STYLE_KEY];
-  const { x: zx, y: zy } = obj.getTotalObjectScaling();
-  ctx.save();
-  ctx.scale(1 / zx, 1 / zy);
-  const layout = slotLayout(ctx, userSlotHint(obj) || style?.prompt || "", obj.width * zx, obj.height * zy);
-  if (!layout) return ctx.restore();
-  const { scale, lines } = layout;
-  const icon = BASE.icon * scale;
-  const line = BASE.line * scale;
-  const gap = BASE.gap * scale;
-  const top = -(icon + (lines.length ? gap + lines.length * line : 0)) / 2;
-  const color = style?.color ?? DEFAULT_COLOR;
-  drawUploadIcon(ctx, top, icon, color);
-  ctx.font = fontAt(scale);
-  ctx.fillStyle = color;
-  ctx.textAlign = "center";
-  ctx.textBaseline = "middle";
-  lines.forEach((text, i) => ctx.fillText(text, 0, top + icon + gap + line * (i + 0.5)));
-  ctx.restore();
-}
-function wrapLines(ctx, text, maxWidth) {
-  const lines = [];
-  for (const word of text.split(/\s+/).filter(Boolean)) {
-    if (ctx.measureText(word).width > maxWidth) return [];
-    const last = lines[lines.length - 1];
-    const joined = last ? `${last} ${word}` : word;
-    if (last && ctx.measureText(joined).width <= maxWidth) lines[lines.length - 1] = joined;
-    else lines.push(word);
-  }
-  return lines;
-}
-function drawUploadIcon(ctx, top, size, color) {
-  ctx.save();
-  ctx.translate(-size / 2, top);
-  ctx.scale(size / 24, size / 24);
-  ctx.lineWidth = 1.5;
-  ctx.lineCap = "round";
-  ctx.lineJoin = "round";
-  ctx.strokeStyle = color;
-  ctx.beginPath();
-  ctx.moveTo(3, 16.5);
-  ctx.lineTo(3, 18.75);
-  ctx.quadraticCurveTo(3, 21, 5.25, 21);
-  ctx.lineTo(18.75, 21);
-  ctx.quadraticCurveTo(21, 21, 21, 18.75);
-  ctx.lineTo(21, 16.5);
-  ctx.moveTo(7.5, 7.5);
-  ctx.lineTo(12, 3);
-  ctx.lineTo(16.5, 7.5);
-  ctx.moveTo(12, 3);
-  ctx.lineTo(12, 16.5);
-  ctx.stroke();
-  ctx.restore();
-}
-function installUserSlotRendering(target) {
-  const proto = target;
-  const original = proto._render;
-  const originalIsCacheDirty = proto.isCacheDirty;
-  proto.isCacheDirty = function(skipCanvas) {
-    const slot = isUserSlot(this);
-    if (slot !== Boolean(this._wasUserSlot)) {
-      this._wasUserSlot = slot;
-      this.dirty = true;
-    }
-    return originalIsCacheDirty.call(this, skipCanvas);
-  };
-  proto._render = function(ctx) {
-    if (!isUserSlot(this)) return original.call(this, ctx);
-    const fill = this.fill;
-    this.fill = checkerPattern(this);
-    try {
-      original.call(this, ctx);
-    } finally {
-      this.fill = fill;
-    }
-    drawSlotContent(ctx, this);
-  };
 }
 
 // src/shapes/FabRect.ts
@@ -4498,7 +4563,6 @@ var LayerManager = class {
       const isBackground2 = data.layerId === BACKGROUND_ID;
       if (isBackground2 || data.selectable === false) obj.selectable = false;
       if (isBackground2 || data.evented === false) obj.evented = false;
-      restoreBindings(obj, data);
     });
     return objects;
   }
@@ -4799,6 +4863,22 @@ var LayerManager = class {
     return obj;
   }
   /**
+   * Donne un texte à personnaliser à l'utilisateur final (userTexts), ou le reprend
+   * (`requested: false`) : le texte du calque devient — ou cesse d'être — l'exemple. Un texte
+   * lié à une expression cesse de l'être. Son verrou est réappliqué : un texte à personnaliser
+   * s'édite même verrouillé.
+   *
+   * Rend le texte, ou null si le calque n'en est pas un.
+   */
+  setUserText(obj, requested = true) {
+    if (!isTextObject(obj)) return null;
+    const bindings = obj.get("bindings");
+    obj.set({ bindings: requested ? requestUserText(bindings) : releaseUserText(bindings) });
+    applyLockMode(obj, getLockMode(obj));
+    this.canvas.requestRenderAll();
+    return obj;
+  }
+  /**
    * Un calque en remplace un autre à sa place : son layout (container, enfant) et son
    * verrouillage — sinon ses enfants restent orphelins, ou il sort de son container — et
    * son rang dans la pile (sous ses enfants).
@@ -4936,6 +5016,7 @@ var LayerManager = class {
     }
     const migrated = obj && migrateLegacyLayout(layoutOf(obj));
     if (obj && migrated) obj.set("layout", migrated);
+    if (obj) restoreBindings(obj, layer);
     if (obj && layer.lockMode) {
       const mode = layer.lockMode;
       if ("applyLockMode" in obj && typeof obj.applyLockMode === "function") {
@@ -7914,7 +7995,7 @@ function arrangeFree(container, objects) {
 
 // src/ui/controls.ts
 var import_fabric22 = require("#fabric");
-function applyControlStyle(canvas, guideColor, resolveTarget, userSlotLabel) {
+function applyControlStyle(canvas, guideColor, resolveTarget, userInputLabels) {
   const gc = guideColor;
   import_fabric22.FabricObject.ownDefaults.borderColor = gc;
   import_fabric22.FabricObject.ownDefaults.borderScaleFactor = 2;
@@ -7927,7 +8008,7 @@ function applyControlStyle(canvas, guideColor, resolveTarget, userSlotLabel) {
   installControlRenderer(gc, hoverProgress);
   installControlHitAreas(canvas);
   installHoverAnimation(canvas, hoverProgress);
-  installHoverBorder(canvas, gc, resolveTarget, userSlotLabel);
+  installHoverBorder(canvas, gc, resolveTarget, userInputLabels);
 }
 var EDGE_CONTROLS = /* @__PURE__ */ new Set(["mt", "mb", "ml", "mr"]);
 var CORNER_CONTROLS = /* @__PURE__ */ new Set(["tl", "tr", "bl", "br"]);
@@ -8120,7 +8201,7 @@ function installHoverAnimation(canvas, hoverProgress) {
     }
   });
 }
-function installHoverBorder(canvas, guideColor, resolveTarget, userSlotLabel) {
+function installHoverBorder(canvas, guideColor, resolveTarget, userInputLabels) {
   let hoveredObj = null;
   const clearTopCtx = () => {
     const fc = canvas.originalFabricCanvas;
@@ -8163,7 +8244,7 @@ function installHoverBorder(canvas, guideColor, resolveTarget, userSlotLabel) {
   installBadgeLayer(
     canvas.originalFabricCanvas,
     guideColor,
-    [(obj) => bindingBadgeLabel(obj, userSlotLabel)],
+    [(obj) => bindingBadgeLabel(obj, userInputLabels)],
     () => {
       const active = canvas.getActiveObject();
       return [active, hoveredObj !== active ? hoveredObj : null].filter((obj) => Boolean(obj));
@@ -9512,6 +9593,26 @@ var SelectionCommands = class {
   }
 };
 
+// src/userInputs.ts
+function userInputKindOf(obj) {
+  if (isUserSlot(obj)) return "image";
+  return isUserText(obj) ? "text" : null;
+}
+function collectUserInputs(objects) {
+  return objects.flatMap((object) => {
+    const kind = userInputKindOf(object);
+    if (!kind) return [];
+    const { left, top, width, height } = object.getBoundingRect();
+    return [{
+      object,
+      layerId: idOf(object),
+      kind,
+      hint: kind === "image" ? userSlotHint(object) : "",
+      rect: { left, top, width, height }
+    }];
+  });
+}
+
 // src/displayStyle.ts
 function displayFill(obj) {
   return obj.displayFill ?? null;
@@ -10115,8 +10216,15 @@ var _FabricEditor = class _FabricEditor {
     });
     this.layers = new LayerManager(this.canvas);
     this.selection = new SelectionManager(this.canvas);
-    applyControlStyle(this.canvas, gc, (obj) => this.selection.resolveTarget(obj), config.userSlotLabel);
-    const slotStyle = { color: gc, prompt: config.userSlotPrompt };
+    applyControlStyle(this.canvas, gc, (obj) => this.selection.resolveTarget(obj), {
+      userSlot: config.userSlotLabel,
+      userText: config.userTextLabel
+    });
+    const slotStyle = {
+      color: gc,
+      prompt: config.userSlotPrompt,
+      authoring: config.authorsUserInputs === true
+    };
     this.canvas.originalFabricCanvas[USER_SLOT_STYLE_KEY] = slotStyle;
     this.canvas.originalFabricCanvas[TOKEN_COLOR_KEY] = config.tokenColor ?? gc;
     this.masks = new MaskManager(this.canvas);
@@ -10630,26 +10738,33 @@ var _FabricEditor = class _FabricEditor {
     const gc = this.config.guideColor ?? DEFAULT_GUIDE_COLOR;
     return imageSlotDataUrl(slotMark(spec), gc);
   }
-  /** Les images à fournir de la page (userSlots), boîtes en coordonnées scène. */
-  userSlots() {
-    return collectUserSlots(this.layers.all.filter((obj) => !obj.get(DRAG_PREVIEW_KEY)));
+  /**
+   * Les entrées à fournir de la page — images à fournir, textes à personnaliser (userInputs) —
+   * boîtes en coordonnées scène.
+   */
+  userInputs() {
+    return collectUserInputs(this.layers.all.filter((obj) => !obj.get(DRAG_PREVIEW_KEY)));
   }
   /**
-   * Prévient l'hôte quand les images à fournir changent — apparition, disparition,
-   * consigne, boîte, échelle ou cadrage d'affichage : de quoi (re)placer ses bulles. Comparé
-   * à chaque rendu et à chaque redimensionnement, appelé seulement sur changement (et une
-   * fois tout de suite). Rend la fonction de désabonnement.
+   * Prévient l'hôte quand les entrées à fournir changent — apparition, disparition (un texte
+   * personnalisé, un cadre rempli), consigne, boîte, visibilité, échelle ou cadrage : de quoi
+   * (re)placer ses bulles, avec `clientRectOf`. Comparé à chaque rendu et à chaque
+   * redimensionnement, appelé seulement sur changement (et une fois tout de suite). Rend la
+   * fonction de désabonnement.
    */
-  onUserSlotsChange(callback) {
+  onUserInputsChange(callback) {
     let last = null;
     const check = () => {
-      const slots = this.userSlots();
+      const inputs = this.userInputs();
       const signature = JSON.stringify([
         this._displayScale,
         this._userZoom,
-        slots.map(({ layerId, hint, rect }) => [
+        this.canvas.originalFabricCanvas.viewportTransform,
+        inputs.map(({ object, layerId, kind, hint, rect }) => [
           layerId,
+          kind,
           hint,
+          object.visible,
           Math.round(rect.left),
           Math.round(rect.top),
           Math.round(rect.width),
@@ -10658,7 +10773,7 @@ var _FabricEditor = class _FabricEditor {
       ]);
       if (signature === last) return;
       last = signature;
-      callback(slots);
+      callback(inputs);
     };
     this.canvas.on("after:render", check);
     this._resizeCallbacks.push(check);
@@ -10667,6 +10782,24 @@ var _FabricEditor = class _FabricEditor {
       this.canvas.off("after:render", check);
       this._resizeCallbacks = this._resizeCallbacks.filter((cb) => cb !== check);
     };
+  }
+  /**
+   * La boîte d'un objet À L'ÉCRAN, dans le repère de la fenêtre (celui de
+   * getBoundingClientRect) : de quoi ancrer un élément de l'hôte — une bulle — contre un objet
+   * du canvas. Calculée à l'appel : zoom, cadrage et place du canvas dans la page compris.
+   */
+  clientRectOf(obj) {
+    const fc = this.canvas.originalFabricCanvas;
+    const page = (fc.upperCanvasEl ?? fc.getElement()).getBoundingClientRect();
+    const sx = fc.width ? page.width / fc.width : 1;
+    const sy = fc.height ? page.height / fc.height : 1;
+    const [zx, , , zy, dx, dy] = fc.viewportTransform;
+    const box = obj.getBoundingRect();
+    const left = page.left + (box.left * zx + dx) * sx;
+    const top = page.top + (box.top * zy + dy) * sy;
+    const width = box.width * zx * sx;
+    const height = box.height * zy * sy;
+    return { x: left, y: top, left, top, right: left + width, bottom: top + height, width, height };
   }
   // ── Commandes de sélection (editor/selection-commands) ──────────
   groupSelection() {
@@ -11487,6 +11620,7 @@ var ORDER = {
     "animations",
     "effects",
     "variables",
+    "userText",
     "layout",
     "condition",
     "saveAsSticker",
@@ -11624,7 +11758,10 @@ function oneAllows(obj, kind) {
       case "containerize":
         return rules.restyles && rules.hosts && !isContainerObject(obj);
       // Une condition de visibilité se pose sur tout calque sélectionnable, verrou compris :
-      // c'est un réglage d'auteur, pas de style ; de même garder la sélection en calque
+      // c'est un réglage d'auteur, pas de style ; de même donner un texte à personnaliser
+      // (userTexts — l'hôte ne le propose qu'à l'auteur) ou garder la sélection en calque
+      case "userText":
+        return kind === "text";
       case "condition":
       case "saveAsSticker":
       case "lock":
@@ -12662,6 +12799,7 @@ function textUnitTiles(text, kind, { resolution = 1, pad = tilePadding(text) } =
   TEXT_STYLE_KEYS,
   USER_SCOPE,
   USER_SLOT_FIELD,
+  USER_TEXT_FIELD,
   addCircleClip,
   addCropControls,
   addHeartClip,
@@ -12676,7 +12814,7 @@ function textUnitTiles(text, kind, { resolution = 1, pad = tilePadding(text) } =
   canvasImageSource,
   clampTopLeft,
   clipDataFor,
-  collectUserSlots,
+  collectUserInputs,
   createCircle,
   createDropSession,
   createHeart,
@@ -12719,7 +12857,9 @@ function textUnitTiles(text, kind, { resolution = 1, pad = tilePadding(text) } =
   isMonoPath,
   isPositionLocked,
   isStyleLocked,
+  isUserOwnedText,
   isUserSlot,
+  isUserText,
   isValidShape,
   kindOf,
   layerToHtmlStandalone,
@@ -12761,8 +12901,10 @@ function textUnitTiles(text, kind, { resolution = 1, pad = tilePadding(text) } =
   toolsFor,
   topLeft,
   unionBox,
+  userInputKindOf,
   userSlotBinding,
   userSlotHint,
+  userTextBinding,
   wrapContainerAroundChild,
   yogaLayout,
   zoomCrop

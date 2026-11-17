@@ -21,8 +21,8 @@ import { ImageFrame } from "./ImageFrame";
 export type ToolId =
   | "group" | "align" | "distribute" | "arrangement" | "ungroup"
   | "appearance" | "fill" | "font" | "variables" | "crop" | "image" | "promoteBackground" | "clip" | "outline"
-  | "effects" | "layout" | "containerize" | "animations" | "condition" | "saveAsSticker" | "lock" | "forward"
-  | "backward" | "delete";
+  | "effects" | "layout" | "containerize" | "animations" | "condition" | "userText" | "saveAsSticker" | "lock"
+  | "forward" | "backward" | "delete";
 
 /**
  * - `text`, `shape`, `image` : un objet seul, d'après sa sorte ;
@@ -40,8 +40,8 @@ export type SelectionKind = "text" | "shape" | "image" | "block" | "group" | "ma
  */
 const ORDER: Record<SelectionKind, ToolId[]> = {
   text: [
-    "appearance", "fill", "font", "animations", "effects", "variables", "layout", "condition", "saveAsSticker",
-    "lock", "forward", "backward",
+    "appearance", "fill", "font", "animations", "effects", "variables", "userText", "layout", "condition",
+    "saveAsSticker", "lock", "forward", "backward",
   ],
   shape: [
     "appearance", "fill", "clip", "outline", "animations", "effects", "layout", "containerize", "condition",
@@ -131,7 +131,9 @@ function oneAllows(obj: FabricObject, kind: SelectionKind): (tool: ToolId) => bo
       // Une forme (ou une image) simple devient un bloc : elle accueille, et n'en est pas un
       case "containerize": return rules.restyles && rules.hosts && !isContainerObject(obj);
       // Une condition de visibilité se pose sur tout calque sélectionnable, verrou compris :
-      // c'est un réglage d'auteur, pas de style ; de même garder la sélection en calque
+      // c'est un réglage d'auteur, pas de style ; de même donner un texte à personnaliser
+      // (userTexts — l'hôte ne le propose qu'à l'auteur) ou garder la sélection en calque
+      case "userText": return kind === "text";
       case "condition":
       case "saveAsSticker":
       case "lock": return true;

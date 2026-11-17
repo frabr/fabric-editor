@@ -347,6 +347,234 @@ function tokenColorOf(obj) {
   return obj.canvas?.[TOKEN_COLOR_KEY] ?? null;
 }
 
+// src/ui/color.ts
+function parseHex(hex) {
+  const h = hex.replace("#", "");
+  if (h.length === 3) {
+    return [
+      parseInt(h[0] + h[0], 16),
+      parseInt(h[1] + h[1], 16),
+      parseInt(h[2] + h[2], 16)
+    ];
+  }
+  return [
+    parseInt(h.slice(0, 2), 16),
+    parseInt(h.slice(2, 4), 16),
+    parseInt(h.slice(4, 6), 16)
+  ];
+}
+var DEFAULT_GUIDE_COLOR = "#d946ef";
+
+// src/userSlots.ts
+import { Pattern, util } from "#fabric";
+
+// src/bindings.ts
+function pendingBindings(obj) {
+  const bindings = obj.get("bindings") || {};
+  return Object.fromEntries(Object.entries(bindings).filter(([, spec]) => spec?.resolved !== true));
+}
+function restoreBindings(obj, data) {
+  if (!data.bindings) return;
+  obj.set("bindings", data.bindings);
+}
+
+// src/userSlots.ts
+var USER_SCOPE = "user";
+var USER_SLOT_FIELD = "image.src";
+function userSlotBinding(obj) {
+  const spec = pendingBindings(obj)[USER_SLOT_FIELD];
+  return spec?.scope === USER_SCOPE ? spec : null;
+}
+function isUserSlot(obj) {
+  return userSlotBinding(obj) !== null;
+}
+function userSlotHint(obj) {
+  return String(userSlotBinding(obj)?.hint ?? "");
+}
+function resolveUserSlot(bindings) {
+  const spec = bindings?.[USER_SLOT_FIELD];
+  if (spec?.scope !== USER_SCOPE) return bindings;
+  return { ...bindings, [USER_SLOT_FIELD]: { ...spec, resolved: true } };
+}
+var CELL = 16;
+var CHECKER_LIGHT = "#f9fafb";
+var CHECKER_DARK = "#e5e7eb";
+var checkerSource = null;
+function checkerTile() {
+  if (checkerSource) return checkerSource;
+  const tile = util.createCanvasElement();
+  tile.width = tile.height = CELL * 2;
+  const ctx = tile.getContext("2d");
+  ctx.fillStyle = CHECKER_LIGHT;
+  ctx.fillRect(0, 0, CELL * 2, CELL * 2);
+  ctx.fillStyle = CHECKER_DARK;
+  ctx.fillRect(0, 0, CELL, CELL);
+  ctx.fillRect(CELL, CELL, CELL, CELL);
+  checkerSource = tile;
+  return tile;
+}
+function checkerCanvas(width, height) {
+  const el = util.createCanvasElement();
+  el.width = Math.max(1, Math.round(width));
+  el.height = Math.max(1, Math.round(height));
+  const ctx = el.getContext("2d");
+  ctx.fillStyle = ctx.createPattern(checkerTile(), "repeat") ?? CHECKER_LIGHT;
+  ctx.fillRect(0, 0, el.width, el.height);
+  return el;
+}
+function transparentCanvas(width, height) {
+  const el = util.createCanvasElement();
+  el.width = Math.max(1, Math.round(width));
+  el.height = Math.max(1, Math.round(height));
+  return el;
+}
+function checkerPattern(obj) {
+  const sx = obj.scaleX || 1;
+  const sy = obj.scaleY || 1;
+  return new Pattern({ source: checkerTile(), repeat: "repeat", patternTransform: [1 / sx, 0, 0, 1 / sy, 0, 0] });
+}
+var USER_SLOT_STYLE_KEY = "userSlotStyle";
+var DEFAULT_COLOR = DEFAULT_GUIDE_COLOR;
+var BASE = { icon: 20, font: 10, line: 13, gap: 6, pad: 8 };
+var SCALES = [4, 3.5, 3, 2.5, 2, 1.6];
+var fontAt = (scale) => `500 ${BASE.font * scale}px ui-sans-serif, system-ui, sans-serif`;
+function slotLayout(ctx, text, w, h) {
+  for (const scale2 of text ? SCALES : []) {
+    ctx.font = fontAt(scale2);
+    const pad = BASE.pad * scale2;
+    const lines = wrapLines(ctx, text, w - pad * 2);
+    const height = (BASE.icon + BASE.gap + lines.length * BASE.line) * scale2 + pad * 2;
+    if (lines.length && height <= h) return { scale: scale2, lines };
+  }
+  const scale = SCALES.find((s) => (BASE.icon + BASE.pad * 2) * s <= Math.min(w, h));
+  return scale ? { scale, lines: [] } : null;
+}
+function drawSlotContent(ctx, obj) {
+  const style = obj.canvas?.[USER_SLOT_STYLE_KEY];
+  const { x: zx, y: zy } = obj.getTotalObjectScaling();
+  ctx.save();
+  ctx.scale(1 / zx, 1 / zy);
+  const layout = slotLayout(ctx, userSlotHint(obj) || style?.prompt || "", obj.width * zx, obj.height * zy);
+  if (!layout) return ctx.restore();
+  const { scale, lines } = layout;
+  const icon = BASE.icon * scale;
+  const line = BASE.line * scale;
+  const gap = BASE.gap * scale;
+  const top = -(icon + (lines.length ? gap + lines.length * line : 0)) / 2;
+  const color = style?.color ?? DEFAULT_COLOR;
+  drawUploadIcon(ctx, top, icon, color);
+  ctx.font = fontAt(scale);
+  ctx.fillStyle = color;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  lines.forEach((text, i) => ctx.fillText(text, 0, top + icon + gap + line * (i + 0.5)));
+  ctx.restore();
+}
+function wrapLines(ctx, text, maxWidth) {
+  const lines = [];
+  for (const word of text.split(/\s+/).filter(Boolean)) {
+    if (ctx.measureText(word).width > maxWidth) return [];
+    const last = lines[lines.length - 1];
+    const joined = last ? `${last} ${word}` : word;
+    if (last && ctx.measureText(joined).width <= maxWidth) lines[lines.length - 1] = joined;
+    else lines.push(word);
+  }
+  return lines;
+}
+function drawUploadIcon(ctx, top, size, color) {
+  ctx.save();
+  ctx.translate(-size / 2, top);
+  ctx.scale(size / 24, size / 24);
+  ctx.lineWidth = 1.5;
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  ctx.strokeStyle = color;
+  ctx.beginPath();
+  ctx.moveTo(3, 16.5);
+  ctx.lineTo(3, 18.75);
+  ctx.quadraticCurveTo(3, 21, 5.25, 21);
+  ctx.lineTo(18.75, 21);
+  ctx.quadraticCurveTo(21, 21, 21, 18.75);
+  ctx.lineTo(21, 16.5);
+  ctx.moveTo(7.5, 7.5);
+  ctx.lineTo(12, 3);
+  ctx.lineTo(16.5, 7.5);
+  ctx.moveTo(12, 3);
+  ctx.lineTo(12, 16.5);
+  ctx.stroke();
+  ctx.restore();
+}
+function installUserSlotRendering(target) {
+  const proto = target;
+  const original = proto._render;
+  const originalIsCacheDirty = proto.isCacheDirty;
+  proto.isCacheDirty = function(skipCanvas) {
+    const slot = isUserSlot(this);
+    if (slot !== Boolean(this._wasUserSlot)) {
+      this._wasUserSlot = slot;
+      this.dirty = true;
+    }
+    return originalIsCacheDirty.call(this, skipCanvas);
+  };
+  proto._render = function(ctx) {
+    if (!isUserSlot(this)) return original.call(this, ctx);
+    const fill = this.fill;
+    this.fill = checkerPattern(this);
+    try {
+      original.call(this, ctx);
+    } finally {
+      this.fill = fill;
+    }
+    drawSlotContent(ctx, this);
+  };
+}
+
+// src/userTexts.ts
+var USER_TEXT_FIELD = "text";
+function textBinding(obj) {
+  const spec = obj.get("bindings")?.[USER_TEXT_FIELD];
+  return spec?.scope === USER_SCOPE ? spec : null;
+}
+function userTextBinding(obj) {
+  const spec = textBinding(obj);
+  return spec && spec.resolved !== true ? spec : null;
+}
+function isUserText(obj) {
+  return userTextBinding(obj) !== null;
+}
+function isUserOwnedText(obj) {
+  return textBinding(obj) !== null;
+}
+function requestUserText(bindings) {
+  return { ...bindings, [USER_TEXT_FIELD]: { scope: USER_SCOPE } };
+}
+function releaseUserText(bindings) {
+  const { [USER_TEXT_FIELD]: spec, ...rest } = bindings ?? {};
+  return spec?.scope === USER_SCOPE ? rest : { ...bindings };
+}
+function resolveUserText(bindings) {
+  const spec = bindings?.[USER_TEXT_FIELD];
+  if (spec?.scope !== USER_SCOPE) return bindings;
+  return { ...bindings, [USER_TEXT_FIELD]: { ...spec, resolved: true } };
+}
+function styleOf(obj) {
+  return obj.canvas?.[USER_SLOT_STYLE_KEY];
+}
+function authorsUserInputs(obj) {
+  return styleOf(obj)?.authoring === true;
+}
+function drawUserTextOutline(ctx, obj) {
+  const { x: zx, y: zy } = obj.getTotalObjectScaling();
+  ctx.save();
+  ctx.scale(1 / zx, 1 / zy);
+  ctx.strokeStyle = styleOf(obj)?.color ?? DEFAULT_GUIDE_COLOR;
+  ctx.lineWidth = 1.5;
+  ctx.setLineDash([6, 4]);
+  ctx.globalAlpha = 0.9;
+  ctx.strokeRect(-obj.width / 2 * zx, -obj.height / 2 * zy, obj.width * zx, obj.height * zy);
+  ctx.restore();
+}
+
 // src/controls/CustomTextbox.ts
 var { changeObjectWidth, changeObjectHeight } = controlsUtils2;
 var UNBOUNDED_WIDTH = 1e4;
@@ -479,11 +707,18 @@ var CustomTextbox = class extends Textbox {
     }
     super.onKeyDown(e);
   }
-  /** Une frappe (ou un collage) qui change le texte : ce n'est plus l'exemple. */
+  /**
+   * Une frappe (ou un collage) qui change le texte : ce n'est plus l'exemple — et un texte à
+   * personnaliser l'est, sauf sous la main de son auteur, qui en écrit l'exemple.
+   */
   onInput(e) {
     const before = this.text;
     super.onInput(e);
-    if (this.placeholder && this.text !== before) this.placeholder = false;
+    if (this.text === before) return;
+    if (this.placeholder) this.placeholder = false;
+    if (isUserText(this) && !authorsUserInputs(this)) {
+      this.set("bindings", resolveUserText(this.get("bindings")));
+    }
   }
   /** Fabric efface la zone du texte sur le calque du dessus à chaque clignotement du
    *  curseur : les pastilles du texte en édition sont repeintes avec lui. */
@@ -628,8 +863,13 @@ var CustomTextbox = class extends Textbox {
     if (key === "fontSize") this.fontSizeIntent = value;
     return super._set(key, value);
   }
-  /** overflow "clip" : le texte est coupé au bord de sa boîte. */
+  /** Le texte, puis le liseré d'un texte à personnaliser encore en attente. */
   _render(ctx) {
+    this._renderClipped(ctx);
+    if (isUserText(this)) drawUserTextOutline(ctx, this);
+  }
+  /** overflow "clip" : le texte est coupé au bord de sa boîte. */
+  _renderClipped(ctx) {
     if (!this._overflowing || this.textOverflow !== "clip") {
       super._render(ctx);
       return;
@@ -640,6 +880,16 @@ var CustomTextbox = class extends Textbox {
     ctx.clip();
     super._render(ctx);
     ctx.restore();
+  }
+  /** Le liseré suit l'état : poser ou régler le binding ne salit pas le cache aux yeux de
+   *  Fabric, c'est le passage en attente (ou sa fin) qui le fait. */
+  isCacheDirty(skipCanvas) {
+    const awaiting = isUserText(this);
+    if (awaiting !== Boolean(this._wasUserText)) {
+      this._wasUserText = awaiting;
+      this.dirty = true;
+    }
+    return super.isCacheDirty(skipCanvas);
   }
   // ── Poignées ───────────────────────────────────────────────────────
   /**
@@ -991,190 +1241,8 @@ function applyLockMode(obj, mode) {
   obj.hasControls = mode === "free";
   obj.lockContent = mode === "full";
   if (obj.type === "i-text" || obj.type === "textbox") {
-    obj.editable = mode !== "full";
+    obj.editable = mode !== "full" || isUserOwnedText(obj);
   }
-}
-
-// src/userSlots.ts
-import { Pattern, util } from "#fabric";
-
-// src/ui/color.ts
-function parseHex(hex) {
-  const h = hex.replace("#", "");
-  if (h.length === 3) {
-    return [
-      parseInt(h[0] + h[0], 16),
-      parseInt(h[1] + h[1], 16),
-      parseInt(h[2] + h[2], 16)
-    ];
-  }
-  return [
-    parseInt(h.slice(0, 2), 16),
-    parseInt(h.slice(2, 4), 16),
-    parseInt(h.slice(4, 6), 16)
-  ];
-}
-var DEFAULT_GUIDE_COLOR = "#d946ef";
-
-// src/bindings.ts
-function pendingBindings(obj) {
-  const bindings = obj.get("bindings") || {};
-  return Object.fromEntries(Object.entries(bindings).filter(([, spec]) => spec?.resolved !== true));
-}
-function restoreBindings(obj, data) {
-  if (!data.bindings) return;
-  obj.set("bindings", data.bindings);
-}
-
-// src/userSlots.ts
-var USER_SCOPE = "user";
-var USER_SLOT_FIELD = "image.src";
-function userSlotBinding(obj) {
-  const spec = pendingBindings(obj)[USER_SLOT_FIELD];
-  return spec?.scope === USER_SCOPE ? spec : null;
-}
-function isUserSlot(obj) {
-  return userSlotBinding(obj) !== null;
-}
-function userSlotHint(obj) {
-  return String(userSlotBinding(obj)?.hint ?? "");
-}
-function resolveUserSlot(bindings) {
-  const spec = bindings?.[USER_SLOT_FIELD];
-  if (spec?.scope !== USER_SCOPE) return bindings;
-  return { ...bindings, [USER_SLOT_FIELD]: { ...spec, resolved: true } };
-}
-var CELL = 16;
-var CHECKER_LIGHT = "#f9fafb";
-var CHECKER_DARK = "#e5e7eb";
-var checkerSource = null;
-function checkerTile() {
-  if (checkerSource) return checkerSource;
-  const tile = util.createCanvasElement();
-  tile.width = tile.height = CELL * 2;
-  const ctx = tile.getContext("2d");
-  ctx.fillStyle = CHECKER_LIGHT;
-  ctx.fillRect(0, 0, CELL * 2, CELL * 2);
-  ctx.fillStyle = CHECKER_DARK;
-  ctx.fillRect(0, 0, CELL, CELL);
-  ctx.fillRect(CELL, CELL, CELL, CELL);
-  checkerSource = tile;
-  return tile;
-}
-function checkerCanvas(width, height) {
-  const el = util.createCanvasElement();
-  el.width = Math.max(1, Math.round(width));
-  el.height = Math.max(1, Math.round(height));
-  const ctx = el.getContext("2d");
-  ctx.fillStyle = ctx.createPattern(checkerTile(), "repeat") ?? CHECKER_LIGHT;
-  ctx.fillRect(0, 0, el.width, el.height);
-  return el;
-}
-function transparentCanvas(width, height) {
-  const el = util.createCanvasElement();
-  el.width = Math.max(1, Math.round(width));
-  el.height = Math.max(1, Math.round(height));
-  return el;
-}
-function checkerPattern(obj) {
-  const sx = obj.scaleX || 1;
-  const sy = obj.scaleY || 1;
-  return new Pattern({ source: checkerTile(), repeat: "repeat", patternTransform: [1 / sx, 0, 0, 1 / sy, 0, 0] });
-}
-var USER_SLOT_STYLE_KEY = "userSlotStyle";
-var DEFAULT_COLOR = DEFAULT_GUIDE_COLOR;
-var BASE = { icon: 20, font: 10, line: 13, gap: 6, pad: 8 };
-var SCALES = [4, 3.5, 3, 2.5, 2, 1.6];
-var fontAt = (scale) => `500 ${BASE.font * scale}px ui-sans-serif, system-ui, sans-serif`;
-function slotLayout(ctx, text, w, h) {
-  for (const scale2 of text ? SCALES : []) {
-    ctx.font = fontAt(scale2);
-    const pad = BASE.pad * scale2;
-    const lines = wrapLines(ctx, text, w - pad * 2);
-    const height = (BASE.icon + BASE.gap + lines.length * BASE.line) * scale2 + pad * 2;
-    if (lines.length && height <= h) return { scale: scale2, lines };
-  }
-  const scale = SCALES.find((s) => (BASE.icon + BASE.pad * 2) * s <= Math.min(w, h));
-  return scale ? { scale, lines: [] } : null;
-}
-function drawSlotContent(ctx, obj) {
-  const style = obj.canvas?.[USER_SLOT_STYLE_KEY];
-  const { x: zx, y: zy } = obj.getTotalObjectScaling();
-  ctx.save();
-  ctx.scale(1 / zx, 1 / zy);
-  const layout = slotLayout(ctx, userSlotHint(obj) || style?.prompt || "", obj.width * zx, obj.height * zy);
-  if (!layout) return ctx.restore();
-  const { scale, lines } = layout;
-  const icon = BASE.icon * scale;
-  const line = BASE.line * scale;
-  const gap = BASE.gap * scale;
-  const top = -(icon + (lines.length ? gap + lines.length * line : 0)) / 2;
-  const color = style?.color ?? DEFAULT_COLOR;
-  drawUploadIcon(ctx, top, icon, color);
-  ctx.font = fontAt(scale);
-  ctx.fillStyle = color;
-  ctx.textAlign = "center";
-  ctx.textBaseline = "middle";
-  lines.forEach((text, i) => ctx.fillText(text, 0, top + icon + gap + line * (i + 0.5)));
-  ctx.restore();
-}
-function wrapLines(ctx, text, maxWidth) {
-  const lines = [];
-  for (const word of text.split(/\s+/).filter(Boolean)) {
-    if (ctx.measureText(word).width > maxWidth) return [];
-    const last = lines[lines.length - 1];
-    const joined = last ? `${last} ${word}` : word;
-    if (last && ctx.measureText(joined).width <= maxWidth) lines[lines.length - 1] = joined;
-    else lines.push(word);
-  }
-  return lines;
-}
-function drawUploadIcon(ctx, top, size, color) {
-  ctx.save();
-  ctx.translate(-size / 2, top);
-  ctx.scale(size / 24, size / 24);
-  ctx.lineWidth = 1.5;
-  ctx.lineCap = "round";
-  ctx.lineJoin = "round";
-  ctx.strokeStyle = color;
-  ctx.beginPath();
-  ctx.moveTo(3, 16.5);
-  ctx.lineTo(3, 18.75);
-  ctx.quadraticCurveTo(3, 21, 5.25, 21);
-  ctx.lineTo(18.75, 21);
-  ctx.quadraticCurveTo(21, 21, 21, 18.75);
-  ctx.lineTo(21, 16.5);
-  ctx.moveTo(7.5, 7.5);
-  ctx.lineTo(12, 3);
-  ctx.lineTo(16.5, 7.5);
-  ctx.moveTo(12, 3);
-  ctx.lineTo(12, 16.5);
-  ctx.stroke();
-  ctx.restore();
-}
-function installUserSlotRendering(target) {
-  const proto = target;
-  const original = proto._render;
-  const originalIsCacheDirty = proto.isCacheDirty;
-  proto.isCacheDirty = function(skipCanvas) {
-    const slot = isUserSlot(this);
-    if (slot !== Boolean(this._wasUserSlot)) {
-      this._wasUserSlot = slot;
-      this.dirty = true;
-    }
-    return originalIsCacheDirty.call(this, skipCanvas);
-  };
-  proto._render = function(ctx) {
-    if (!isUserSlot(this)) return original.call(this, ctx);
-    const fill = this.fill;
-    this.fill = checkerPattern(this);
-    try {
-      original.call(this, ctx);
-    } finally {
-      this.fill = fill;
-    }
-    drawSlotContent(ctx, this);
-  };
 }
 
 // src/shapes/FabRect.ts
@@ -2689,7 +2757,6 @@ var LayerManager = class {
       const isBackground2 = data.layerId === BACKGROUND_ID;
       if (isBackground2 || data.selectable === false) obj.selectable = false;
       if (isBackground2 || data.evented === false) obj.evented = false;
-      restoreBindings(obj, data);
     });
     return objects;
   }
@@ -2990,6 +3057,22 @@ var LayerManager = class {
     return obj;
   }
   /**
+   * Donne un texte à personnaliser à l'utilisateur final (userTexts), ou le reprend
+   * (`requested: false`) : le texte du calque devient — ou cesse d'être — l'exemple. Un texte
+   * lié à une expression cesse de l'être. Son verrou est réappliqué : un texte à personnaliser
+   * s'édite même verrouillé.
+   *
+   * Rend le texte, ou null si le calque n'en est pas un.
+   */
+  setUserText(obj, requested = true) {
+    if (!isTextObject(obj)) return null;
+    const bindings = obj.get("bindings");
+    obj.set({ bindings: requested ? requestUserText(bindings) : releaseUserText(bindings) });
+    applyLockMode(obj, getLockMode(obj));
+    this.canvas.requestRenderAll();
+    return obj;
+  }
+  /**
    * Un calque en remplace un autre à sa place : son layout (container, enfant) et son
    * verrouillage — sinon ses enfants restent orphelins, ou il sort de son container — et
    * son rang dans la pile (sous ses enfants).
@@ -3127,6 +3210,7 @@ var LayerManager = class {
     }
     const migrated = obj && migrateLegacyLayout(layoutOf(obj));
     if (obj && migrated) obj.set("layout", migrated);
+    if (obj) restoreBindings(obj, layer);
     if (obj && layer.lockMode) {
       const mode = layer.lockMode;
       if ("applyLockMode" in obj && typeof obj.applyLockMode === "function") {

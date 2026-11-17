@@ -162,11 +162,11 @@ export { textUnits, renderTextRange, textUnitTiles, textParts, tilePadding } fro
 export type { TextUnit, TextUnitBox, TextUnitKind, TextTile, TextUnitTiles, TextLayerPart, RenderRangeOptions } from "./text-units";
 export { isGhost, setGhost, isEclipsed, setEclipsed, GHOST_OPACITY } from "./ghost";
 export { displayFill, setDisplayFill } from "./displayStyle";
-export type { Bindings, BindingSpec } from "./bindings";
-export {
-  isUserSlot, userSlotHint, userSlotBinding, collectUserSlots, USER_SCOPE, USER_SLOT_FIELD,
-} from "./userSlots";
-export type { UserSlot } from "./userSlots";
+export type { Bindings, BindingSpec, UserInputLabels } from "./bindings";
+export { isUserSlot, userSlotHint, userSlotBinding, USER_SCOPE, USER_SLOT_FIELD } from "./userSlots";
+export { isUserText, isUserOwnedText, userTextBinding, USER_TEXT_FIELD } from "./userTexts";
+export { collectUserInputs, userInputKindOf } from "./userInputs";
+export type { UserInput, UserInputKind } from "./userInputs";
 export { imageSlotBinding, slotMark, drawImageSlot, imageSlotDataUrl, IMAGE_SLOT_FIELD, EACH_MEDIA } from "./imageSlots";
 export type { SlotGlyph, SlotMark } from "./imageSlots";
 export { DEFAULT_GUIDE_COLOR, DEFAULT_SNAP_GUIDE_COLOR } from "./ui/color";

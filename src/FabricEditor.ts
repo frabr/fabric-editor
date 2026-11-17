@@ -23,7 +23,8 @@ import { SelectionCommands } from "./editor/selection-commands";
 
 import { type AlignEdge, type DistributeAxis } from "./align";
 import { rulesOf } from "./capabilities";
-import { collectUserSlots, USER_SLOT_STYLE_KEY, type UserSlot, type UserSlotStyle } from "./userSlots";
+import { USER_SLOT_STYLE_KEY, type UserSlotStyle } from "./userSlots";
+import { collectUserInputs, type UserInput } from "./userInputs";
 import type { BindingSpec } from "./bindings";
 import { imageSlotDataUrl, slotMark } from "./imageSlots";
 import { TOKEN_COLOR_KEY } from "./tokens";
@@ -97,8 +98,15 @@ export class FabricEditor {
     this.layers = new LayerManager(this.canvas);
     this.selection = new SelectionManager(this.canvas);
 
-    applyControlStyle(this.canvas, gc, (obj) => this.selection.resolveTarget(obj), config.userSlotLabel);
-    const slotStyle: UserSlotStyle = { color: gc, prompt: config.userSlotPrompt };
+    applyControlStyle(this.canvas, gc, (obj) => this.selection.resolveTarget(obj), {
+      userSlot: config.userSlotLabel,
+      userText: config.userTextLabel,
+    });
+    const slotStyle: UserSlotStyle = {
+      color: gc,
+      prompt: config.userSlotPrompt,
+      authoring: config.authorsUserInputs === true,
+    };
     (this.canvas.originalFabricCanvas as unknown as Record<string, UserSlotStyle>)[USER_SLOT_STYLE_KEY] = slotStyle;
     (this.canvas.originalFabricCanvas as unknown as Record<string, string>)[TOKEN_COLOR_KEY] = config.tokenColor ?? gc;
     this.masks = new MaskManager(this.canvas);
@@ -671,33 +679,39 @@ export class FabricEditor {
     return imageSlotDataUrl(slotMark(spec), gc);
   }
 
-  /** Les images à fournir de la page (userSlots), boîtes en coordonnées scène. */
-  userSlots(): UserSlot[] {
-    // L'aperçu d'un drag n'est pas un cadre du document
-    return collectUserSlots(this.layers.all.filter((obj) => !obj.get(DRAG_PREVIEW_KEY)));
+  /**
+   * Les entrées à fournir de la page — images à fournir, textes à personnaliser (userInputs) —
+   * boîtes en coordonnées scène.
+   */
+  userInputs(): UserInput[] {
+    // L'aperçu d'un drag n'est pas un objet du document
+    return collectUserInputs(this.layers.all.filter((obj) => !obj.get(DRAG_PREVIEW_KEY)));
   }
 
   /**
-   * Prévient l'hôte quand les images à fournir changent — apparition, disparition,
-   * consigne, boîte, échelle ou cadrage d'affichage : de quoi (re)placer ses bulles. Comparé
-   * à chaque rendu et à chaque redimensionnement, appelé seulement sur changement (et une
-   * fois tout de suite). Rend la fonction de désabonnement.
+   * Prévient l'hôte quand les entrées à fournir changent — apparition, disparition (un texte
+   * personnalisé, un cadre rempli), consigne, boîte, visibilité, échelle ou cadrage : de quoi
+   * (re)placer ses bulles, avec `clientRectOf`. Comparé à chaque rendu et à chaque
+   * redimensionnement, appelé seulement sur changement (et une fois tout de suite). Rend la
+   * fonction de désabonnement.
    */
-  onUserSlotsChange(callback: (slots: UserSlot[]) => void): () => void {
+  onUserInputsChange(callback: (inputs: UserInput[]) => void): () => void {
     let last: string | null = null;
     const check = () => {
-      const slots = this.userSlots();
+      const inputs = this.userInputs();
       const signature = JSON.stringify([
         this._displayScale,
         this._userZoom,
-        slots.map(({ layerId, hint, rect }) => [
-          layerId, hint, Math.round(rect.left), Math.round(rect.top), Math.round(rect.width), Math.round(rect.height),
+        this.canvas.originalFabricCanvas.viewportTransform,
+        inputs.map(({ object, layerId, kind, hint, rect }) => [
+          layerId, kind, hint, object.visible,
+          Math.round(rect.left), Math.round(rect.top), Math.round(rect.width), Math.round(rect.height),
         ]),
       ]);
       if (signature === last) return;
 
       last = signature;
-      callback(slots);
+      callback(inputs);
     };
 
     this.canvas.on("after:render", check);
@@ -708,6 +722,29 @@ export class FabricEditor {
       this._resizeCallbacks = this._resizeCallbacks.filter((cb) => cb !== check);
     };
   }
+
+  /**
+   * La boîte d'un objet À L'ÉCRAN, dans le repère de la fenêtre (celui de
+   * getBoundingClientRect) : de quoi ancrer un élément de l'hôte — une bulle — contre un objet
+   * du canvas. Calculée à l'appel : zoom, cadrage et place du canvas dans la page compris.
+   */
+  clientRectOf(obj: FabricObject): {
+    x: number; y: number; left: number; top: number; right: number; bottom: number; width: number; height: number;
+  } {
+    const fc = this.canvas.originalFabricCanvas;
+    const page = (fc.upperCanvasEl ?? fc.getElement()).getBoundingClientRect();
+    // Le canvas peut être mis à l'échelle en CSS : pixels d'écran par pixel du canvas
+    const sx = fc.width ? page.width / fc.width : 1;
+    const sy = fc.height ? page.height / fc.height : 1;
+    const [zx, , , zy, dx, dy] = fc.viewportTransform;
+    const box = obj.getBoundingRect();
+    const left = page.left + (box.left * zx + dx) * sx;
+    const top = page.top + (box.top * zy + dy) * sy;
+    const width = box.width * zx * sx;
+    const height = box.height * zy * sy;
+    return { x: left, y: top, left, top, right: left + width, bottom: top + height, width, height };
+  }
+
 
   // ── Commandes de sélection (editor/selection-commands) ──────────
 

@@ -20,6 +20,14 @@ export interface EditorConfig {
   userSlotLabel?: string;
   /** Invite dans les images à fournir, sous l'icône (si elle tient) — la traduction de l'hôte. */
   userSlotPrompt?: string;
+  /** Badge des textes à personnaliser (défaut : « À personnaliser ») — la traduction de l'hôte. */
+  userTextLabel?: string;
+  /**
+   * Le lecteur est l'AUTEUR des entrées à fournir : il écrit l'exemple d'un texte à
+   * personnaliser, ses frappes ne le règlent pas (cf. userTexts). Sans : l'utilisateur final,
+   * dont la première frappe personnalise le texte.
+   */
+  authorsUserInputs?: boolean;
   /** Les raccourcis : la table de départ, le document écouté, la plateforme (tests). */
   shortcuts?: import("./shortcuts/ShortcutManager").ShortcutManagerOptions;
   container?: HTMLElement;
@@ -72,7 +80,7 @@ export interface LayerData {
   /** Layout data (container or child) — see layout/types.ts */
   layout?: import("./layout").LayoutData;
   /** Bindings du dialecte template (apibots) : { champ: { expr, scope, resolved } } */
-  bindings?: Record<string, { expr?: string; scope?: string; resolved?: boolean }>;
+  bindings?: import("./bindings").Bindings;
   [key: string]: unknown;
 }
 

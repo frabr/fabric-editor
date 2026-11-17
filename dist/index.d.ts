@@ -318,6 +318,9 @@ interface TextConstraint {
  * document s'affiche juste sans relayout) ; `fontSizeIntent` est la taille voulue par
  * l'utilisateur, d'où repart l'autofit à chaque calcul.
  *
+ * Un texte à personnaliser (binding `text` de scope `user`, cf. userTexts) se dessine avec son
+ * liseré tant qu'il est en attente, et se règle à la première frappe de l'utilisateur final.
+ *
  * Hérite de Textbox (et non IText) pour le line-wrapping natif. Place aussi le textarea
  * caché dans le container du canvas, pour le focus dans les modales (`showModal()`
  * piège le focus hors du dialog).
@@ -396,7 +399,10 @@ declare class CustomTextbox extends Textbox {
      * touche jamais au flux de saisie de Fabric.
      */
     onKeyDown(e: KeyboardEvent): void;
-    /** Une frappe (ou un collage) qui change le texte : ce n'est plus l'exemple. */
+    /**
+     * Une frappe (ou un collage) qui change le texte : ce n'est plus l'exemple — et un texte à
+     * personnaliser l'est, sauf sous la main de son auteur, qui en écrit l'exemple.
+     */
     onInput(e: Event): void;
     /** Fabric efface la zone du texte sur le calque du dessus à chaque clignotement du
      *  curseur : les pastilles du texte en édition sont repeintes avec lui. */
@@ -436,8 +442,14 @@ declare class CustomTextbox extends Textbox {
     private _wrapAt;
     /** Toute nouvelle `fontSize` posée via set() est une intention de l'utilisateur. */
     _set(key: string, value: any): this;
-    /** overflow "clip" : le texte est coupé au bord de sa boîte. */
+    /** Le texte, puis le liseré d'un texte à personnaliser encore en attente. */
     _render(ctx: CanvasRenderingContext2D): void;
+    /** overflow "clip" : le texte est coupé au bord de sa boîte. */
+    private _renderClipped;
+    /** Le liseré suit l'état : poser ou régler le binding ne salit pas le cache aux yeux de
+     *  Fabric, c'est le passage en attente (ou sa fin) qui le fait. */
+    isCacheDirty(skipCanvas?: boolean): boolean;
+    private _wasUserText?;
     /**
      * Bord gauche/droit : la largeur passe en fixe et prend la valeur tirée.
      * Bord haut/bas : en hauteur contenu, pose le plancher `minSize.h` ; en hauteur fixe,
@@ -536,6 +548,9 @@ declare function getNextLockMode(currentMode: LockMode$1): LockMode$1;
  * - free: contrôles actifs, peut bouger et changer le contenu/style
  * - position: pas de contrôles, ne peut pas bouger, mais peut changer le contenu (texte éditable, pas le style)
  * - full: pas de contrôles, ne peut ni bouger ni changer le contenu
+ *
+ * Un texte à personnaliser (userTexts) reste éditable quel que soit son verrou : l'auteur l'a
+ * confié à l'utilisateur final, le verrou garde sa place et son style.
  */
 declare function applyLockMode(obj: FabricObject, mode: LockMode$1): void;
 /**
@@ -551,6 +566,56 @@ declare function isContentLocked(obj: FabricObject): boolean;
  * Vérifie si la position d'un objet est verrouillée (mode position ou full)
  */
 declare function isPositionLocked(obj: FabricObject): boolean;
+
+/**
+ * Les bindings du dialecte template (apibots, plan media-template-generators §4) : un calque
+ * peut porter `bindings` — { champ: { expr, scope, resolved } } — et le champ stocké reste
+ * une valeur plate (le sample), donc le canvas rend le calque tel quel. L'éditeur, lui, doit
+ * SAVOIR qu'un champ est lié :
+ *
+ * - la donnée voyage avec le calque (sérialisation/désérialisation, comme layerId) ;
+ * - un texte lié s'édite dans sa textbox, valeurs affichées : l'hôte reporte les frappes dans
+ *   l'expression et pose ses variables comme plages atomiques (`tokenSpans`, CustomTextbox) ;
+ * - le lien se voit : un badge au coin du cadre (survol, sélection), dans la couleur d'édition
+ *   (guideColor), et un liseré permanent sur les médias dynamiques.
+ */
+/** `media` : ce qu'une image liée désigne — le rang d'une photo du sujet, `"each"`, ou le nom
+ *  d'une image du lecteur (cf. imageSlots). `hint` : la consigne d'une image à fournir (scope
+ *  `user`, cf. userSlots). Un `text` de scope `user` est un texte à personnaliser (userTexts). */
+type BindingSpec = {
+    expr?: string;
+    scope?: string;
+    resolved?: boolean;
+    hint?: string;
+    media?: number | string;
+};
+type Bindings = Record<string, BindingSpec>;
+declare function pendingBindings(obj: FabricObject): Bindings;
+declare function hasPendingBindings(obj: FabricObject): boolean;
+/**
+ * Pose un texte par programme et REMET LA MISE EN PAGE À JOUR : un `set("text", …)` nu ne
+ * remesure pas l'objet et n'émet pas l'événement `changed` que les sessions de layout
+ * écoutent — le conteneur (hug) garderait son ancienne taille alors que le texte a grandi.
+ * C'est le verbe qu'utilise l'aperçu live d'une expression liée (apibots, §9).
+ */
+declare function setTextContent(obj: FabricObject, text: string): void;
+/**
+ * Le badge de liaison (cf. ui/badges : sous les poignées, avec le cadre) : il nomme les
+ * tokens liés ($NOM), les images liées (`media 3`, `avatar`), les images à fournir et les
+ * textes à personnaliser du calque.
+ */
+declare function bindingBadgeLabel(obj: FabricObject, labels?: UserInputLabels): string | null;
+/** Peint le badge de liaison d'un calque (la couche des badges le fait pour l'éditeur). */
+declare function drawBindingBadge(ctx: CanvasRenderingContext2D, obj: FabricObject, color: string, labels?: UserInputLabels): void;
+/** Les badges des entrées à fournir — l'hôte passe ses traductions (`EditorConfig.userSlotLabel`,
+ *  `userTextLabel`). */
+interface UserInputLabels {
+    userSlot?: string;
+    userText?: string;
+}
+/** Le nom d'une image liée : `media 3`, `media i` (l'itération), ou le nom de l'image du
+ *  lecteur (`avatar`). C'est ce que le badge et la timeline de l'hôte affichent. */
+declare function mediaLabel(spec: BindingSpec): string;
 
 /**
  * La pile qui place `obj`, s'il est dans une pile (pas dans un groupe) : sa place est
@@ -1132,7 +1197,7 @@ declare function formatModifier(modifier: Modifier, platform: Platform): string;
  * Supprimer toujours en dernier. En multi-sélection, Grouper d'abord.
  */
 
-type ToolId = "group" | "align" | "distribute" | "arrangement" | "ungroup" | "appearance" | "fill" | "font" | "variables" | "crop" | "image" | "promoteBackground" | "clip" | "outline" | "effects" | "layout" | "containerize" | "animations" | "condition" | "saveAsSticker" | "lock" | "forward" | "backward" | "delete";
+type ToolId = "group" | "align" | "distribute" | "arrangement" | "ungroup" | "appearance" | "fill" | "font" | "variables" | "crop" | "image" | "promoteBackground" | "clip" | "outline" | "effects" | "layout" | "containerize" | "animations" | "condition" | "userText" | "saveAsSticker" | "lock" | "forward" | "backward" | "delete";
 /**
  * - `text`, `shape`, `image` : un objet seul, d'après sa sorte ;
  * - `block` : une forme qui porte des éléments ;
@@ -1312,6 +1377,14 @@ interface EditorConfig {
     userSlotLabel?: string;
     /** Invite dans les images à fournir, sous l'icône (si elle tient) — la traduction de l'hôte. */
     userSlotPrompt?: string;
+    /** Badge des textes à personnaliser (défaut : « À personnaliser ») — la traduction de l'hôte. */
+    userTextLabel?: string;
+    /**
+     * Le lecteur est l'AUTEUR des entrées à fournir : il écrit l'exemple d'un texte à
+     * personnaliser, ses frappes ne le règlent pas (cf. userTexts). Sans : l'utilisateur final,
+     * dont la première frappe personnalise le texte.
+     */
+    authorsUserInputs?: boolean;
     /** Les raccourcis : la table de départ, le document écouté, la plateforme (tests). */
     shortcuts?: ShortcutManagerOptions;
     container?: HTMLElement;
@@ -1349,11 +1422,7 @@ interface LayerData {
     /** Layout data (container or child) — see layout/types.ts */
     layout?: LayoutData;
     /** Bindings du dialecte template (apibots) : { champ: { expr, scope, resolved } } */
-    bindings?: Record<string, {
-        expr?: string;
-        scope?: string;
-        resolved?: boolean;
-    }>;
+    bindings?: Bindings;
     [key: string]: unknown;
 }
 interface TextLayerOptions {
@@ -1838,6 +1907,15 @@ declare class LayerManager {
      * Rend la forme, ou null si le calque ne peut pas recevoir d'image (texte, groupe de paths).
      */
     requestUserImage(obj: FabricObject, hint?: string): FabricObject | null;
+    /**
+     * Donne un texte à personnaliser à l'utilisateur final (userTexts), ou le reprend
+     * (`requested: false`) : le texte du calque devient — ou cesse d'être — l'exemple. Un texte
+     * lié à une expression cesse de l'être. Son verrou est réappliqué : un texte à personnaliser
+     * s'édite même verrouillé.
+     *
+     * Rend le texte, ou null si le calque n'en est pas un.
+     */
+    setUserText(obj: FabricObject, requested?: boolean): FabricObject | null;
     /**
      * Un calque en remplace un autre à sa place : son layout (container, enfant) et son
      * verrouillage — sinon ses enfants restent orphelins, ou il sort de son container — et
@@ -2597,70 +2675,21 @@ declare function alignDelta(box: Box, ref: Box, edge: AlignEdge): Delta;
 declare function distributeDeltas(boxes: Box[], axis: DistributeAxis): Delta[];
 
 /**
- * Les bindings du dialecte template (apibots, plan media-template-generators §4) : un calque
- * peut porter `bindings` — { champ: { expr, scope, resolved } } — et le champ stocké reste
- * une valeur plate (le sample), donc le canvas rend le calque tel quel. L'éditeur, lui, doit
- * SAVOIR qu'un champ est lié :
+ * Les entrées à fournir d'une page : tout ce que l'utilisateur final doit régler lui-même
+ * avant de publier — une image à fournir (userSlots) ou un texte à personnaliser (userTexts).
+ * Le miroir de `CompositionDocument::Bindings#pending_user_inputs` (apibots), qui fait foi.
  *
- * - la donnée voyage avec le calque (sérialisation/désérialisation, comme layerId) ;
- * - un texte lié s'édite dans sa textbox, valeurs affichées : l'hôte reporte les frappes dans
- *   l'expression et pose ses variables comme plages atomiques (`tokenSpans`, CustomTextbox) ;
- * - le lien se voit : un badge au coin du cadre (survol, sélection), dans la couleur d'édition
- *   (guideColor), et un liseré permanent sur les médias dynamiques.
+ * La lib dit l'ÉTAT (cet objet attend, de telle sorte, à tel endroit) et le dessine dans le
+ * canvas ; ce que l'hôte en fait à côté — une bulle dans son style, un compteur, un verrou
+ * d'enregistrement — est son affaire (`FabricEditor#onUserInputsChange`, `#clientRectOf`).
  */
-/** `media` : ce qu'une image liée désigne — le rang d'une photo du sujet, `"each"`, ou le nom
- *  d'une image du lecteur (cf. imageSlots). `hint` : la consigne d'une image à fournir (scope
- *  `user`, cf. userSlots). */
-type BindingSpec = {
-    expr?: string;
-    scope?: string;
-    resolved?: boolean;
-    hint?: string;
-    media?: number | string;
-};
-type Bindings = Record<string, BindingSpec>;
-declare function pendingBindings(obj: FabricObject): Bindings;
-declare function hasPendingBindings(obj: FabricObject): boolean;
-/**
- * Pose un texte par programme et REMET LA MISE EN PAGE À JOUR : un `set("text", …)` nu ne
- * remesure pas l'objet et n'émet pas l'événement `changed` que les sessions de layout
- * écoutent — le conteneur (hug) garderait son ancienne taille alors que le texte a grandi.
- * C'est le verbe qu'utilise l'aperçu live d'une expression liée (apibots, §9).
- */
-declare function setTextContent(obj: FabricObject, text: string): void;
-/**
- * Le badge de liaison (cf. ui/badges : sous les poignées, avec le cadre) : il nomme les
- * tokens liés ($NOM), les images liées (`media 3`, `avatar`) et les images à fournir du calque.
- */
-declare function bindingBadgeLabel(obj: FabricObject, userSlotLabel?: string): string | null;
-/** Peint le badge de liaison d'un calque (la couche des badges le fait pour l'éditeur). */
-declare function drawBindingBadge(ctx: CanvasRenderingContext2D, obj: FabricObject, color: string, userSlotLabel?: string): void;
-/** Le nom d'une image liée : `media 3`, `media i` (l'itération), ou le nom de l'image du
- *  lecteur (`avatar`). C'est ce que le badge et la timeline de l'hôte affichent. */
-declare function mediaLabel(spec: BindingSpec): string;
-
-/**
- * Les images à fournir (apibots, plan user-image-slots) : un cadre que l'utilisateur final
- * doit remplir lui-même. C'est un binding `image.src` de scope `user` — pas d'expression,
- * une consigne :
- *
- *   bindings: { "image.src": { scope: "user", hint: "Photo de l'équipe" } }
- *
- * `expand!` et `interpolate!` n'évaluent pas ce scope : le cadre traverse la chaîne
- * intact, et tant qu'il est en attente le document n'est pas résolu (pas de rendu).
- *
- * Le cadre est une FORME (rect, cercle, path) : elle prend en fond l'image qu'on lui
- * lâche, comme toute forme (règlement : `onToolboxImage: "fill"`). En attente, elle se
- * dessine en damier avec une icône d'upload et une invite — dans son propre rendu, pas en overlay, pour
- * que les aperçus (vignettes de pages, PreviewCanvas) montrent aussi le trou à combler.
- * Remplie, le binding passe `resolved` et reste comme provenance.
- */
-declare const USER_SCOPE = "user";
-declare const USER_SLOT_FIELD = "image.src";
-/** Un cadre en attente, et sa boîte en coordonnées scène (le repère de getBoundingRect). */
-interface UserSlot {
+type UserInputKind = "image" | "text";
+/** Une entrée en attente, et sa boîte en coordonnées scène (le repère de getBoundingRect). */
+interface UserInput {
     object: FabricObject;
     layerId?: string;
+    kind: UserInputKind;
+    /** La consigne de l'auteur (images) ; vide pour un texte, dont l'exemple est la consigne. */
     hint: string;
     rect: {
         left: number;
@@ -2669,12 +2698,10 @@ interface UserSlot {
         height: number;
     };
 }
-/** Le binding d'image à fournir, s'il est en attente. */
-declare function userSlotBinding(obj: FabricObject): BindingSpec | null;
-declare function isUserSlot(obj: FabricObject): boolean;
-declare function userSlotHint(obj: FabricObject): string;
-/** Les cadres en attente parmi des objets, dans l'ordre de la pile. */
-declare function collectUserSlots(objects: FabricObject[]): UserSlot[];
+/** La sorte d'entrée qu'un objet attend, ou null s'il n'attend rien. */
+declare function userInputKindOf(obj: FabricObject): UserInputKind | null;
+/** Les entrées en attente parmi des objets, dans l'ordre de la pile. */
+declare function collectUserInputs(objects: FabricObject[]): UserInput[];
 
 declare class CropMode {
     private readonly canvas;
@@ -2943,15 +2970,34 @@ declare class FabricEditor {
      * valeur à montrer (aperçu de glisser, image de départ). Jamais une source de document.
      */
     imageSlotUrl(spec: BindingSpec): string;
-    /** Les images à fournir de la page (userSlots), boîtes en coordonnées scène. */
-    userSlots(): UserSlot[];
     /**
-     * Prévient l'hôte quand les images à fournir changent — apparition, disparition,
-     * consigne, boîte, échelle ou cadrage d'affichage : de quoi (re)placer ses bulles. Comparé
-     * à chaque rendu et à chaque redimensionnement, appelé seulement sur changement (et une
-     * fois tout de suite). Rend la fonction de désabonnement.
+     * Les entrées à fournir de la page — images à fournir, textes à personnaliser (userInputs) —
+     * boîtes en coordonnées scène.
      */
-    onUserSlotsChange(callback: (slots: UserSlot[]) => void): () => void;
+    userInputs(): UserInput[];
+    /**
+     * Prévient l'hôte quand les entrées à fournir changent — apparition, disparition (un texte
+     * personnalisé, un cadre rempli), consigne, boîte, visibilité, échelle ou cadrage : de quoi
+     * (re)placer ses bulles, avec `clientRectOf`. Comparé à chaque rendu et à chaque
+     * redimensionnement, appelé seulement sur changement (et une fois tout de suite). Rend la
+     * fonction de désabonnement.
+     */
+    onUserInputsChange(callback: (inputs: UserInput[]) => void): () => void;
+    /**
+     * La boîte d'un objet À L'ÉCRAN, dans le repère de la fenêtre (celui de
+     * getBoundingClientRect) : de quoi ancrer un élément de l'hôte — une bulle — contre un objet
+     * du canvas. Calculée à l'appel : zoom, cadrage et place du canvas dans la page compris.
+     */
+    clientRectOf(obj: FabricObject): {
+        x: number;
+        y: number;
+        left: number;
+        top: number;
+        right: number;
+        bottom: number;
+        width: number;
+        height: number;
+    };
     groupSelection(): FabricObject | null;
     selectAll(): FabricObject[];
     deselect(): void;
@@ -3950,6 +3996,58 @@ declare function displayFill(obj: FabricObject): string | null;
 declare function setDisplayFill(obj: FabricObject, fill: string | null): boolean;
 
 /**
+ * Les images à fournir (apibots, plan user-image-slots) : un cadre que l'utilisateur final
+ * doit remplir lui-même. C'est un binding `image.src` de scope `user` — pas d'expression,
+ * une consigne :
+ *
+ *   bindings: { "image.src": { scope: "user", hint: "Photo de l'équipe" } }
+ *
+ * `expand!` et `interpolate!` n'évaluent pas ce scope : le cadre traverse la chaîne
+ * intact, et tant qu'il est en attente le document n'est pas résolu (pas de rendu).
+ *
+ * Le cadre est une FORME (rect, cercle, path) : elle prend en fond l'image qu'on lui
+ * lâche, comme toute forme (règlement : `onToolboxImage: "fill"`). En attente, elle se
+ * dessine en damier avec une icône d'upload et une invite — dans son propre rendu, pas en overlay, pour
+ * que les aperçus (vignettes de pages, PreviewCanvas) montrent aussi le trou à combler.
+ * Remplie, le binding passe `resolved` et reste comme provenance.
+ */
+declare const USER_SCOPE = "user";
+declare const USER_SLOT_FIELD = "image.src";
+/** Le binding d'image à fournir, s'il est en attente. */
+declare function userSlotBinding(obj: FabricObject): BindingSpec | null;
+declare function isUserSlot(obj: FabricObject): boolean;
+declare function userSlotHint(obj: FabricObject): string;
+
+/**
+ * Les textes à personnaliser (apibots, PROJ-915) : un texte que l'utilisateur final doit
+ * réécrire lui-même avant de publier. C'est un binding `text` de scope `user` — pas
+ * d'expression, rien ne s'interpole : le texte du calque est l'EXEMPLE (« Ville »), écrit par
+ * l'auteur.
+ *
+ *   { type: "Textbox", text: "Ville", bindings: { text: { scope: "user" } } }
+ *
+ * À ne pas confondre avec un texte lié (`{ expr: "$VILLE", scope: "company" }`), que le
+ * serveur remplit seul : un champ porte l'un ou l'autre binding, jamais les deux.
+ *
+ * Deux lecteurs, un même geste (taper dans le texte), deux sens — c'est l'hôte qui dit lequel
+ * (`EditorConfig.authorsUserInputs`) :
+ * - l'AUTEUR écrit l'exemple : ses frappes ne règlent rien, le texte reste à personnaliser ;
+ * - l'utilisateur final le PERSONNALISE : la première frappe qui change le texte passe le
+ *   binding `resolved`, qui reste comme provenance.
+ *
+ * Le texte reste éditable quel que soit son verrou, avant comme après (c'est son contrat,
+ * cf. locking). En attente, il porte un liseré pointillé dans la couleur d'édition — dans son
+ * propre rendu, comme le damier d'une image à fournir, pour que les aperçus le montrent aussi.
+ */
+declare const USER_TEXT_FIELD = "text";
+/** Le binding de texte à personnaliser, s'il est en attente. */
+declare function userTextBinding(obj: FabricObject): BindingSpec | null;
+declare function isUserText(obj: FabricObject): boolean;
+/** Un texte confié à l'utilisateur final, en attente ou déjà personnalisé : il s'édite quel
+ *  que soit son verrou. */
+declare function isUserOwnedText(obj: FabricObject): boolean;
+
+/**
  * Les emplacements d'image (apibots : les médias dynamiques) : un cadre dont la source est
  * LIÉE. Le binding dit ce que l'image sera, par `media` — le rang d'une photo du sujet (compté
  * à partir de 1), `"each"` pour celle de l'itération, ou le nom d'une image du lecteur
@@ -4009,4 +4107,4 @@ declare const DEFAULT_GUIDE_COLOR = "#d946ef";
  */
 declare const DEFAULT_SNAP_GUIDE_COLOR = "#ff00ff";
 
-export { type AlignEdge, type AlignItems, type AlignSelf, type Arrangement, type BadgeLabeler, type BindingSpec, type Bindings, type Box, CANVAS_SHORTCUTS, CanvasGuides, type CatalogShape, type CatalogShapeInput, type ChildData, type ClipData, type ContainerData, ContainerizeSession, type ControlOption, type Crop, CropMode, CustomTextbox, DEFAULT_GUIDE_COLOR, DEFAULT_SNAP_GUIDE_COLOR, type Delta, DesignCanvas, type DistributeAxis, type DragPayload, DropHandler, type DropHandlerConfig, type DropResult, EACH_MEDIA, type EditorConfig, FabCircle, FabGroup, FabPath, FabRect, FabricEditor, type FlexDirection, type FontConfig, type FontsConfig, type FrameRect, FreeResizeSession, GHOST_OPACITY, GestureManager, type GestureShortcut, type GradientStop, HEART_PATH, HEXAGON_PATH, type HistoryCallbacks, HistoryManager, type HistoryState, type HtmlLayerOutput, type HtmlRenderOptions, IMAGE_SLOT_FIELD, ImageFrame, type ImageLayerOptions, InsertChildSession, type JustifyContent, type KeyShortcut, LAYER_PROPS, type LayerData, LayerManager, type LayoutData, LayoutManager, type LayoutManagerCallbacks, type LayoutParents, type LayoutSession, type LockMode$1 as LockMode, type Lockable, MAX_CROP_SCALE, MIN_PAD, MIXED, MaskManager, type Modifier, NO_CROP, type NormalizedShape, type NormalizedShapePath, type ObjectControlsConfig, type ObjectKind, type ObjectRules, PendingUploadsManager, PersistenceManager, type Platform, PreviewCanvas, ROTATION_STEP, type RenderRangeOptions, ResizeSession, type ResizeSnapResult, type SaveOptions, type SaveResult, ScaleSession, type SelectionCallbacks, type SelectionKind, SelectionManager, type ShapeCatalogEntry, type ShapeLayerOptions, type ShapePathData, type ShapeType, type ShortcutContext, type ShortcutEntry, type ShortcutGroup, ShortcutManager, type ShortcutManagerOptions, type ShortcutScope, type SizeMode, type SizePreset, type SizingData, type SlotGlyph, type SlotMark, type SnappingConfig, SnappingManager, StackResizeSession, TEXT_STYLE_KEYS, type TextLayerOptions, type TextLayerPart, type TextOverflow, type TextStyleKey, type TextStyleState, type TextStyleValue, type TextTile, type TextUnit, type TextUnitBox, type TextUnitKind, type TextUnitTiles, type ToolId, type ToolboxImageReaction, type TreeLayer, USER_SCOPE, USER_SLOT_FIELD, type UserSlot, type WorkspaceOptions, addCircleClip, addCropControls, addHeartClip, addHexagonClip, alignAxis, alignDelta, antiScale, applyClip, applyLockMode, badgeLabel, bindingBadgeLabel, canvasImageSource, clampTopLeft, clipDataFor, collectUserSlots, createCircle, createDropSession, createHeart, createHexagon, createImage, createPathShape, createPathsShape, createRect, createShape, cropFromRect, detectPlatform, displayFill, distributeDeltas, drawBindingBadge, drawFrameBadge, drawImageSlot, fabricToHtml, fitFreeContainer, fontFamiliesOf, forgetFontMeasures, formatCombo, formatModifier, getAvailableShapes, getCatalogShape, getLockMode, getNextLockMode, getShapeCatalog, hasExceededOffset, hasPendingBindings, imageSlotBinding, imageSlotDataUrl, initYoga, isBold, isContentLocked, isCropped, isEclipsed, isFreeContainer, isGhost, isKeyShortcut, isMonoPath, isPositionLocked, isStyleLocked, isUserSlot, isValidShape, kindOf, layerToHtmlStandalone, layoutChildren, layoutDescendants, layoutParents, layoutRoot, mediaLabel, nextShape, normalizeShape, panCrop, parseCombo, pendingBindings, photoRect, pointInObject, registerShapes, registeredShapes, removeCropControls, renderTextRange, rulesOf, runLayout, scaledSize, selectionKindOf, setDisplayFill, setEclipsed, setGhost, setTextContent, slotMark, stackBlock, stackParentOf, summarizeObject, summarizeStyles, switchClip, switchShape, textParts, textUnitTiles, textUnits, tilePadding, toolsFor, topLeft, unionBox, userSlotBinding, userSlotHint, wrapContainerAroundChild, yogaLayout, zoomCrop };
+export { type AlignEdge, type AlignItems, type AlignSelf, type Arrangement, type BadgeLabeler, type BindingSpec, type Bindings, type Box, CANVAS_SHORTCUTS, CanvasGuides, type CatalogShape, type CatalogShapeInput, type ChildData, type ClipData, type ContainerData, ContainerizeSession, type ControlOption, type Crop, CropMode, CustomTextbox, DEFAULT_GUIDE_COLOR, DEFAULT_SNAP_GUIDE_COLOR, type Delta, DesignCanvas, type DistributeAxis, type DragPayload, DropHandler, type DropHandlerConfig, type DropResult, EACH_MEDIA, type EditorConfig, FabCircle, FabGroup, FabPath, FabRect, FabricEditor, type FlexDirection, type FontConfig, type FontsConfig, type FrameRect, FreeResizeSession, GHOST_OPACITY, GestureManager, type GestureShortcut, type GradientStop, HEART_PATH, HEXAGON_PATH, type HistoryCallbacks, HistoryManager, type HistoryState, type HtmlLayerOutput, type HtmlRenderOptions, IMAGE_SLOT_FIELD, ImageFrame, type ImageLayerOptions, InsertChildSession, type JustifyContent, type KeyShortcut, LAYER_PROPS, type LayerData, LayerManager, type LayoutData, LayoutManager, type LayoutManagerCallbacks, type LayoutParents, type LayoutSession, type LockMode$1 as LockMode, type Lockable, MAX_CROP_SCALE, MIN_PAD, MIXED, MaskManager, type Modifier, NO_CROP, type NormalizedShape, type NormalizedShapePath, type ObjectControlsConfig, type ObjectKind, type ObjectRules, PendingUploadsManager, PersistenceManager, type Platform, PreviewCanvas, ROTATION_STEP, type RenderRangeOptions, ResizeSession, type ResizeSnapResult, type SaveOptions, type SaveResult, ScaleSession, type SelectionCallbacks, type SelectionKind, SelectionManager, type ShapeCatalogEntry, type ShapeLayerOptions, type ShapePathData, type ShapeType, type ShortcutContext, type ShortcutEntry, type ShortcutGroup, ShortcutManager, type ShortcutManagerOptions, type ShortcutScope, type SizeMode, type SizePreset, type SizingData, type SlotGlyph, type SlotMark, type SnappingConfig, SnappingManager, StackResizeSession, TEXT_STYLE_KEYS, type TextLayerOptions, type TextLayerPart, type TextOverflow, type TextStyleKey, type TextStyleState, type TextStyleValue, type TextTile, type TextUnit, type TextUnitBox, type TextUnitKind, type TextUnitTiles, type ToolId, type ToolboxImageReaction, type TreeLayer, USER_SCOPE, USER_SLOT_FIELD, USER_TEXT_FIELD, type UserInput, type UserInputKind, type UserInputLabels, type WorkspaceOptions, addCircleClip, addCropControls, addHeartClip, addHexagonClip, alignAxis, alignDelta, antiScale, applyClip, applyLockMode, badgeLabel, bindingBadgeLabel, canvasImageSource, clampTopLeft, clipDataFor, collectUserInputs, createCircle, createDropSession, createHeart, createHexagon, createImage, createPathShape, createPathsShape, createRect, createShape, cropFromRect, detectPlatform, displayFill, distributeDeltas, drawBindingBadge, drawFrameBadge, drawImageSlot, fabricToHtml, fitFreeContainer, fontFamiliesOf, forgetFontMeasures, formatCombo, formatModifier, getAvailableShapes, getCatalogShape, getLockMode, getNextLockMode, getShapeCatalog, hasExceededOffset, hasPendingBindings, imageSlotBinding, imageSlotDataUrl, initYoga, isBold, isContentLocked, isCropped, isEclipsed, isFreeContainer, isGhost, isKeyShortcut, isMonoPath, isPositionLocked, isStyleLocked, isUserOwnedText, isUserSlot, isUserText, isValidShape, kindOf, layerToHtmlStandalone, layoutChildren, layoutDescendants, layoutParents, layoutRoot, mediaLabel, nextShape, normalizeShape, panCrop, parseCombo, pendingBindings, photoRect, pointInObject, registerShapes, registeredShapes, removeCropControls, renderTextRange, rulesOf, runLayout, scaledSize, selectionKindOf, setDisplayFill, setEclipsed, setGhost, setTextContent, slotMark, stackBlock, stackParentOf, summarizeObject, summarizeStyles, switchClip, switchShape, textParts, textUnitTiles, textUnits, tilePadding, toolsFor, topLeft, unionBox, userInputKindOf, userSlotBinding, userSlotHint, userTextBinding, wrapContainerAroundChild, yogaLayout, zoomCrop };
