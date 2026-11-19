@@ -31,13 +31,16 @@ export function drawFrameBadge(
   const corner = (obj as unknown as { oCoords?: Record<string, { x: number; y: number }> }).oCoords?.tl;
   if (!corner) return;
 
+  // Collé au contour : le bas du badge EST le haut du cadre, et son bord gauche déborde
+  // d'un pixel pour s'aligner sur l'extérieur de la bordure.
+  paintBadge(ctx, corner.x - 1, corner.y - BADGE_HEIGHT, label, color);
+}
+
+/** Le rectangle et son libellé, coin haut-gauche en (`left`, `top`), en espace écran. */
+export function paintBadge(ctx: CanvasRenderingContext2D, left: number, top: number, label: string, color: string): void {
   ctx.save();
   ctx.font = BADGE_FONT;
   const width = ctx.measureText(label).width + BADGE_PAD * 2;
-  // Collé au contour : le bas du badge EST le haut du cadre, et son bord gauche déborde
-  // d'un pixel pour s'aligner sur l'extérieur de la bordure.
-  const left = corner.x - 1;
-  const top = corner.y - BADGE_HEIGHT;
 
   ctx.fillStyle = color;
   ctx.fillRect(left, top, width, BADGE_HEIGHT);

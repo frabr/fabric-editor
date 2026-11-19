@@ -579,16 +579,21 @@ declare function isPositionLocked(obj: FabricObject): boolean;
  * - le lien se voit : un badge au coin du cadre (survol, sélection), dans la couleur d'édition
  *   (guideColor), et un liseré permanent sur les médias dynamiques.
  */
-/** `media` : ce qu'une image liée désigne — le rang d'une photo du sujet, `"each"`, ou le nom
- *  d'une image du lecteur (cf. imageSlots). `hint` : la consigne d'une image à fournir (scope
- *  `user`, cf. userSlots). Un `text` de scope `user` est un texte à personnaliser (userTexts). */
+/** `media` : ce qu'une image liée désigne — le rang d'une photo du sujet, `"each"`, le nom
+ *  d'une image du lecteur (cf. imageSlots), ou `"draw"` : une image que l'hôte tire parmi
+ *  `candidates` (ses nœuds de média, opaques ici). `hint` : la consigne d'une image à fournir
+ *  (scope `user`, cf. userSlots). Un `text` de scope `user` est un texte à personnaliser
+ *  (userTexts). */
 type BindingSpec = {
     expr?: string;
     scope?: string;
     resolved?: boolean;
     hint?: string;
     media?: number | string;
+    candidates?: unknown[];
 };
+/** `media` d'une image tirée parmi les candidates du binding. */
+declare const DRAW_MEDIA = "draw";
 type Bindings = Record<string, BindingSpec>;
 declare function pendingBindings(obj: FabricObject): Bindings;
 declare function hasPendingBindings(obj: FabricObject): boolean;
@@ -613,8 +618,9 @@ interface UserInputLabels {
     userSlot?: string;
     userText?: string;
 }
-/** Le nom d'une image liée : `media 3`, `media i` (l'itération), ou le nom de l'image du
- *  lecteur (`avatar`). C'est ce que le badge et la timeline de l'hôte affichent. */
+/** Le nom d'une image liée : `media 3`, `media i` (l'itération), `1 parmi 7` (une image tirée
+ *  parmi les candidates du binding), ou le nom de l'image du lecteur (`avatar`). C'est ce que
+ *  le badge et la timeline de l'hôte affichent. */
 declare function mediaLabel(spec: BindingSpec): string;
 
 /**
@@ -1560,6 +1566,8 @@ interface ImageFrameOptions {
     cornerRadius?: number;
     /** Le recadrage de l'image dans le cadre (cf. crop.ts) ; centrée, cover, sans. */
     crop?: Partial<Crop>;
+    /** Cf. ImageFrameData.fit ; en contain, frameWidth/frameHeight sont la boîte. */
+    fit?: ImageFit;
     /** @deprecated Documents d'avant : le décalage du centre de l'image en pixels de cadre. */
     imageOffsetX?: number;
     imageOffsetY?: number;
@@ -1573,6 +1581,8 @@ interface ImageFrameOptions {
     imageMeta?: ImageMeta;
 }
 type ImageMeta = Record<string, unknown>;
+/** Le cadre impose sa forme à l'image (cover), ou la prend d'elle (contain). */
+type ImageFit = "cover" | "contain";
 interface ImageFrameData {
     originX?: "left" | "center" | "right";
     originY?: "top" | "center" | "bottom";
@@ -1596,6 +1606,14 @@ interface ImageFrameData {
     clipData?: ClipData;
     /** Corner radius in pixels (only meaningful when clipShape is "rect"). */
     cornerRadius?: number;
+    /**
+     * `contain` : le cadre prend la forme de son image — le côté le plus long de l'image se cale
+     * sur la boîte `frameWidth` × `frameHeight`, l'autre suit le ratio. Pour une image dont le
+     * ratio change d'un lecteur à l'autre (le logo d'une company) : le cadre a la taille concrète
+     * de l'image, la mise en page se déroule autour (une pastille qui épouse le logo). La boîte
+     * est ce qui se sauve ; un cadre sans image l'occupe entière. Absent = cover.
+     */
+    fit?: ImageFit;
     layerId?: string;
     lockMode?: LockMode$1;
     lockContent?: boolean;
@@ -1637,6 +1655,10 @@ declare class ImageFrame extends Group {
     clipData?: ClipData;
     /** Corner radius in pixels for "rect" clip shape. 0 = sharp corners. */
     cornerRadius: number;
+    /** Cf. ImageFrameData.fit. */
+    fit: ImageFit;
+    /** En contain, la boîte où l'image se cale ; frameWidth/frameHeight sont alors sa taille. */
+    private _box;
     private _crop;
     private _image;
     private _imageMeta;
@@ -1743,6 +1765,11 @@ declare class ImageFrame extends Group {
     isCacheDirty(skipCanvas?: boolean): boolean;
     /** Le contenu du cadre : son image — ou, vide et lié, l'emplacement, sous la même découpe. */
     drawObject(ctx: CanvasRenderingContext2D, forClipping: boolean | undefined, context: any): void;
+    /**
+     * La taille du cadre : en contain, celle de l'image calée dans la boîte (la boîte entière
+     * sans image) ; sinon frameWidth/frameHeight tels quels. Le groupe suit.
+     */
+    private _fitFrame;
     /** L'image dans le groupe (origine au centre) : cover × échelle, centre décalé selon le recadrage. */
     private _applyCrop;
     private _applyClip;
@@ -1887,6 +1914,8 @@ declare class LayerManager {
      * `src`), la sélection ne bouge pas. Sans effet sur ce qui n'est pas une forme-image.
      */
     showImageValue(target: FabricObject, url: string | null): Promise<void>;
+    /** Un cadre en contain change de taille avec son image : ses containers s'y refont. */
+    private _reflowContained;
     /**
      * Remplace la source d'une image legacy (FabricImage sans frame)
      * @internal
@@ -4107,4 +4136,4 @@ declare const DEFAULT_GUIDE_COLOR = "#d946ef";
  */
 declare const DEFAULT_SNAP_GUIDE_COLOR = "#ff00ff";
 
-export { type AlignEdge, type AlignItems, type AlignSelf, type Arrangement, type BadgeLabeler, type BindingSpec, type Bindings, type Box, CANVAS_SHORTCUTS, CanvasGuides, type CatalogShape, type CatalogShapeInput, type ChildData, type ClipData, type ContainerData, ContainerizeSession, type ControlOption, type Crop, CropMode, CustomTextbox, DEFAULT_GUIDE_COLOR, DEFAULT_SNAP_GUIDE_COLOR, type Delta, DesignCanvas, type DistributeAxis, type DragPayload, DropHandler, type DropHandlerConfig, type DropResult, EACH_MEDIA, type EditorConfig, FabCircle, FabGroup, FabPath, FabRect, FabricEditor, type FlexDirection, type FontConfig, type FontsConfig, type FrameRect, FreeResizeSession, GHOST_OPACITY, GestureManager, type GestureShortcut, type GradientStop, HEART_PATH, HEXAGON_PATH, type HistoryCallbacks, HistoryManager, type HistoryState, type HtmlLayerOutput, type HtmlRenderOptions, IMAGE_SLOT_FIELD, ImageFrame, type ImageLayerOptions, InsertChildSession, type JustifyContent, type KeyShortcut, LAYER_PROPS, type LayerData, LayerManager, type LayoutData, LayoutManager, type LayoutManagerCallbacks, type LayoutParents, type LayoutSession, type LockMode$1 as LockMode, type Lockable, MAX_CROP_SCALE, MIN_PAD, MIXED, MaskManager, type Modifier, NO_CROP, type NormalizedShape, type NormalizedShapePath, type ObjectControlsConfig, type ObjectKind, type ObjectRules, PendingUploadsManager, PersistenceManager, type Platform, PreviewCanvas, ROTATION_STEP, type RenderRangeOptions, ResizeSession, type ResizeSnapResult, type SaveOptions, type SaveResult, ScaleSession, type SelectionCallbacks, type SelectionKind, SelectionManager, type ShapeCatalogEntry, type ShapeLayerOptions, type ShapePathData, type ShapeType, type ShortcutContext, type ShortcutEntry, type ShortcutGroup, ShortcutManager, type ShortcutManagerOptions, type ShortcutScope, type SizeMode, type SizePreset, type SizingData, type SlotGlyph, type SlotMark, type SnappingConfig, SnappingManager, StackResizeSession, TEXT_STYLE_KEYS, type TextLayerOptions, type TextLayerPart, type TextOverflow, type TextStyleKey, type TextStyleState, type TextStyleValue, type TextTile, type TextUnit, type TextUnitBox, type TextUnitKind, type TextUnitTiles, type ToolId, type ToolboxImageReaction, type TreeLayer, USER_SCOPE, USER_SLOT_FIELD, USER_TEXT_FIELD, type UserInput, type UserInputKind, type UserInputLabels, type WorkspaceOptions, addCircleClip, addCropControls, addHeartClip, addHexagonClip, alignAxis, alignDelta, antiScale, applyClip, applyLockMode, badgeLabel, bindingBadgeLabel, canvasImageSource, clampTopLeft, clipDataFor, collectUserInputs, createCircle, createDropSession, createHeart, createHexagon, createImage, createPathShape, createPathsShape, createRect, createShape, cropFromRect, detectPlatform, displayFill, distributeDeltas, drawBindingBadge, drawFrameBadge, drawImageSlot, fabricToHtml, fitFreeContainer, fontFamiliesOf, forgetFontMeasures, formatCombo, formatModifier, getAvailableShapes, getCatalogShape, getLockMode, getNextLockMode, getShapeCatalog, hasExceededOffset, hasPendingBindings, imageSlotBinding, imageSlotDataUrl, initYoga, isBold, isContentLocked, isCropped, isEclipsed, isFreeContainer, isGhost, isKeyShortcut, isMonoPath, isPositionLocked, isStyleLocked, isUserOwnedText, isUserSlot, isUserText, isValidShape, kindOf, layerToHtmlStandalone, layoutChildren, layoutDescendants, layoutParents, layoutRoot, mediaLabel, nextShape, normalizeShape, panCrop, parseCombo, pendingBindings, photoRect, pointInObject, registerShapes, registeredShapes, removeCropControls, renderTextRange, rulesOf, runLayout, scaledSize, selectionKindOf, setDisplayFill, setEclipsed, setGhost, setTextContent, slotMark, stackBlock, stackParentOf, summarizeObject, summarizeStyles, switchClip, switchShape, textParts, textUnitTiles, textUnits, tilePadding, toolsFor, topLeft, unionBox, userInputKindOf, userSlotBinding, userSlotHint, userTextBinding, wrapContainerAroundChild, yogaLayout, zoomCrop };
+export { type AlignEdge, type AlignItems, type AlignSelf, type Arrangement, type BadgeLabeler, type BindingSpec, type Bindings, type Box, CANVAS_SHORTCUTS, CanvasGuides, type CatalogShape, type CatalogShapeInput, type ChildData, type ClipData, type ContainerData, ContainerizeSession, type ControlOption, type Crop, CropMode, CustomTextbox, DEFAULT_GUIDE_COLOR, DEFAULT_SNAP_GUIDE_COLOR, DRAW_MEDIA, type Delta, DesignCanvas, type DistributeAxis, type DragPayload, DropHandler, type DropHandlerConfig, type DropResult, EACH_MEDIA, type EditorConfig, FabCircle, FabGroup, FabPath, FabRect, FabricEditor, type FlexDirection, type FontConfig, type FontsConfig, type FrameRect, FreeResizeSession, GHOST_OPACITY, GestureManager, type GestureShortcut, type GradientStop, HEART_PATH, HEXAGON_PATH, type HistoryCallbacks, HistoryManager, type HistoryState, type HtmlLayerOutput, type HtmlRenderOptions, IMAGE_SLOT_FIELD, type ImageFit, ImageFrame, type ImageLayerOptions, InsertChildSession, type JustifyContent, type KeyShortcut, LAYER_PROPS, type LayerData, LayerManager, type LayoutData, LayoutManager, type LayoutManagerCallbacks, type LayoutParents, type LayoutSession, type LockMode$1 as LockMode, type Lockable, MAX_CROP_SCALE, MIN_PAD, MIXED, MaskManager, type Modifier, NO_CROP, type NormalizedShape, type NormalizedShapePath, type ObjectControlsConfig, type ObjectKind, type ObjectRules, PendingUploadsManager, PersistenceManager, type Platform, PreviewCanvas, ROTATION_STEP, type RenderRangeOptions, ResizeSession, type ResizeSnapResult, type SaveOptions, type SaveResult, ScaleSession, type SelectionCallbacks, type SelectionKind, SelectionManager, type ShapeCatalogEntry, type ShapeLayerOptions, type ShapePathData, type ShapeType, type ShortcutContext, type ShortcutEntry, type ShortcutGroup, ShortcutManager, type ShortcutManagerOptions, type ShortcutScope, type SizeMode, type SizePreset, type SizingData, type SlotGlyph, type SlotMark, type SnappingConfig, SnappingManager, StackResizeSession, TEXT_STYLE_KEYS, type TextLayerOptions, type TextLayerPart, type TextOverflow, type TextStyleKey, type TextStyleState, type TextStyleValue, type TextTile, type TextUnit, type TextUnitBox, type TextUnitKind, type TextUnitTiles, type ToolId, type ToolboxImageReaction, type TreeLayer, USER_SCOPE, USER_SLOT_FIELD, USER_TEXT_FIELD, type UserInput, type UserInputKind, type UserInputLabels, type WorkspaceOptions, addCircleClip, addCropControls, addHeartClip, addHexagonClip, alignAxis, alignDelta, antiScale, applyClip, applyLockMode, badgeLabel, bindingBadgeLabel, canvasImageSource, clampTopLeft, clipDataFor, collectUserInputs, createCircle, createDropSession, createHeart, createHexagon, createImage, createPathShape, createPathsShape, createRect, createShape, cropFromRect, detectPlatform, displayFill, distributeDeltas, drawBindingBadge, drawFrameBadge, drawImageSlot, fabricToHtml, fitFreeContainer, fontFamiliesOf, forgetFontMeasures, formatCombo, formatModifier, getAvailableShapes, getCatalogShape, getLockMode, getNextLockMode, getShapeCatalog, hasExceededOffset, hasPendingBindings, imageSlotBinding, imageSlotDataUrl, initYoga, isBold, isContentLocked, isCropped, isEclipsed, isFreeContainer, isGhost, isKeyShortcut, isMonoPath, isPositionLocked, isStyleLocked, isUserOwnedText, isUserSlot, isUserText, isValidShape, kindOf, layerToHtmlStandalone, layoutChildren, layoutDescendants, layoutParents, layoutRoot, mediaLabel, nextShape, normalizeShape, panCrop, parseCombo, pendingBindings, photoRect, pointInObject, registerShapes, registeredShapes, removeCropControls, renderTextRange, rulesOf, runLayout, scaledSize, selectionKindOf, setDisplayFill, setEclipsed, setGhost, setTextContent, slotMark, stackBlock, stackParentOf, summarizeObject, summarizeStyles, switchClip, switchShape, textParts, textUnitTiles, textUnits, tilePadding, toolsFor, topLeft, unionBox, userInputKindOf, userSlotBinding, userSlotHint, userTextBinding, wrapContainerAroundChild, yogaLayout, zoomCrop };

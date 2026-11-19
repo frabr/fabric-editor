@@ -538,15 +538,18 @@ type LockMode$1 = "free" | "position" | "full";
  * - le lien se voit : un badge au coin du cadre (survol, sélection), dans la couleur d'édition
  *   (guideColor), et un liseré permanent sur les médias dynamiques.
  */
-/** `media` : ce qu'une image liée désigne — le rang d'une photo du sujet, `"each"`, ou le nom
- *  d'une image du lecteur (cf. imageSlots). `hint` : la consigne d'une image à fournir (scope
- *  `user`, cf. userSlots). Un `text` de scope `user` est un texte à personnaliser (userTexts). */
+/** `media` : ce qu'une image liée désigne — le rang d'une photo du sujet, `"each"`, le nom
+ *  d'une image du lecteur (cf. imageSlots), ou `"draw"` : une image que l'hôte tire parmi
+ *  `candidates` (ses nœuds de média, opaques ici). `hint` : la consigne d'une image à fournir
+ *  (scope `user`, cf. userSlots). Un `text` de scope `user` est un texte à personnaliser
+ *  (userTexts). */
 type BindingSpec = {
     expr?: string;
     scope?: string;
     resolved?: boolean;
     hint?: string;
     media?: number | string;
+    candidates?: unknown[];
 };
 type Bindings = Record<string, BindingSpec>;
 
@@ -881,6 +884,8 @@ interface ImageFrameOptions {
     cornerRadius?: number;
     /** Le recadrage de l'image dans le cadre (cf. crop.ts) ; centrée, cover, sans. */
     crop?: Partial<Crop>;
+    /** Cf. ImageFrameData.fit ; en contain, frameWidth/frameHeight sont la boîte. */
+    fit?: ImageFit;
     /** @deprecated Documents d'avant : le décalage du centre de l'image en pixels de cadre. */
     imageOffsetX?: number;
     imageOffsetY?: number;
@@ -894,6 +899,8 @@ interface ImageFrameOptions {
     imageMeta?: ImageMeta;
 }
 type ImageMeta = Record<string, unknown>;
+/** Le cadre impose sa forme à l'image (cover), ou la prend d'elle (contain). */
+type ImageFit = "cover" | "contain";
 interface ImageFrameData {
     originX?: "left" | "center" | "right";
     originY?: "top" | "center" | "bottom";
@@ -917,6 +924,14 @@ interface ImageFrameData {
     clipData?: ClipData;
     /** Corner radius in pixels (only meaningful when clipShape is "rect"). */
     cornerRadius?: number;
+    /**
+     * `contain` : le cadre prend la forme de son image — le côté le plus long de l'image se cale
+     * sur la boîte `frameWidth` × `frameHeight`, l'autre suit le ratio. Pour une image dont le
+     * ratio change d'un lecteur à l'autre (le logo d'une company) : le cadre a la taille concrète
+     * de l'image, la mise en page se déroule autour (une pastille qui épouse le logo). La boîte
+     * est ce qui se sauve ; un cadre sans image l'occupe entière. Absent = cover.
+     */
+    fit?: ImageFit;
     layerId?: string;
     lockMode?: LockMode$1;
     lockContent?: boolean;
@@ -958,6 +973,10 @@ declare class ImageFrame extends Group {
     clipData?: ClipData;
     /** Corner radius in pixels for "rect" clip shape. 0 = sharp corners. */
     cornerRadius: number;
+    /** Cf. ImageFrameData.fit. */
+    fit: ImageFit;
+    /** En contain, la boîte où l'image se cale ; frameWidth/frameHeight sont alors sa taille. */
+    private _box;
     private _crop;
     private _image;
     private _imageMeta;
@@ -1064,6 +1083,11 @@ declare class ImageFrame extends Group {
     isCacheDirty(skipCanvas?: boolean): boolean;
     /** Le contenu du cadre : son image — ou, vide et lié, l'emplacement, sous la même découpe. */
     drawObject(ctx: CanvasRenderingContext2D, forClipping: boolean | undefined, context: any): void;
+    /**
+     * La taille du cadre : en contain, celle de l'image calée dans la boîte (la boîte entière
+     * sans image) ; sinon frameWidth/frameHeight tels quels. Le groupe suit.
+     */
+    private _fitFrame;
     /** L'image dans le groupe (origine au centre) : cover × échelle, centre décalé selon le recadrage. */
     private _applyCrop;
     private _applyClip;
@@ -1197,6 +1221,8 @@ declare class LayerManager {
      * `src`), la sélection ne bouge pas. Sans effet sur ce qui n'est pas une forme-image.
      */
     showImageValue(target: FabricObject, url: string | null): Promise<void>;
+    /** Un cadre en contain change de taille avec son image : ses containers s'y refont. */
+    private _reflowContained;
     /**
      * Remplace la source d'une image legacy (FabricImage sans frame)
      * @internal

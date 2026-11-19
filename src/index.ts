@@ -26,7 +26,7 @@ export type { DropHandlerConfig, DragPayload, DropResult } from "./DropHandler";
 export { PendingUploadsManager } from "./PendingUploadsManager";
 
 // ImageFrame, et son recadrage
-export { ImageFrame } from "./ImageFrame";
+export { ImageFrame, type ImageFit } from "./ImageFrame";
 export { CropMode } from "./CropMode";
 export { NO_CROP, MAX_CROP_SCALE, isCropped, photoRect, cropFromRect, panCrop, zoomCrop } from "./crop";
 export type { Crop } from "./crop";
@@ -152,7 +152,7 @@ export type { SnappingConfig, ResizeSnapResult } from "./SnappingManager";
 export type { LayoutManagerCallbacks, SizePreset } from "./LayoutManager";
 export {
   pendingBindings, hasPendingBindings, setTextContent, drawBindingBadge, bindingBadgeLabel,
-  mediaLabel,
+  mediaLabel, DRAW_MEDIA,
 } from "./bindings";
 export { drawFrameBadge, badgeLabel, type BadgeLabeler } from "./ui/badges";
 export { fontFamiliesOf, isBold, summarizeStyles, summarizeObject, MIXED, TEXT_STYLE_KEYS } from "./text-styles";

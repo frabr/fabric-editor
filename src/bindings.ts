@@ -1,5 +1,5 @@
-import type { FabricObject } from "#fabric";
-import { drawFrameBadge } from "./ui/badges";
+import { util, type FabricObject } from "#fabric";
+import { drawFrameBadge, paintBadge } from "./ui/badges";
 
 /**
  * Les bindings du dialecte template (apibots, plan media-template-generators §4) : un calque
@@ -14,10 +14,17 @@ import { drawFrameBadge } from "./ui/badges";
  *   (guideColor), et un liseré permanent sur les médias dynamiques.
  */
 
-/** `media` : ce qu'une image liée désigne — le rang d'une photo du sujet, `"each"`, ou le nom
- *  d'une image du lecteur (cf. imageSlots). `hint` : la consigne d'une image à fournir (scope
- *  `user`, cf. userSlots). Un `text` de scope `user` est un texte à personnaliser (userTexts). */
-export type BindingSpec = { expr?: string; scope?: string; resolved?: boolean; hint?: string; media?: number | string };
+/** `media` : ce qu'une image liée désigne — le rang d'une photo du sujet, `"each"`, le nom
+ *  d'une image du lecteur (cf. imageSlots), ou `"draw"` : une image que l'hôte tire parmi
+ *  `candidates` (ses nœuds de média, opaques ici). `hint` : la consigne d'une image à fournir
+ *  (scope `user`, cf. userSlots). Un `text` de scope `user` est un texte à personnaliser
+ *  (userTexts). */
+export type BindingSpec = {
+  expr?: string; scope?: string; resolved?: boolean; hint?: string; media?: number | string; candidates?: unknown[];
+};
+
+/** `media` d'une image tirée parmi les candidates du binding. */
+export const DRAW_MEDIA = "draw";
 export type Bindings = Record<string, BindingSpec>;
 
 export function pendingBindings(obj: FabricObject): Bindings {
@@ -88,10 +95,12 @@ export interface UserInputLabels {
 export const DEFAULT_USER_SLOT_LABEL = "À fournir";
 export const DEFAULT_USER_TEXT_LABEL = "À personnaliser";
 
-/** Le nom d'une image liée : `media 3`, `media i` (l'itération), ou le nom de l'image du
- *  lecteur (`avatar`). C'est ce que le badge et la timeline de l'hôte affichent. */
+/** Le nom d'une image liée : `media 3`, `media i` (l'itération), `1 parmi 7` (une image tirée
+ *  parmi les candidates du binding), ou le nom de l'image du lecteur (`avatar`). C'est ce que
+ *  le badge et la timeline de l'hôte affichent. */
 export function mediaLabel(spec: BindingSpec): string {
   if (typeof spec.media === "number") return `media ${spec.media}`;
+  if (spec.media === DRAW_MEDIA) return `1 parmi ${Array.isArray(spec.candidates) ? spec.candidates.length : 0}`;
   return spec.media === "each" ? "media i" : String(spec.media ?? "");
 }
 
@@ -140,6 +149,26 @@ export function drawDynamicMediaOutline(
   ctx.globalAlpha = 0.9;
   ctx.stroke();
   ctx.restore();
+}
+
+/**
+ * Le badge PERMANENT d'un média dynamique inerte (le fond d'une page : ni survol ni sélection,
+ * donc jamais de cadre ni de badge de cadre) : sans lui, un fond qui montre une valeur — la
+ * première candidate d'une image tirée — passerait pour une image fixe. Posé DANS le coin
+ * haut-gauche du calque (un fond plein cadre n'a rien au-dessus de lui), à la position
+ * calculée au moment du dessin, comme le liseré.
+ */
+export function drawInertMediaBadge(
+  ctx: CanvasRenderingContext2D,
+  obj: FabricObject,
+  color: string,
+  labels: UserInputLabels = {},
+): void {
+  if (obj.evented !== false || !obj.visible || !obj.canvas) return;
+  if (!Object.keys(pendingBindings(obj)).some((field) => field.startsWith("image."))) return;
+
+  const corner = util.transformPoint(obj.getCoords()[0], obj.canvas.viewportTransform);
+  paintBadge(ctx, corner.x, corner.y, bindingLabel(obj, labels), color);
 }
 
 type Traceable = FabricObject & {

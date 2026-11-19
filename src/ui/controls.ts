@@ -8,7 +8,7 @@
 import { FabricObject, Control, controlsUtils, type TPointerEvent } from "#fabric";
 import type { DesignCanvas } from "../DesignCanvas";
 import { parseHex } from "./color";
-import { bindingBadgeLabel, drawDynamicMediaOutline, type UserInputLabels } from "../bindings";
+import { bindingBadgeLabel, drawDynamicMediaOutline, drawInertMediaBadge, type UserInputLabels } from "../bindings";
 import { drawActiveTokenPills } from "../tokens";
 import { installBadgeLayer } from "./badges";
 
@@ -362,10 +362,12 @@ function installHoverBorder(
     // Les médias dynamiques portent un liseré PERMANENT : l'aperçu montre la vraie image
     // d'exemple, le pointillé dit « remplie à la publication ». L'objet visé (survol,
     // sélection) s'en passe : son cadre plein le remplace, le badge nomme le lien.
+    // Un média dynamique inerte (le fond) n'est jamais visé : son badge est permanent aussi.
     canvas.getObjects().forEach((obj) => {
       if (obj === active || obj === hoveredObj) return;
 
       drawDynamicMediaOutline(ctx, obj, guideColor);
+      drawInertMediaBadge(ctx, obj, guideColor, userInputLabels);
     });
 
     if (!hoveredObj || hoveredObj === active) return;

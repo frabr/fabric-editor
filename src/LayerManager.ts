@@ -22,6 +22,7 @@ import { isTextObject } from "./layout/text";
 import { imageSlotBinding, IMAGE_SLOT_FIELD } from "./imageSlots";
 import { BACKGROUND_ID, LEGACY_BACKGROUND_ID, layoutOf } from "./layout/model";
 import { findById } from "./layout/hierarchy";
+import { relayoutAncestors } from "./layout/run";
 
 /** La part du document (par côté) qu'occupe un calque neuf sans dimension. */
 const NEW_LAYER_RATIO = 0.4;
@@ -303,6 +304,7 @@ export class LayerManager {
       const frame = target as ImageFrame;
       const newImg = await FabricImage.fromURL(newUrl, { crossOrigin: "anonymous" });
       frame.replaceImage(newImg, options?.imageMeta);
+      this._reflowContained(frame);
       if (imageSlotBinding(frame as unknown as FabricObject)) {
         const { [IMAGE_SLOT_FIELD]: _unbound, ...bindings } = (frame.get("bindings") ?? {}) as Bindings;
         frame.set("bindings", bindings);
@@ -345,7 +347,13 @@ export class LayerManager {
       if (this.valueRequests.get(frame) !== url || !imageSlotBinding(target)) return;
       frame.showValue(image);
     }
+    this._reflowContained(frame);
     this.canvas.requestRenderAll();
+  }
+
+  /** Un cadre en contain change de taille avec son image : ses containers s'y refont. */
+  private _reflowContained(frame: ImageFrame): void {
+    if (frame.fit === "contain") relayoutAncestors(frame as unknown as FabricObject, this.canvas.getObjects());
   }
 
   /**

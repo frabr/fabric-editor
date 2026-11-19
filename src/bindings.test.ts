@@ -4,7 +4,7 @@
 import { describe, it, expect } from "vitest";
 import { FabricImage, StaticCanvas } from "#fabric";
 import { createCanvas } from "canvas";
-import { drawDynamicMediaOutline } from "./bindings";
+import { drawDynamicMediaOutline, drawInertMediaBadge } from "./bindings";
 import { ImageFrame } from "./ImageFrame";
 import { registerShapes } from "./shapes/registry";
 
@@ -45,5 +45,31 @@ describe("drawDynamicMediaOutline", () => {
     expect(maxX).toBeGreaterThan(minX);
     expect(Math.abs((minX + maxX) / 2 - 150)).toBeLessThan(3);
     expect(Math.abs((minY + maxY) / 2 - 150)).toBeLessThan(3);
+  });
+});
+
+describe("drawInertMediaBadge", () => {
+  function background(evented: boolean): { frame: ImageFrame; ctx: CanvasRenderingContext2D } {
+    const canvas = new StaticCanvas(undefined, { width: 300, height: 300 });
+    const img = new FabricImage(createCanvas(10, 10) as unknown as HTMLCanvasElement);
+    const frame = new ImageFrame(img, { frameWidth: 200, frameHeight: 200, left: 150, top: 150 });
+    frame.set({ evented, bindings: { "image.src": { scope: "subject", media: "draw", candidates: [{}, {}] } } });
+    canvas.add(frame);
+    return { frame, ctx: createCanvas(300, 300).getContext("2d") as unknown as CanvasRenderingContext2D };
+  }
+
+  it("un fond lié (inerte) porte son badge en permanence, dans son coin haut-gauche", () => {
+    const { frame, ctx } = background(false);
+    drawInertMediaBadge(ctx, frame, "#ff0000");
+    const [minX, minY] = redBox(ctx, 300);
+
+    expect([minX, minY]).toEqual([50, 50]);
+  });
+
+  it("un calque qu'on peut viser garde le badge de son cadre : rien de permanent", () => {
+    const { frame, ctx } = background(true);
+    drawInertMediaBadge(ctx, frame, "#ff0000");
+
+    expect(redBox(ctx, 300)[2]).toBe(-1);
   });
 });

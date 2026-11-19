@@ -119,7 +119,7 @@ import { createRequire } from "module";
 import { StaticCanvas, FabricObject as FabricObject4 } from "#fabric";
 
 // src/LayerManager.ts
-import { FabricImage as FabricImage5, Group as Group5, Point as Point3, util as util3 } from "#fabric";
+import { FabricImage as FabricImage5, Group as Group5, Point as Point4, util as util5 } from "#fabric";
 
 // src/controls/CustomTextbox.ts
 import { Textbox, Point, controlsUtils as controlsUtils2 } from "#fabric";
@@ -366,9 +366,10 @@ function parseHex(hex) {
 var DEFAULT_GUIDE_COLOR = "#d946ef";
 
 // src/userSlots.ts
-import { Pattern, util } from "#fabric";
+import { Pattern, util as util2 } from "#fabric";
 
 // src/bindings.ts
+import { util } from "#fabric";
 function pendingBindings(obj) {
   const bindings = obj.get("bindings") || {};
   return Object.fromEntries(Object.entries(bindings).filter(([, spec]) => spec?.resolved !== true));
@@ -402,7 +403,7 @@ var CHECKER_DARK = "#e5e7eb";
 var checkerSource = null;
 function checkerTile() {
   if (checkerSource) return checkerSource;
-  const tile = util.createCanvasElement();
+  const tile = util2.createCanvasElement();
   tile.width = tile.height = CELL * 2;
   const ctx = tile.getContext("2d");
   ctx.fillStyle = CHECKER_LIGHT;
@@ -414,7 +415,7 @@ function checkerTile() {
   return tile;
 }
 function checkerCanvas(width, height) {
-  const el = util.createCanvasElement();
+  const el = util2.createCanvasElement();
   el.width = Math.max(1, Math.round(width));
   el.height = Math.max(1, Math.round(height));
   const ctx = el.getContext("2d");
@@ -423,7 +424,7 @@ function checkerCanvas(width, height) {
   return el;
 }
 function transparentCanvas(width, height) {
-  const el = util.createCanvasElement();
+  const el = util2.createCanvasElement();
   el.width = Math.max(1, Math.round(width));
   el.height = Math.max(1, Math.round(height));
   return el;
@@ -1920,7 +1921,7 @@ import {
 } from "#fabric";
 
 // src/imageSlots.ts
-import { util as util2 } from "#fabric";
+import { util as util3 } from "#fabric";
 var IMAGE_SLOT_FIELD = "image.src";
 var EACH_MEDIA = "each";
 function imageSlotBinding(obj) {
@@ -2126,6 +2127,10 @@ var ImageFrame = class _ImageFrame extends Group4 {
     });
     /** Corner radius in pixels for "rect" clip shape. 0 = sharp corners. */
     this.cornerRadius = 0;
+    /** Cf. ImageFrameData.fit. */
+    this.fit = "cover";
+    /** En contain, la boîte où l'image se cale ; frameWidth/frameHeight sont alors sa taille. */
+    this._box = null;
     this._crop = NO_CROP;
     this._imageMeta = {};
     this._source = "document";
@@ -2145,6 +2150,11 @@ var ImageFrame = class _ImageFrame extends Group4 {
       1
     );
     this._imageMeta = { ...options.imageMeta ?? {} };
+    if (options.fit === "contain") {
+      this.fit = "contain";
+      this._box = { w: frameWidth, h: frameHeight };
+      this._fitFrame();
+    }
     if (options.layerId) {
       this.set("layerId", options.layerId);
     }
@@ -2182,6 +2192,8 @@ var ImageFrame = class _ImageFrame extends Group4 {
     const img = new FabricImage4(checkerCanvas(options.frameWidth, options.frameHeight));
     const frame = new _ImageFrame(img, options);
     frame._source = "none";
+    frame._fitFrame();
+    frame._applyCrop();
     return frame;
   }
   /** L'image affichée n'est pas celle du document (une url de session, le temps d'un
@@ -2291,8 +2303,7 @@ var ImageFrame = class _ImageFrame extends Group4 {
     }
     newImage.group = this;
     this._image = newImage;
-    this.width = this.frameWidth;
-    this.height = this.frameHeight;
+    this._fitFrame();
     this._applyClip(savedClipShape);
     this.setCoords();
     this._applyCrop();
@@ -2302,10 +2313,10 @@ var ImageFrame = class _ImageFrame extends Group4 {
    * zone autant que possible.
    */
   resizeFrame(newWidth, newHeight) {
+    if (this._box) this._box = { w: newWidth, h: newHeight };
     this.frameWidth = newWidth;
     this.frameHeight = newHeight;
-    this.width = newWidth;
-    this.height = newHeight;
+    this._fitFrame();
     this._applyCrop();
     this._applyClip(this.clipShape || "rect");
     if (this.clipPath) {
@@ -2400,6 +2411,21 @@ var ImageFrame = class _ImageFrame extends Group4 {
   // ─────────────────────────────────────────────────────────────
   // Méthodes privées
   // ─────────────────────────────────────────────────────────────
+  /**
+   * La taille du cadre : en contain, celle de l'image calée dans la boîte (la boîte entière
+   * sans image) ; sinon frameWidth/frameHeight tels quels. Le groupe suit.
+   */
+  _fitFrame() {
+    if (this._box) {
+      const { w: bw, h: bh } = this._box;
+      const nat = this.naturalSize;
+      const s = this._source === "none" || !nat.w || !nat.h ? 0 : Math.min(bw / nat.w, bh / nat.h);
+      this.frameWidth = s ? nat.w * s : bw;
+      this.frameHeight = s ? nat.h * s : bh;
+    }
+    this.width = this.frameWidth;
+    this.height = this.frameHeight;
+  }
   /** L'image dans le groupe (origine au centre) : cover × échelle, centre décalé selon le recadrage. */
   _applyCrop() {
     const nat = this.naturalSize;
@@ -2604,8 +2630,9 @@ var ImageFrame = class _ImageFrame extends Group4 {
       angle: this.angle,
       scaleX: this.scaleX,
       scaleY: this.scaleY,
-      frameWidth: this.frameWidth,
-      frameHeight: this.frameHeight,
+      frameWidth: this._box?.w ?? this.frameWidth,
+      frameHeight: this._box?.h ?? this.frameHeight,
+      fit: this._box ? "contain" : void 0,
       clipShape: this.clipShape,
       clipData: this.clipData,
       cornerRadius: this.cornerRadius || void 0,
@@ -2635,6 +2662,7 @@ var ImageFrame = class _ImageFrame extends Group4 {
       lockMode: data.lockMode,
       frameWidth: data.frameWidth,
       frameHeight: data.frameHeight,
+      fit: data.fit,
       imageMeta: imageMetaOf(data.image)
     };
     const img = src ? await FabricImage4.fromURL(src, { crossOrigin: "anonymous" }) : null;
@@ -2691,6 +2719,335 @@ var ImageFrame = class _ImageFrame extends Group4 {
 };
 classRegistry5.setClass(ImageFrame);
 classRegistry5.setClass(ImageFrame, "ImageFrame");
+
+// src/layout/stack/engine.ts
+var yoga = null;
+var yogaConfig = null;
+async function initYoga() {
+  if (yoga) return;
+  const { loadYoga } = await import("yoga-layout/load");
+  yoga = await loadYoga();
+  yogaConfig = yoga.Config.create();
+  yogaConfig.setPointScaleFactor(0);
+}
+function getYoga() {
+  if (!yoga) throw new Error("Yoga not initialized. Call initYoga() first.");
+  return yoga;
+}
+function yogaLayout(children, containerLeft, containerTop, containerW, containerH, cd, sizing, allObjects) {
+  if (children.length === 0) return { w: 0, h: 0 };
+  const Y = getYoga();
+  const modeX = sizing.x;
+  const modeY = sizing.y;
+  const root = Y.Node.create(yogaConfig);
+  applyContainerStyle(root, cd, Y);
+  if (modeX === "fixed") root.setWidth(containerW);
+  else root.setWidthAuto();
+  if (modeY === "fixed") root.setHeight(containerH);
+  else root.setHeightAuto();
+  applyHugFloor(root, sizing);
+  const built = buildChildren(root, children, cd, sizing, allObjects, Y);
+  root.calculateLayout(
+    modeX === "fixed" ? containerW : void 0,
+    modeY === "fixed" ? containerH : void 0
+  );
+  placeChildren(built, containerLeft, containerTop, 0);
+  const w = root.getComputedWidth();
+  const h = root.getComputedHeight();
+  root.freeRecursive();
+  return { w, h };
+}
+function applyContainerStyle(node, cd, Y) {
+  const isColumn = directionOf(cd) === "column";
+  node.setFlexDirection(isColumn ? Y.FLEX_DIRECTION_COLUMN : Y.FLEX_DIRECTION_ROW);
+  node.setAlignItems(mapAlignItems(cd.alignItems ?? "flex-start", Y));
+  node.setJustifyContent(mapJustifyContent(cd.justifyContent ?? "flex-start", Y));
+  const gap = cd.gap ?? 0;
+  if (gap > 0) node.setGap(isColumn ? Y.GUTTER_ROW : Y.GUTTER_COLUMN, gap);
+  const pad = cd.padding;
+  if (pad) {
+    node.setPadding(Y.EDGE_TOP, pad.top);
+    node.setPadding(Y.EDGE_RIGHT, pad.right);
+    node.setPadding(Y.EDGE_BOTTOM, pad.bottom);
+    node.setPadding(Y.EDGE_LEFT, pad.left);
+  }
+}
+function applyHugFloor(node, sizing) {
+  const minSize = sizing.minSize;
+  if (!minSize) return;
+  if (sizing.x === "hug" && minSize.w > 0) node.setMinWidth(minSize.w);
+  if (sizing.y === "hug" && minSize.h > 0) node.setMinHeight(minSize.h);
+}
+function nestedChildren(obj, allObjects) {
+  if (!allObjects || isTextObject(obj) || isFreeContainer(obj)) return null;
+  const layout = layoutOf(obj);
+  if (!layout?.container) return null;
+  const children = flowChildrenOf(allObjects, obj);
+  return children.length > 0 ? children : null;
+}
+function buildChildren(parent, children, cd, sizing, allObjects, Y) {
+  const isColumn = directionOf(cd) === "column";
+  const alignItems = cd.alignItems ?? "flex-start";
+  for (const { obj } of children) {
+    if (isTextObject(obj)) continue;
+    const ext = obj;
+    if (ext._layoutIntrinsic) {
+      setShapeSize(obj, ext._layoutIntrinsic.w, ext._layoutIntrinsic.h);
+      delete ext._layoutIntrinsic;
+    }
+  }
+  const built = [];
+  for (let i = 0; i < children.length; i++) {
+    const { obj, cl } = children[i];
+    const node = Y.Node.create(yogaConfig);
+    const alignSelf = cl.alignSelf ?? "auto";
+    if (alignSelf !== "auto") node.setAlignSelf(mapAlignSelf(alignSelf, Y));
+    const flexGrow = cl.flexGrow ?? 0;
+    if (flexGrow > 0 && !isFreeContainer(obj)) node.setFlexGrow(flexGrow);
+    const effectiveAlign = alignSelf !== "auto" ? alignSelf : alignItems;
+    const willStretch = effectiveAlign === "stretch";
+    const entry = { obj, node };
+    const nested = nestedChildren(obj, allObjects);
+    const mainHug = nested && (isColumn ? sizingOf(obj).y : sizingOf(obj).x) === "hug";
+    const foldingText = isTextObject(obj) && (layoutOf(obj)?.overflow ?? "shrink") === "shrink";
+    node.setFlexShrink(foldingText || mainHug ? 1 : 0);
+    if (isTextObject(obj)) {
+      setupTextMeasure(node, obj, Y);
+    } else if (isFreeContainer(obj)) {
+      setRigidSize(node, obj, { isColumn, willStretch: false, parentSizing: sizing, flexGrow: 0 });
+      if (allObjects) entry.followers = descendantsOf(allObjects, [obj]);
+    } else if (nested) {
+      const childCd = layoutOf(obj).container;
+      const childSizing = sizingOf(obj);
+      applyContainerStyle(node, childCd, Y);
+      setNestedSize(node, obj, childSizing, { isColumn, willStretch, parentSizing: sizing, flexGrow });
+      entry.children = buildChildren(node, nested, childCd, childSizing, allObjects, Y);
+    } else {
+      setRigidSize(node, obj, { isColumn, willStretch, parentSizing: sizing, flexGrow });
+    }
+    parent.insertChild(node, i);
+    built.push(entry);
+  }
+  return built;
+}
+function setRigidSize(node, obj, slot) {
+  const { isColumn, willStretch, parentSizing, flexGrow } = slot;
+  const { w, h } = scaledSize(obj);
+  if (isColumn) {
+    node.setHeight(h);
+    if (!willStretch || parentSizing.x === "hug") node.setWidth(w);
+  } else {
+    node.setWidth(w);
+    if (!willStretch || parentSizing.y === "hug") node.setHeight(h);
+  }
+  if (flexGrow > 0) {
+    if (isColumn) node.setHeightAuto();
+    else node.setWidthAuto();
+  }
+}
+function setNestedSize(node, obj, sizing, slot) {
+  const { isColumn, willStretch, parentSizing, flexGrow } = slot;
+  const { w, h } = scaledSize(obj);
+  const parentCrossIsHug = isColumn ? parentSizing.x === "hug" : parentSizing.y === "hug";
+  const main = isColumn ? sizing.y : sizing.x;
+  const cross = isColumn ? sizing.x : sizing.y;
+  const setMain = (v) => isColumn ? node.setHeight(v) : node.setWidth(v);
+  const setCross = (v) => isColumn ? node.setWidth(v) : node.setHeight(v);
+  if (main === "fixed" && flexGrow === 0) setMain(isColumn ? h : w);
+  if (cross === "fixed" && (!willStretch || parentCrossIsHug)) setCross(isColumn ? w : h);
+  applyHugFloor(node, sizing);
+}
+function placeChildren(built, parentLeft, parentTop, depth) {
+  for (const { obj, node, children, followers } of built) {
+    const before = followers && topLeft(obj);
+    const left = parentLeft + node.getComputedLeft();
+    const top = parentTop + node.getComputedTop();
+    const computedW = node.getComputedWidth();
+    const computedH = node.getComputedHeight();
+    const currentSize = scaledSize(obj);
+    const changedW = Math.abs(computedW - currentSize.w) > 0.5;
+    const changedH = Math.abs(computedH - currentSize.h) > 0.5;
+    if (isTextObject(obj)) {
+      if (changedW || changedH) obj.layoutWith({ w: computedW, h: computedH });
+    } else {
+      const ext = obj;
+      if (!children && (computedW < currentSize.w - 0.5 || computedH < currentSize.h - 0.5) && !ext._layoutIntrinsic) {
+        ext._layoutIntrinsic = currentSize;
+      }
+      if (changedW || changedH) {
+        setShapeSize(obj, changedW ? computedW : currentSize.w, changedH ? computedH : currentSize.h);
+      }
+    }
+    const { w: childW, h: childH } = scaledSize(obj);
+    const objLeft = obj.originX === "center" ? left + childW / 2 : obj.originX === "right" ? left + childW : left;
+    const objTop = obj.originY === "center" ? top + childH / 2 : obj.originY === "bottom" ? top + childH : top;
+    obj.set({ left: objLeft, top: objTop });
+    if (before) {
+      const after = topLeft(obj);
+      translateObjects(followers, after.x - before.x, after.y - before.y);
+    }
+    if (depth > 0) obj.setCoords();
+    if (children) placeChildren(children, left, top, depth + 1);
+  }
+}
+function mapAlignItems(align, Y) {
+  switch (align) {
+    case "stretch":
+      return Y.ALIGN_STRETCH;
+    case "flex-start":
+      return Y.ALIGN_FLEX_START;
+    case "flex-end":
+      return Y.ALIGN_FLEX_END;
+    case "center":
+      return Y.ALIGN_CENTER;
+    default:
+      return Y.ALIGN_FLEX_START;
+  }
+}
+function mapAlignSelf(align, Y) {
+  switch (align) {
+    case "stretch":
+      return Y.ALIGN_STRETCH;
+    case "flex-start":
+      return Y.ALIGN_FLEX_START;
+    case "flex-end":
+      return Y.ALIGN_FLEX_END;
+    case "center":
+      return Y.ALIGN_CENTER;
+    default:
+      return Y.ALIGN_AUTO;
+  }
+}
+function mapJustifyContent(justify, Y) {
+  switch (justify) {
+    case "flex-start":
+      return Y.JUSTIFY_FLEX_START;
+    case "flex-end":
+      return Y.JUSTIFY_FLEX_END;
+    case "center":
+      return Y.JUSTIFY_CENTER;
+    case "space-between":
+      return Y.JUSTIFY_SPACE_BETWEEN;
+    case "space-around":
+      return Y.JUSTIFY_SPACE_AROUND;
+    default:
+      return Y.JUSTIFY_FLEX_START;
+  }
+}
+function setupTextMeasure(node, obj, Y) {
+  const t = obj;
+  node.setMeasureFunc((width, widthMode) => {
+    if (widthMode === Y.MEASURE_MODE_EXACTLY) t.layoutWith({ w: width });
+    else if (widthMode === Y.MEASURE_MODE_AT_MOST) t.layoutWith({ maxW: width });
+    else t.layoutWith({});
+    const { w, h } = scaledSize(obj);
+    return { width: w, height: h };
+  });
+}
+
+// src/layout/rotation.ts
+import { util as util4 } from "#fabric";
+function rotateAbout(obj, pivot, delta) {
+  if (!delta) return;
+  const center = obj.getCenterPoint().rotate(util4.degreesToRadians(delta), pivot);
+  obj.set({ angle: (obj.angle || 0) + delta });
+  obj.setPositionByOrigin(center, "center", "center");
+  obj.setCoords();
+}
+function inLocalFrame(root, objects, fn) {
+  const angle = root.angle || 0;
+  if (Math.abs(angle) < 1e-6) return fn();
+  const pivot = root.getCenterPoint();
+  const subtree = subtreeOf(objects, [root]);
+  for (const obj of subtree) rotateAbout(obj, pivot, -angle);
+  try {
+    return fn();
+  } finally {
+    for (const obj of subtree) rotateAbout(obj, pivot, angle);
+  }
+}
+
+// src/layout/free/fit.ts
+function fitFreeContainer(container, objects) {
+  inLocalFrame(container, objects, () => fitFreeContainerLocal(container, objects));
+}
+function fitFreeContainerLocal(container, objects) {
+  const children = childrenOf(objects, container).map((c) => c.obj).filter((child) => !isEclipsed(child));
+  if (children.length === 0) return;
+  for (const child of children) {
+    if (isFreeContainer(child)) fitFreeContainer(child, objects);
+    else if (isTextObject(child)) child.layoutWith({});
+  }
+  const box = outsetBox(unionBox(children.map(boxOf)), paddingOf(containerDataOf(container)));
+  setShapeSize(container, box.width, box.height);
+  placeTopLeft(container, box.left, box.top);
+}
+
+// src/layout/run.ts
+function runLayout(objects) {
+  for (const obj of objects) {
+    const layout = layoutOf(obj);
+    if (!layout?.container) continue;
+    if (parentContainerOf(obj, objects)) continue;
+    layoutTree(obj, objects);
+  }
+}
+function layoutTree(container, objects) {
+  inLocalFrame(container, objects, () => layoutTreeLocal(container, objects));
+}
+function layoutTreeLocal(container, objects) {
+  const cd = layoutOf(container).container;
+  const children = flowChildrenOf(objects, container);
+  if (children.length === 0) return;
+  if (cd.arrangement === "free") {
+    for (const { obj } of children) {
+      if (containerDataOf(obj)) layoutTree(obj, objects);
+    }
+    fitFreeContainer(container, objects);
+    return;
+  }
+  fitGroupsUnder(container, objects);
+  layoutContainer(container, cd, children, objects);
+}
+function fitGroupsUnder(container, objects) {
+  for (const { obj } of childrenOf(objects, container)) {
+    if (!containerDataOf(obj)) continue;
+    if (isFreeContainer(obj)) layoutTree(obj, objects);
+    else fitGroupsUnder(obj, objects);
+  }
+}
+function relayoutAncestors(obj, allObjects) {
+  for (let parent = parentContainerOf(obj, allObjects); parent; parent = parentContainerOf(parent, allObjects)) {
+    layoutTree(parent, allObjects);
+  }
+}
+function layoutContainer(container, cd, children, allObjects) {
+  const sizing = sizingOf(container);
+  const minW = sizing.minSize?.w ?? 0;
+  const minH = sizing.minSize?.h ?? 0;
+  const { w: visW, h: visH } = scaledSize(container);
+  const currentW = sizing.x === "hug" ? Math.max(visW, minW) : visW;
+  const currentH = sizing.y === "hug" ? Math.max(visH, minH) : visH;
+  const tl = topLeft(container);
+  const { w: requiredW, h: requiredH } = yogaLayout(
+    children,
+    tl.x,
+    tl.y,
+    currentW,
+    currentH,
+    cd,
+    sizing,
+    allObjects
+  );
+  const finalW = sizing.x === "hug" ? Math.max(requiredW, minW) : currentW;
+  const finalH = sizing.y === "hug" ? Math.max(requiredH, minH) : currentH;
+  setShapeSize(container, finalW, finalH);
+  if (finalW !== currentW || finalH !== currentH) {
+    const tl2 = topLeft(container);
+    yogaLayout(children, tl2.x, tl2.y, finalW, finalH, cd, sizing, allObjects);
+  }
+  syncCoords(container, children);
+}
 
 // src/LayerManager.ts
 var NEW_LAYER_RATIO = 0.4;
@@ -2780,7 +3137,7 @@ var LayerManager = class {
   }
   /** Le centre du document. */
   get center() {
-    return new Point3(this.canvas.width / 2, this.canvas.height / 2);
+    return new Point4(this.canvas.width / 2, this.canvas.height / 2);
   }
   /**
    * La boîte d'un calque neuf (forme, image) : NEW_LAYER_RATIO du document dans chaque sens.
@@ -2916,6 +3273,7 @@ var LayerManager = class {
       const frame = target;
       const newImg = await FabricImage5.fromURL(newUrl, { crossOrigin: "anonymous" });
       frame.replaceImage(newImg, options?.imageMeta);
+      this._reflowContained(frame);
       if (imageSlotBinding(frame)) {
         const { [IMAGE_SLOT_FIELD]: _unbound, ...bindings } = frame.get("bindings") ?? {};
         frame.set("bindings", bindings);
@@ -2948,7 +3306,12 @@ var LayerManager = class {
       if (this.valueRequests.get(frame) !== url || !imageSlotBinding(target)) return;
       frame.showValue(image);
     }
+    this._reflowContained(frame);
     this.canvas.requestRenderAll();
+  }
+  /** Un cadre en contain change de taille avec son image : ses containers s'y refont. */
+  _reflowContained(frame) {
+    if (frame.fit === "contain") relayoutAncestors(frame, this.canvas.getObjects());
   }
   /**
    * Remplace la source d'une image legacy (FabricImage sans frame)
@@ -3303,7 +3666,7 @@ function clipOfShape(shape) {
   if (shape instanceof FabPath) {
     const id = shape.id;
     const clipData = {
-      d: util3.joinPath(shape.path),
+      d: util5.joinPath(shape.path),
       width: shape.width,
       height: shape.height,
       ...shape.fillRule === "evenodd" ? { fillRule: "evenodd" } : {}
@@ -3560,330 +3923,6 @@ var HistoryManager = class {
     }
   }
 };
-
-// src/layout/stack/engine.ts
-var yoga = null;
-var yogaConfig = null;
-async function initYoga() {
-  if (yoga) return;
-  const { loadYoga } = await import("yoga-layout/load");
-  yoga = await loadYoga();
-  yogaConfig = yoga.Config.create();
-  yogaConfig.setPointScaleFactor(0);
-}
-function getYoga() {
-  if (!yoga) throw new Error("Yoga not initialized. Call initYoga() first.");
-  return yoga;
-}
-function yogaLayout(children, containerLeft, containerTop, containerW, containerH, cd, sizing, allObjects) {
-  if (children.length === 0) return { w: 0, h: 0 };
-  const Y = getYoga();
-  const modeX = sizing.x;
-  const modeY = sizing.y;
-  const root = Y.Node.create(yogaConfig);
-  applyContainerStyle(root, cd, Y);
-  if (modeX === "fixed") root.setWidth(containerW);
-  else root.setWidthAuto();
-  if (modeY === "fixed") root.setHeight(containerH);
-  else root.setHeightAuto();
-  applyHugFloor(root, sizing);
-  const built = buildChildren(root, children, cd, sizing, allObjects, Y);
-  root.calculateLayout(
-    modeX === "fixed" ? containerW : void 0,
-    modeY === "fixed" ? containerH : void 0
-  );
-  placeChildren(built, containerLeft, containerTop, 0);
-  const w = root.getComputedWidth();
-  const h = root.getComputedHeight();
-  root.freeRecursive();
-  return { w, h };
-}
-function applyContainerStyle(node, cd, Y) {
-  const isColumn = directionOf(cd) === "column";
-  node.setFlexDirection(isColumn ? Y.FLEX_DIRECTION_COLUMN : Y.FLEX_DIRECTION_ROW);
-  node.setAlignItems(mapAlignItems(cd.alignItems ?? "flex-start", Y));
-  node.setJustifyContent(mapJustifyContent(cd.justifyContent ?? "flex-start", Y));
-  const gap = cd.gap ?? 0;
-  if (gap > 0) node.setGap(isColumn ? Y.GUTTER_ROW : Y.GUTTER_COLUMN, gap);
-  const pad = cd.padding;
-  if (pad) {
-    node.setPadding(Y.EDGE_TOP, pad.top);
-    node.setPadding(Y.EDGE_RIGHT, pad.right);
-    node.setPadding(Y.EDGE_BOTTOM, pad.bottom);
-    node.setPadding(Y.EDGE_LEFT, pad.left);
-  }
-}
-function applyHugFloor(node, sizing) {
-  const minSize = sizing.minSize;
-  if (!minSize) return;
-  if (sizing.x === "hug" && minSize.w > 0) node.setMinWidth(minSize.w);
-  if (sizing.y === "hug" && minSize.h > 0) node.setMinHeight(minSize.h);
-}
-function nestedChildren(obj, allObjects) {
-  if (!allObjects || isTextObject(obj) || isFreeContainer(obj)) return null;
-  const layout = layoutOf(obj);
-  if (!layout?.container) return null;
-  const children = flowChildrenOf(allObjects, obj);
-  return children.length > 0 ? children : null;
-}
-function buildChildren(parent, children, cd, sizing, allObjects, Y) {
-  const isColumn = directionOf(cd) === "column";
-  const alignItems = cd.alignItems ?? "flex-start";
-  for (const { obj } of children) {
-    if (isTextObject(obj)) continue;
-    const ext = obj;
-    if (ext._layoutIntrinsic) {
-      setShapeSize(obj, ext._layoutIntrinsic.w, ext._layoutIntrinsic.h);
-      delete ext._layoutIntrinsic;
-    }
-  }
-  const built = [];
-  for (let i = 0; i < children.length; i++) {
-    const { obj, cl } = children[i];
-    const node = Y.Node.create(yogaConfig);
-    const alignSelf = cl.alignSelf ?? "auto";
-    if (alignSelf !== "auto") node.setAlignSelf(mapAlignSelf(alignSelf, Y));
-    const flexGrow = cl.flexGrow ?? 0;
-    if (flexGrow > 0 && !isFreeContainer(obj)) node.setFlexGrow(flexGrow);
-    const effectiveAlign = alignSelf !== "auto" ? alignSelf : alignItems;
-    const willStretch = effectiveAlign === "stretch";
-    const entry = { obj, node };
-    const nested = nestedChildren(obj, allObjects);
-    const mainHug = nested && (isColumn ? sizingOf(obj).y : sizingOf(obj).x) === "hug";
-    const foldingText = isTextObject(obj) && (layoutOf(obj)?.overflow ?? "shrink") === "shrink";
-    node.setFlexShrink(foldingText || mainHug ? 1 : 0);
-    if (isTextObject(obj)) {
-      setupTextMeasure(node, obj, Y);
-    } else if (isFreeContainer(obj)) {
-      setRigidSize(node, obj, { isColumn, willStretch: false, parentSizing: sizing, flexGrow: 0 });
-      if (allObjects) entry.followers = descendantsOf(allObjects, [obj]);
-    } else if (nested) {
-      const childCd = layoutOf(obj).container;
-      const childSizing = sizingOf(obj);
-      applyContainerStyle(node, childCd, Y);
-      setNestedSize(node, obj, childSizing, { isColumn, willStretch, parentSizing: sizing, flexGrow });
-      entry.children = buildChildren(node, nested, childCd, childSizing, allObjects, Y);
-    } else {
-      setRigidSize(node, obj, { isColumn, willStretch, parentSizing: sizing, flexGrow });
-    }
-    parent.insertChild(node, i);
-    built.push(entry);
-  }
-  return built;
-}
-function setRigidSize(node, obj, slot) {
-  const { isColumn, willStretch, parentSizing, flexGrow } = slot;
-  const { w, h } = scaledSize(obj);
-  if (isColumn) {
-    node.setHeight(h);
-    if (!willStretch || parentSizing.x === "hug") node.setWidth(w);
-  } else {
-    node.setWidth(w);
-    if (!willStretch || parentSizing.y === "hug") node.setHeight(h);
-  }
-  if (flexGrow > 0) {
-    if (isColumn) node.setHeightAuto();
-    else node.setWidthAuto();
-  }
-}
-function setNestedSize(node, obj, sizing, slot) {
-  const { isColumn, willStretch, parentSizing, flexGrow } = slot;
-  const { w, h } = scaledSize(obj);
-  const parentCrossIsHug = isColumn ? parentSizing.x === "hug" : parentSizing.y === "hug";
-  const main = isColumn ? sizing.y : sizing.x;
-  const cross = isColumn ? sizing.x : sizing.y;
-  const setMain = (v) => isColumn ? node.setHeight(v) : node.setWidth(v);
-  const setCross = (v) => isColumn ? node.setWidth(v) : node.setHeight(v);
-  if (main === "fixed" && flexGrow === 0) setMain(isColumn ? h : w);
-  if (cross === "fixed" && (!willStretch || parentCrossIsHug)) setCross(isColumn ? w : h);
-  applyHugFloor(node, sizing);
-}
-function placeChildren(built, parentLeft, parentTop, depth) {
-  for (const { obj, node, children, followers } of built) {
-    const before = followers && topLeft(obj);
-    const left = parentLeft + node.getComputedLeft();
-    const top = parentTop + node.getComputedTop();
-    const computedW = node.getComputedWidth();
-    const computedH = node.getComputedHeight();
-    const currentSize = scaledSize(obj);
-    const changedW = Math.abs(computedW - currentSize.w) > 0.5;
-    const changedH = Math.abs(computedH - currentSize.h) > 0.5;
-    if (isTextObject(obj)) {
-      if (changedW || changedH) obj.layoutWith({ w: computedW, h: computedH });
-    } else {
-      const ext = obj;
-      if (!children && (computedW < currentSize.w - 0.5 || computedH < currentSize.h - 0.5) && !ext._layoutIntrinsic) {
-        ext._layoutIntrinsic = currentSize;
-      }
-      if (changedW || changedH) {
-        setShapeSize(obj, changedW ? computedW : currentSize.w, changedH ? computedH : currentSize.h);
-      }
-    }
-    const { w: childW, h: childH } = scaledSize(obj);
-    const objLeft = obj.originX === "center" ? left + childW / 2 : obj.originX === "right" ? left + childW : left;
-    const objTop = obj.originY === "center" ? top + childH / 2 : obj.originY === "bottom" ? top + childH : top;
-    obj.set({ left: objLeft, top: objTop });
-    if (before) {
-      const after = topLeft(obj);
-      translateObjects(followers, after.x - before.x, after.y - before.y);
-    }
-    if (depth > 0) obj.setCoords();
-    if (children) placeChildren(children, left, top, depth + 1);
-  }
-}
-function mapAlignItems(align, Y) {
-  switch (align) {
-    case "stretch":
-      return Y.ALIGN_STRETCH;
-    case "flex-start":
-      return Y.ALIGN_FLEX_START;
-    case "flex-end":
-      return Y.ALIGN_FLEX_END;
-    case "center":
-      return Y.ALIGN_CENTER;
-    default:
-      return Y.ALIGN_FLEX_START;
-  }
-}
-function mapAlignSelf(align, Y) {
-  switch (align) {
-    case "stretch":
-      return Y.ALIGN_STRETCH;
-    case "flex-start":
-      return Y.ALIGN_FLEX_START;
-    case "flex-end":
-      return Y.ALIGN_FLEX_END;
-    case "center":
-      return Y.ALIGN_CENTER;
-    default:
-      return Y.ALIGN_AUTO;
-  }
-}
-function mapJustifyContent(justify, Y) {
-  switch (justify) {
-    case "flex-start":
-      return Y.JUSTIFY_FLEX_START;
-    case "flex-end":
-      return Y.JUSTIFY_FLEX_END;
-    case "center":
-      return Y.JUSTIFY_CENTER;
-    case "space-between":
-      return Y.JUSTIFY_SPACE_BETWEEN;
-    case "space-around":
-      return Y.JUSTIFY_SPACE_AROUND;
-    default:
-      return Y.JUSTIFY_FLEX_START;
-  }
-}
-function setupTextMeasure(node, obj, Y) {
-  const t = obj;
-  node.setMeasureFunc((width, widthMode) => {
-    if (widthMode === Y.MEASURE_MODE_EXACTLY) t.layoutWith({ w: width });
-    else if (widthMode === Y.MEASURE_MODE_AT_MOST) t.layoutWith({ maxW: width });
-    else t.layoutWith({});
-    const { w, h } = scaledSize(obj);
-    return { width: w, height: h };
-  });
-}
-
-// src/layout/rotation.ts
-import { util as util4 } from "#fabric";
-function rotateAbout(obj, pivot, delta) {
-  if (!delta) return;
-  const center = obj.getCenterPoint().rotate(util4.degreesToRadians(delta), pivot);
-  obj.set({ angle: (obj.angle || 0) + delta });
-  obj.setPositionByOrigin(center, "center", "center");
-  obj.setCoords();
-}
-function inLocalFrame(root, objects, fn) {
-  const angle = root.angle || 0;
-  if (Math.abs(angle) < 1e-6) return fn();
-  const pivot = root.getCenterPoint();
-  const subtree = subtreeOf(objects, [root]);
-  for (const obj of subtree) rotateAbout(obj, pivot, -angle);
-  try {
-    return fn();
-  } finally {
-    for (const obj of subtree) rotateAbout(obj, pivot, angle);
-  }
-}
-
-// src/layout/free/fit.ts
-function fitFreeContainer(container, objects) {
-  inLocalFrame(container, objects, () => fitFreeContainerLocal(container, objects));
-}
-function fitFreeContainerLocal(container, objects) {
-  const children = childrenOf(objects, container).map((c) => c.obj).filter((child) => !isEclipsed(child));
-  if (children.length === 0) return;
-  for (const child of children) {
-    if (isFreeContainer(child)) fitFreeContainer(child, objects);
-    else if (isTextObject(child)) child.layoutWith({});
-  }
-  const box = outsetBox(unionBox(children.map(boxOf)), paddingOf(containerDataOf(container)));
-  setShapeSize(container, box.width, box.height);
-  placeTopLeft(container, box.left, box.top);
-}
-
-// src/layout/run.ts
-function runLayout(objects) {
-  for (const obj of objects) {
-    const layout = layoutOf(obj);
-    if (!layout?.container) continue;
-    if (parentContainerOf(obj, objects)) continue;
-    layoutTree(obj, objects);
-  }
-}
-function layoutTree(container, objects) {
-  inLocalFrame(container, objects, () => layoutTreeLocal(container, objects));
-}
-function layoutTreeLocal(container, objects) {
-  const cd = layoutOf(container).container;
-  const children = flowChildrenOf(objects, container);
-  if (children.length === 0) return;
-  if (cd.arrangement === "free") {
-    for (const { obj } of children) {
-      if (containerDataOf(obj)) layoutTree(obj, objects);
-    }
-    fitFreeContainer(container, objects);
-    return;
-  }
-  fitGroupsUnder(container, objects);
-  layoutContainer(container, cd, children, objects);
-}
-function fitGroupsUnder(container, objects) {
-  for (const { obj } of childrenOf(objects, container)) {
-    if (!containerDataOf(obj)) continue;
-    if (isFreeContainer(obj)) layoutTree(obj, objects);
-    else fitGroupsUnder(obj, objects);
-  }
-}
-function layoutContainer(container, cd, children, allObjects) {
-  const sizing = sizingOf(container);
-  const minW = sizing.minSize?.w ?? 0;
-  const minH = sizing.minSize?.h ?? 0;
-  const { w: visW, h: visH } = scaledSize(container);
-  const currentW = sizing.x === "hug" ? Math.max(visW, minW) : visW;
-  const currentH = sizing.y === "hug" ? Math.max(visH, minH) : visH;
-  const tl = topLeft(container);
-  const { w: requiredW, h: requiredH } = yogaLayout(
-    children,
-    tl.x,
-    tl.y,
-    currentW,
-    currentH,
-    cd,
-    sizing,
-    allObjects
-  );
-  const finalW = sizing.x === "hug" ? Math.max(requiredW, minW) : currentW;
-  const finalH = sizing.y === "hug" ? Math.max(requiredH, minH) : currentH;
-  setShapeSize(container, finalW, finalH);
-  if (finalW !== currentW || finalH !== currentH) {
-    const tl2 = topLeft(container);
-    yogaLayout(children, tl2.x, tl2.y, finalW, finalH, cd, sizing, allObjects);
-  }
-  syncCoords(container, children);
-}
 
 // src/node.ts
 var require2 = createRequire(import.meta.url);

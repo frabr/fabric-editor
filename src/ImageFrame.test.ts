@@ -169,5 +169,53 @@ describe("recadrage", () => {
   it("un cadre en attente ne se recadre pas", async () => {
     const frame = await ImageFrame.fromObject(frameData({ content_medium_id: 7 }));
     expect(frame.croppable).toBe(false);
+  });});
+
+describe("contain : le cadre prend la forme de son image", () => {
+  const sized = (w: number, h: number) => new FabricImage(createCanvas(w, h) as unknown as HTMLCanvasElement);
+  // La boîte d'un logo : 260 × 92
+  const logo = (img: FabricImage) => new ImageFrame(img, { frameWidth: 260, frameHeight: 92, fit: "contain" });
+
+  it("le côté le plus long se cale sur la boîte, l'autre suit le ratio", () => {
+    const square = logo(sized(50, 50));
+    expect([square.frameWidth, square.frameHeight]).toEqual([92, 92]);
+    expect([square.width, square.height]).toEqual([92, 92]);
+    const wide = logo(sized(400, 100));
+    expect([wide.frameWidth, wide.frameHeight]).toEqual([260, 65]);
+    // L'image remplit le cadre, sans recadrage
+    expect(wide.photoRect()).toEqual({ x: 0, y: 0, w: 260, h: 65 });
+  });
+
+  it("une autre image (remplacée, ou la valeur d'une source liée) redonne sa forme au cadre", () => {
+    const frame = logo(sized(50, 50));
+    frame.replaceImage(sized(300, 100));
+    expect([frame.frameWidth, frame.frameHeight]).toEqual([260, 260 / 3]);
+    frame.showValue(sized(100, 200));
+    expect([frame.frameWidth, frame.frameHeight]).toEqual([46, 92]);
+  });
+
+  it("sans image, il occupe la boîte", async () => {
+    const frame = await ImageFrame.fromObject({ ...frameData({ content_medium_id: 7 }), frameWidth: 260, frameHeight: 92, fit: "contain" });
+    expect([frame.frameWidth, frame.frameHeight]).toEqual([260, 92]);
+    frame.showValue(sized(50, 50));
+    frame.clearSource();
+    expect([frame.frameWidth, frame.frameHeight]).toEqual([260, 92]);
+  });
+
+  it("se sauve avec sa boîte, pas la taille du moment ; redimensionné, c'est la boîte qui change", async () => {
+    const frame = logo(sized(50, 50));
+    expect(frame.toObject()).toMatchObject({ fit: "contain", frameWidth: 260, frameHeight: 92 });
+    frame.resizeFrame(130, 46);
+    expect([frame.frameWidth, frame.frameHeight]).toEqual([46, 46]);
+    expect(frame.toObject()).toMatchObject({ frameWidth: 130, frameHeight: 46 });
+
+    const back = await ImageFrame.fromObject({ ...frameData({ src: PIXEL }), frameWidth: 260, frameHeight: 92, fit: "contain" });
+    expect([back.frameWidth, back.frameHeight]).toEqual([92, 92]);
+  });
+
+  it("en cover, rien ne change et le mode n'est pas écrit", () => {
+    const frame = new ImageFrame(sized(50, 50), { frameWidth: 260, frameHeight: 92 });
+    expect([frame.frameWidth, frame.frameHeight]).toEqual([260, 92]);
+    expect(frame.toObject().fit).toBeUndefined();
   });
 });

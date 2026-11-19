@@ -149,13 +149,13 @@ __export(node_exports, {
 });
 module.exports = __toCommonJS(node_exports);
 var import_module = require("module");
-var import_fabric16 = require("#fabric");
+var import_fabric17 = require("#fabric");
 
 // src/LayerManager.ts
-var import_fabric14 = require("#fabric");
+var import_fabric16 = require("#fabric");
 
 // src/controls/CustomTextbox.ts
-var import_fabric3 = require("#fabric");
+var import_fabric4 = require("#fabric");
 
 // src/layout/types.ts
 var MIN_FONT_SIZE = 8;
@@ -399,9 +399,10 @@ function parseHex(hex) {
 var DEFAULT_GUIDE_COLOR = "#d946ef";
 
 // src/userSlots.ts
-var import_fabric2 = require("#fabric");
+var import_fabric3 = require("#fabric");
 
 // src/bindings.ts
+var import_fabric2 = require("#fabric");
 function pendingBindings(obj) {
   const bindings = obj.get("bindings") || {};
   return Object.fromEntries(Object.entries(bindings).filter(([, spec]) => spec?.resolved !== true));
@@ -435,7 +436,7 @@ var CHECKER_DARK = "#e5e7eb";
 var checkerSource = null;
 function checkerTile() {
   if (checkerSource) return checkerSource;
-  const tile = import_fabric2.util.createCanvasElement();
+  const tile = import_fabric3.util.createCanvasElement();
   tile.width = tile.height = CELL * 2;
   const ctx = tile.getContext("2d");
   ctx.fillStyle = CHECKER_LIGHT;
@@ -447,7 +448,7 @@ function checkerTile() {
   return tile;
 }
 function checkerCanvas(width, height) {
-  const el = import_fabric2.util.createCanvasElement();
+  const el = import_fabric3.util.createCanvasElement();
   el.width = Math.max(1, Math.round(width));
   el.height = Math.max(1, Math.round(height));
   const ctx = el.getContext("2d");
@@ -456,7 +457,7 @@ function checkerCanvas(width, height) {
   return el;
 }
 function transparentCanvas(width, height) {
-  const el = import_fabric2.util.createCanvasElement();
+  const el = import_fabric3.util.createCanvasElement();
   el.width = Math.max(1, Math.round(width));
   el.height = Math.max(1, Math.round(height));
   return el;
@@ -464,7 +465,7 @@ function transparentCanvas(width, height) {
 function checkerPattern(obj) {
   const sx = obj.scaleX || 1;
   const sy = obj.scaleY || 1;
-  return new import_fabric2.Pattern({ source: checkerTile(), repeat: "repeat", patternTransform: [1 / sx, 0, 0, 1 / sy, 0, 0] });
+  return new import_fabric3.Pattern({ source: checkerTile(), repeat: "repeat", patternTransform: [1 / sx, 0, 0, 1 / sy, 0, 0] });
 }
 var USER_SLOT_STYLE_KEY = "userSlotStyle";
 var DEFAULT_COLOR = DEFAULT_GUIDE_COLOR;
@@ -609,9 +610,9 @@ function drawUserTextOutline(ctx, obj) {
 }
 
 // src/controls/CustomTextbox.ts
-var { changeObjectWidth, changeObjectHeight } = import_fabric3.controlsUtils;
+var { changeObjectWidth, changeObjectHeight } = import_fabric4.controlsUtils;
 var UNBOUNDED_WIDTH = 1e4;
-var CustomTextbox = class extends import_fabric3.Textbox {
+var CustomTextbox = class extends import_fabric4.Textbox {
   constructor(text, options) {
     super(text, options);
     /** La sélection d'avant le dernier mouvement : dit dans quel sens on traverse un token. */
@@ -1174,11 +1175,11 @@ var CustomTextbox = class extends import_fabric3.Textbox {
     const upperCanvas = this.canvas.upperCanvasEl;
     const upperCanvasWidth = upperCanvas.width / retinaScaling;
     const upperCanvasHeight = upperCanvas.height / retinaScaling;
-    const p = new import_fabric3.Point(
+    const p = new import_fabric4.Point(
       boundaries.left + leftOffset,
       boundaries.top + boundaries.topOffset + charHeight
     ).transform(this.calcTransformMatrix()).transform(this.canvas.viewportTransform).multiply(
-      new import_fabric3.Point(
+      new import_fabric4.Point(
         upperCanvas.clientWidth / upperCanvasWidth,
         upperCanvas.clientHeight / upperCanvasHeight
       )
@@ -1257,7 +1258,7 @@ function sendBlocksBackward(objects, moved) {
 }
 
 // src/capabilities.ts
-var import_fabric8 = require("#fabric");
+var import_fabric9 = require("#fabric");
 
 // src/locking.ts
 function getLockMode(obj) {
@@ -1279,7 +1280,7 @@ function applyLockMode(obj, mode) {
 }
 
 // src/shapes/FabRect.ts
-var import_fabric4 = require("#fabric");
+var import_fabric5 = require("#fabric");
 
 // src/shapes/lockMixin.ts
 var LOCK_MODES = ["free", "position", "full"];
@@ -1316,8 +1317,8 @@ function installLockMethods(proto) {
 }
 
 // src/shapes/FabRect.ts
-var { changeObjectWidth: changeObjectWidth2, changeObjectHeight: changeObjectHeight2 } = import_fabric4.controlsUtils;
-var FabRect = class extends import_fabric4.Rect {
+var { changeObjectWidth: changeObjectWidth2, changeObjectHeight: changeObjectHeight2 } = import_fabric5.controlsUtils;
+var FabRect = class extends import_fabric5.Rect {
   constructor(options) {
     super({
       originX: "center",
@@ -1369,12 +1370,12 @@ FabRect.type = "Rect";
 FabRect.customProperties = ["layerId", "layerType", "lockMode", "lockContent"];
 installLockMethods(FabRect.prototype);
 installUserSlotRendering(FabRect.prototype);
-import_fabric4.classRegistry.setClass(FabRect, "Rect");
+import_fabric5.classRegistry.setClass(FabRect, "Rect");
 
 // src/shapes/FabCircle.ts
-var import_fabric5 = require("#fabric");
-var { changeObjectWidth: changeObjectWidth3, changeObjectHeight: changeObjectHeight3 } = import_fabric5.controlsUtils;
-var FabCircle = class extends import_fabric5.Circle {
+var import_fabric6 = require("#fabric");
+var { changeObjectWidth: changeObjectWidth3, changeObjectHeight: changeObjectHeight3 } = import_fabric6.controlsUtils;
+var FabCircle = class extends import_fabric6.Circle {
   constructor(options) {
     super({
       originX: "center",
@@ -1425,10 +1426,10 @@ FabCircle.type = "Circle";
 FabCircle.customProperties = ["layerId", "layerType", "lockMode", "lockContent"];
 installLockMethods(FabCircle.prototype);
 installUserSlotRendering(FabCircle.prototype);
-import_fabric5.classRegistry.setClass(FabCircle, "Circle");
+import_fabric6.classRegistry.setClass(FabCircle, "Circle");
 
 // src/shapes/FabPath.ts
-var import_fabric6 = require("#fabric");
+var import_fabric7 = require("#fabric");
 
 // src/shapes/registry.ts
 var registry = [];
@@ -1449,9 +1450,9 @@ function clipDataFor(id) {
 }
 
 // src/shapes/FabPath.ts
-var { changeObjectWidth: changeObjectWidth4, changeObjectHeight: changeObjectHeight4 } = import_fabric6.controlsUtils;
+var { changeObjectWidth: changeObjectWidth4, changeObjectHeight: changeObjectHeight4 } = import_fabric7.controlsUtils;
 var DEFAULT_SIZE = 300;
-var _FabPath = class _FabPath extends import_fabric6.Path {
+var _FabPath = class _FabPath extends import_fabric7.Path {
   constructor(path, options) {
     super(path, {
       originX: "center",
@@ -1559,11 +1560,11 @@ _FabPath.customProperties = ["layerId", "layerType", "lockMode", "lockContent"];
 var FabPath = _FabPath;
 installLockMethods(FabPath.prototype);
 installUserSlotRendering(FabPath.prototype);
-import_fabric6.classRegistry.setClass(FabPath, "Path");
+import_fabric7.classRegistry.setClass(FabPath, "Path");
 
 // src/shapes/FabGroup.ts
-var import_fabric7 = require("#fabric");
-var FabGroup = class extends import_fabric7.Group {
+var import_fabric8 = require("#fabric");
+var FabGroup = class extends import_fabric8.Group {
   /** La couleur commune des enfants ; null quand ils diffèrent (une œuvre polychrome). */
   commonFill() {
     const fills = this.getObjects().map((child) => child.fill);
@@ -1582,15 +1583,15 @@ function sameFill(a, b) {
   if (!a || !b || typeof a === "string" || typeof b === "string") return false;
   return JSON.stringify(a) === JSON.stringify(b);
 }
-import_fabric7.classRegistry.setClass(FabGroup, "Group");
+import_fabric8.classRegistry.setClass(FabGroup, "Group");
 
 // src/capabilities.ts
 function kindOf(obj) {
   const layerType = obj.layerType;
   if (isTextObject(obj)) return "text";
   if (layerType === "imageFrame") return "imageShape";
-  if (obj instanceof import_fabric8.FabricImage) return "legacyImage";
-  if (layerType === "shape" || obj instanceof import_fabric8.Rect) return "shape";
+  if (obj instanceof import_fabric9.FabricImage) return "legacyImage";
+  if (layerType === "shape" || obj instanceof import_fabric9.Rect) return "shape";
   return "other";
 }
 function rulesOf(obj, { ignoreLock = false } = {}) {
@@ -1634,7 +1635,7 @@ function kindRules(obj, kind) {
     case "shape":
       return {
         kind,
-        onToolboxImage: obj instanceof import_fabric8.Group ? null : "fill",
+        onToolboxImage: obj instanceof import_fabric9.Group ? null : "fill",
         hosts: true,
         options: shapeOptions(obj),
         ...free
@@ -1664,10 +1665,10 @@ function isOutOfPlay(obj) {
 }
 
 // src/shapes/factories.ts
-var import_fabric10 = require("#fabric");
+var import_fabric11 = require("#fabric");
 
 // src/controls/cropControls.ts
-var import_fabric9 = require("#fabric");
+var import_fabric10 = require("#fabric");
 var CROP_CONFIGS = {
   left: {
     dimension: "width",
@@ -1761,7 +1762,7 @@ function addCropControls(obj) {
   sides.forEach((side) => {
     const position = CONTROL_POSITIONS[side];
     const controlName = CONTROL_NAMES[side];
-    obj.controls[controlName] = new import_fabric9.Control({
+    obj.controls[controlName] = new import_fabric10.Control({
       x: position.x,
       y: position.y,
       actionHandler: createCropActionHandler(side),
@@ -1779,7 +1780,7 @@ function createCircle(options) {
   return new FabCircle(options);
 }
 async function createImage(url, options) {
-  const img = await import_fabric10.FabricImage.fromURL(url, { crossOrigin: "anonymous" });
+  const img = await import_fabric11.FabricImage.fromURL(url, { crossOrigin: "anonymous" });
   let scale = 1;
   if (img.width > 300 || img.height > 300) {
     scale = Math.min(300 / img.width, 300 / img.height);
@@ -1887,7 +1888,7 @@ function isValidShape(id) {
 }
 
 // src/layout/geometry.ts
-var import_fabric11 = require("#fabric");
+var import_fabric12 = require("#fabric");
 function scaledSize(obj) {
   return {
     w: obj.width * (obj.scaleX || 1),
@@ -1928,7 +1929,7 @@ function outsetBox(box, pad) {
   return insetBox(box, { top: -pad.top, right: -pad.right, bottom: -pad.bottom, left: -pad.left });
 }
 function placeTopLeft(obj, x, y) {
-  obj.setPositionByOrigin(new import_fabric11.Point(x, y), "left", "top");
+  obj.setPositionByOrigin(new import_fabric12.Point(x, y), "left", "top");
   obj.setCoords();
 }
 function syncCoords(container, children) {
@@ -1939,10 +1940,10 @@ function syncCoords(container, children) {
 }
 
 // src/ImageFrame.ts
-var import_fabric13 = require("#fabric");
+var import_fabric14 = require("#fabric");
 
 // src/imageSlots.ts
-var import_fabric12 = require("#fabric");
+var import_fabric13 = require("#fabric");
 var IMAGE_SLOT_FIELD = "image.src";
 var EACH_MEDIA = "each";
 function imageSlotBinding(obj) {
@@ -2114,7 +2115,7 @@ function rotatePoint(dx, dy, angleDeg) {
     y: dx * Math.sin(angle) + dy * Math.cos(angle)
   };
 }
-var ImageFrame = class _ImageFrame extends import_fabric13.Group {
+var ImageFrame = class _ImageFrame extends import_fabric14.Group {
   constructor(image, options = {}) {
     const frameScale = options.frameScale ?? 1;
     const frameWidth = options.frameWidth ?? image.width * frameScale;
@@ -2142,12 +2143,16 @@ var ImageFrame = class _ImageFrame extends import_fabric13.Group {
       height: frameHeight,
       subTargetCheck: false,
       interactive: false,
-      layoutManager: new import_fabric13.LayoutManager(new import_fabric13.FixedLayout()),
+      layoutManager: new import_fabric14.LayoutManager(new import_fabric14.FixedLayout()),
       // Désactiver le cache pour que le clipPath soit redessiné à chaque frame
       objectCaching: false
     });
     /** Corner radius in pixels for "rect" clip shape. 0 = sharp corners. */
     this.cornerRadius = 0;
+    /** Cf. ImageFrameData.fit. */
+    this.fit = "cover";
+    /** En contain, la boîte où l'image se cale ; frameWidth/frameHeight sont alors sa taille. */
+    this._box = null;
     this._crop = NO_CROP;
     this._imageMeta = {};
     this._source = "document";
@@ -2167,6 +2172,11 @@ var ImageFrame = class _ImageFrame extends import_fabric13.Group {
       1
     );
     this._imageMeta = { ...options.imageMeta ?? {} };
+    if (options.fit === "contain") {
+      this.fit = "contain";
+      this._box = { w: frameWidth, h: frameHeight };
+      this._fitFrame();
+    }
     if (options.layerId) {
       this.set("layerId", options.layerId);
     }
@@ -2201,9 +2211,11 @@ var ImageFrame = class _ImageFrame extends import_fabric13.Group {
   }
   /** Un cadre en attente : l'image est le damier, aux dimensions du cadre. */
   static pending(options) {
-    const img = new import_fabric13.FabricImage(checkerCanvas(options.frameWidth, options.frameHeight));
+    const img = new import_fabric14.FabricImage(checkerCanvas(options.frameWidth, options.frameHeight));
     const frame = new _ImageFrame(img, options);
     frame._source = "none";
+    frame._fitFrame();
+    frame._applyCrop();
     return frame;
   }
   /** L'image affichée n'est pas celle du document (une url de session, le temps d'un
@@ -2231,7 +2243,7 @@ var ImageFrame = class _ImageFrame extends import_fabric13.Group {
   clearSource() {
     this._imageMeta = {};
     this._source = "none";
-    this._swapImage(new import_fabric13.FabricImage(checkerCanvas(this.frameWidth, this.frameHeight)));
+    this._swapImage(new import_fabric14.FabricImage(checkerCanvas(this.frameWidth, this.frameHeight)));
     this.dirty = true;
     this.canvas?.requestRenderAll();
   }
@@ -2313,8 +2325,7 @@ var ImageFrame = class _ImageFrame extends import_fabric13.Group {
     }
     newImage.group = this;
     this._image = newImage;
-    this.width = this.frameWidth;
-    this.height = this.frameHeight;
+    this._fitFrame();
     this._applyClip(savedClipShape);
     this.setCoords();
     this._applyCrop();
@@ -2324,10 +2335,10 @@ var ImageFrame = class _ImageFrame extends import_fabric13.Group {
    * zone autant que possible.
    */
   resizeFrame(newWidth, newHeight) {
+    if (this._box) this._box = { w: newWidth, h: newHeight };
     this.frameWidth = newWidth;
     this.frameHeight = newHeight;
-    this.width = newWidth;
-    this.height = newHeight;
+    this._fitFrame();
     this._applyCrop();
     this._applyClip(this.clipShape || "rect");
     if (this.clipPath) {
@@ -2422,6 +2433,21 @@ var ImageFrame = class _ImageFrame extends import_fabric13.Group {
   // ─────────────────────────────────────────────────────────────
   // Méthodes privées
   // ─────────────────────────────────────────────────────────────
+  /**
+   * La taille du cadre : en contain, celle de l'image calée dans la boîte (la boîte entière
+   * sans image) ; sinon frameWidth/frameHeight tels quels. Le groupe suit.
+   */
+  _fitFrame() {
+    if (this._box) {
+      const { w: bw, h: bh } = this._box;
+      const nat = this.naturalSize;
+      const s = this._source === "none" || !nat.w || !nat.h ? 0 : Math.min(bw / nat.w, bh / nat.h);
+      this.frameWidth = s ? nat.w * s : bw;
+      this.frameHeight = s ? nat.h * s : bh;
+    }
+    this.width = this.frameWidth;
+    this.height = this.frameHeight;
+  }
   /** L'image dans le groupe (origine au centre) : cover × échelle, centre décalé selon le recadrage. */
   _applyCrop() {
     const nat = this.naturalSize;
@@ -2626,8 +2652,9 @@ var ImageFrame = class _ImageFrame extends import_fabric13.Group {
       angle: this.angle,
       scaleX: this.scaleX,
       scaleY: this.scaleY,
-      frameWidth: this.frameWidth,
-      frameHeight: this.frameHeight,
+      frameWidth: this._box?.w ?? this.frameWidth,
+      frameHeight: this._box?.h ?? this.frameHeight,
+      fit: this._box ? "contain" : void 0,
       clipShape: this.clipShape,
       clipData: this.clipData,
       cornerRadius: this.cornerRadius || void 0,
@@ -2657,9 +2684,10 @@ var ImageFrame = class _ImageFrame extends import_fabric13.Group {
       lockMode: data.lockMode,
       frameWidth: data.frameWidth,
       frameHeight: data.frameHeight,
+      fit: data.fit,
       imageMeta: imageMetaOf(data.image)
     };
-    const img = src ? await import_fabric13.FabricImage.fromURL(src, { crossOrigin: "anonymous" }) : null;
+    const img = src ? await import_fabric14.FabricImage.fromURL(src, { crossOrigin: "anonymous" }) : null;
     options.crop = cropX !== void 0 || cropY !== void 0 ? { x: cropX, y: cropY, scale } : cropFromCenterOffset(
       data.frameWidth,
       data.frameHeight,
@@ -2688,7 +2716,7 @@ var ImageFrame = class _ImageFrame extends import_fabric13.Group {
     if (data.opacity !== void 0) {
       frame.opacity = data.opacity;
     }
-    if (data.shadow) frame.set("shadow", new import_fabric13.Shadow(data.shadow));
+    if (data.shadow) frame.set("shadow", new import_fabric14.Shadow(data.shadow));
     return frame;
   }
   /**
@@ -2711,877 +2739,8 @@ var ImageFrame = class _ImageFrame extends import_fabric13.Group {
     });
   }
 };
-import_fabric13.classRegistry.setClass(ImageFrame);
-import_fabric13.classRegistry.setClass(ImageFrame, "ImageFrame");
-
-// src/LayerManager.ts
-var NEW_LAYER_RATIO = 0.4;
-var BACKGROUND_LAYER_ID = LEGACY_BACKGROUND_ID;
-var DEFAULT_SHAPE_FILL = "#d9d9d9";
-var LAYER_PROPS = ["layerId", "lockMode", "lockContent", "layout", "bindings", "bindingSegments"];
-var LayerManager = class {
-  constructor(canvas) {
-    this.canvas = canvas;
-    /** La dernière valeur demandée pour chaque cadre lié (showImageValue) : un chargement
-     *  dépassé ne s'affiche pas. */
-    this.valueRequests = /* @__PURE__ */ new WeakMap();
-  }
-  /**
-   * Retourne tous les calques (excluant l'image de fond)
-   */
-  get all() {
-    return this.canvas.getObjects().filter((obj) => obj.get("layerId") !== BACKGROUND_LAYER_ID);
-  }
-  /**
-   * Retourne l'image de fond
-   */
-  get background() {
-    return this.canvas.getObjects().find((obj) => obj.get("layerId") === BACKGROUND_LAYER_ID);
-  }
-  /**
-   * Trouve un calque par son ID
-   */
-  findById(layerId) {
-    return findById(this.canvas.getObjects(), layerId);
-  }
-  /**
-   * Charge l'image de fond
-   */
-  async loadBackgroundImage(url) {
-    const img = await import_fabric14.FabricImage.fromURL(url, { crossOrigin: "anonymous" });
-    const scaleX = this.canvas.width / img.width;
-    const scaleY = this.canvas.height / img.height;
-    const scale = Math.max(scaleX, scaleY);
-    img.set({
-      originX: "center",
-      originY: "center",
-      scaleX: scale,
-      scaleY: scale,
-      left: this.canvas.width / 2,
-      top: this.canvas.height / 2,
-      selectable: false,
-      evented: false,
-      layerId: BACKGROUND_LAYER_ID
-    });
-    this.canvas.add(img);
-    return img;
-  }
-  /**
-   * Désérialise plusieurs calques sans les ajouter au canvas — la moitié asynchrone
-   * (chargement d'images compris) du chargement, pour que l'appelant puisse faire le swap
-   * ancien/nouveau contenu de façon synchrone (anti-flicker).
-   */
-  async deserializeAll(layers) {
-    const objects = await Promise.all(layers.map((l) => this.deserialize(l)));
-    objects.forEach((obj, i) => {
-      if (!obj) return;
-      const data = layers[i];
-      const isBackground2 = data.layerId === BACKGROUND_ID;
-      if (isBackground2 || data.selectable === false) obj.selectable = false;
-      if (isBackground2 || data.evented === false) obj.evented = false;
-    });
-    return objects;
-  }
-  /**
-   * Charge plusieurs calques depuis leurs données JSON
-   */
-  async loadLayers(layers) {
-    const objects = await this.deserializeAll(layers);
-    objects.forEach((obj) => obj && this.add(obj));
-    return objects.filter(Boolean);
-  }
-  /**
-   * Ajoute un objet au canvas et le sélectionne (si interactif)
-   */
-  add(obj) {
-    this.canvas.add(obj);
-    if (obj.selectable !== false && typeof this.canvas.setActiveObject === "function") {
-      this.canvas.setActiveObject(obj);
-    }
-    return obj;
-  }
-  /** Le centre du document. */
-  get center() {
-    return new import_fabric14.Point(this.canvas.width / 2, this.canvas.height / 2);
-  }
-  /**
-   * La boîte d'un calque neuf (forme, image) : NEW_LAYER_RATIO du document dans chaque sens.
-   * Un calque y entre en gardant ses proportions. 40 % depuis le 2026-10-28 (c'était la
-   * moitié : trop grand, surtout pour une icône).
-   */
-  get newLayerBox() {
-    return { w: this.canvas.width * NEW_LAYER_RATIO, h: this.canvas.height * NEW_LAYER_RATIO };
-  }
-  fitNewLayerBox(obj) {
-    const { w, h } = scaledSize(obj);
-    const box = this.newLayerBox;
-    const scale = Math.min(box.w / w, box.h / h);
-    setShapeSize(obj, w * scale, h * scale);
-  }
-  /** Un calque ajouté sans position (un clic, pas un lâcher) se pose au centre du document. */
-  centerUnplaced(obj, options) {
-    if (options.left != null || options.top != null) return;
-    obj.setPositionByOrigin(this.center, "center", "center");
-    obj.setCoords();
-  }
-  /**
-   * Supprime un objet du canvas
-   */
-  remove(obj) {
-    this.canvas.remove(obj);
-  }
-  /**
-   * Supprime plusieurs objets
-   */
-  removeMany(objects) {
-    objects.forEach((obj) => this.canvas.remove(obj));
-  }
-  /**
-   * Monte l'objet (ou les objets) devant le premier objet de même niveau qui le
-   * chevauche. Un container emmène ses descendants (toujours au-dessus de lui) ; un enfant
-   * reste parmi les enfants de son container ; des objets montés ensemble ne se doublent pas.
-   */
-  bringForward(obj) {
-    const moved = Array.isArray(obj) ? obj : [obj];
-    const order = bringBlocksForward(this.canvas.getObjects(), moved, (a, b) => a.isOverlapping(b));
-    if (order) this.applyStackOrder(order);
-  }
-  /**
-   * Descend l'objet (ou les objets) d'un niveau, mêmes règles de blocs que bringForward.
-   * Ne peut pas descendre en dessous de l'image de fond.
-   */
-  sendBackward(obj) {
-    const moved = Array.isArray(obj) ? obj : [obj];
-    const order = sendBlocksBackward(this.canvas.getObjects(), moved);
-    if (order) this.applyStackOrder(order);
-  }
-  applyStackOrder(order) {
-    order.forEach((obj, index) => this.canvas.moveObjectTo(obj, index));
-    this.canvas.renderAll();
-  }
-  /**
-   * Crée et ajoute un calque texte
-   */
-  /**
-   * Crée un calque texte sans l'ajouter au canvas.
-   * Source unique des défauts texte — utilisé par addText et par le
-   * drag externe (DropHandler).
-   */
-  createText(options = {}) {
-    const {
-      text = "Tapez votre texte ici",
-      left = 100,
-      top = 100,
-      fontFamily = "Inter",
-      fontSize = 32,
-      fontWeight = "normal",
-      fill = "#000000",
-      layerId = this.generateId(),
-      placeholder = false
-    } = options;
-    const textObj = new CustomTextbox(text, {
-      left,
-      top,
-      fontFamily,
-      fontSize,
-      fontWeight,
-      fill
-    });
-    textObj.set("layerId", layerId);
-    if (placeholder) textObj.placeholder = true;
-    return textObj;
-  }
-  addText(options = {}) {
-    const textObj = this.createText(options);
-    this.centerUnplaced(textObj, options);
-    this.add(textObj);
-    return textObj;
-  }
-  /**
-   * Crée et ajoute un calque image dans un ImageFrame
-   */
-  async addImage(url, options = {}) {
-    const center = this.center;
-    const { left = center.x, top = center.y, layerId = this.generateId(), imageMeta } = options;
-    const img = await import_fabric14.FabricImage.fromURL(url, { crossOrigin: "anonymous" });
-    const box = this.newLayerBox;
-    const frameScale = Math.min(box.w / img.width, box.h / img.height);
-    const frame = new ImageFrame(img, { left, top, layerId, frameScale, imageMeta });
-    this.add(frame);
-    return frame;
-  }
-  /**
-   * Crée et ajoute une image simple (legacy, sans frame)
-   * Utilisé pour le background ou cas spéciaux
-   */
-  async addImageLegacy(url, options = {}) {
-    const { left = 100, top = 100, originX, originY, layerId = this.generateId() } = options;
-    const img = await createImage(url, { left, top, originX, originY, layerId });
-    this.add(img);
-    return img;
-  }
-  /**
-   * Remplace la source d'une image existante en conservant toutes ses propriétés
-   * Supporte à la fois ImageFrame et FabricImage legacy
-   *
-   * @param options.opacity - Opacité à appliquer (utile si target.opacity est temporairement modifiée)
-   * @param options.imageMeta - Les clés de la nouvelle source (une forme-image seulement)
-   * @param options.select - Sélectionner l'image remplacée (défaut)
-   *
-   * C'est un geste d'auteur : « cette image-ci, ici ». Un cadre dont la source était liée
-   * (imageSlots) se délie — sinon la liaison reprendrait la main au prochain affichage, et à
-   * l'expansion. L'hôte qui pose une image liée relie après (son binding), et montre la valeur
-   * d'une liaison par showImageValue, jamais par ici.
-   */
-  async replaceImageSource(target, newUrl, options) {
-    if (kindOf(target) === "imageShape") {
-      const frame = target;
-      const newImg = await import_fabric14.FabricImage.fromURL(newUrl, { crossOrigin: "anonymous" });
-      frame.replaceImage(newImg, options?.imageMeta);
-      if (imageSlotBinding(frame)) {
-        const { [IMAGE_SLOT_FIELD]: _unbound, ...bindings } = frame.get("bindings") ?? {};
-        frame.set("bindings", bindings);
-      }
-      if (options?.opacity !== void 0) {
-        frame.opacity = options.opacity;
-      }
-      if (frame.selectable !== false && options?.select !== false) this.canvas.setActiveObject(frame);
-      this.canvas.renderAll();
-      return frame;
-    }
-    return this._replaceImageSourceLegacy(target, newUrl, options);
-  }
-  /**
-   * Montre dans une forme-image la VALEUR de sa source liée (imageSlots) pour le lecteur du
-   * moment — ou, sans valeur (`null`), la vide : le cadre se dessine alors en emplacement.
-   * Affichage seul : rien n'entre dans le document (le cadre reste en attente, sauvé sans
-   * `src`), la sélection ne bouge pas. Sans effet sur ce qui n'est pas une forme-image.
-   */
-  async showImageValue(target, url) {
-    if (kindOf(target) !== "imageShape") return;
-    const frame = target;
-    this.valueRequests.set(frame, url);
-    if (!url) {
-      if (frame.displayedSrc) frame.clearSource();
-    } else if (url === frame.displayedSrc) {
-      if (!frame.pending) frame.showValue();
-    } else {
-      const image = await import_fabric14.FabricImage.fromURL(url, { crossOrigin: "anonymous" });
-      if (this.valueRequests.get(frame) !== url || !imageSlotBinding(target)) return;
-      frame.showValue(image);
-    }
-    this.canvas.requestRenderAll();
-  }
-  /**
-   * Remplace la source d'une image legacy (FabricImage sans frame)
-   * @internal
-   */
-  async _replaceImageSourceLegacy(target, newUrl, options) {
-    const oldCenter = target.getCenterPoint();
-    const props = {
-      angle: target.angle,
-      flipX: target.flipX,
-      flipY: target.flipY,
-      opacity: options?.opacity ?? target.opacity,
-      layerId: target.get("layerId"),
-      layerType: target.get("layerType")
-    };
-    const lockMode = getLockMode(target);
-    const newImg = await import_fabric14.FabricImage.fromURL(newUrl, { crossOrigin: "anonymous" });
-    const oldWidth = target.width * target.scaleX;
-    const oldHeight = target.height * target.scaleY;
-    const coverScale2 = Math.max(oldWidth / newImg.width, oldHeight / newImg.height);
-    let adjustedClipPath = target.clipPath;
-    if (target.clipPath) {
-      adjustedClipPath = await target.clipPath.clone();
-      const clipScaleX = (adjustedClipPath.scaleX || 1) * (target.scaleX / coverScale2);
-      const clipScaleY = (adjustedClipPath.scaleY || 1) * (target.scaleY / coverScale2);
-      adjustedClipPath.set({ scaleX: clipScaleX, scaleY: clipScaleY });
-    }
-    newImg.set({
-      ...props,
-      scaleX: coverScale2,
-      scaleY: coverScale2,
-      clipPath: adjustedClipPath,
-      originX: "center",
-      originY: "center",
-      left: oldCenter.x,
-      top: oldCenter.y
-    });
-    const index = this.canvas.getObjects().indexOf(target);
-    this.canvas.remove(target);
-    this.canvas.add(newImg);
-    if (index >= 0 && index < this.canvas.getObjects().length) {
-      this.canvas.moveObjectTo(newImg, index);
-    }
-    if (lockMode !== "free") {
-      applyLockMode(newImg, lockMode);
-    }
-    this.canvas.setActiveObject(newImg);
-    this.canvas.renderAll();
-    return newImg;
-  }
-  /**
-   * Remplace une forme (shape) par un ImageFrame contenant l'image donnée.
-   * La forme sert de masque : l'image épouse ses dimensions et son clipShape.
-   * L'ImageFrame est inséré au même z-index que la forme d'origine.
-   */
-  async replaceShapeWithImage(shape, imageUrl, imageMeta) {
-    const { clipShape, clipData, cornerRadius } = clipOfShape(shape);
-    const { w: displayedWidth, h: displayedHeight } = scaledSize(shape);
-    const center = shape.getRelativeCenterPoint();
-    const img = await import_fabric14.FabricImage.fromURL(imageUrl, { crossOrigin: "anonymous" });
-    const frame = new ImageFrame(img, {
-      left: center.x,
-      top: center.y,
-      angle: shape.angle,
-      layerId: shape.layerId || this.generateId(),
-      clipShape,
-      clipData,
-      imageMeta,
-      frameWidth: displayedWidth,
-      frameHeight: displayedHeight,
-      cornerRadius
-    });
-    const bindings = resolveUserSlot(shape.get("bindings"));
-    if (bindings) frame.set("bindings", bindings);
-    this.takeOver(shape, frame);
-    return frame;
-  }
-  /**
-   * Demande l'image à l'utilisateur final (userSlots) : le calque devient une forme liée à
-   * une image à fournir, avec sa consigne. Une forme le reste ; une forme-image redevient la
-   * forme de sa découpe, aux mêmes dimensions — son image est abandonnée (pas d'exemple :
-   * le damier dit « à fournir »), ses autres bindings la suivent.
-   *
-   * Rend la forme, ou null si le calque ne peut pas recevoir d'image (texte, groupe de paths).
-   */
-  requestUserImage(obj, hint = "") {
-    const bindings = {
-      ...obj.get("bindings") || {},
-      [USER_SLOT_FIELD]: { scope: USER_SCOPE, hint }
-    };
-    if (obj instanceof ImageFrame) {
-      const shape = shapeOfFrame(obj);
-      shape.set({
-        layerId: obj.get("layerId") || this.generateId(),
-        layerType: "shape",
-        angle: obj.angle,
-        bindings
-      });
-      shape.setPositionByOrigin(obj.getRelativeCenterPoint(), "center", "center");
-      this.takeOver(obj, shape);
-      return shape;
-    }
-    if (rulesOf(obj, { ignoreLock: true }).onToolboxImage !== "fill") return null;
-    obj.set({ bindings });
-    this.canvas.requestRenderAll();
-    return obj;
-  }
-  /**
-   * Donne un texte à personnaliser à l'utilisateur final (userTexts), ou le reprend
-   * (`requested: false`) : le texte du calque devient — ou cesse d'être — l'exemple. Un texte
-   * lié à une expression cesse de l'être. Son verrou est réappliqué : un texte à personnaliser
-   * s'édite même verrouillé.
-   *
-   * Rend le texte, ou null si le calque n'en est pas un.
-   */
-  setUserText(obj, requested = true) {
-    if (!isTextObject(obj)) return null;
-    const bindings = obj.get("bindings");
-    obj.set({ bindings: requested ? requestUserText(bindings) : releaseUserText(bindings) });
-    applyLockMode(obj, getLockMode(obj));
-    this.canvas.requestRenderAll();
-    return obj;
-  }
-  /**
-   * Un calque en remplace un autre à sa place : son layout (container, enfant) et son
-   * verrouillage — sinon ses enfants restent orphelins, ou il sort de son container — et
-   * son rang dans la pile (sous ses enfants).
-   */
-  takeOver(previous, next) {
-    const layout = layoutOf(previous);
-    if (layout) next.set("layout", JSON.parse(JSON.stringify(layout)));
-    const lockMode = getLockMode(previous);
-    if (lockMode !== "free") applyLockMode(next, lockMode);
-    const zIndex = this.canvas.getObjects().indexOf(previous);
-    this.canvas.remove(previous);
-    this.canvas.add(next);
-    if (zIndex >= 0 && zIndex < this.canvas.getObjects().length) {
-      this.canvas.moveObjectTo(next, zIndex);
-    }
-    this.canvas.setActiveObject(next);
-    this.canvas.renderAll();
-  }
-  /**
-   * Crée et ajoute un calque forme (rectangle par défaut)
-   */
-  /**
-   * Crée un calque forme sans l'ajouter au canvas.
-   * Source unique des défauts forme — utilisé par addShape et par le
-   * drag externe (DropHandler).
-   */
-  createShape(options = {}) {
-    const {
-      left = 100,
-      top = 100,
-      fill = DEFAULT_SHAPE_FILL,
-      stroke,
-      shapeType = "rect",
-      layerId = this.generateId()
-    } = options;
-    const common = { fill, stroke, left, top, width: options.width, height: options.height };
-    const shape = options.paths?.length ? createPathsShape(options.paths, { id: shapeType, ...common }) : createShape(shapeType, common);
-    shape.set({ layerId, layerType: "shape" });
-    if (options.width == null && options.height == null) this.fitNewLayerBox(shape);
-    return shape;
-  }
-  /** Crée un cadre à fournir (un rect lié, cf. userSlots) sans l'ajouter au canvas. */
-  createUserSlot(options = {}) {
-    const { hint = "", ...shapeOptions2 } = options;
-    const shape = this.createShape({ fill: "#ffffff", ...shapeOptions2, shapeType: "rect" });
-    shape.set({ bindings: { [USER_SLOT_FIELD]: { scope: USER_SCOPE, hint } } });
-    return shape;
-  }
-  addUserSlot(options = {}) {
-    const shape = this.createUserSlot(options);
-    this.centerUnplaced(shape, options);
-    this.add(shape);
-    return shape;
-  }
-  addShape(options = {}) {
-    const shape = this.createShape(options);
-    this.centerUnplaced(shape, options);
-    this.add(shape);
-    return shape;
-  }
-  /**
-   * @legacy Fusionne des objets dans un `fabric.Group` (éditeur SAFTI legacy, « fusionner
-   * les calques »). Pour grouper dans l'éditeur : `FabricEditor.groupSelection` (un groupe
-   * libre, ses objets restent des calques).
-   */
-  groupObjects(objects) {
-    const group = new import_fabric14.Group(objects);
-    objects.forEach((obj) => this.canvas.remove(obj));
-    this.canvas.add(group);
-    this.canvas.setActiveObject(group);
-    this.canvas.requestRenderAll();
-    return group;
-  }
-  /**
-   * Sérialise tous les calques en JSON
-   * Inclut les propriétés custom : layerId, lockMode, lockContent
-   */
-  serialize() {
-    return this.all.map((obj) => obj.toObject([...LAYER_PROPS]));
-  }
-  /**
-   * Désérialise un calque depuis ses données JSON
-   * Les images legacy (type "Image") sont automatiquement migrées vers ImageFrame
-   */
-  async deserialize(layer) {
-    let obj = null;
-    switch (layer.type) {
-      case "IText":
-      case "i-text":
-      case "Textbox":
-      case "textbox": {
-        const text = await CustomTextbox.fromObject(layer);
-        text.charSpacing = text.charSpacing || 1;
-        obj = text;
-        break;
-      }
-      case "ImageFrame":
-      case "imageFrame": {
-        obj = await ImageFrame.fromObject(layer);
-        break;
-      }
-      case "Image":
-      case "image": {
-        const img = await import_fabric14.FabricImage.fromObject({
-          ...layer,
-          crossOrigin: "anonymous"
-        });
-        const clipShape = this.detectLegacyClipShape(layer.clipPath);
-        obj = ImageFrame.fromLegacyImage(img, {
-          clipShape,
-          layerId: layer.layerId,
-          lockMode: layer.lockMode
-        });
-        break;
-      }
-      case "Group":
-      case "group":
-        obj = await FabGroup.fromObject(layer);
-        break;
-      case "Rect":
-      case "rect":
-        obj = await FabRect.fromObject(layer);
-        break;
-      case "Path":
-      case "path":
-        obj = await FabPath.fromObject(layer);
-        break;
-      case "Circle":
-      case "circle":
-        obj = await FabCircle.fromObject(layer);
-        break;
-      default:
-        console.warn(`Type de calque inconnu: ${layer.type}`);
-        return null;
-    }
-    const migrated = obj && migrateLegacyLayout(layoutOf(obj));
-    if (obj && migrated) obj.set("layout", migrated);
-    if (obj) restoreBindings(obj, layer);
-    if (obj && layer.lockMode) {
-      const mode = layer.lockMode;
-      if ("applyLockMode" in obj && typeof obj.applyLockMode === "function") {
-        obj.applyLockMode(mode);
-      } else {
-        applyLockMode(obj, mode);
-      }
-    }
-    return obj;
-  }
-  /**
-   * Applique un mode de verrouillage à un objet
-   * Délègue à la fonction du module locking.ts
-   */
-  applyLockMode(obj, mode) {
-    applyLockMode(obj, mode);
-  }
-  /**
-   * Génère un ID unique pour un calque
-   */
-  generateId() {
-    return `layer_${Date.now()}_${Math.floor(Math.random() * 1e3)}`;
-  }
-  /**
-   * Détecte le type de clip depuis un clipPath legacy sérialisé
-   */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  detectLegacyClipShape(clipPath) {
-    if (!clipPath) return void 0;
-    if (clipPath.id && isValidShape(clipPath.id)) {
-      return clipPath.id;
-    }
-    const type = clipPath.type?.toLowerCase();
-    if (type === "circle") {
-      return "circle";
-    }
-    if (type === "rect") {
-      return "rect";
-    }
-    if (type === "path") {
-      return this.detectClipPath(clipPath);
-    }
-    return void 0;
-  }
-  /* Pour détecter les anciens clippath (dans les signatures notamment)*/
-  detectClipPath(clipPath) {
-    if (clipPath.type.toLowerCase() !== "path") {
-      return "heart";
-    }
-    const path = clipPath.path;
-    if (!Array.isArray(path)) {
-      return "heart";
-    }
-    let count = {
-      M: 0,
-      L: 0,
-      C: 0,
-      Q: 0,
-      Z: 0
-    };
-    for (const cmd of path) {
-      const type = cmd[0];
-      if (type in count) {
-        count[type]++;
-      }
-    }
-    if (count.Q === 0 && count.L === 6 && count.C === 6 && count.M === 1 && count.Z === 1) {
-      return "hexagon";
-    }
-    return "heart";
-  }
-};
-function shapeOfFrame(frame) {
-  const { w, h } = scaledSize(frame);
-  const fill = "#ffffff";
-  const strokeWidth = 0;
-  const clipShape = frame.clipShape || "rect";
-  if (clipShape === "circle") {
-    const circle = new FabCircle({ radius: Math.min(w, h) / 2, fill, strokeWidth });
-    circle.setSize(w, h);
-    return circle;
-  }
-  const clipData = clipShape === "rect" ? void 0 : frame.clipData ?? clipDataFor(clipShape);
-  if (clipData) return FabPath.fromPathData({ d: clipData.d }, { id: clipShape, fill, strokeWidth, width: w, height: h });
-  return new FabRect({ width: w, height: h, rx: frame.cornerRadius, ry: frame.cornerRadius, fill, strokeWidth });
-}
-function clipOfShape(shape) {
-  if (shape instanceof FabRect) return { clipShape: "rect", cornerRadius: shape.getCornerRadius() };
-  if (shape instanceof FabCircle) return { clipShape: "circle", cornerRadius: 0 };
-  if (shape instanceof FabPath) {
-    const id = shape.id;
-    const clipData = {
-      d: import_fabric14.util.joinPath(shape.path),
-      width: shape.width,
-      height: shape.height,
-      ...shape.fillRule === "evenodd" ? { fillRule: "evenodd" } : {}
-    };
-    return { clipShape: id && isValidShape(id) ? id : id || "custom", clipData, cornerRadius: 0 };
-  }
-  return { clipShape: "rect", cornerRadius: 0 };
-}
-
-// src/PersistenceManager.ts
-var PersistenceManager = class {
-  constructor(canvas, layers) {
-    this.canvas = canvas;
-    this.layers = layers;
-    this.pendingUploads = null;
-  }
-  /**
-   * Configure le gestionnaire d'uploads en attente
-   */
-  setPendingUploads(manager) {
-    this.pendingUploads = manager;
-  }
-  /**
-   * Sauvegarde l'état actuel de l'éditeur
-   *
-   * Si des fichiers sont en attente d'upload, ils sont uploadés en parallèle
-   * du rendu canvas pour optimiser le temps total.
-   */
-  async save(options = {}) {
-    const { rasterize = false } = options;
-    this.canvas.discardActiveObject();
-    const [urlMap, dataUrl] = await Promise.all([
-      this.uploadPendingFiles(),
-      rasterize ? this.rasterize() : Promise.resolve(void 0)
-    ]);
-    let layersData = this.layers.serialize();
-    let uploadedAssets;
-    if (urlMap.size > 0) {
-      const { PendingUploadsManager: PendingUploadsManager2 } = await Promise.resolve().then(() => (init_PendingUploadsManager(), PendingUploadsManager_exports));
-      layersData = PendingUploadsManager2.replaceUrls(layersData, urlMap);
-      uploadedAssets = Array.from(urlMap.values());
-    }
-    return {
-      layers: layersData,
-      dataUrl,
-      uploadedAssets
-    };
-  }
-  /**
-   * Upload les fichiers en attente vers Cloudinary
-   */
-  async uploadPendingFiles() {
-    if (!this.pendingUploads) {
-      return /* @__PURE__ */ new Map();
-    }
-    return this.pendingUploads.uploadAll();
-  }
-  /**
-   * Rasterise le canvas en image base64
-   */
-  async rasterize() {
-    return this.canvas.toFrameDataURL({ format: "png", quality: 1, multiplier: 1 });
-  }
-  /**
-   * Compacte le canvas autour des calques (pour le mode standalone)
-   *
-   * Calcule le bounding box manuellement sans Group, car Fabric.js 7
-   * transforme les coordonnées des enfants en relatif au centre du groupe.
-   */
-  compactAroundLayers() {
-    const layerObjects = this.layers.all;
-    if (layerObjects.length === 0) return;
-    let minX = Infinity, minY = Infinity;
-    let maxX = -Infinity, maxY = -Infinity;
-    for (const obj of layerObjects) {
-      const rect = obj.getBoundingRect();
-      minX = Math.min(minX, rect.left);
-      minY = Math.min(minY, rect.top);
-      maxX = Math.max(maxX, rect.left + rect.width);
-      maxY = Math.max(maxY, rect.top + rect.height);
-    }
-    for (const obj of layerObjects) {
-      obj.set({
-        left: obj.left - minX,
-        top: obj.top - minY
-      });
-      obj.setCoords();
-    }
-    this.canvas.clear();
-    for (const obj of layerObjects) {
-      this.canvas.add(obj);
-    }
-    this.canvas.setDimensions({
-      width: maxX - minX,
-      height: maxY - minY
-    });
-  }
-  /**
-   * Exporte les données des calques en JSON
-   */
-  exportLayersJSON() {
-    return JSON.stringify(this.layers.serialize());
-  }
-  /**
-   * Importe des calques depuis du JSON
-   */
-  async importLayersJSON(json) {
-    const layersData = JSON.parse(json);
-    await this.layers.loadLayers(layersData);
-  }
-  /**
-   * Réinitialise l'éditeur (supprime tous les calques sauf le fond)
-   */
-  reset() {
-    const background = this.layers.background;
-    this.canvas.clear();
-    if (background) {
-      this.canvas.add(background);
-    }
-    this.canvas.renderAll();
-  }
-};
-
-// src/HistoryManager.ts
-var HistoryManager = class {
-  constructor(canvas, layers, options = {}) {
-    this.canvas = canvas;
-    this.layers = layers;
-    this.stack = [];
-    this.index = -1;
-    this.callbacks = {};
-    this.isRestoring = false;
-    this.maxSize = options.maxSize ?? 50;
-  }
-  /**
-   * Configure les callbacks
-   */
-  setCallbacks(callbacks) {
-    this.callbacks = { ...this.callbacks, ...callbacks };
-  }
-  /**
-   * Définit le callback onStateChange
-   */
-  set onStateChange(callback) {
-    this.callbacks.onStateChange = callback;
-  }
-  /**
-   * Vérifie si on peut annuler
-   */
-  get canUndo() {
-    return this.index > 0;
-  }
-  /**
-   * Vérifie si on peut refaire
-   */
-  get canRedo() {
-    return this.index < this.stack.length - 1;
-  }
-  /**
-   * Retourne l'état actuel
-   */
-  get state() {
-    return {
-      canUndo: this.canUndo,
-      canRedo: this.canRedo
-    };
-  }
-  /**
-   * Enregistre l'état actuel dans l'historique
-   * Appelé après chaque modification
-   */
-  push() {
-    if (this.isRestoring) return;
-    const snapshot = JSON.stringify(this.layers.serialize());
-    if (this.index < this.stack.length - 1) {
-      this.stack = this.stack.slice(0, this.index + 1);
-    }
-    if (this.stack[this.stack.length - 1] === snapshot) {
-      return;
-    }
-    this.stack.push(snapshot);
-    if (this.stack.length > this.maxSize) {
-      this.stack.shift();
-    } else {
-      this.index++;
-    }
-    this.notifyStateChange();
-  }
-  /**
-   * Annule la dernière modification (Ctrl+Z)
-   * @returns true si l'annulation a réussi
-   */
-  async undo() {
-    if (!this.canUndo) return false;
-    this.index--;
-    await this.restore();
-    this.notifyStateChange();
-    return true;
-  }
-  /**
-   * Refait la dernière modification annulée (Ctrl+Y / Ctrl+Shift+Z)
-   * @returns true si le redo a réussi
-   */
-  async redo() {
-    if (!this.canRedo) return false;
-    this.index++;
-    await this.restore();
-    this.notifyStateChange();
-    return true;
-  }
-  /**
-   * Réinitialise l'historique
-   * Utile après un chargement initial ou une sauvegarde
-   */
-  clear() {
-    this.stack = [];
-    this.index = -1;
-    this.notifyStateChange();
-  }
-  /**
-   * Initialise l'historique avec l'état actuel
-   * À appeler après le chargement initial des calques
-   */
-  initialize() {
-    this.clear();
-    this.push();
-  }
-  /**
-   * Restaure l'état à l'index actuel
-   */
-  async restore() {
-    const snapshot = this.stack[this.index];
-    if (!snapshot) return;
-    this.isRestoring = true;
-    const previousRenderOnAddRemove = this.canvas.renderOnAddRemove;
-    this.canvas.renderOnAddRemove = false;
-    try {
-      const layersData = JSON.parse(snapshot);
-      const currentLayers = this.layers.all;
-      currentLayers.forEach((obj) => this.layers.remove(obj));
-      await this.layers.loadLayers(layersData);
-    } finally {
-      this.canvas.renderOnAddRemove = previousRenderOnAddRemove;
-      this.canvas.requestRenderAll();
-      this.isRestoring = false;
-    }
-  }
-  /**
-   * Notifie les callbacks du changement d'état
-   */
-  notifyStateChange() {
-    if (this.callbacks.onStateChange) {
-      this.callbacks.onStateChange(this.state);
-    }
-  }
-};
+import_fabric14.classRegistry.setClass(ImageFrame);
+import_fabric14.classRegistry.setClass(ImageFrame, "ImageFrame");
 
 // src/layout/stack/engine.ts
 var yoga = null;
@@ -3879,6 +3038,11 @@ function fitGroupsUnder(container, objects) {
     else fitGroupsUnder(obj, objects);
   }
 }
+function relayoutAncestors(obj, allObjects) {
+  for (let parent = parentContainerOf(obj, allObjects); parent; parent = parentContainerOf(parent, allObjects)) {
+    layoutTree(parent, allObjects);
+  }
+}
 function layoutContainer(container, cd, children, allObjects) {
   const sizing = sizingOf(container);
   const minW = sizing.minSize?.w ?? 0;
@@ -3907,13 +3071,888 @@ function layoutContainer(container, cd, children, allObjects) {
   syncCoords(container, children);
 }
 
+// src/LayerManager.ts
+var NEW_LAYER_RATIO = 0.4;
+var BACKGROUND_LAYER_ID = LEGACY_BACKGROUND_ID;
+var DEFAULT_SHAPE_FILL = "#d9d9d9";
+var LAYER_PROPS = ["layerId", "lockMode", "lockContent", "layout", "bindings", "bindingSegments"];
+var LayerManager = class {
+  constructor(canvas) {
+    this.canvas = canvas;
+    /** La dernière valeur demandée pour chaque cadre lié (showImageValue) : un chargement
+     *  dépassé ne s'affiche pas. */
+    this.valueRequests = /* @__PURE__ */ new WeakMap();
+  }
+  /**
+   * Retourne tous les calques (excluant l'image de fond)
+   */
+  get all() {
+    return this.canvas.getObjects().filter((obj) => obj.get("layerId") !== BACKGROUND_LAYER_ID);
+  }
+  /**
+   * Retourne l'image de fond
+   */
+  get background() {
+    return this.canvas.getObjects().find((obj) => obj.get("layerId") === BACKGROUND_LAYER_ID);
+  }
+  /**
+   * Trouve un calque par son ID
+   */
+  findById(layerId) {
+    return findById(this.canvas.getObjects(), layerId);
+  }
+  /**
+   * Charge l'image de fond
+   */
+  async loadBackgroundImage(url) {
+    const img = await import_fabric16.FabricImage.fromURL(url, { crossOrigin: "anonymous" });
+    const scaleX = this.canvas.width / img.width;
+    const scaleY = this.canvas.height / img.height;
+    const scale = Math.max(scaleX, scaleY);
+    img.set({
+      originX: "center",
+      originY: "center",
+      scaleX: scale,
+      scaleY: scale,
+      left: this.canvas.width / 2,
+      top: this.canvas.height / 2,
+      selectable: false,
+      evented: false,
+      layerId: BACKGROUND_LAYER_ID
+    });
+    this.canvas.add(img);
+    return img;
+  }
+  /**
+   * Désérialise plusieurs calques sans les ajouter au canvas — la moitié asynchrone
+   * (chargement d'images compris) du chargement, pour que l'appelant puisse faire le swap
+   * ancien/nouveau contenu de façon synchrone (anti-flicker).
+   */
+  async deserializeAll(layers) {
+    const objects = await Promise.all(layers.map((l) => this.deserialize(l)));
+    objects.forEach((obj, i) => {
+      if (!obj) return;
+      const data = layers[i];
+      const isBackground2 = data.layerId === BACKGROUND_ID;
+      if (isBackground2 || data.selectable === false) obj.selectable = false;
+      if (isBackground2 || data.evented === false) obj.evented = false;
+    });
+    return objects;
+  }
+  /**
+   * Charge plusieurs calques depuis leurs données JSON
+   */
+  async loadLayers(layers) {
+    const objects = await this.deserializeAll(layers);
+    objects.forEach((obj) => obj && this.add(obj));
+    return objects.filter(Boolean);
+  }
+  /**
+   * Ajoute un objet au canvas et le sélectionne (si interactif)
+   */
+  add(obj) {
+    this.canvas.add(obj);
+    if (obj.selectable !== false && typeof this.canvas.setActiveObject === "function") {
+      this.canvas.setActiveObject(obj);
+    }
+    return obj;
+  }
+  /** Le centre du document. */
+  get center() {
+    return new import_fabric16.Point(this.canvas.width / 2, this.canvas.height / 2);
+  }
+  /**
+   * La boîte d'un calque neuf (forme, image) : NEW_LAYER_RATIO du document dans chaque sens.
+   * Un calque y entre en gardant ses proportions. 40 % depuis le 2026-10-28 (c'était la
+   * moitié : trop grand, surtout pour une icône).
+   */
+  get newLayerBox() {
+    return { w: this.canvas.width * NEW_LAYER_RATIO, h: this.canvas.height * NEW_LAYER_RATIO };
+  }
+  fitNewLayerBox(obj) {
+    const { w, h } = scaledSize(obj);
+    const box = this.newLayerBox;
+    const scale = Math.min(box.w / w, box.h / h);
+    setShapeSize(obj, w * scale, h * scale);
+  }
+  /** Un calque ajouté sans position (un clic, pas un lâcher) se pose au centre du document. */
+  centerUnplaced(obj, options) {
+    if (options.left != null || options.top != null) return;
+    obj.setPositionByOrigin(this.center, "center", "center");
+    obj.setCoords();
+  }
+  /**
+   * Supprime un objet du canvas
+   */
+  remove(obj) {
+    this.canvas.remove(obj);
+  }
+  /**
+   * Supprime plusieurs objets
+   */
+  removeMany(objects) {
+    objects.forEach((obj) => this.canvas.remove(obj));
+  }
+  /**
+   * Monte l'objet (ou les objets) devant le premier objet de même niveau qui le
+   * chevauche. Un container emmène ses descendants (toujours au-dessus de lui) ; un enfant
+   * reste parmi les enfants de son container ; des objets montés ensemble ne se doublent pas.
+   */
+  bringForward(obj) {
+    const moved = Array.isArray(obj) ? obj : [obj];
+    const order = bringBlocksForward(this.canvas.getObjects(), moved, (a, b) => a.isOverlapping(b));
+    if (order) this.applyStackOrder(order);
+  }
+  /**
+   * Descend l'objet (ou les objets) d'un niveau, mêmes règles de blocs que bringForward.
+   * Ne peut pas descendre en dessous de l'image de fond.
+   */
+  sendBackward(obj) {
+    const moved = Array.isArray(obj) ? obj : [obj];
+    const order = sendBlocksBackward(this.canvas.getObjects(), moved);
+    if (order) this.applyStackOrder(order);
+  }
+  applyStackOrder(order) {
+    order.forEach((obj, index) => this.canvas.moveObjectTo(obj, index));
+    this.canvas.renderAll();
+  }
+  /**
+   * Crée et ajoute un calque texte
+   */
+  /**
+   * Crée un calque texte sans l'ajouter au canvas.
+   * Source unique des défauts texte — utilisé par addText et par le
+   * drag externe (DropHandler).
+   */
+  createText(options = {}) {
+    const {
+      text = "Tapez votre texte ici",
+      left = 100,
+      top = 100,
+      fontFamily = "Inter",
+      fontSize = 32,
+      fontWeight = "normal",
+      fill = "#000000",
+      layerId = this.generateId(),
+      placeholder = false
+    } = options;
+    const textObj = new CustomTextbox(text, {
+      left,
+      top,
+      fontFamily,
+      fontSize,
+      fontWeight,
+      fill
+    });
+    textObj.set("layerId", layerId);
+    if (placeholder) textObj.placeholder = true;
+    return textObj;
+  }
+  addText(options = {}) {
+    const textObj = this.createText(options);
+    this.centerUnplaced(textObj, options);
+    this.add(textObj);
+    return textObj;
+  }
+  /**
+   * Crée et ajoute un calque image dans un ImageFrame
+   */
+  async addImage(url, options = {}) {
+    const center = this.center;
+    const { left = center.x, top = center.y, layerId = this.generateId(), imageMeta } = options;
+    const img = await import_fabric16.FabricImage.fromURL(url, { crossOrigin: "anonymous" });
+    const box = this.newLayerBox;
+    const frameScale = Math.min(box.w / img.width, box.h / img.height);
+    const frame = new ImageFrame(img, { left, top, layerId, frameScale, imageMeta });
+    this.add(frame);
+    return frame;
+  }
+  /**
+   * Crée et ajoute une image simple (legacy, sans frame)
+   * Utilisé pour le background ou cas spéciaux
+   */
+  async addImageLegacy(url, options = {}) {
+    const { left = 100, top = 100, originX, originY, layerId = this.generateId() } = options;
+    const img = await createImage(url, { left, top, originX, originY, layerId });
+    this.add(img);
+    return img;
+  }
+  /**
+   * Remplace la source d'une image existante en conservant toutes ses propriétés
+   * Supporte à la fois ImageFrame et FabricImage legacy
+   *
+   * @param options.opacity - Opacité à appliquer (utile si target.opacity est temporairement modifiée)
+   * @param options.imageMeta - Les clés de la nouvelle source (une forme-image seulement)
+   * @param options.select - Sélectionner l'image remplacée (défaut)
+   *
+   * C'est un geste d'auteur : « cette image-ci, ici ». Un cadre dont la source était liée
+   * (imageSlots) se délie — sinon la liaison reprendrait la main au prochain affichage, et à
+   * l'expansion. L'hôte qui pose une image liée relie après (son binding), et montre la valeur
+   * d'une liaison par showImageValue, jamais par ici.
+   */
+  async replaceImageSource(target, newUrl, options) {
+    if (kindOf(target) === "imageShape") {
+      const frame = target;
+      const newImg = await import_fabric16.FabricImage.fromURL(newUrl, { crossOrigin: "anonymous" });
+      frame.replaceImage(newImg, options?.imageMeta);
+      this._reflowContained(frame);
+      if (imageSlotBinding(frame)) {
+        const { [IMAGE_SLOT_FIELD]: _unbound, ...bindings } = frame.get("bindings") ?? {};
+        frame.set("bindings", bindings);
+      }
+      if (options?.opacity !== void 0) {
+        frame.opacity = options.opacity;
+      }
+      if (frame.selectable !== false && options?.select !== false) this.canvas.setActiveObject(frame);
+      this.canvas.renderAll();
+      return frame;
+    }
+    return this._replaceImageSourceLegacy(target, newUrl, options);
+  }
+  /**
+   * Montre dans une forme-image la VALEUR de sa source liée (imageSlots) pour le lecteur du
+   * moment — ou, sans valeur (`null`), la vide : le cadre se dessine alors en emplacement.
+   * Affichage seul : rien n'entre dans le document (le cadre reste en attente, sauvé sans
+   * `src`), la sélection ne bouge pas. Sans effet sur ce qui n'est pas une forme-image.
+   */
+  async showImageValue(target, url) {
+    if (kindOf(target) !== "imageShape") return;
+    const frame = target;
+    this.valueRequests.set(frame, url);
+    if (!url) {
+      if (frame.displayedSrc) frame.clearSource();
+    } else if (url === frame.displayedSrc) {
+      if (!frame.pending) frame.showValue();
+    } else {
+      const image = await import_fabric16.FabricImage.fromURL(url, { crossOrigin: "anonymous" });
+      if (this.valueRequests.get(frame) !== url || !imageSlotBinding(target)) return;
+      frame.showValue(image);
+    }
+    this._reflowContained(frame);
+    this.canvas.requestRenderAll();
+  }
+  /** Un cadre en contain change de taille avec son image : ses containers s'y refont. */
+  _reflowContained(frame) {
+    if (frame.fit === "contain") relayoutAncestors(frame, this.canvas.getObjects());
+  }
+  /**
+   * Remplace la source d'une image legacy (FabricImage sans frame)
+   * @internal
+   */
+  async _replaceImageSourceLegacy(target, newUrl, options) {
+    const oldCenter = target.getCenterPoint();
+    const props = {
+      angle: target.angle,
+      flipX: target.flipX,
+      flipY: target.flipY,
+      opacity: options?.opacity ?? target.opacity,
+      layerId: target.get("layerId"),
+      layerType: target.get("layerType")
+    };
+    const lockMode = getLockMode(target);
+    const newImg = await import_fabric16.FabricImage.fromURL(newUrl, { crossOrigin: "anonymous" });
+    const oldWidth = target.width * target.scaleX;
+    const oldHeight = target.height * target.scaleY;
+    const coverScale2 = Math.max(oldWidth / newImg.width, oldHeight / newImg.height);
+    let adjustedClipPath = target.clipPath;
+    if (target.clipPath) {
+      adjustedClipPath = await target.clipPath.clone();
+      const clipScaleX = (adjustedClipPath.scaleX || 1) * (target.scaleX / coverScale2);
+      const clipScaleY = (adjustedClipPath.scaleY || 1) * (target.scaleY / coverScale2);
+      adjustedClipPath.set({ scaleX: clipScaleX, scaleY: clipScaleY });
+    }
+    newImg.set({
+      ...props,
+      scaleX: coverScale2,
+      scaleY: coverScale2,
+      clipPath: adjustedClipPath,
+      originX: "center",
+      originY: "center",
+      left: oldCenter.x,
+      top: oldCenter.y
+    });
+    const index = this.canvas.getObjects().indexOf(target);
+    this.canvas.remove(target);
+    this.canvas.add(newImg);
+    if (index >= 0 && index < this.canvas.getObjects().length) {
+      this.canvas.moveObjectTo(newImg, index);
+    }
+    if (lockMode !== "free") {
+      applyLockMode(newImg, lockMode);
+    }
+    this.canvas.setActiveObject(newImg);
+    this.canvas.renderAll();
+    return newImg;
+  }
+  /**
+   * Remplace une forme (shape) par un ImageFrame contenant l'image donnée.
+   * La forme sert de masque : l'image épouse ses dimensions et son clipShape.
+   * L'ImageFrame est inséré au même z-index que la forme d'origine.
+   */
+  async replaceShapeWithImage(shape, imageUrl, imageMeta) {
+    const { clipShape, clipData, cornerRadius } = clipOfShape(shape);
+    const { w: displayedWidth, h: displayedHeight } = scaledSize(shape);
+    const center = shape.getRelativeCenterPoint();
+    const img = await import_fabric16.FabricImage.fromURL(imageUrl, { crossOrigin: "anonymous" });
+    const frame = new ImageFrame(img, {
+      left: center.x,
+      top: center.y,
+      angle: shape.angle,
+      layerId: shape.layerId || this.generateId(),
+      clipShape,
+      clipData,
+      imageMeta,
+      frameWidth: displayedWidth,
+      frameHeight: displayedHeight,
+      cornerRadius
+    });
+    const bindings = resolveUserSlot(shape.get("bindings"));
+    if (bindings) frame.set("bindings", bindings);
+    this.takeOver(shape, frame);
+    return frame;
+  }
+  /**
+   * Demande l'image à l'utilisateur final (userSlots) : le calque devient une forme liée à
+   * une image à fournir, avec sa consigne. Une forme le reste ; une forme-image redevient la
+   * forme de sa découpe, aux mêmes dimensions — son image est abandonnée (pas d'exemple :
+   * le damier dit « à fournir »), ses autres bindings la suivent.
+   *
+   * Rend la forme, ou null si le calque ne peut pas recevoir d'image (texte, groupe de paths).
+   */
+  requestUserImage(obj, hint = "") {
+    const bindings = {
+      ...obj.get("bindings") || {},
+      [USER_SLOT_FIELD]: { scope: USER_SCOPE, hint }
+    };
+    if (obj instanceof ImageFrame) {
+      const shape = shapeOfFrame(obj);
+      shape.set({
+        layerId: obj.get("layerId") || this.generateId(),
+        layerType: "shape",
+        angle: obj.angle,
+        bindings
+      });
+      shape.setPositionByOrigin(obj.getRelativeCenterPoint(), "center", "center");
+      this.takeOver(obj, shape);
+      return shape;
+    }
+    if (rulesOf(obj, { ignoreLock: true }).onToolboxImage !== "fill") return null;
+    obj.set({ bindings });
+    this.canvas.requestRenderAll();
+    return obj;
+  }
+  /**
+   * Donne un texte à personnaliser à l'utilisateur final (userTexts), ou le reprend
+   * (`requested: false`) : le texte du calque devient — ou cesse d'être — l'exemple. Un texte
+   * lié à une expression cesse de l'être. Son verrou est réappliqué : un texte à personnaliser
+   * s'édite même verrouillé.
+   *
+   * Rend le texte, ou null si le calque n'en est pas un.
+   */
+  setUserText(obj, requested = true) {
+    if (!isTextObject(obj)) return null;
+    const bindings = obj.get("bindings");
+    obj.set({ bindings: requested ? requestUserText(bindings) : releaseUserText(bindings) });
+    applyLockMode(obj, getLockMode(obj));
+    this.canvas.requestRenderAll();
+    return obj;
+  }
+  /**
+   * Un calque en remplace un autre à sa place : son layout (container, enfant) et son
+   * verrouillage — sinon ses enfants restent orphelins, ou il sort de son container — et
+   * son rang dans la pile (sous ses enfants).
+   */
+  takeOver(previous, next) {
+    const layout = layoutOf(previous);
+    if (layout) next.set("layout", JSON.parse(JSON.stringify(layout)));
+    const lockMode = getLockMode(previous);
+    if (lockMode !== "free") applyLockMode(next, lockMode);
+    const zIndex = this.canvas.getObjects().indexOf(previous);
+    this.canvas.remove(previous);
+    this.canvas.add(next);
+    if (zIndex >= 0 && zIndex < this.canvas.getObjects().length) {
+      this.canvas.moveObjectTo(next, zIndex);
+    }
+    this.canvas.setActiveObject(next);
+    this.canvas.renderAll();
+  }
+  /**
+   * Crée et ajoute un calque forme (rectangle par défaut)
+   */
+  /**
+   * Crée un calque forme sans l'ajouter au canvas.
+   * Source unique des défauts forme — utilisé par addShape et par le
+   * drag externe (DropHandler).
+   */
+  createShape(options = {}) {
+    const {
+      left = 100,
+      top = 100,
+      fill = DEFAULT_SHAPE_FILL,
+      stroke,
+      shapeType = "rect",
+      layerId = this.generateId()
+    } = options;
+    const common = { fill, stroke, left, top, width: options.width, height: options.height };
+    const shape = options.paths?.length ? createPathsShape(options.paths, { id: shapeType, ...common }) : createShape(shapeType, common);
+    shape.set({ layerId, layerType: "shape" });
+    if (options.width == null && options.height == null) this.fitNewLayerBox(shape);
+    return shape;
+  }
+  /** Crée un cadre à fournir (un rect lié, cf. userSlots) sans l'ajouter au canvas. */
+  createUserSlot(options = {}) {
+    const { hint = "", ...shapeOptions2 } = options;
+    const shape = this.createShape({ fill: "#ffffff", ...shapeOptions2, shapeType: "rect" });
+    shape.set({ bindings: { [USER_SLOT_FIELD]: { scope: USER_SCOPE, hint } } });
+    return shape;
+  }
+  addUserSlot(options = {}) {
+    const shape = this.createUserSlot(options);
+    this.centerUnplaced(shape, options);
+    this.add(shape);
+    return shape;
+  }
+  addShape(options = {}) {
+    const shape = this.createShape(options);
+    this.centerUnplaced(shape, options);
+    this.add(shape);
+    return shape;
+  }
+  /**
+   * @legacy Fusionne des objets dans un `fabric.Group` (éditeur SAFTI legacy, « fusionner
+   * les calques »). Pour grouper dans l'éditeur : `FabricEditor.groupSelection` (un groupe
+   * libre, ses objets restent des calques).
+   */
+  groupObjects(objects) {
+    const group = new import_fabric16.Group(objects);
+    objects.forEach((obj) => this.canvas.remove(obj));
+    this.canvas.add(group);
+    this.canvas.setActiveObject(group);
+    this.canvas.requestRenderAll();
+    return group;
+  }
+  /**
+   * Sérialise tous les calques en JSON
+   * Inclut les propriétés custom : layerId, lockMode, lockContent
+   */
+  serialize() {
+    return this.all.map((obj) => obj.toObject([...LAYER_PROPS]));
+  }
+  /**
+   * Désérialise un calque depuis ses données JSON
+   * Les images legacy (type "Image") sont automatiquement migrées vers ImageFrame
+   */
+  async deserialize(layer) {
+    let obj = null;
+    switch (layer.type) {
+      case "IText":
+      case "i-text":
+      case "Textbox":
+      case "textbox": {
+        const text = await CustomTextbox.fromObject(layer);
+        text.charSpacing = text.charSpacing || 1;
+        obj = text;
+        break;
+      }
+      case "ImageFrame":
+      case "imageFrame": {
+        obj = await ImageFrame.fromObject(layer);
+        break;
+      }
+      case "Image":
+      case "image": {
+        const img = await import_fabric16.FabricImage.fromObject({
+          ...layer,
+          crossOrigin: "anonymous"
+        });
+        const clipShape = this.detectLegacyClipShape(layer.clipPath);
+        obj = ImageFrame.fromLegacyImage(img, {
+          clipShape,
+          layerId: layer.layerId,
+          lockMode: layer.lockMode
+        });
+        break;
+      }
+      case "Group":
+      case "group":
+        obj = await FabGroup.fromObject(layer);
+        break;
+      case "Rect":
+      case "rect":
+        obj = await FabRect.fromObject(layer);
+        break;
+      case "Path":
+      case "path":
+        obj = await FabPath.fromObject(layer);
+        break;
+      case "Circle":
+      case "circle":
+        obj = await FabCircle.fromObject(layer);
+        break;
+      default:
+        console.warn(`Type de calque inconnu: ${layer.type}`);
+        return null;
+    }
+    const migrated = obj && migrateLegacyLayout(layoutOf(obj));
+    if (obj && migrated) obj.set("layout", migrated);
+    if (obj) restoreBindings(obj, layer);
+    if (obj && layer.lockMode) {
+      const mode = layer.lockMode;
+      if ("applyLockMode" in obj && typeof obj.applyLockMode === "function") {
+        obj.applyLockMode(mode);
+      } else {
+        applyLockMode(obj, mode);
+      }
+    }
+    return obj;
+  }
+  /**
+   * Applique un mode de verrouillage à un objet
+   * Délègue à la fonction du module locking.ts
+   */
+  applyLockMode(obj, mode) {
+    applyLockMode(obj, mode);
+  }
+  /**
+   * Génère un ID unique pour un calque
+   */
+  generateId() {
+    return `layer_${Date.now()}_${Math.floor(Math.random() * 1e3)}`;
+  }
+  /**
+   * Détecte le type de clip depuis un clipPath legacy sérialisé
+   */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  detectLegacyClipShape(clipPath) {
+    if (!clipPath) return void 0;
+    if (clipPath.id && isValidShape(clipPath.id)) {
+      return clipPath.id;
+    }
+    const type = clipPath.type?.toLowerCase();
+    if (type === "circle") {
+      return "circle";
+    }
+    if (type === "rect") {
+      return "rect";
+    }
+    if (type === "path") {
+      return this.detectClipPath(clipPath);
+    }
+    return void 0;
+  }
+  /* Pour détecter les anciens clippath (dans les signatures notamment)*/
+  detectClipPath(clipPath) {
+    if (clipPath.type.toLowerCase() !== "path") {
+      return "heart";
+    }
+    const path = clipPath.path;
+    if (!Array.isArray(path)) {
+      return "heart";
+    }
+    let count = {
+      M: 0,
+      L: 0,
+      C: 0,
+      Q: 0,
+      Z: 0
+    };
+    for (const cmd of path) {
+      const type = cmd[0];
+      if (type in count) {
+        count[type]++;
+      }
+    }
+    if (count.Q === 0 && count.L === 6 && count.C === 6 && count.M === 1 && count.Z === 1) {
+      return "hexagon";
+    }
+    return "heart";
+  }
+};
+function shapeOfFrame(frame) {
+  const { w, h } = scaledSize(frame);
+  const fill = "#ffffff";
+  const strokeWidth = 0;
+  const clipShape = frame.clipShape || "rect";
+  if (clipShape === "circle") {
+    const circle = new FabCircle({ radius: Math.min(w, h) / 2, fill, strokeWidth });
+    circle.setSize(w, h);
+    return circle;
+  }
+  const clipData = clipShape === "rect" ? void 0 : frame.clipData ?? clipDataFor(clipShape);
+  if (clipData) return FabPath.fromPathData({ d: clipData.d }, { id: clipShape, fill, strokeWidth, width: w, height: h });
+  return new FabRect({ width: w, height: h, rx: frame.cornerRadius, ry: frame.cornerRadius, fill, strokeWidth });
+}
+function clipOfShape(shape) {
+  if (shape instanceof FabRect) return { clipShape: "rect", cornerRadius: shape.getCornerRadius() };
+  if (shape instanceof FabCircle) return { clipShape: "circle", cornerRadius: 0 };
+  if (shape instanceof FabPath) {
+    const id = shape.id;
+    const clipData = {
+      d: import_fabric16.util.joinPath(shape.path),
+      width: shape.width,
+      height: shape.height,
+      ...shape.fillRule === "evenodd" ? { fillRule: "evenodd" } : {}
+    };
+    return { clipShape: id && isValidShape(id) ? id : id || "custom", clipData, cornerRadius: 0 };
+  }
+  return { clipShape: "rect", cornerRadius: 0 };
+}
+
+// src/PersistenceManager.ts
+var PersistenceManager = class {
+  constructor(canvas, layers) {
+    this.canvas = canvas;
+    this.layers = layers;
+    this.pendingUploads = null;
+  }
+  /**
+   * Configure le gestionnaire d'uploads en attente
+   */
+  setPendingUploads(manager) {
+    this.pendingUploads = manager;
+  }
+  /**
+   * Sauvegarde l'état actuel de l'éditeur
+   *
+   * Si des fichiers sont en attente d'upload, ils sont uploadés en parallèle
+   * du rendu canvas pour optimiser le temps total.
+   */
+  async save(options = {}) {
+    const { rasterize = false } = options;
+    this.canvas.discardActiveObject();
+    const [urlMap, dataUrl] = await Promise.all([
+      this.uploadPendingFiles(),
+      rasterize ? this.rasterize() : Promise.resolve(void 0)
+    ]);
+    let layersData = this.layers.serialize();
+    let uploadedAssets;
+    if (urlMap.size > 0) {
+      const { PendingUploadsManager: PendingUploadsManager2 } = await Promise.resolve().then(() => (init_PendingUploadsManager(), PendingUploadsManager_exports));
+      layersData = PendingUploadsManager2.replaceUrls(layersData, urlMap);
+      uploadedAssets = Array.from(urlMap.values());
+    }
+    return {
+      layers: layersData,
+      dataUrl,
+      uploadedAssets
+    };
+  }
+  /**
+   * Upload les fichiers en attente vers Cloudinary
+   */
+  async uploadPendingFiles() {
+    if (!this.pendingUploads) {
+      return /* @__PURE__ */ new Map();
+    }
+    return this.pendingUploads.uploadAll();
+  }
+  /**
+   * Rasterise le canvas en image base64
+   */
+  async rasterize() {
+    return this.canvas.toFrameDataURL({ format: "png", quality: 1, multiplier: 1 });
+  }
+  /**
+   * Compacte le canvas autour des calques (pour le mode standalone)
+   *
+   * Calcule le bounding box manuellement sans Group, car Fabric.js 7
+   * transforme les coordonnées des enfants en relatif au centre du groupe.
+   */
+  compactAroundLayers() {
+    const layerObjects = this.layers.all;
+    if (layerObjects.length === 0) return;
+    let minX = Infinity, minY = Infinity;
+    let maxX = -Infinity, maxY = -Infinity;
+    for (const obj of layerObjects) {
+      const rect = obj.getBoundingRect();
+      minX = Math.min(minX, rect.left);
+      minY = Math.min(minY, rect.top);
+      maxX = Math.max(maxX, rect.left + rect.width);
+      maxY = Math.max(maxY, rect.top + rect.height);
+    }
+    for (const obj of layerObjects) {
+      obj.set({
+        left: obj.left - minX,
+        top: obj.top - minY
+      });
+      obj.setCoords();
+    }
+    this.canvas.clear();
+    for (const obj of layerObjects) {
+      this.canvas.add(obj);
+    }
+    this.canvas.setDimensions({
+      width: maxX - minX,
+      height: maxY - minY
+    });
+  }
+  /**
+   * Exporte les données des calques en JSON
+   */
+  exportLayersJSON() {
+    return JSON.stringify(this.layers.serialize());
+  }
+  /**
+   * Importe des calques depuis du JSON
+   */
+  async importLayersJSON(json) {
+    const layersData = JSON.parse(json);
+    await this.layers.loadLayers(layersData);
+  }
+  /**
+   * Réinitialise l'éditeur (supprime tous les calques sauf le fond)
+   */
+  reset() {
+    const background = this.layers.background;
+    this.canvas.clear();
+    if (background) {
+      this.canvas.add(background);
+    }
+    this.canvas.renderAll();
+  }
+};
+
+// src/HistoryManager.ts
+var HistoryManager = class {
+  constructor(canvas, layers, options = {}) {
+    this.canvas = canvas;
+    this.layers = layers;
+    this.stack = [];
+    this.index = -1;
+    this.callbacks = {};
+    this.isRestoring = false;
+    this.maxSize = options.maxSize ?? 50;
+  }
+  /**
+   * Configure les callbacks
+   */
+  setCallbacks(callbacks) {
+    this.callbacks = { ...this.callbacks, ...callbacks };
+  }
+  /**
+   * Définit le callback onStateChange
+   */
+  set onStateChange(callback) {
+    this.callbacks.onStateChange = callback;
+  }
+  /**
+   * Vérifie si on peut annuler
+   */
+  get canUndo() {
+    return this.index > 0;
+  }
+  /**
+   * Vérifie si on peut refaire
+   */
+  get canRedo() {
+    return this.index < this.stack.length - 1;
+  }
+  /**
+   * Retourne l'état actuel
+   */
+  get state() {
+    return {
+      canUndo: this.canUndo,
+      canRedo: this.canRedo
+    };
+  }
+  /**
+   * Enregistre l'état actuel dans l'historique
+   * Appelé après chaque modification
+   */
+  push() {
+    if (this.isRestoring) return;
+    const snapshot = JSON.stringify(this.layers.serialize());
+    if (this.index < this.stack.length - 1) {
+      this.stack = this.stack.slice(0, this.index + 1);
+    }
+    if (this.stack[this.stack.length - 1] === snapshot) {
+      return;
+    }
+    this.stack.push(snapshot);
+    if (this.stack.length > this.maxSize) {
+      this.stack.shift();
+    } else {
+      this.index++;
+    }
+    this.notifyStateChange();
+  }
+  /**
+   * Annule la dernière modification (Ctrl+Z)
+   * @returns true si l'annulation a réussi
+   */
+  async undo() {
+    if (!this.canUndo) return false;
+    this.index--;
+    await this.restore();
+    this.notifyStateChange();
+    return true;
+  }
+  /**
+   * Refait la dernière modification annulée (Ctrl+Y / Ctrl+Shift+Z)
+   * @returns true si le redo a réussi
+   */
+  async redo() {
+    if (!this.canRedo) return false;
+    this.index++;
+    await this.restore();
+    this.notifyStateChange();
+    return true;
+  }
+  /**
+   * Réinitialise l'historique
+   * Utile après un chargement initial ou une sauvegarde
+   */
+  clear() {
+    this.stack = [];
+    this.index = -1;
+    this.notifyStateChange();
+  }
+  /**
+   * Initialise l'historique avec l'état actuel
+   * À appeler après le chargement initial des calques
+   */
+  initialize() {
+    this.clear();
+    this.push();
+  }
+  /**
+   * Restaure l'état à l'index actuel
+   */
+  async restore() {
+    const snapshot = this.stack[this.index];
+    if (!snapshot) return;
+    this.isRestoring = true;
+    const previousRenderOnAddRemove = this.canvas.renderOnAddRemove;
+    this.canvas.renderOnAddRemove = false;
+    try {
+      const layersData = JSON.parse(snapshot);
+      const currentLayers = this.layers.all;
+      currentLayers.forEach((obj) => this.layers.remove(obj));
+      await this.layers.loadLayers(layersData);
+    } finally {
+      this.canvas.renderOnAddRemove = previousRenderOnAddRemove;
+      this.canvas.requestRenderAll();
+      this.isRestoring = false;
+    }
+  }
+  /**
+   * Notifie les callbacks du changement d'état
+   */
+  notifyStateChange() {
+    if (this.callbacks.onStateChange) {
+      this.callbacks.onStateChange(this.state);
+    }
+  }
+};
+
 // src/node.ts
 var import_meta = {};
 var require2 = (0, import_module.createRequire)(import_meta.url);
 var _NodeEditor = class _NodeEditor {
   constructor(config) {
     this.config = config;
-    this.canvas = new import_fabric16.StaticCanvas(void 0, {
+    this.canvas = new import_fabric17.StaticCanvas(void 0, {
       width: config.width,
       height: config.height
     });
@@ -3973,8 +4012,8 @@ var _NodeEditor = class _NodeEditor {
   extendFabricObject() {
     if (_NodeEditor._toObjectExtended) return;
     _NodeEditor._toObjectExtended = true;
-    const originalToObject = import_fabric16.FabricObject.prototype.toObject;
-    import_fabric16.FabricObject.prototype.toObject = function(propertiesToInclude) {
+    const originalToObject = import_fabric17.FabricObject.prototype.toObject;
+    import_fabric17.FabricObject.prototype.toObject = function(propertiesToInclude) {
       return originalToObject.call(
         this,
         ["layerId"].concat(propertiesToInclude || [])

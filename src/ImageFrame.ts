@@ -46,6 +46,8 @@ export interface ImageFrameOptions {
   cornerRadius?: number;
   /** Le recadrage de l'image dans le cadre (cf. crop.ts) ; centrée, cover, sans. */
   crop?: Partial<Crop>;
+  /** Cf. ImageFrameData.fit ; en contain, frameWidth/frameHeight sont la boîte. */
+  fit?: ImageFit;
   /** @deprecated Documents d'avant : le décalage du centre de l'image en pixels de cadre. */
   imageOffsetX?: number;
   imageOffsetY?: number;
@@ -60,6 +62,9 @@ export interface ImageFrameOptions {
 }
 
 export type ImageMeta = Record<string, unknown>;
+
+/** Le cadre impose sa forme à l'image (cover), ou la prend d'elle (contain). */
+export type ImageFit = "cover" | "contain";
 
 export interface ImageFrameData {
   originX?: "left" | "center" | "right";
@@ -84,6 +89,14 @@ export interface ImageFrameData {
   clipData?: ClipData;
   /** Corner radius in pixels (only meaningful when clipShape is "rect"). */
   cornerRadius?: number;
+  /**
+   * `contain` : le cadre prend la forme de son image — le côté le plus long de l'image se cale
+   * sur la boîte `frameWidth` × `frameHeight`, l'autre suit le ratio. Pour une image dont le
+   * ratio change d'un lecteur à l'autre (le logo d'une company) : le cadre a la taille concrète
+   * de l'image, la mise en page se déroule autour (une pastille qui épouse le logo). La boîte
+   * est ce qui se sauve ; un cadre sans image l'occupe entière. Absent = cover.
+   */
+  fit?: ImageFit;
   layerId?: string;
   lockMode?: LockMode;
   lockContent?: boolean;
@@ -168,6 +181,10 @@ export class ImageFrame extends Group {
   clipData?: ClipData;
   /** Corner radius in pixels for "rect" clip shape. 0 = sharp corners. */
   cornerRadius: number = 0;
+  /** Cf. ImageFrameData.fit. */
+  fit: ImageFit = "cover";
+  /** En contain, la boîte où l'image se cale ; frameWidth/frameHeight sont alors sa taille. */
+  private _box: { w: number; h: number } | null = null;
 
   private _crop: Crop = NO_CROP;
   private _image: FabricImage;
@@ -222,6 +239,11 @@ export class ImageFrame extends Group {
       : cropFromCenterOffset(frameWidth, frameHeight, { w: image.width, h: image.height },
                              options.imageOffsetX ?? 0, options.imageOffsetY ?? 0, 1);
     this._imageMeta = { ...(options.imageMeta ?? {}) };
+    if (options.fit === "contain") {
+      this.fit = "contain";
+      this._box = { w: frameWidth, h: frameHeight };
+      this._fitFrame();
+    }
 
     if (options.layerId) {
       this.set("layerId", options.layerId);
@@ -269,6 +291,8 @@ export class ImageFrame extends Group {
     const img = new FabricImage(checkerCanvas(options.frameWidth, options.frameHeight));
     const frame = new ImageFrame(img, options);
     frame._source = "none";
+    frame._fitFrame();
+    frame._applyCrop();
     return frame;
   }
 
@@ -401,8 +425,7 @@ export class ImageFrame extends Group {
     newImage.group = this;
     this._image = newImage;
 
-    this.width = this.frameWidth;
-    this.height = this.frameHeight;
+    this._fitFrame();
     this._applyClip(savedClipShape);
     this.setCoords();
     this._applyCrop();
@@ -413,10 +436,10 @@ export class ImageFrame extends Group {
    * zone autant que possible.
    */
   resizeFrame(newWidth: number, newHeight: number): void {
+    if (this._box) this._box = { w: newWidth, h: newHeight };
     this.frameWidth = newWidth;
     this.frameHeight = newHeight;
-    this.width = newWidth;
-    this.height = newHeight;
+    this._fitFrame();
     this._applyCrop();
 
     this._applyClip(this.clipShape || "rect");
@@ -526,6 +549,22 @@ export class ImageFrame extends Group {
   // ─────────────────────────────────────────────────────────────
   // Méthodes privées
   // ─────────────────────────────────────────────────────────────
+
+  /**
+   * La taille du cadre : en contain, celle de l'image calée dans la boîte (la boîte entière
+   * sans image) ; sinon frameWidth/frameHeight tels quels. Le groupe suit.
+   */
+  private _fitFrame(): void {
+    if (this._box) {
+      const { w: bw, h: bh } = this._box;
+      const nat = this.naturalSize;
+      const s = this._source === "none" || !nat.w || !nat.h ? 0 : Math.min(bw / nat.w, bh / nat.h);
+      this.frameWidth = s ? nat.w * s : bw;
+      this.frameHeight = s ? nat.h * s : bh;
+    }
+    this.width = this.frameWidth;
+    this.height = this.frameHeight;
+  }
 
   /** L'image dans le groupe (origine au centre) : cover × échelle, centre décalé selon le recadrage. */
   private _applyCrop(): void {
@@ -787,8 +826,9 @@ export class ImageFrame extends Group {
       angle: this.angle,
       scaleX: this.scaleX,
       scaleY: this.scaleY,
-      frameWidth: this.frameWidth,
-      frameHeight: this.frameHeight,
+      frameWidth: this._box?.w ?? this.frameWidth,
+      frameHeight: this._box?.h ?? this.frameHeight,
+      fit: this._box ? "contain" : undefined,
       clipShape: this.clipShape,
       clipData: this.clipData,
       cornerRadius: this.cornerRadius || undefined,
@@ -819,6 +859,7 @@ export class ImageFrame extends Group {
       lockMode: data.lockMode,
       frameWidth: data.frameWidth,
       frameHeight: data.frameHeight,
+      fit: data.fit,
       imageMeta: imageMetaOf(data.image),
     };
 

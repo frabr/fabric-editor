@@ -66,6 +66,7 @@ describe("mediaLabel", () => {
     expect(mediaLabel({ media: 3 })).toBe("media 3");
     expect(mediaLabel({ media: "each" })).toBe("media i");
     expect(mediaLabel({ media: "avatar" })).toBe("avatar");
+    expect(mediaLabel({ media: "draw", candidates: [{}, {}, {}] })).toBe("1 parmi 3");
   });
 });
 
