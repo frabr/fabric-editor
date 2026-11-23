@@ -1498,7 +1498,7 @@ var DesignCanvas = class {
 };
 
 // src/LayerManager.ts
-import { FabricImage as FabricImage5, Group as Group5, Point as Point5, util as util5 } from "#fabric";
+import { FabricImage as FabricImage5, Group as Group5, Point as Point5, util as util7 } from "#fabric";
 
 // src/controls/CustomTextbox.ts
 import { Textbox, Point as Point2, controlsUtils as controlsUtils2 } from "#fabric";
@@ -1524,7 +1524,8 @@ function resolveTextBox(input, measure) {
     m = measure.wrapped(width, fontSize);
   }
   const minH = sizing.y === "hug" ? sizing.minSize?.h ?? 0 : 0;
-  const height = boundH ?? Math.max(m.height, minH);
+  const shrunkHug = sizing.y === "hug" && fontSize < input.fontSizeIntent;
+  const height = boundH != null && !shrunkHug ? boundH : Math.max(m.height, minH);
   return { width: m.width, height, fontSize, overflowing: m.height > height + 0.5 };
 }
 function fits(m, width, boundH) {
@@ -2855,6 +2856,179 @@ function installLockMethods(proto) {
   };
 }
 
+// src/shapes/outerShadow.ts
+import { Color } from "#fabric";
+var FAR = 1e5;
+function seesThrough(fill) {
+  if (!fill || typeof fill !== "string") return true;
+  if (fill === "transparent" || fill === "none") return true;
+  return new Color(fill).getAlpha() < 1;
+}
+function installOuterShadow(target, buildPath) {
+  const proto = target;
+  const originalRender = proto.render;
+  proto.render = function(ctx) {
+    const shadow = this.shadow;
+    if (!shadow || !seesThrough(this.fill) || this.isNotVisible()) return originalRender.call(this, ctx);
+    drawOuterShadow(this, ctx, buildPath);
+    this.shadow = null;
+    try {
+      originalRender.call(this, ctx);
+    } finally {
+      this.shadow = shadow;
+    }
+  };
+}
+function traceShapePath(shape, ctx, buildPath) {
+  const target = shape;
+  target._renderPaintInOrder = () => {
+  };
+  try {
+    buildPath.call(shape, ctx);
+  } finally {
+    delete target._renderPaintInOrder;
+  }
+}
+function drawOuterShadow(shape, ctx, buildPath) {
+  const paint = shape._renderPaintInOrder;
+  ctx.save();
+  try {
+    shape._setupCompositeOperation(ctx);
+    shape.transform(ctx);
+    shape._setOpacity(ctx);
+    traceShapePath(shape, ctx, buildPath);
+    ctx.rect(-FAR, -FAR, 2 * FAR, 2 * FAR);
+    ctx.clip("evenodd");
+    shape._setShadow(ctx);
+    shape._renderPaintInOrder = (c) => {
+      c.fillStyle = "#000";
+      c.fill();
+    };
+    buildPath.call(shape, ctx);
+  } finally {
+    delete shape._renderPaintInOrder;
+    if (shape._renderPaintInOrder !== paint) shape._renderPaintInOrder = paint;
+    ctx.restore();
+  }
+}
+
+// src/shapes/backdropBlur.ts
+import { util as util4 } from "#fabric";
+
+// src/imageBlur.ts
+import { util as util3 } from "#fabric";
+function blurredCanvas(source, displayScale, radius) {
+  const workScale = Math.min(1, Math.max(displayScale, 1e-3));
+  const el = util3.createCanvasElement();
+  el.width = Math.max(1, Math.round(source.width * workScale));
+  el.height = Math.max(1, Math.round(source.height * workScale));
+  const ctx = el.getContext("2d");
+  ctx.drawImage(source, 0, 0, el.width, el.height);
+  const sigma = radius / Math.max(displayScale, 1e-3) * workScale;
+  if (sigma < 0.5) return el;
+  const image = ctx.getImageData(0, 0, el.width, el.height);
+  gaussianApprox(image.data, el.width, el.height, sigma);
+  ctx.putImageData(image, 0, 0);
+  return el;
+}
+function gaussianApprox(data, width, height, sigma) {
+  const boxes = boxSizes(sigma, 3);
+  const tmp = new Uint8ClampedArray(data.length);
+  for (const size of boxes) {
+    const r = (size - 1) / 2;
+    boxBlurH(data, tmp, width, height, r);
+    boxBlurV(tmp, data, width, height, r);
+  }
+}
+function boxSizes(sigma, n) {
+  const ideal = Math.sqrt(12 * sigma * sigma / n + 1);
+  let lower = Math.floor(ideal);
+  if (lower % 2 === 0) lower--;
+  const upper = lower + 2;
+  const m = Math.round((12 * sigma * sigma - n * lower * lower - 4 * n * lower - 3 * n) / (-4 * lower - 4));
+  return Array.from({ length: n }, (_, i) => i < m ? lower : upper);
+}
+function boxBlurH(src, dst, w, h, r) {
+  const span = 2 * r + 1;
+  for (let y = 0; y < h; y++) {
+    const row = y * w * 4;
+    for (let c = 0; c < 4; c++) {
+      const at = (x) => src[row + Math.min(w - 1, Math.max(0, x)) * 4 + c];
+      let sum = 0;
+      for (let x = -r; x <= r; x++) sum += at(x);
+      for (let x = 0; x < w; x++) {
+        dst[row + x * 4 + c] = sum / span;
+        sum += at(x + r + 1) - at(x - r);
+      }
+    }
+  }
+}
+function boxBlurV(src, dst, w, h, r) {
+  const span = 2 * r + 1;
+  for (let x = 0; x < w; x++) {
+    for (let c = 0; c < 4; c++) {
+      const at = (y) => src[(Math.min(h - 1, Math.max(0, y)) * w + x) * 4 + c];
+      let sum = 0;
+      for (let y = -r; y <= r; y++) sum += at(y);
+      for (let y = 0; y < h; y++) {
+        dst[(y * w + x) * 4 + c] = sum / span;
+        sum += at(y + r + 1) - at(y - r);
+      }
+    }
+  }
+}
+
+// src/shapes/backdropBlur.ts
+function installBackdropBlur(target, buildPath) {
+  const proto = target;
+  const originalRender = proto.render;
+  proto.render = function(ctx) {
+    if (this.backdropBlur && this.backdropBlur > 0 && !this.isNotVisible()) {
+      drawBackdrop(this, ctx, buildPath, this.backdropBlur);
+    }
+    originalRender.call(this, ctx);
+  };
+}
+function drawBackdrop(shape, ctx, buildPath, radius) {
+  ctx.save();
+  try {
+    shape.transform(ctx);
+    const m = ctx.getTransform();
+    const scale = Math.sqrt(Math.abs(m.a * m.d - m.b * m.c)) || 1;
+    const sigma = radius * scale;
+    const margin = Math.ceil(3 * sigma);
+    const box = deviceBox(m, shape.width / 2, shape.height / 2, margin, ctx.canvas);
+    if (!box) return;
+    const pixels = ctx.getImageData(box.x, box.y, box.w, box.h);
+    gaussianApprox(pixels.data, box.w, box.h, sigma);
+    const tile = util4.createCanvasElement();
+    tile.width = box.w;
+    tile.height = box.h;
+    tile.getContext("2d").putImageData(pixels, 0, 0);
+    traceShapePath(shape, ctx, buildPath);
+    ctx.clip();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.globalAlpha = shape.opacity ?? 1;
+    ctx.drawImage(tile, box.x, box.y);
+  } finally {
+    ctx.restore();
+  }
+}
+function deviceBox(m, hw, hh, margin, canvas) {
+  const corners = [[-hw, -hh], [hw, -hh], [hw, hh], [-hw, hh]].map(([x2, y2]) => [
+    m.a * x2 + m.c * y2 + m.e,
+    m.b * x2 + m.d * y2 + m.f
+  ]);
+  const xs = corners.map((c) => c[0]);
+  const ys = corners.map((c) => c[1]);
+  const x = Math.max(0, Math.floor(Math.min(...xs) - margin));
+  const y = Math.max(0, Math.floor(Math.min(...ys) - margin));
+  const right = Math.min(canvas.width, Math.ceil(Math.max(...xs) + margin));
+  const bottom = Math.min(canvas.height, Math.ceil(Math.max(...ys) + margin));
+  if (right - x < 1 || bottom - y < 1) return null;
+  return { x, y, w: right - x, h: bottom - y };
+}
+
 // src/shapes/FabRect.ts
 var { changeObjectWidth: changeObjectWidth2, changeObjectHeight: changeObjectHeight2 } = controlsUtils3;
 var FabRect = class extends Rect {
@@ -2906,8 +3080,10 @@ var FabRect = class extends Rect {
   }
 };
 FabRect.type = "Rect";
-FabRect.customProperties = ["layerId", "layerType", "lockMode", "lockContent"];
+FabRect.customProperties = ["layerId", "layerType", "lockMode", "lockContent", "backdropBlur"];
 installLockMethods(FabRect.prototype);
+installOuterShadow(FabRect.prototype, Rect.prototype._render);
+installBackdropBlur(FabRect.prototype, Rect.prototype._render);
 installUserSlotRendering(FabRect.prototype);
 classRegistry.setClass(FabRect, "Rect");
 
@@ -2962,8 +3138,10 @@ var FabCircle = class extends Circle {
   }
 };
 FabCircle.type = "Circle";
-FabCircle.customProperties = ["layerId", "layerType", "lockMode", "lockContent"];
+FabCircle.customProperties = ["layerId", "layerType", "lockMode", "lockContent", "backdropBlur"];
 installLockMethods(FabCircle.prototype);
+installOuterShadow(FabCircle.prototype, Circle.prototype._render);
+installBackdropBlur(FabCircle.prototype, Circle.prototype._render);
 installUserSlotRendering(FabCircle.prototype);
 classRegistry2.setClass(FabCircle, "Circle");
 
@@ -3105,9 +3283,11 @@ var _FabPath = class _FabPath extends Path {
   }
 };
 _FabPath.type = "Path";
-_FabPath.customProperties = ["layerId", "layerType", "lockMode", "lockContent"];
+_FabPath.customProperties = ["layerId", "layerType", "lockMode", "lockContent", "backdropBlur"];
 var FabPath = _FabPath;
 installLockMethods(FabPath.prototype);
+installOuterShadow(FabPath.prototype, Path.prototype._render);
+installBackdropBlur(FabPath.prototype, Path.prototype._render);
 installUserSlotRendering(FabPath.prototype);
 classRegistry3.setClass(FabPath, "Path");
 
@@ -3579,7 +3759,7 @@ import {
 } from "#fabric";
 
 // src/imageSlots.ts
-import { util as util3 } from "#fabric";
+import { util as util5 } from "#fabric";
 var IMAGE_SLOT_FIELD = "image.src";
 var EACH_MEDIA = "each";
 function imageSlotBinding(obj) {
@@ -3684,7 +3864,7 @@ var GLYPHS = {
   }
 };
 function imageSlotDataUrl(mark, color = DEFAULT_GUIDE_COLOR, size = UNIT) {
-  const el = util3.createCanvasElement();
+  const el = util5.createCanvasElement();
   el.width = el.height = size;
   const ctx = el.getContext("2d");
   ctx.translate(size / 2, size / 2);
@@ -3795,6 +3975,11 @@ var ImageFrame = class _ImageFrame extends Group4 {
     this.cornerRadius = 0;
     /** Cf. ImageFrameData.fit. */
     this.fit = "cover";
+    /** Cf. ImageFrameData.blur. */
+    this.blur = 0;
+    /** Le flou posé sur l'image au dernier calcul (élément source, échelle, rayon) : rien à refaire
+     *  tant qu'il ne change pas. */
+    this._blurKey = null;
     /** En contain, la boîte où l'image se cale ; frameWidth/frameHeight sont alors sa taille. */
     this._box = null;
     this._crop = NO_CROP;
@@ -3821,6 +4006,7 @@ var ImageFrame = class _ImageFrame extends Group4 {
       this._box = { w: frameWidth, h: frameHeight };
       this._fitFrame();
     }
+    this.blur = options.blur ?? 0;
     if (options.layerId) {
       this.set("layerId", options.layerId);
     }
@@ -3877,6 +4063,7 @@ var ImageFrame = class _ImageFrame extends Group4 {
     this._imageMeta = {};
     this._source = "value";
     if (image) this._swapImage(image);
+    else this._applyBlur();
     this.dirty = true;
     this.canvas?.requestRenderAll();
   }
@@ -4098,6 +4285,46 @@ var ImageFrame = class _ImageFrame extends Group4 {
     const s = coverScale(this.frameWidth, this.frameHeight, nat) * this._crop.scale;
     const offset = centerOffset(this.frameWidth, this.frameHeight, nat, this._crop);
     this._image.set({ scaleX: s, scaleY: s, left: offset.x, top: offset.y });
+    this._applyBlur();
+  }
+  /** Floute l'image (ou la rend nette) : elle s'affiche floutée à son échelle courante. */
+  setBlur(radius) {
+    this.blur = Math.max(0, radius || 0);
+    this._applyBlur();
+    this.dirty = true;
+    this.canvas?.requestRenderAll();
+  }
+  /**
+   * L'élément dessiné par l'image : la source, ou sa version floutée à la résolution
+   * d'affichage (cf. imageBlur) — la source reste `_originalElement`, celle qui se sauve. Le
+   * damier d'un cadre en attente ne se floute pas. Recalculé seulement quand la source,
+   * l'échelle (à 2 % près) ou le rayon changent.
+   */
+  _applyBlur() {
+    const img = this._image;
+    const source = img._originalElement;
+    if (!source) return;
+    if (!this.blur || this._source === "none") {
+      if (img._element !== source) {
+        img._element = source;
+        img._filterScalingX = img._filterScalingY = 1;
+        img.dirty = true;
+      }
+      this._blurKey = null;
+      return;
+    }
+    const scale = img.scaleX;
+    const key = this._blurKey;
+    if (key && key.element === source && key.radius === this.blur && Math.abs(key.scale - scale) <= key.scale * 0.02) {
+      return;
+    }
+    const blurred = blurredCanvas(source, scale, this.blur);
+    img._element = blurred;
+    img._filterScalingX = blurred.width / source.width;
+    img._filterScalingY = blurred.height / source.height;
+    img.dirty = true;
+    this.dirty = true;
+    this._blurKey = { element: source, scale, radius: this.blur };
   }
   _applyClip(shapeType) {
     this.clipShape = shapeType;
@@ -4299,6 +4526,7 @@ var ImageFrame = class _ImageFrame extends Group4 {
       frameWidth: this._box?.w ?? this.frameWidth,
       frameHeight: this._box?.h ?? this.frameHeight,
       fit: this._box ? "contain" : void 0,
+      blur: this.blur || void 0,
       clipShape: this.clipShape,
       clipData: this.clipData,
       cornerRadius: this.cornerRadius || void 0,
@@ -4329,6 +4557,7 @@ var ImageFrame = class _ImageFrame extends Group4 {
       frameWidth: data.frameWidth,
       frameHeight: data.frameHeight,
       fit: data.fit,
+      blur: data.blur,
       imageMeta: imageMetaOf(data.image)
     };
     const img = src ? await FabricImage4.fromURL(src, { crossOrigin: "anonymous" }) : null;
@@ -4417,6 +4646,12 @@ function yogaLayout(children, containerLeft, containerTop, containerW, container
     modeX === "fixed" ? containerW : void 0,
     modeY === "fixed" ? containerH : void 0
   );
+  if (refitShrunkTexts(built)) {
+    root.calculateLayout(
+      modeX === "fixed" ? containerW : void 0,
+      modeY === "fixed" ? containerH : void 0
+    );
+  }
   placeChildren(built, containerLeft, containerTop, 0);
   const w = root.getComputedWidth();
   const h = root.getComputedHeight();
@@ -4556,6 +4791,25 @@ function placeChildren(built, parentLeft, parentTop, depth) {
     if (children) placeChildren(children, left, top, depth + 1);
   }
 }
+function refitShrunkTexts(built) {
+  let refit = false;
+  for (const { obj, node, children } of built) {
+    if (children) refit = refitShrunkTexts(children) || refit;
+    if (!isTextObject(obj) || sizingOf(obj).y !== "hug") continue;
+    if ((layoutOf(obj)?.overflow ?? "shrink") !== "shrink") continue;
+    const w = node.getComputedWidth();
+    const h = node.getComputedHeight();
+    if (h >= scaledSize(obj).h - 0.5) continue;
+    obj.layoutWith({ w, h });
+    const folded = scaledSize(obj).h;
+    if (folded >= h - 0.5) continue;
+    node.setWidth(w);
+    node.setHeight(folded);
+    node.setFlexShrink(0);
+    refit = true;
+  }
+  return refit;
+}
 function mapAlignItems(align, Y) {
   switch (align) {
     case "stretch":
@@ -4612,10 +4866,10 @@ function setupTextMeasure(node, obj, Y) {
 }
 
 // src/layout/rotation.ts
-import { util as util4 } from "#fabric";
+import { util as util6 } from "#fabric";
 function rotateAbout(obj, pivot, delta) {
   if (!delta) return;
-  const center = obj.getCenterPoint().rotate(util4.degreesToRadians(delta), pivot);
+  const center = obj.getCenterPoint().rotate(util6.degreesToRadians(delta), pivot);
   obj.set({ angle: (obj.angle || 0) + delta });
   obj.setPositionByOrigin(center, "center", "center");
   obj.setCoords();
@@ -4655,7 +4909,7 @@ var SubtreeRotate = class _SubtreeRotate {
   /** La descendance suit la rotation de `target` depuis le début. */
   follow(target) {
     const delta = (target.angle || 0) - this.startAngle;
-    const rad = util4.degreesToRadians(delta);
+    const rad = util6.degreesToRadians(delta);
     for (const f of this.followers) {
       f.obj.set({ angle: f.angle + delta });
       f.obj.setPositionByOrigin(f.center.rotate(rad, this.pivot), "center", "center");
@@ -5371,7 +5625,7 @@ function clipOfShape(shape) {
   if (shape instanceof FabPath) {
     const id = shape.id;
     const clipData = {
-      d: util5.joinPath(shape.path),
+      d: util7.joinPath(shape.path),
       width: shape.width,
       height: shape.height,
       ...shape.fillRule === "evenodd" ? { fillRule: "evenodd" } : {}
@@ -8174,7 +8428,7 @@ var SubtreeDrag = class _SubtreeDrag {
 };
 
 // src/layout/scale-session.ts
-import { Point as Point8, util as util6 } from "#fabric";
+import { Point as Point8, util as util8 } from "#fabric";
 var scaleMin = (minSize, k) => minSize && { w: minSize.w * k, h: minSize.h * k };
 var ScaleSession = class _ScaleSession {
   constructor(container, objects, start) {
@@ -8205,7 +8459,7 @@ var ScaleSession = class _ScaleSession {
     const k = Math.min(this.maxK, Math.max(0.05, (w / start.width + h / start.height) / 2));
     const fx = transform.originX === "left" ? 0 : transform.originX === "right" ? 1 : 0.5;
     const fy = transform.originY === "top" ? 0 : transform.originY === "bottom" ? 1 : 0.5;
-    const corner = new Point8(start.width * fx, start.height * fy).rotate(util6.degreesToRadians(this.angle)).add(new Point8(start.left, start.top));
+    const corner = new Point8(start.width * fx, start.height * fy).rotate(util8.degreesToRadians(this.angle)).add(new Point8(start.left, start.top));
     this.apply(k, corner);
   }
   /**
@@ -9535,7 +9789,7 @@ function installDisplayStyleRendering(target) {
 }
 
 // src/CropMode.ts
-import { Point as Point9, util as util7 } from "#fabric";
+import { Point as Point9, util as util9 } from "#fabric";
 var HANDLE_RADIUS = 6;
 var HANDLE_GRAB = 12;
 var FALLBACK_VEIL = "#f3f4f6";
@@ -9640,7 +9894,7 @@ var CropMode = class {
   /** Le point de la scène dans le repère du cadre. */
   toFrame(scene) {
     const frame = this.frame;
-    const local = scene.transform(util7.invertTransform(frame.calcTransformMatrix()));
+    const local = scene.transform(util9.invertTransform(frame.calcTransformMatrix()));
     return { x: local.x + frame.frameWidth / 2, y: local.y + frame.frameHeight / 2 };
   }
   /** Le point du cadre à l'écran (pixels CSS du canvas). */
@@ -12459,7 +12713,7 @@ function layerToHtmlStandalone(layer, zIndex) {
 }
 
 // src/text-units.ts
-import { util as util8 } from "#fabric";
+import { util as util10 } from "#fabric";
 var WHITESPACE = /\s/;
 function internals(text) {
   return text;
@@ -12600,7 +12854,7 @@ function tilePadding(text) {
 function textUnitTiles(text, kind, { resolution = 1, pad = tilePadding(text) } = {}) {
   const t = internals(text);
   const matrix = t.calcTransformMatrix();
-  const toLocal = util8.invertTransform(matrix);
+  const toLocal = util10.invertTransform(matrix);
   const parts = textParts(text);
   const [a, b, c, d, e, f] = matrix;
   const aligned = b === 0 && c === 0 && a > 0 && d > 0;
@@ -12630,7 +12884,7 @@ function textUnitTiles(text, kind, { resolution = 1, pad = tilePadding(text) } =
       const y0 = snapY(r.y - pad, Math.floor);
       const box = { x: x0, y: y0, w: snapX(r.x + r.w + pad, Math.ceil) - x0, h: snapY(r.y + r.h + pad, Math.ceil) - y0 };
       return parts.map((part) => {
-        const canvas = util8.createCanvasElement();
+        const canvas = util10.createCanvasElement();
         canvas.width = Math.max(1, Math.ceil(box.w * resolution));
         canvas.height = Math.max(1, Math.ceil(box.h * resolution));
         box.w = canvas.width / resolution;

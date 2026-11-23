@@ -1320,7 +1320,7 @@ __export(index_exports, {
 module.exports = __toCommonJS(index_exports);
 
 // src/FabricEditor.ts
-var import_fabric29 = require("#fabric");
+var import_fabric32 = require("#fabric");
 
 // src/DesignCanvas.ts
 var import_fabric = require("#fabric");
@@ -1661,7 +1661,7 @@ var DesignCanvas = class {
 };
 
 // src/LayerManager.ts
-var import_fabric17 = require("#fabric");
+var import_fabric20 = require("#fabric");
 
 // src/controls/CustomTextbox.ts
 var import_fabric5 = require("#fabric");
@@ -1687,7 +1687,8 @@ function resolveTextBox(input, measure) {
     m = measure.wrapped(width, fontSize);
   }
   const minH = sizing.y === "hug" ? sizing.minSize?.h ?? 0 : 0;
-  const height = boundH ?? Math.max(m.height, minH);
+  const shrunkHug = sizing.y === "hug" && fontSize < input.fontSizeIntent;
+  const height = boundH != null && !shrunkHug ? boundH : Math.max(m.height, minH);
   return { width: m.width, height, fontSize, overflowing: m.height > height + 0.5 };
 }
 function fits(m, width, boundH) {
@@ -2943,7 +2944,7 @@ function sendBlocksBackward(objects, moved) {
 }
 
 // src/capabilities.ts
-var import_fabric10 = require("#fabric");
+var import_fabric13 = require("#fabric");
 
 // src/locking.ts
 var LOCK_MODES = ["free", "position", "full"];
@@ -2982,7 +2983,7 @@ function isPositionLocked(obj) {
 }
 
 // src/shapes/FabRect.ts
-var import_fabric6 = require("#fabric");
+var import_fabric9 = require("#fabric");
 
 // src/shapes/lockMixin.ts
 var LOCK_MODES2 = ["free", "position", "full"];
@@ -3018,9 +3019,182 @@ function installLockMethods(proto) {
   };
 }
 
+// src/shapes/outerShadow.ts
+var import_fabric6 = require("#fabric");
+var FAR = 1e5;
+function seesThrough(fill) {
+  if (!fill || typeof fill !== "string") return true;
+  if (fill === "transparent" || fill === "none") return true;
+  return new import_fabric6.Color(fill).getAlpha() < 1;
+}
+function installOuterShadow(target, buildPath) {
+  const proto = target;
+  const originalRender = proto.render;
+  proto.render = function(ctx) {
+    const shadow = this.shadow;
+    if (!shadow || !seesThrough(this.fill) || this.isNotVisible()) return originalRender.call(this, ctx);
+    drawOuterShadow(this, ctx, buildPath);
+    this.shadow = null;
+    try {
+      originalRender.call(this, ctx);
+    } finally {
+      this.shadow = shadow;
+    }
+  };
+}
+function traceShapePath(shape, ctx, buildPath) {
+  const target = shape;
+  target._renderPaintInOrder = () => {
+  };
+  try {
+    buildPath.call(shape, ctx);
+  } finally {
+    delete target._renderPaintInOrder;
+  }
+}
+function drawOuterShadow(shape, ctx, buildPath) {
+  const paint = shape._renderPaintInOrder;
+  ctx.save();
+  try {
+    shape._setupCompositeOperation(ctx);
+    shape.transform(ctx);
+    shape._setOpacity(ctx);
+    traceShapePath(shape, ctx, buildPath);
+    ctx.rect(-FAR, -FAR, 2 * FAR, 2 * FAR);
+    ctx.clip("evenodd");
+    shape._setShadow(ctx);
+    shape._renderPaintInOrder = (c) => {
+      c.fillStyle = "#000";
+      c.fill();
+    };
+    buildPath.call(shape, ctx);
+  } finally {
+    delete shape._renderPaintInOrder;
+    if (shape._renderPaintInOrder !== paint) shape._renderPaintInOrder = paint;
+    ctx.restore();
+  }
+}
+
+// src/shapes/backdropBlur.ts
+var import_fabric8 = require("#fabric");
+
+// src/imageBlur.ts
+var import_fabric7 = require("#fabric");
+function blurredCanvas(source, displayScale, radius) {
+  const workScale = Math.min(1, Math.max(displayScale, 1e-3));
+  const el = import_fabric7.util.createCanvasElement();
+  el.width = Math.max(1, Math.round(source.width * workScale));
+  el.height = Math.max(1, Math.round(source.height * workScale));
+  const ctx = el.getContext("2d");
+  ctx.drawImage(source, 0, 0, el.width, el.height);
+  const sigma = radius / Math.max(displayScale, 1e-3) * workScale;
+  if (sigma < 0.5) return el;
+  const image = ctx.getImageData(0, 0, el.width, el.height);
+  gaussianApprox(image.data, el.width, el.height, sigma);
+  ctx.putImageData(image, 0, 0);
+  return el;
+}
+function gaussianApprox(data, width, height, sigma) {
+  const boxes = boxSizes(sigma, 3);
+  const tmp = new Uint8ClampedArray(data.length);
+  for (const size of boxes) {
+    const r = (size - 1) / 2;
+    boxBlurH(data, tmp, width, height, r);
+    boxBlurV(tmp, data, width, height, r);
+  }
+}
+function boxSizes(sigma, n) {
+  const ideal = Math.sqrt(12 * sigma * sigma / n + 1);
+  let lower = Math.floor(ideal);
+  if (lower % 2 === 0) lower--;
+  const upper = lower + 2;
+  const m = Math.round((12 * sigma * sigma - n * lower * lower - 4 * n * lower - 3 * n) / (-4 * lower - 4));
+  return Array.from({ length: n }, (_, i) => i < m ? lower : upper);
+}
+function boxBlurH(src, dst, w, h, r) {
+  const span = 2 * r + 1;
+  for (let y = 0; y < h; y++) {
+    const row = y * w * 4;
+    for (let c = 0; c < 4; c++) {
+      const at = (x) => src[row + Math.min(w - 1, Math.max(0, x)) * 4 + c];
+      let sum = 0;
+      for (let x = -r; x <= r; x++) sum += at(x);
+      for (let x = 0; x < w; x++) {
+        dst[row + x * 4 + c] = sum / span;
+        sum += at(x + r + 1) - at(x - r);
+      }
+    }
+  }
+}
+function boxBlurV(src, dst, w, h, r) {
+  const span = 2 * r + 1;
+  for (let x = 0; x < w; x++) {
+    for (let c = 0; c < 4; c++) {
+      const at = (y) => src[(Math.min(h - 1, Math.max(0, y)) * w + x) * 4 + c];
+      let sum = 0;
+      for (let y = -r; y <= r; y++) sum += at(y);
+      for (let y = 0; y < h; y++) {
+        dst[(y * w + x) * 4 + c] = sum / span;
+        sum += at(y + r + 1) - at(y - r);
+      }
+    }
+  }
+}
+
+// src/shapes/backdropBlur.ts
+function installBackdropBlur(target, buildPath) {
+  const proto = target;
+  const originalRender = proto.render;
+  proto.render = function(ctx) {
+    if (this.backdropBlur && this.backdropBlur > 0 && !this.isNotVisible()) {
+      drawBackdrop(this, ctx, buildPath, this.backdropBlur);
+    }
+    originalRender.call(this, ctx);
+  };
+}
+function drawBackdrop(shape, ctx, buildPath, radius) {
+  ctx.save();
+  try {
+    shape.transform(ctx);
+    const m = ctx.getTransform();
+    const scale = Math.sqrt(Math.abs(m.a * m.d - m.b * m.c)) || 1;
+    const sigma = radius * scale;
+    const margin = Math.ceil(3 * sigma);
+    const box = deviceBox(m, shape.width / 2, shape.height / 2, margin, ctx.canvas);
+    if (!box) return;
+    const pixels = ctx.getImageData(box.x, box.y, box.w, box.h);
+    gaussianApprox(pixels.data, box.w, box.h, sigma);
+    const tile = import_fabric8.util.createCanvasElement();
+    tile.width = box.w;
+    tile.height = box.h;
+    tile.getContext("2d").putImageData(pixels, 0, 0);
+    traceShapePath(shape, ctx, buildPath);
+    ctx.clip();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.globalAlpha = shape.opacity ?? 1;
+    ctx.drawImage(tile, box.x, box.y);
+  } finally {
+    ctx.restore();
+  }
+}
+function deviceBox(m, hw, hh, margin, canvas) {
+  const corners = [[-hw, -hh], [hw, -hh], [hw, hh], [-hw, hh]].map(([x2, y2]) => [
+    m.a * x2 + m.c * y2 + m.e,
+    m.b * x2 + m.d * y2 + m.f
+  ]);
+  const xs = corners.map((c) => c[0]);
+  const ys = corners.map((c) => c[1]);
+  const x = Math.max(0, Math.floor(Math.min(...xs) - margin));
+  const y = Math.max(0, Math.floor(Math.min(...ys) - margin));
+  const right = Math.min(canvas.width, Math.ceil(Math.max(...xs) + margin));
+  const bottom = Math.min(canvas.height, Math.ceil(Math.max(...ys) + margin));
+  if (right - x < 1 || bottom - y < 1) return null;
+  return { x, y, w: right - x, h: bottom - y };
+}
+
 // src/shapes/FabRect.ts
-var { changeObjectWidth: changeObjectWidth2, changeObjectHeight: changeObjectHeight2 } = import_fabric6.controlsUtils;
-var FabRect = class extends import_fabric6.Rect {
+var { changeObjectWidth: changeObjectWidth2, changeObjectHeight: changeObjectHeight2 } = import_fabric9.controlsUtils;
+var FabRect = class extends import_fabric9.Rect {
   constructor(options) {
     super({
       originX: "center",
@@ -3069,15 +3243,17 @@ var FabRect = class extends import_fabric6.Rect {
   }
 };
 FabRect.type = "Rect";
-FabRect.customProperties = ["layerId", "layerType", "lockMode", "lockContent"];
+FabRect.customProperties = ["layerId", "layerType", "lockMode", "lockContent", "backdropBlur"];
 installLockMethods(FabRect.prototype);
+installOuterShadow(FabRect.prototype, import_fabric9.Rect.prototype._render);
+installBackdropBlur(FabRect.prototype, import_fabric9.Rect.prototype._render);
 installUserSlotRendering(FabRect.prototype);
-import_fabric6.classRegistry.setClass(FabRect, "Rect");
+import_fabric9.classRegistry.setClass(FabRect, "Rect");
 
 // src/shapes/FabCircle.ts
-var import_fabric7 = require("#fabric");
-var { changeObjectWidth: changeObjectWidth3, changeObjectHeight: changeObjectHeight3 } = import_fabric7.controlsUtils;
-var FabCircle = class extends import_fabric7.Circle {
+var import_fabric10 = require("#fabric");
+var { changeObjectWidth: changeObjectWidth3, changeObjectHeight: changeObjectHeight3 } = import_fabric10.controlsUtils;
+var FabCircle = class extends import_fabric10.Circle {
   constructor(options) {
     super({
       originX: "center",
@@ -3125,13 +3301,15 @@ var FabCircle = class extends import_fabric7.Circle {
   }
 };
 FabCircle.type = "Circle";
-FabCircle.customProperties = ["layerId", "layerType", "lockMode", "lockContent"];
+FabCircle.customProperties = ["layerId", "layerType", "lockMode", "lockContent", "backdropBlur"];
 installLockMethods(FabCircle.prototype);
+installOuterShadow(FabCircle.prototype, import_fabric10.Circle.prototype._render);
+installBackdropBlur(FabCircle.prototype, import_fabric10.Circle.prototype._render);
 installUserSlotRendering(FabCircle.prototype);
-import_fabric7.classRegistry.setClass(FabCircle, "Circle");
+import_fabric10.classRegistry.setClass(FabCircle, "Circle");
 
 // src/shapes/FabPath.ts
-var import_fabric8 = require("#fabric");
+var import_fabric11 = require("#fabric");
 
 // src/shapes/registry.ts
 var registry = [];
@@ -3162,9 +3340,9 @@ function normalizeEntry(entry) {
 }
 
 // src/shapes/FabPath.ts
-var { changeObjectWidth: changeObjectWidth4, changeObjectHeight: changeObjectHeight4 } = import_fabric8.controlsUtils;
+var { changeObjectWidth: changeObjectWidth4, changeObjectHeight: changeObjectHeight4 } = import_fabric11.controlsUtils;
 var DEFAULT_SIZE = 300;
-var _FabPath = class _FabPath extends import_fabric8.Path {
+var _FabPath = class _FabPath extends import_fabric11.Path {
   constructor(path, options) {
     super(path, {
       originX: "center",
@@ -3268,15 +3446,17 @@ var _FabPath = class _FabPath extends import_fabric8.Path {
   }
 };
 _FabPath.type = "Path";
-_FabPath.customProperties = ["layerId", "layerType", "lockMode", "lockContent"];
+_FabPath.customProperties = ["layerId", "layerType", "lockMode", "lockContent", "backdropBlur"];
 var FabPath = _FabPath;
 installLockMethods(FabPath.prototype);
+installOuterShadow(FabPath.prototype, import_fabric11.Path.prototype._render);
+installBackdropBlur(FabPath.prototype, import_fabric11.Path.prototype._render);
 installUserSlotRendering(FabPath.prototype);
-import_fabric8.classRegistry.setClass(FabPath, "Path");
+import_fabric11.classRegistry.setClass(FabPath, "Path");
 
 // src/shapes/FabGroup.ts
-var import_fabric9 = require("#fabric");
-var FabGroup = class extends import_fabric9.Group {
+var import_fabric12 = require("#fabric");
+var FabGroup = class extends import_fabric12.Group {
   /** La couleur commune des enfants ; null quand ils diffèrent (une œuvre polychrome). */
   commonFill() {
     const fills = this.getObjects().map((child) => child.fill);
@@ -3295,15 +3475,15 @@ function sameFill(a, b) {
   if (!a || !b || typeof a === "string" || typeof b === "string") return false;
   return JSON.stringify(a) === JSON.stringify(b);
 }
-import_fabric9.classRegistry.setClass(FabGroup, "Group");
+import_fabric12.classRegistry.setClass(FabGroup, "Group");
 
 // src/capabilities.ts
 function kindOf(obj) {
   const layerType = obj.layerType;
   if (isTextObject(obj)) return "text";
   if (layerType === "imageFrame") return "imageShape";
-  if (obj instanceof import_fabric10.FabricImage) return "legacyImage";
-  if (layerType === "shape" || obj instanceof import_fabric10.Rect) return "shape";
+  if (obj instanceof import_fabric13.FabricImage) return "legacyImage";
+  if (layerType === "shape" || obj instanceof import_fabric13.Rect) return "shape";
   return "other";
 }
 function rulesOf(obj, { ignoreLock = false } = {}) {
@@ -3347,7 +3527,7 @@ function kindRules(obj, kind) {
     case "shape":
       return {
         kind,
-        onToolboxImage: obj instanceof import_fabric10.Group ? null : "fill",
+        onToolboxImage: obj instanceof import_fabric13.Group ? null : "fill",
         hosts: true,
         options: shapeOptions(obj),
         ...free
@@ -3377,10 +3557,10 @@ function isOutOfPlay(obj) {
 }
 
 // src/shapes/factories.ts
-var import_fabric12 = require("#fabric");
+var import_fabric15 = require("#fabric");
 
 // src/controls/cropControls.ts
-var import_fabric11 = require("#fabric");
+var import_fabric14 = require("#fabric");
 var CROP_CONFIGS = {
   left: {
     dimension: "width",
@@ -3474,7 +3654,7 @@ function addCropControls(obj) {
   sides.forEach((side) => {
     const position = CONTROL_POSITIONS[side];
     const controlName = CONTROL_NAMES[side];
-    obj.controls[controlName] = new import_fabric11.Control({
+    obj.controls[controlName] = new import_fabric14.Control({
       x: position.x,
       y: position.y,
       actionHandler: createCropActionHandler(side),
@@ -3508,7 +3688,7 @@ function createPathShape(shapeId, options) {
   return FabPath.createFromCatalog(shapeId, options);
 }
 async function createImage(url, options) {
-  const img = await import_fabric12.FabricImage.fromURL(url, { crossOrigin: "anonymous" });
+  const img = await import_fabric15.FabricImage.fromURL(url, { crossOrigin: "anonymous" });
   let scale = 1;
   if (img.width > 300 || img.height > 300) {
     scale = Math.min(300 / img.width, 300 / img.height);
@@ -3652,7 +3832,7 @@ function getAvailableShapes() {
 }
 
 // src/layout/geometry.ts
-var import_fabric13 = require("#fabric");
+var import_fabric16 = require("#fabric");
 function scaledSize(obj) {
   return {
     w: obj.width * (obj.scaleX || 1),
@@ -3693,7 +3873,7 @@ function outsetBox(box, pad) {
   return insetBox(box, { top: -pad.top, right: -pad.right, bottom: -pad.bottom, left: -pad.left });
 }
 function placeTopLeft(obj, x, y) {
-  obj.setPositionByOrigin(new import_fabric13.Point(x, y), "left", "top");
+  obj.setPositionByOrigin(new import_fabric16.Point(x, y), "left", "top");
   obj.setCoords();
 }
 function pointInObject(point, obj, margin = 0) {
@@ -3728,10 +3908,10 @@ function cornerToAxes(corner) {
 }
 
 // src/ImageFrame.ts
-var import_fabric15 = require("#fabric");
+var import_fabric18 = require("#fabric");
 
 // src/imageSlots.ts
-var import_fabric14 = require("#fabric");
+var import_fabric17 = require("#fabric");
 var IMAGE_SLOT_FIELD = "image.src";
 var EACH_MEDIA = "each";
 function imageSlotBinding(obj) {
@@ -3836,7 +4016,7 @@ var GLYPHS = {
   }
 };
 function imageSlotDataUrl(mark, color = DEFAULT_GUIDE_COLOR, size = UNIT) {
-  const el = import_fabric14.util.createCanvasElement();
+  const el = import_fabric17.util.createCanvasElement();
   el.width = el.height = size;
   const ctx = el.getContext("2d");
   ctx.translate(size / 2, size / 2);
@@ -3911,7 +4091,7 @@ function rotatePoint(dx, dy, angleDeg) {
     y: dx * Math.sin(angle) + dy * Math.cos(angle)
   };
 }
-var ImageFrame = class _ImageFrame extends import_fabric15.Group {
+var ImageFrame = class _ImageFrame extends import_fabric18.Group {
   constructor(image, options = {}) {
     const frameScale = options.frameScale ?? 1;
     const frameWidth = options.frameWidth ?? image.width * frameScale;
@@ -3939,7 +4119,7 @@ var ImageFrame = class _ImageFrame extends import_fabric15.Group {
       height: frameHeight,
       subTargetCheck: false,
       interactive: false,
-      layoutManager: new import_fabric15.LayoutManager(new import_fabric15.FixedLayout()),
+      layoutManager: new import_fabric18.LayoutManager(new import_fabric18.FixedLayout()),
       // Désactiver le cache pour que le clipPath soit redessiné à chaque frame
       objectCaching: false
     });
@@ -3947,6 +4127,11 @@ var ImageFrame = class _ImageFrame extends import_fabric15.Group {
     this.cornerRadius = 0;
     /** Cf. ImageFrameData.fit. */
     this.fit = "cover";
+    /** Cf. ImageFrameData.blur. */
+    this.blur = 0;
+    /** Le flou posé sur l'image au dernier calcul (élément source, échelle, rayon) : rien à refaire
+     *  tant qu'il ne change pas. */
+    this._blurKey = null;
     /** En contain, la boîte où l'image se cale ; frameWidth/frameHeight sont alors sa taille. */
     this._box = null;
     this._crop = NO_CROP;
@@ -3973,6 +4158,7 @@ var ImageFrame = class _ImageFrame extends import_fabric15.Group {
       this._box = { w: frameWidth, h: frameHeight };
       this._fitFrame();
     }
+    this.blur = options.blur ?? 0;
     if (options.layerId) {
       this.set("layerId", options.layerId);
     }
@@ -4007,7 +4193,7 @@ var ImageFrame = class _ImageFrame extends import_fabric15.Group {
   }
   /** Un cadre en attente : l'image est le damier, aux dimensions du cadre. */
   static pending(options) {
-    const img = new import_fabric15.FabricImage(checkerCanvas(options.frameWidth, options.frameHeight));
+    const img = new import_fabric18.FabricImage(checkerCanvas(options.frameWidth, options.frameHeight));
     const frame = new _ImageFrame(img, options);
     frame._source = "none";
     frame._fitFrame();
@@ -4029,6 +4215,7 @@ var ImageFrame = class _ImageFrame extends import_fabric15.Group {
     this._imageMeta = {};
     this._source = "value";
     if (image) this._swapImage(image);
+    else this._applyBlur();
     this.dirty = true;
     this.canvas?.requestRenderAll();
   }
@@ -4039,7 +4226,7 @@ var ImageFrame = class _ImageFrame extends import_fabric15.Group {
   clearSource() {
     this._imageMeta = {};
     this._source = "none";
-    this._swapImage(new import_fabric15.FabricImage(checkerCanvas(this.frameWidth, this.frameHeight)));
+    this._swapImage(new import_fabric18.FabricImage(checkerCanvas(this.frameWidth, this.frameHeight)));
     this.dirty = true;
     this.canvas?.requestRenderAll();
   }
@@ -4250,6 +4437,46 @@ var ImageFrame = class _ImageFrame extends import_fabric15.Group {
     const s = coverScale(this.frameWidth, this.frameHeight, nat) * this._crop.scale;
     const offset = centerOffset(this.frameWidth, this.frameHeight, nat, this._crop);
     this._image.set({ scaleX: s, scaleY: s, left: offset.x, top: offset.y });
+    this._applyBlur();
+  }
+  /** Floute l'image (ou la rend nette) : elle s'affiche floutée à son échelle courante. */
+  setBlur(radius) {
+    this.blur = Math.max(0, radius || 0);
+    this._applyBlur();
+    this.dirty = true;
+    this.canvas?.requestRenderAll();
+  }
+  /**
+   * L'élément dessiné par l'image : la source, ou sa version floutée à la résolution
+   * d'affichage (cf. imageBlur) — la source reste `_originalElement`, celle qui se sauve. Le
+   * damier d'un cadre en attente ne se floute pas. Recalculé seulement quand la source,
+   * l'échelle (à 2 % près) ou le rayon changent.
+   */
+  _applyBlur() {
+    const img = this._image;
+    const source = img._originalElement;
+    if (!source) return;
+    if (!this.blur || this._source === "none") {
+      if (img._element !== source) {
+        img._element = source;
+        img._filterScalingX = img._filterScalingY = 1;
+        img.dirty = true;
+      }
+      this._blurKey = null;
+      return;
+    }
+    const scale = img.scaleX;
+    const key = this._blurKey;
+    if (key && key.element === source && key.radius === this.blur && Math.abs(key.scale - scale) <= key.scale * 0.02) {
+      return;
+    }
+    const blurred = blurredCanvas(source, scale, this.blur);
+    img._element = blurred;
+    img._filterScalingX = blurred.width / source.width;
+    img._filterScalingY = blurred.height / source.height;
+    img.dirty = true;
+    this.dirty = true;
+    this._blurKey = { element: source, scale, radius: this.blur };
   }
   _applyClip(shapeType) {
     this.clipShape = shapeType;
@@ -4451,6 +4678,7 @@ var ImageFrame = class _ImageFrame extends import_fabric15.Group {
       frameWidth: this._box?.w ?? this.frameWidth,
       frameHeight: this._box?.h ?? this.frameHeight,
       fit: this._box ? "contain" : void 0,
+      blur: this.blur || void 0,
       clipShape: this.clipShape,
       clipData: this.clipData,
       cornerRadius: this.cornerRadius || void 0,
@@ -4481,9 +4709,10 @@ var ImageFrame = class _ImageFrame extends import_fabric15.Group {
       frameWidth: data.frameWidth,
       frameHeight: data.frameHeight,
       fit: data.fit,
+      blur: data.blur,
       imageMeta: imageMetaOf(data.image)
     };
-    const img = src ? await import_fabric15.FabricImage.fromURL(src, { crossOrigin: "anonymous" }) : null;
+    const img = src ? await import_fabric18.FabricImage.fromURL(src, { crossOrigin: "anonymous" }) : null;
     options.crop = cropX !== void 0 || cropY !== void 0 ? { x: cropX, y: cropY, scale } : cropFromCenterOffset(
       data.frameWidth,
       data.frameHeight,
@@ -4512,7 +4741,7 @@ var ImageFrame = class _ImageFrame extends import_fabric15.Group {
     if (data.opacity !== void 0) {
       frame.opacity = data.opacity;
     }
-    if (data.shadow) frame.set("shadow", new import_fabric15.Shadow(data.shadow));
+    if (data.shadow) frame.set("shadow", new import_fabric18.Shadow(data.shadow));
     return frame;
   }
   /**
@@ -4535,8 +4764,8 @@ var ImageFrame = class _ImageFrame extends import_fabric15.Group {
     });
   }
 };
-import_fabric15.classRegistry.setClass(ImageFrame);
-import_fabric15.classRegistry.setClass(ImageFrame, "ImageFrame");
+import_fabric18.classRegistry.setClass(ImageFrame);
+import_fabric18.classRegistry.setClass(ImageFrame, "ImageFrame");
 
 // src/layout/stack/engine.ts
 var yoga = null;
@@ -4569,6 +4798,12 @@ function yogaLayout(children, containerLeft, containerTop, containerW, container
     modeX === "fixed" ? containerW : void 0,
     modeY === "fixed" ? containerH : void 0
   );
+  if (refitShrunkTexts(built)) {
+    root.calculateLayout(
+      modeX === "fixed" ? containerW : void 0,
+      modeY === "fixed" ? containerH : void 0
+    );
+  }
   placeChildren(built, containerLeft, containerTop, 0);
   const w = root.getComputedWidth();
   const h = root.getComputedHeight();
@@ -4708,6 +4943,25 @@ function placeChildren(built, parentLeft, parentTop, depth) {
     if (children) placeChildren(children, left, top, depth + 1);
   }
 }
+function refitShrunkTexts(built) {
+  let refit = false;
+  for (const { obj, node, children } of built) {
+    if (children) refit = refitShrunkTexts(children) || refit;
+    if (!isTextObject(obj) || sizingOf(obj).y !== "hug") continue;
+    if ((layoutOf(obj)?.overflow ?? "shrink") !== "shrink") continue;
+    const w = node.getComputedWidth();
+    const h = node.getComputedHeight();
+    if (h >= scaledSize(obj).h - 0.5) continue;
+    obj.layoutWith({ w, h });
+    const folded = scaledSize(obj).h;
+    if (folded >= h - 0.5) continue;
+    node.setWidth(w);
+    node.setHeight(folded);
+    node.setFlexShrink(0);
+    refit = true;
+  }
+  return refit;
+}
 function mapAlignItems(align, Y) {
   switch (align) {
     case "stretch":
@@ -4764,10 +5018,10 @@ function setupTextMeasure(node, obj, Y) {
 }
 
 // src/layout/rotation.ts
-var import_fabric16 = require("#fabric");
+var import_fabric19 = require("#fabric");
 function rotateAbout(obj, pivot, delta) {
   if (!delta) return;
-  const center = obj.getCenterPoint().rotate(import_fabric16.util.degreesToRadians(delta), pivot);
+  const center = obj.getCenterPoint().rotate(import_fabric19.util.degreesToRadians(delta), pivot);
   obj.set({ angle: (obj.angle || 0) + delta });
   obj.setPositionByOrigin(center, "center", "center");
   obj.setCoords();
@@ -4807,7 +5061,7 @@ var SubtreeRotate = class _SubtreeRotate {
   /** La descendance suit la rotation de `target` depuis le début. */
   follow(target) {
     const delta = (target.angle || 0) - this.startAngle;
-    const rad = import_fabric16.util.degreesToRadians(delta);
+    const rad = import_fabric19.util.degreesToRadians(delta);
     for (const f of this.followers) {
       f.obj.set({ angle: f.angle + delta });
       f.obj.setPositionByOrigin(f.center.rotate(rad, this.pivot), "center", "center");
@@ -4940,7 +5194,7 @@ var LayerManager = class {
    * Charge l'image de fond
    */
   async loadBackgroundImage(url) {
-    const img = await import_fabric17.FabricImage.fromURL(url, { crossOrigin: "anonymous" });
+    const img = await import_fabric20.FabricImage.fromURL(url, { crossOrigin: "anonymous" });
     const scaleX = this.canvas.width / img.width;
     const scaleY = this.canvas.height / img.height;
     const scale = Math.max(scaleX, scaleY);
@@ -4994,7 +5248,7 @@ var LayerManager = class {
   }
   /** Le centre du document. */
   get center() {
-    return new import_fabric17.Point(this.canvas.width / 2, this.canvas.height / 2);
+    return new import_fabric20.Point(this.canvas.width / 2, this.canvas.height / 2);
   }
   /**
    * La boîte d'un calque neuf (forme, image) : NEW_LAYER_RATIO du document dans chaque sens.
@@ -5095,7 +5349,7 @@ var LayerManager = class {
   async addImage(url, options = {}) {
     const center = this.center;
     const { left = center.x, top = center.y, layerId = this.generateId(), imageMeta } = options;
-    const img = await import_fabric17.FabricImage.fromURL(url, { crossOrigin: "anonymous" });
+    const img = await import_fabric20.FabricImage.fromURL(url, { crossOrigin: "anonymous" });
     const box = this.newLayerBox;
     const frameScale = Math.min(box.w / img.width, box.h / img.height);
     const frame = new ImageFrame(img, { left, top, layerId, frameScale, imageMeta });
@@ -5128,7 +5382,7 @@ var LayerManager = class {
   async replaceImageSource(target, newUrl, options) {
     if (kindOf(target) === "imageShape") {
       const frame = target;
-      const newImg = await import_fabric17.FabricImage.fromURL(newUrl, { crossOrigin: "anonymous" });
+      const newImg = await import_fabric20.FabricImage.fromURL(newUrl, { crossOrigin: "anonymous" });
       frame.replaceImage(newImg, options?.imageMeta);
       this._reflowContained(frame);
       if (imageSlotBinding(frame)) {
@@ -5159,7 +5413,7 @@ var LayerManager = class {
     } else if (url === frame.displayedSrc) {
       if (!frame.pending) frame.showValue();
     } else {
-      const image = await import_fabric17.FabricImage.fromURL(url, { crossOrigin: "anonymous" });
+      const image = await import_fabric20.FabricImage.fromURL(url, { crossOrigin: "anonymous" });
       if (this.valueRequests.get(frame) !== url || !imageSlotBinding(target)) return;
       frame.showValue(image);
     }
@@ -5185,7 +5439,7 @@ var LayerManager = class {
       layerType: target.get("layerType")
     };
     const lockMode = getLockMode(target);
-    const newImg = await import_fabric17.FabricImage.fromURL(newUrl, { crossOrigin: "anonymous" });
+    const newImg = await import_fabric20.FabricImage.fromURL(newUrl, { crossOrigin: "anonymous" });
     const oldWidth = target.width * target.scaleX;
     const oldHeight = target.height * target.scaleY;
     const coverScale2 = Math.max(oldWidth / newImg.width, oldHeight / newImg.height);
@@ -5228,7 +5482,7 @@ var LayerManager = class {
     const { clipShape, clipData, cornerRadius } = clipOfShape(shape);
     const { w: displayedWidth, h: displayedHeight } = scaledSize(shape);
     const center = shape.getRelativeCenterPoint();
-    const img = await import_fabric17.FabricImage.fromURL(imageUrl, { crossOrigin: "anonymous" });
+    const img = await import_fabric20.FabricImage.fromURL(imageUrl, { crossOrigin: "anonymous" });
     const frame = new ImageFrame(img, {
       left: center.x,
       top: center.y,
@@ -5359,7 +5613,7 @@ var LayerManager = class {
    * libre, ses objets restent des calques).
    */
   groupObjects(objects) {
-    const group = new import_fabric17.Group(objects);
+    const group = new import_fabric20.Group(objects);
     objects.forEach((obj) => this.canvas.remove(obj));
     this.canvas.add(group);
     this.canvas.setActiveObject(group);
@@ -5396,7 +5650,7 @@ var LayerManager = class {
       }
       case "Image":
       case "image": {
-        const img = await import_fabric17.FabricImage.fromObject({
+        const img = await import_fabric20.FabricImage.fromObject({
           ...layer,
           crossOrigin: "anonymous"
         });
@@ -5523,7 +5777,7 @@ function clipOfShape(shape) {
   if (shape instanceof FabPath) {
     const id = shape.id;
     const clipData = {
-      d: import_fabric17.util.joinPath(shape.path),
+      d: import_fabric20.util.joinPath(shape.path),
       width: shape.width,
       height: shape.height,
       ...shape.fillRule === "evenodd" ? { fillRule: "evenodd" } : {}
@@ -5534,7 +5788,7 @@ function clipOfShape(shape) {
 }
 
 // src/SelectionManager.ts
-var import_fabric18 = require("#fabric");
+var import_fabric21 = require("#fabric");
 var SelectionManager = class {
   constructor(canvas) {
     this.canvas = canvas;
@@ -5707,7 +5961,7 @@ var SelectionManager = class {
     if (kept.length === 0) this.clear();
     else if (kept.length === 1) this.select(kept[0]);
     else {
-      this.canvas.setActiveObject(new import_fabric18.ActiveSelection(kept, { canvas: this.canvas.originalFabricCanvas }));
+      this.canvas.setActiveObject(new import_fabric21.ActiveSelection(kept, { canvas: this.canvas.originalFabricCanvas }));
       this.canvas.renderAll();
     }
   }
@@ -5796,7 +6050,7 @@ var SelectionManager = class {
     const id = idOf(container);
     this._enteredId = id;
     const child = this.canvas.getObjects().slice().reverse().find(
-      (o) => parentIdOf(o) === id && o.containsPoint(new import_fabric18.Point(point.x, point.y))
+      (o) => parentIdOf(o) === id && o.containsPoint(new import_fabric21.Point(point.x, point.y))
     );
     if (child) this.canvas.setActiveObject(child);
     this.canvas.requestRenderAll();
@@ -5823,7 +6077,7 @@ var SelectionManager = class {
     if (this._silenced) return;
     const activeObject = this.canvas.getActiveObject();
     if (!activeObject) return;
-    if (activeObject instanceof import_fabric18.ActiveSelection) {
+    if (activeObject instanceof import_fabric21.ActiveSelection) {
       this.handleMultipleSelection(activeObject);
       return;
     }
@@ -5866,7 +6120,7 @@ var SelectionManager = class {
       return;
     }
     if (kept.length !== members.length || kept.some((obj) => !members.includes(obj))) {
-      this.canvas.setActiveObject(new import_fabric18.ActiveSelection(kept, { canvas: this.canvas.originalFabricCanvas }));
+      this.canvas.setActiveObject(new import_fabric21.ActiveSelection(kept, { canvas: this.canvas.originalFabricCanvas }));
       this.canvas.requestRenderAll();
       return;
     }
@@ -5941,7 +6195,7 @@ var SelectionManager = class {
 };
 
 // src/MaskManager.ts
-var import_fabric19 = require("#fabric");
+var import_fabric22 = require("#fabric");
 var MASK_LAYER_ID = "mask";
 var BACKGROUND_LAYER_ID2 = "originalImage";
 var MaskManager = class {
@@ -5986,7 +6240,7 @@ var MaskManager = class {
     if (!bgImage) {
       throw new Error("Pas d'image de fond pour appliquer le masque");
     }
-    const maskImage = await import_fabric19.FabricImage.fromURL(maskUrl, {
+    const maskImage = await import_fabric22.FabricImage.fromURL(maskUrl, {
       crossOrigin: "anonymous"
     });
     this.cropCanvasToMask(maskImage, bgImage.height);
@@ -6292,10 +6546,10 @@ var HistoryManager = class {
 };
 
 // src/SnappingManager.ts
-var import_fabric21 = require("#fabric");
+var import_fabric24 = require("#fabric");
 
 // src/ui/guides.ts
-var import_fabric20 = require("#fabric");
+var import_fabric23 = require("#fabric");
 var CanvasGuides = class {
   constructor(canvas, color = DEFAULT_SNAP_GUIDE_COLOR) {
     this.objects = [];
@@ -6308,7 +6562,7 @@ var CanvasGuides = class {
   // ── Low-level primitives ──────────────────────────────────────────
   /** Add a line guide. */
   addLine(coords, opts = {}) {
-    const line = new import_fabric20.Line(coords, {
+    const line = new import_fabric23.Line(coords, {
       stroke: opts.stroke ?? this.color,
       strokeWidth: opts.strokeWidth ?? 1,
       strokeDashArray: opts.strokeDashArray ?? [5, 5],
@@ -6321,7 +6575,7 @@ var CanvasGuides = class {
   }
   /** Add a rectangle guide (highlight zone, margin indicator, etc.). */
   addRect(opts, insertAbove) {
-    const rect = new import_fabric20.Rect({
+    const rect = new import_fabric23.Rect({
       left: opts.left,
       top: opts.top,
       originX: "left",
@@ -6591,7 +6845,7 @@ function createHatchPattern(hex) {
   ctx.moveTo(size / 2, size + size / 2);
   ctx.lineTo(size + size / 2, size / 2);
   ctx.stroke();
-  return new import_fabric20.Pattern({ source: canvas, repeat: "repeat" });
+  return new import_fabric23.Pattern({ source: canvas, repeat: "repeat" });
 }
 
 // src/snap.ts
@@ -6705,9 +6959,9 @@ var SnappingManager = class {
   handleObjectMoving(obj) {
     if (!obj || !this.enabled) return;
     if (obj.get("layerId") === "originalImage") return;
-    const moving = obj instanceof import_fabric21.ActiveSelection ? obj.getObjects() : [obj];
+    const moving = obj instanceof import_fabric24.ActiveSelection ? obj.getObjects() : [obj];
     const objects = this.canvas.getObjects();
-    if (!(obj instanceof import_fabric21.ActiveSelection) && stackParentOf(obj, objects)) {
+    if (!(obj instanceof import_fabric24.ActiveSelection) && stackParentOf(obj, objects)) {
       this.guides.clearAndRender();
       return;
     }
@@ -6901,10 +7155,10 @@ function isSnapTarget(obj) {
 }
 
 // src/LayoutManager.ts
-var import_fabric25 = require("#fabric");
+var import_fabric28 = require("#fabric");
 
 // src/DragToLayout.ts
-var import_fabric22 = require("#fabric");
+var import_fabric25 = require("#fabric");
 
 // src/layout/stack/sessions/animator.ts
 function easeOutCubic(t) {
@@ -7584,7 +7838,7 @@ var DragToLayout = class {
    * need to be on the canvas yet — it is added when the session anchors.
    */
   tick(source, cursor) {
-    source.setPositionByOrigin(new import_fabric22.Point(cursor.x, cursor.y), "center", "center");
+    source.setPositionByOrigin(new import_fabric25.Point(cursor.x, cursor.y), "center", "center");
     source.setCoords();
     this.move(source, cursor);
     if (this.canvas.getObjects().includes(source)) this.canvas.requestRenderAll();
@@ -8040,16 +8294,16 @@ function arrangeFree(container, objects) {
 }
 
 // src/ui/controls.ts
-var import_fabric23 = require("#fabric");
+var import_fabric26 = require("#fabric");
 function applyControlStyle(canvas, guideColor, resolveTarget, userInputLabels) {
   const gc = guideColor;
-  import_fabric23.FabricObject.ownDefaults.borderColor = gc;
-  import_fabric23.FabricObject.ownDefaults.borderScaleFactor = 2;
-  import_fabric23.FabricObject.ownDefaults.borderOpacityWhenMoving = 1;
-  import_fabric23.FabricObject.ownDefaults.cornerColor = "#ffffff";
-  import_fabric23.FabricObject.ownDefaults.cornerStrokeColor = "#000000";
-  import_fabric23.FabricObject.ownDefaults.transparentCorners = false;
-  import_fabric23.FabricObject.ownDefaults.cornerSize = 16;
+  import_fabric26.FabricObject.ownDefaults.borderColor = gc;
+  import_fabric26.FabricObject.ownDefaults.borderScaleFactor = 2;
+  import_fabric26.FabricObject.ownDefaults.borderOpacityWhenMoving = 1;
+  import_fabric26.FabricObject.ownDefaults.cornerColor = "#ffffff";
+  import_fabric26.FabricObject.ownDefaults.cornerStrokeColor = "#000000";
+  import_fabric26.FabricObject.ownDefaults.transparentCorners = false;
+  import_fabric26.FabricObject.ownDefaults.cornerSize = 16;
   const hoverProgress = /* @__PURE__ */ new WeakMap();
   installControlRenderer(gc, hoverProgress);
   installControlHitAreas(canvas);
@@ -8064,7 +8318,7 @@ var ANIM_SPEED = 10;
 function installControlRenderer(gc, hoverProgress) {
   const [activeR, activeG, activeB] = parseHex(gc);
   const hoverStart = /* @__PURE__ */ new WeakMap();
-  import_fabric23.Control.prototype.render = function(ctx, left, top, styleOverride, fabricObject) {
+  import_fabric26.Control.prototype.render = function(ctx, left, top, styleOverride, fabricObject) {
     if (fabricObject.isMoving) return;
     const baseColor = styleOverride?.cornerColor ?? fabricObject.cornerColor;
     const isDefault = baseColor === DEFAULT_COLOR2;
@@ -8153,13 +8407,13 @@ var resizeEdge = (eventData, transform, x, y) => {
   return changed;
 };
 function installControlHitAreas(canvas) {
-  const createSideRotationControl = () => new import_fabric23.Control({
+  const createSideRotationControl = () => new import_fabric26.Control({
     x: 0.5,
     y: 0,
     offsetX: 30,
     offsetY: 0,
-    actionHandler: import_fabric23.controlsUtils.rotationWithSnapping,
-    cursorStyleHandler: import_fabric23.controlsUtils.rotationStyleHandler,
+    actionHandler: import_fabric26.controlsUtils.rotationWithSnapping,
+    cursorStyleHandler: import_fabric26.controlsUtils.rotationStyleHandler,
     withConnection: true,
     actionName: "rotate"
   });
@@ -8326,7 +8580,7 @@ var SubtreeDrag = class _SubtreeDrag {
 };
 
 // src/layout/scale-session.ts
-var import_fabric24 = require("#fabric");
+var import_fabric27 = require("#fabric");
 var scaleMin = (minSize, k) => minSize && { w: minSize.w * k, h: minSize.h * k };
 var ScaleSession = class _ScaleSession {
   constructor(container, objects, start) {
@@ -8357,7 +8611,7 @@ var ScaleSession = class _ScaleSession {
     const k = Math.min(this.maxK, Math.max(0.05, (w / start.width + h / start.height) / 2));
     const fx = transform.originX === "left" ? 0 : transform.originX === "right" ? 1 : 0.5;
     const fy = transform.originY === "top" ? 0 : transform.originY === "bottom" ? 1 : 0.5;
-    const corner = new import_fabric24.Point(start.width * fx, start.height * fy).rotate(import_fabric24.util.degreesToRadians(this.angle)).add(new import_fabric24.Point(start.left, start.top));
+    const corner = new import_fabric27.Point(start.width * fx, start.height * fy).rotate(import_fabric27.util.degreesToRadians(this.angle)).add(new import_fabric27.Point(start.left, start.top));
     this.apply(k, corner);
   }
   /**
@@ -8621,7 +8875,7 @@ var LayoutManager2 = class {
   // ── Canvas event handlers ─────────────────────────────────────────
   onMoving(e) {
     const obj = e.target;
-    if (obj instanceof import_fabric25.ActiveSelection) {
+    if (obj instanceof import_fabric28.ActiveSelection) {
       this.moveFollowers(obj, obj.getObjects(), e.transform);
       return;
     }
@@ -8673,7 +8927,7 @@ var LayoutManager2 = class {
    *  comme un bloc — autour du centre de départ, depuis le début du geste. */
   onRotating(e) {
     const obj = e.target;
-    const moved = obj instanceof import_fabric25.ActiveSelection ? obj.getObjects() : [obj];
+    const moved = obj instanceof import_fabric28.ActiveSelection ? obj.getObjects() : [obj];
     this.rotateFollowers(obj, moved, e.transform);
   }
   rotateFollowers(target, moved, transform) {
@@ -8702,16 +8956,16 @@ var LayoutManager2 = class {
   onModified(e) {
     const obj = e.target;
     if (this.followers) {
-      const moved = obj instanceof import_fabric25.ActiveSelection ? obj.getObjects() : [obj];
+      const moved = obj instanceof import_fabric28.ActiveSelection ? obj.getObjects() : [obj];
       this.moveFollowers(obj, moved, this.followers.transform);
     }
     this.followers = null;
     if (this.rotation) {
-      const moved = obj instanceof import_fabric25.ActiveSelection ? obj.getObjects() : [obj];
+      const moved = obj instanceof import_fabric28.ActiveSelection ? obj.getObjects() : [obj];
       this.rotateFollowers(obj, moved, this.rotation.transform);
     }
     this.rotation = null;
-    if (obj instanceof import_fabric25.ActiveSelection) {
+    if (obj instanceof import_fabric28.ActiveSelection) {
       this.drag.reset();
       return;
     }
@@ -8772,16 +9026,16 @@ var LayoutManager2 = class {
 };
 
 // src/fonts.ts
-var import_fabric26 = require("#fabric");
+var import_fabric29 = require("#fabric");
 function forgetFontMeasures(family) {
-  import_fabric26.cache.clearFontCache(family);
+  import_fabric29.cache.clearFontCache(family);
 }
 
 // src/types.ts
 var DRAG_PREVIEW_KEY = "dragPreview";
 
 // src/editor/style-commands.ts
-var import_fabric27 = require("#fabric");
+var import_fabric30 = require("#fabric");
 
 // src/clipping/antiScale.ts
 function antiScale(obj) {
@@ -9102,7 +9356,7 @@ var StyleCommands = class {
       obj.nextClipShape();
       obj.dirty = true;
       this.editor.canvas.requestRenderAll();
-    } else if (obj instanceof import_fabric27.FabricImage) {
+    } else if (obj instanceof import_fabric30.FabricImage) {
       switchClip(obj);
       obj.dirty = true;
       this.editor.canvas.remove(obj);
@@ -9114,7 +9368,7 @@ var StyleCommands = class {
    */
   switchShape() {
     const obj = this.editor.selection.current;
-    if (!obj || obj instanceof import_fabric27.FabricImage) return;
+    if (!obj || obj instanceof import_fabric30.FabricImage) return;
     const currentShapeId = obj.id;
     const nextShapeType = nextShape(currentShapeId);
     this.changeShape(nextShapeType);
@@ -9129,7 +9383,7 @@ var StyleCommands = class {
       obj.applyClipShape(shapeType);
       obj.dirty = true;
       this.editor.canvas.requestRenderAll();
-    } else if (!(obj instanceof import_fabric27.FabricImage)) {
+    } else if (!(obj instanceof import_fabric30.FabricImage)) {
       const newObj = switchShape(obj, shapeType);
       const layerId = obj.get("layerId");
       const layerType = obj.get("layerType");
@@ -9250,7 +9504,7 @@ var StyleCommands = class {
     const rad = angleDeg * Math.PI / 180;
     const cos = Math.cos(rad);
     const sin = Math.sin(rad);
-    const gradient = new import_fabric27.Gradient({
+    const gradient = new import_fabric30.Gradient({
       type: "linear",
       gradientUnits: "percentage",
       coords: {
@@ -9331,7 +9585,7 @@ var StyleCommands = class {
     const obj = this.editor.selection.current;
     if (!obj) return;
     const existing = obj.shadow;
-    const shadow = new import_fabric27.Shadow({
+    const shadow = new import_fabric30.Shadow({
       color: opts.color ?? existing?.color ?? "rgba(0,0,0,0.5)",
       blur: opts.blur ?? existing?.blur ?? 10,
       offsetX: opts.offsetX ?? existing?.offsetX ?? 5,
@@ -9687,7 +9941,7 @@ function installDisplayStyleRendering(target) {
 }
 
 // src/CropMode.ts
-var import_fabric28 = require("#fabric");
+var import_fabric31 = require("#fabric");
 var HANDLE_RADIUS = 6;
 var HANDLE_GRAB = 12;
 var FALLBACK_VEIL = "#f3f4f6";
@@ -9792,13 +10046,13 @@ var CropMode = class {
   /** Le point de la scène dans le repère du cadre. */
   toFrame(scene) {
     const frame = this.frame;
-    const local = scene.transform(import_fabric28.util.invertTransform(frame.calcTransformMatrix()));
+    const local = scene.transform(import_fabric31.util.invertTransform(frame.calcTransformMatrix()));
     return { x: local.x + frame.frameWidth / 2, y: local.y + frame.frameHeight / 2 };
   }
   /** Le point du cadre à l'écran (pixels CSS du canvas). */
   toScreen(x, y) {
     const frame = this.frame;
-    return new import_fabric28.Point(x - frame.frameWidth / 2, y - frame.frameHeight / 2).transform(frame.calcTransformMatrix()).transform(this.fc.viewportTransform);
+    return new import_fabric31.Point(x - frame.frameWidth / 2, y - frame.frameHeight / 2).transform(frame.calcTransformMatrix()).transform(this.fc.viewportTransform);
   }
   /** Une unité d'écran en unités de cadre. */
   frameUnit() {
@@ -10898,7 +11152,7 @@ var _FabricEditor = class _FabricEditor {
    * remplacement, et l'image est ajoutée.
    */
   findDropTargetAtPoint(x, y, exclude) {
-    const point = new import_fabric29.Point(x, y);
+    const point = new import_fabric32.Point(x, y);
     const objects = this.canvas.getObjects().slice().reverse();
     for (const obj of objects) {
       if (obj === exclude || obj.get(DRAG_PREVIEW_KEY)) continue;
@@ -10925,15 +11179,15 @@ var _FabricEditor = class _FabricEditor {
   extendFabricObject() {
     if (_FabricEditor._toObjectExtended) return;
     _FabricEditor._toObjectExtended = true;
-    installGhostRendering(import_fabric29.FabricObject.prototype);
-    installDisplayStyleRendering(import_fabric29.FabricObject.prototype);
-    const originalToObject = import_fabric29.FabricObject.prototype.toObject;
-    import_fabric29.FabricObject.prototype.toObject = function(propertiesToInclude) {
+    installGhostRendering(import_fabric32.FabricObject.prototype);
+    installDisplayStyleRendering(import_fabric32.FabricObject.prototype);
+    const originalToObject = import_fabric32.FabricObject.prototype.toObject;
+    import_fabric32.FabricObject.prototype.toObject = function(propertiesToInclude) {
       const data = originalToObject.call(
         this,
         ["layerId", "layout", "bindings"].concat(propertiesToInclude || [])
       );
-      if (this.group instanceof import_fabric29.ActiveSelection) {
+      if (this.group instanceof import_fabric32.ActiveSelection) {
         const { x, y } = this.getXY();
         Object.assign(data, { left: x, top: y });
       }
@@ -10948,8 +11202,8 @@ _FabricEditor._toObjectExtended = false;
 var FabricEditor = _FabricEditor;
 
 // src/PreviewCanvas.ts
-var import_fabric30 = require("#fabric");
-var PreviewCanvas = class extends import_fabric30.StaticCanvas {
+var import_fabric33 = require("#fabric");
+var PreviewCanvas = class extends import_fabric33.StaticCanvas {
   constructor(el, opts) {
     const { width, height, guideColor, ...canvasOpts } = opts;
     super(el, {
@@ -11034,7 +11288,7 @@ var PreviewCanvas = class extends import_fabric30.StaticCanvas {
 };
 
 // src/DropHandler.ts
-var import_fabric31 = require("#fabric");
+var import_fabric34 = require("#fabric");
 var HIGHLIGHT_COLOR = "#3b82f6";
 var KIND_CAPABILITIES = {
   image: { layout: false, replaceTarget: true },
@@ -11044,7 +11298,7 @@ var KIND_CAPABILITIES = {
 };
 function canvasImageSource(obj) {
   if (obj instanceof ImageFrame) return obj.imageSrc ? { url: obj.imageSrc, imageMeta: obj.imageMeta } : null;
-  if (obj instanceof import_fabric31.FabricImage) return obj.getSrc() ? { url: obj.getSrc(), imageMeta: {} } : null;
+  if (obj instanceof import_fabric34.FabricImage) return obj.getSrc() ? { url: obj.getSrc(), imageMeta: {} } : null;
   return null;
 }
 var DropHandler = class {
@@ -11221,7 +11475,7 @@ var DropHandler = class {
       if (!committed && object) {
         if (e) {
           const pointer = this.editor.canvas.getScenePoint(e);
-          object.setPositionByOrigin(new import_fabric31.Point(pointer.x, pointer.y), "center", "center");
+          object.setPositionByOrigin(new import_fabric34.Point(pointer.x, pointer.y), "center", "center");
           object.setCoords();
         }
         if (!this.editor.canvas.getObjects().includes(object)) {
@@ -11297,7 +11551,7 @@ var DropHandler = class {
         this.editor.layout.tickExternalDrag(object, pointer);
         return;
       }
-      object.setPositionByOrigin(new import_fabric31.Point(pointer.x, pointer.y), "center", "center");
+      object.setPositionByOrigin(new import_fabric34.Point(pointer.x, pointer.y), "center", "center");
       object.setCoords();
       this.editor.canvas.requestRenderAll();
     }
@@ -11507,7 +11761,7 @@ var DropHandler = class {
       height = target.height;
       clipPath = target.clipPath;
     }
-    const fabricOverlay = new import_fabric31.Rect({
+    const fabricOverlay = new import_fabric34.Rect({
       left: target.left,
       top: target.top,
       width,
@@ -11601,7 +11855,7 @@ var DropHandler = class {
    * drop-target detection.
    */
   async createImagePreview(url) {
-    const img = await import_fabric31.FabricImage.fromURL(url, { crossOrigin: "anonymous" });
+    const img = await import_fabric34.FabricImage.fromURL(url, { crossOrigin: "anonymous" });
     let scale = 1;
     if (img.width > 300 || img.height > 300) {
       scale = Math.min(300 / img.width, 300 / img.height);
@@ -11636,7 +11890,7 @@ var DropHandler = class {
     if (e && !this.intersectsCanvas(e, null)) return null;
     const pointer = e ? this.editor.canvas.getScenePoint(e) : null;
     const object = this.editor.layers.createUserSlot(opts);
-    if (pointer) object.setPositionByOrigin(new import_fabric31.Point(pointer.x, pointer.y), "center", "center");
+    if (pointer) object.setPositionByOrigin(new import_fabric34.Point(pointer.x, pointer.y), "center", "center");
     this.editor.layers.add(object);
     this.editor.canvas.setActiveObject(object);
     this.editor.canvas.renderAll();
@@ -12611,7 +12865,7 @@ function layerToHtmlStandalone(layer, zIndex) {
 }
 
 // src/text-units.ts
-var import_fabric32 = require("#fabric");
+var import_fabric35 = require("#fabric");
 var WHITESPACE = /\s/;
 function internals(text) {
   return text;
@@ -12752,7 +13006,7 @@ function tilePadding(text) {
 function textUnitTiles(text, kind, { resolution = 1, pad = tilePadding(text) } = {}) {
   const t = internals(text);
   const matrix = t.calcTransformMatrix();
-  const toLocal = import_fabric32.util.invertTransform(matrix);
+  const toLocal = import_fabric35.util.invertTransform(matrix);
   const parts = textParts(text);
   const [a, b, c, d, e, f] = matrix;
   const aligned = b === 0 && c === 0 && a > 0 && d > 0;
@@ -12782,7 +13036,7 @@ function textUnitTiles(text, kind, { resolution = 1, pad = tilePadding(text) } =
       const y0 = snapY(r.y - pad, Math.floor);
       const box = { x: x0, y: y0, w: snapX(r.x + r.w + pad, Math.ceil) - x0, h: snapY(r.y + r.h + pad, Math.ceil) - y0 };
       return parts.map((part) => {
-        const canvas = import_fabric32.util.createCanvasElement();
+        const canvas = import_fabric35.util.createCanvasElement();
         canvas.width = Math.max(1, Math.ceil(box.w * resolution));
         canvas.height = Math.max(1, Math.ceil(box.h * resolution));
         box.w = canvas.width / resolution;

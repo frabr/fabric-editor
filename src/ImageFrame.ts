@@ -21,6 +21,7 @@ import { FabPath } from "./shapes/FabPath";
 import { clipDataFor, type ClipData } from "./shapes/registry";
 import type { SnappingManager } from "./SnappingManager";
 import { checkerCanvas, transparentCanvas } from "./userSlots";
+import { blurredCanvas } from "./imageBlur";
 import type { BindingSpec } from "./bindings";
 import { drawImageSlot, imageSlotBinding, slotColorOf, slotKey, slotMark } from "./imageSlots";
 import {
@@ -59,6 +60,8 @@ export interface ImageFrameOptions {
   /** Les clés de `image` que l'hôte pose à côté de `src` (apibots : `content_medium_id`).
    *  Elles suivent la SOURCE : une image remplacée arrive avec les siennes, ou sans. */
   imageMeta?: ImageMeta;
+  /** Cf. ImageFrameData.blur. */
+  blur?: number;
 }
 
 export type ImageMeta = Record<string, unknown>;
@@ -97,6 +100,11 @@ export interface ImageFrameData {
    * est ce qui se sauve ; un cadre sans image l'occupe entière. Absent = cover.
    */
   fit?: ImageFit;
+  /**
+   * Le flou de l'image, en px de cadre (le `filter: blur(Npx)` du CSS : l'écart-type du
+   * gaussien). Calculé en JS (cf. imageBlur), pareil dans l'éditeur et au rendu. Absent = net.
+   */
+  blur?: number;
   layerId?: string;
   lockMode?: LockMode;
   lockContent?: boolean;
@@ -183,6 +191,11 @@ export class ImageFrame extends Group {
   cornerRadius: number = 0;
   /** Cf. ImageFrameData.fit. */
   fit: ImageFit = "cover";
+  /** Cf. ImageFrameData.blur. */
+  blur = 0;
+  /** Le flou posé sur l'image au dernier calcul (élément source, échelle, rayon) : rien à refaire
+   *  tant qu'il ne change pas. */
+  private _blurKey: { element: unknown; scale: number; radius: number } | null = null;
   /** En contain, la boîte où l'image se cale ; frameWidth/frameHeight sont alors sa taille. */
   private _box: { w: number; h: number } | null = null;
 
@@ -244,6 +257,7 @@ export class ImageFrame extends Group {
       this._box = { w: frameWidth, h: frameHeight };
       this._fitFrame();
     }
+    this.blur = options.blur ?? 0;
 
     if (options.layerId) {
       this.set("layerId", options.layerId);
@@ -312,6 +326,7 @@ export class ImageFrame extends Group {
     this._imageMeta = {};
     this._source = "value";
     if (image) this._swapImage(image);
+    else this._applyBlur();
     this.dirty = true;
     this.canvas?.requestRenderAll();
   }
@@ -572,6 +587,53 @@ export class ImageFrame extends Group {
     const s = coverScale(this.frameWidth, this.frameHeight, nat) * this._crop.scale;
     const offset = centerOffset(this.frameWidth, this.frameHeight, nat, this._crop);
     this._image.set({ scaleX: s, scaleY: s, left: offset.x, top: offset.y });
+    this._applyBlur();
+  }
+
+  /** Floute l'image (ou la rend nette) : elle s'affiche floutée à son échelle courante. */
+  setBlur(radius: number): void {
+    this.blur = Math.max(0, radius || 0);
+    this._applyBlur();
+    this.dirty = true;
+    this.canvas?.requestRenderAll();
+  }
+
+  /**
+   * L'élément dessiné par l'image : la source, ou sa version floutée à la résolution
+   * d'affichage (cf. imageBlur) — la source reste `_originalElement`, celle qui se sauve. Le
+   * damier d'un cadre en attente ne se floute pas. Recalculé seulement quand la source,
+   * l'échelle (à 2 % près) ou le rayon changent.
+   */
+  private _applyBlur(): void {
+    const img = this._image as unknown as {
+      _element: CanvasImageSource; _originalElement: CanvasImageSource & { width: number; height: number };
+      _filterScalingX: number; _filterScalingY: number; scaleX: number; dirty: boolean;
+    };
+    const source = img._originalElement;
+    if (!source) return;
+
+    if (!this.blur || this._source === "none") {
+      if (img._element !== source) {
+        img._element = source;
+        img._filterScalingX = img._filterScalingY = 1;
+        img.dirty = true;
+      }
+      this._blurKey = null;
+      return;
+    }
+
+    const scale = img.scaleX;
+    const key = this._blurKey;
+    if (key && key.element === source && key.radius === this.blur && Math.abs(key.scale - scale) <= key.scale * 0.02) {
+      return;
+    }
+    const blurred = blurredCanvas(source, scale, this.blur);
+    img._element = blurred;
+    img._filterScalingX = blurred.width / source.width;
+    img._filterScalingY = blurred.height / source.height;
+    img.dirty = true;
+    this.dirty = true;
+    this._blurKey = { element: source, scale, radius: this.blur };
   }
 
   private _applyClip(shapeType: ShapeType): void {
@@ -829,6 +891,7 @@ export class ImageFrame extends Group {
       frameWidth: this._box?.w ?? this.frameWidth,
       frameHeight: this._box?.h ?? this.frameHeight,
       fit: this._box ? "contain" : undefined,
+      blur: this.blur || undefined,
       clipShape: this.clipShape,
       clipData: this.clipData,
       cornerRadius: this.cornerRadius || undefined,
@@ -860,6 +923,7 @@ export class ImageFrame extends Group {
       frameWidth: data.frameWidth,
       frameHeight: data.frameHeight,
       fit: data.fit,
+      blur: data.blur,
       imageMeta: imageMetaOf(data.image),
     };
 

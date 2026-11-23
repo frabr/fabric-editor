@@ -897,6 +897,8 @@ interface ImageFrameOptions {
     /** Les clés de `image` que l'hôte pose à côté de `src` (apibots : `content_medium_id`).
      *  Elles suivent la SOURCE : une image remplacée arrive avec les siennes, ou sans. */
     imageMeta?: ImageMeta;
+    /** Cf. ImageFrameData.blur. */
+    blur?: number;
 }
 type ImageMeta = Record<string, unknown>;
 /** Le cadre impose sa forme à l'image (cover), ou la prend d'elle (contain). */
@@ -932,6 +934,11 @@ interface ImageFrameData {
      * est ce qui se sauve ; un cadre sans image l'occupe entière. Absent = cover.
      */
     fit?: ImageFit;
+    /**
+     * Le flou de l'image, en px de cadre (le `filter: blur(Npx)` du CSS : l'écart-type du
+     * gaussien). Calculé en JS (cf. imageBlur), pareil dans l'éditeur et au rendu. Absent = net.
+     */
+    blur?: number;
     layerId?: string;
     lockMode?: LockMode$1;
     lockContent?: boolean;
@@ -975,6 +982,11 @@ declare class ImageFrame extends Group {
     cornerRadius: number;
     /** Cf. ImageFrameData.fit. */
     fit: ImageFit;
+    /** Cf. ImageFrameData.blur. */
+    blur: number;
+    /** Le flou posé sur l'image au dernier calcul (élément source, échelle, rayon) : rien à refaire
+     *  tant qu'il ne change pas. */
+    private _blurKey;
     /** En contain, la boîte où l'image se cale ; frameWidth/frameHeight sont alors sa taille. */
     private _box;
     private _crop;
@@ -1090,6 +1102,15 @@ declare class ImageFrame extends Group {
     private _fitFrame;
     /** L'image dans le groupe (origine au centre) : cover × échelle, centre décalé selon le recadrage. */
     private _applyCrop;
+    /** Floute l'image (ou la rend nette) : elle s'affiche floutée à son échelle courante. */
+    setBlur(radius: number): void;
+    /**
+     * L'élément dessiné par l'image : la source, ou sa version floutée à la résolution
+     * d'affichage (cf. imageBlur) — la source reste `_originalElement`, celle qui se sauve. Le
+     * damier d'un cadre en attente ne se floute pas. Recalculé seulement quand la source,
+     * l'échelle (à 2 % près) ou le rayon changent.
+     */
+    private _applyBlur;
     private _applyClip;
     private _rectClip;
     /**
