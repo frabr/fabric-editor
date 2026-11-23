@@ -1,6 +1,8 @@
 import { Path, classRegistry, controlsUtils, type TOptions, type PathProps } from "#fabric";
 import { installLockMethods, type Lockable } from "./lockMixin";
 import { installUserSlotRendering } from "../userSlots";
+import { installOuterShadow } from "./outerShadow";
+import { installBackdropBlur } from "./backdropBlur";
 import { cornerScaleFactor } from "./resizeUtils";
 import { getCatalogShape, type ShapePathData } from "./registry";
 import type { LockMode } from "../locking";
@@ -11,7 +13,7 @@ const DEFAULT_SIZE = 300;
 
 export class FabPath extends Path implements Lockable {
   static type = "Path";
-  static customProperties = ["layerId", "layerType", "lockMode", "lockContent"];
+  static customProperties = ["layerId", "layerType", "lockMode", "lockContent", "backdropBlur"];
 
   declare lockMode: LockMode;
   declare lockContent: boolean;
@@ -157,5 +159,7 @@ export class FabPath extends Path implements Lockable {
 }
 
 installLockMethods(FabPath.prototype);
+installOuterShadow(FabPath.prototype, Path.prototype._render);
+installBackdropBlur(FabPath.prototype, Path.prototype._render);
 installUserSlotRendering(FabPath.prototype);
 classRegistry.setClass(FabPath, "Path");

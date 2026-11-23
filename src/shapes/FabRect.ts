@@ -1,6 +1,8 @@
 import { Rect, classRegistry, controlsUtils, type TOptions, type RectProps } from "#fabric";
 import { installLockMethods, type Lockable } from "./lockMixin";
 import { installUserSlotRendering } from "../userSlots";
+import { installOuterShadow } from "./outerShadow";
+import { installBackdropBlur } from "./backdropBlur";
 import type { LockMode } from "../locking";
 import { cornerScaleFactor } from "./resizeUtils";
 
@@ -8,7 +10,7 @@ const { changeObjectWidth, changeObjectHeight } = controlsUtils;
 
 export class FabRect extends Rect implements Lockable {
   static type = "Rect";
-  static customProperties = ["layerId", "layerType", "lockMode", "lockContent"];
+  static customProperties = ["layerId", "layerType", "lockMode", "lockContent", "backdropBlur"];
 
   declare lockMode: LockMode;
   declare lockContent: boolean;
@@ -79,5 +81,7 @@ export class FabRect extends Rect implements Lockable {
 }
 
 installLockMethods(FabRect.prototype);
+installOuterShadow(FabRect.prototype, Rect.prototype._render);
+installBackdropBlur(FabRect.prototype, Rect.prototype._render);
 installUserSlotRendering(FabRect.prototype);
 classRegistry.setClass(FabRect, "Rect");

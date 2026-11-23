@@ -1,6 +1,8 @@
 import { Circle, classRegistry, controlsUtils, type TOptions, type CircleProps } from "#fabric";
 import { installLockMethods, type Lockable } from "./lockMixin";
 import { installUserSlotRendering } from "../userSlots";
+import { installOuterShadow } from "./outerShadow";
+import { installBackdropBlur } from "./backdropBlur";
 import { cornerScaleFactor } from "./resizeUtils";
 import type { LockMode } from "../locking";
 
@@ -8,7 +10,7 @@ const { changeObjectWidth, changeObjectHeight } = controlsUtils;
 
 export class FabCircle extends Circle implements Lockable {
   static type = "Circle";
-  static customProperties = ["layerId", "layerType", "lockMode", "lockContent"];
+  static customProperties = ["layerId", "layerType", "lockMode", "lockContent", "backdropBlur"];
 
   declare lockMode: LockMode;
   declare lockContent: boolean;
@@ -84,5 +86,7 @@ export class FabCircle extends Circle implements Lockable {
 }
 
 installLockMethods(FabCircle.prototype);
+installOuterShadow(FabCircle.prototype, Circle.prototype._render);
+installBackdropBlur(FabCircle.prototype, Circle.prototype._render);
 installUserSlotRendering(FabCircle.prototype);
 classRegistry.setClass(FabCircle, "Circle");
