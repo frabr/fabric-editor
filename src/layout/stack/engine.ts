@@ -116,6 +116,14 @@ export function yogaLayout(
     modeY === "fixed" ? containerH : undefined,
   );
 
+  // ── Shrunk texts hug their folded text, then the stack places them again ──
+  if (refitShrunkTexts(built)) {
+    root.calculateLayout(
+      modeX === "fixed" ? containerW : undefined,
+      modeY === "fixed" ? containerH : undefined,
+    );
+  }
+
   // ── Read back positions ──────────────────────────────────────
   placeChildren(built, containerLeft, containerTop, 0);
 
@@ -344,6 +352,37 @@ function placeChildren(built: Built[], parentLeft: number, parentTop: number, de
     if (depth > 0) obj.setCoords();
     if (children) placeChildren(children, left, top, depth + 1);
   }
+}
+
+/**
+ * A text that autofits (overflow "shrink") and hugs its height folds its font into the room
+ * Yoga left it — but that room is not its box: a column justified to the end, or centered,
+ * would otherwise draw the folded text at the top of the room. Each such text is folded
+ * now, then pinned to its folded box so that a second pass places it as the stack says.
+ * Returns whether a second pass is needed.
+ */
+function refitShrunkTexts(built: Built[]): boolean {
+  let refit = false;
+  for (const { obj, node, children } of built) {
+    if (children) refit = refitShrunkTexts(children) || refit;
+    if (!isTextObject(obj) || sizingOf(obj).y !== "hug") continue;
+    if ((layoutOf(obj)?.overflow ?? "shrink") !== "shrink") continue;
+
+    const w = node.getComputedWidth();
+    const h = node.getComputedHeight();
+    // Only a text Yoga squeezed below its measured height has folded (left untouched
+    // otherwise: placeChildren gives it its box, as before)
+    if (h >= scaledSize(obj).h - 0.5) continue;
+    (obj as unknown as LayoutText).layoutWith({ w, h });
+    const folded = scaledSize(obj).h;
+    if (folded >= h - 0.5) continue;
+
+    node.setWidth(w);
+    node.setHeight(folded);
+    node.setFlexShrink(0);
+    refit = true;
+  }
+  return refit;
 }
 
 // ── Yoga enum mapping helpers ──────────────────────────────────────

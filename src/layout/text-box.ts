@@ -73,7 +73,11 @@ export function resolveTextBox(input: TextBoxInput, measure: TextMeasure): TextB
   }
 
   const minH = sizing.y === "hug" ? (sizing.minSize?.h ?? 0) : 0;
-  const height = boundH ?? Math.max(m.height, minH);
+  // Un texte qui épouse sa hauteur et a dû replier sa police reprend la hauteur de son texte
+  // replié : la place que lui laissait son container n'est pas sa boîte (le moteur le
+  // replace ensuite selon l'alignement de la pile, cf. stack/engine refitShrunkTexts)
+  const shrunkHug = sizing.y === "hug" && fontSize < input.fontSizeIntent;
+  const height = boundH != null && !shrunkHug ? boundH : Math.max(m.height, minH);
   return { width: m.width, height, fontSize, overflowing: m.height > height + 0.5 };
 }
 
