@@ -1,13 +1,13 @@
 import { util, type FabricObject } from "#fabric";
-import { pendingBindings, type BindingSpec } from "./bindings";
+import { DRAW_MEDIA, pendingBindings, type BindingSpec } from "./bindings";
 import { DEFAULT_GUIDE_COLOR, parseHex } from "./ui/color";
 import { USER_SCOPE, USER_SLOT_STYLE_KEY, type UserSlotStyle } from "./userSlots";
 
 /**
  * Les emplacements d'image (apibots : les médias dynamiques) : un cadre dont la source est
  * LIÉE. Le binding dit ce que l'image sera, par `media` — le rang d'une photo du sujet (compté
- * à partir de 1), `"each"` pour celle de l'itération, ou le nom d'une image du lecteur
- * (`"avatar"`, `"logo"`) :
+ * à partir de 1), `"each"` pour celle de l'itération, `"draw"` pour une image tirée, ou le nom
+ * d'une image du lecteur (`"avatar"`, `"logo"`) :
  *
  *   bindings: { "image.src": { scope: "subject", media: 3 } }
  *   bindings: { "image.src": { scope: "company", media: "avatar" } }
@@ -16,7 +16,8 @@ import { USER_SCOPE, USER_SLOT_STYLE_KEY, type UserSlotStyle } from "./userSlots
  * source à côté, et surtout pas un dessin d'exemple. Le rendu s'en déduit — tant que rien ne
  * vient remplir le cadre (ImageFrame#showValue, l'expansion côté hôte), il se dessine
  * lui-même : un aplat dans la couleur d'édition, un disque, et le repère de ce qu'il attend
- * (le rang de la photo, `i` pour l'itération, un pictogramme pour une image nommée).
+ * (le rang de la photo, `i` pour l'itération, `?` pour une image tirée, un pictogramme pour
+ * une image nommée).
  *
  * Comme les images à fournir (userSlots, le scope `user`), le dessin est dans le rendu de
  * l'objet, pas en overlay : les aperçus (PreviewCanvas, vignettes) le montrent aussi.
@@ -46,12 +47,13 @@ export function imageSlotBinding(obj: FabricObject): BindingSpec | null {
 /** Le pictogramme d'une image nommée — une photo pour toutes les autres. */
 const NAMED_GLYPHS: Record<string, SlotGlyph> = { avatar: "person" };
 
-/** Le repère d'un emplacement : le rang d'une photo, `i` pour l'itération, sinon un
- *  pictogramme — une personne pour l'avatar, une photo par défaut. */
+/** Le repère d'un emplacement : le rang d'une photo, `i` pour l'itération, `?` pour une image
+ *  tirée, sinon un pictogramme — une personne pour l'avatar, une photo par défaut. */
 export function slotMark(spec: BindingSpec): SlotMark {
   const { media } = spec;
   if (typeof media === "number") return { label: String(media) };
   if (media === EACH_MEDIA) return { label: "i" };
+  if (media === DRAW_MEDIA) return { label: "?" };
 
   return { glyph: NAMED_GLYPHS[String(media)] ?? "photo" };
 }

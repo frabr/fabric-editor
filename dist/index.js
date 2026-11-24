@@ -2040,19 +2040,23 @@ function drawBindingBadge(ctx, obj, color, labels = {}) {
   const label = bindingBadgeLabel(obj, labels);
   if (label) drawFrameBadge(ctx, obj, label, color);
 }
+var DEFAULT_MEDIA_LABELS = { draw: "%{list} au hasard", drawAmong: "1 parmi %{count}" };
 var DEFAULT_USER_SLOT_LABEL = "\xC0 fournir";
 var DEFAULT_USER_TEXT_LABEL = "\xC0 personnaliser";
-function mediaLabel(spec) {
-  if (typeof spec.media === "number") return `media ${spec.media}`;
-  if (spec.media === DRAW_MEDIA) return `1 parmi ${Array.isArray(spec.candidates) ? spec.candidates.length : 0}`;
-  return spec.media === "each" ? "media i" : String(spec.media ?? "");
+function mediaLabel(spec, labels = {}) {
+  const list = spec.key || "media";
+  if (typeof spec.media === "number") return `${list} ${spec.media}`;
+  if (spec.media === "each") return `${list} i`;
+  if (spec.media !== DRAW_MEDIA) return String(spec.media ?? "");
+  if (!Array.isArray(spec.candidates)) return (labels.draw ?? DEFAULT_MEDIA_LABELS.draw).replace("%{list}", list);
+  return (labels.drawAmong ?? DEFAULT_MEDIA_LABELS.drawAmong).replace("%{count}", String(spec.candidates.length));
 }
-function bindingLabel(obj, { userSlot, userText }) {
+function bindingLabel(obj, { userSlot, userText, media }) {
   const labels = Object.entries(pendingBindings(obj)).flatMap(([field, spec]) => {
     if (spec?.scope === "user") {
       return [field === "text" ? userText ?? DEFAULT_USER_TEXT_LABEL : userSlot ?? DEFAULT_USER_SLOT_LABEL];
     }
-    if (spec?.media !== void 0) return [mediaLabel(spec)];
+    if (spec?.media !== void 0) return [mediaLabel(spec, media)];
     return String(spec?.expr ?? "").match(/\$\w+/g) || [];
   });
   return labels.length ? [...new Set(labels)].join(" ") : "$";
@@ -3924,6 +3928,7 @@ function slotMark(spec) {
   const { media } = spec;
   if (typeof media === "number") return { label: String(media) };
   if (media === EACH_MEDIA) return { label: "i" };
+  if (media === DRAW_MEDIA) return { label: "?" };
   return { glyph: NAMED_GLYPHS[String(media)] ?? "photo" };
 }
 function slotKey(spec) {
@@ -10519,7 +10524,8 @@ var _FabricEditor = class _FabricEditor {
     this.selection = new SelectionManager(this.canvas);
     applyControlStyle(this.canvas, gc, (obj) => this.selection.resolveTarget(obj), {
       userSlot: config.userSlotLabel,
-      userText: config.userTextLabel
+      userText: config.userTextLabel,
+      media: config.mediaLabels
     });
     const slotStyle = {
       color: gc,

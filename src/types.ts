@@ -1,5 +1,6 @@
 import type { FabricObject } from "#fabric";
 import type { CatalogShapeInput, ShapePathData } from "./shapes/registry";
+import type { MediaLabels } from "./bindings";
 
 // Configuration de l'éditeur
 export interface EditorConfig {
@@ -22,6 +23,9 @@ export interface EditorConfig {
   userSlotPrompt?: string;
   /** Badge des textes à personnaliser (défaut : « À personnaliser ») — la traduction de l'hôte. */
   userTextLabel?: string;
+  /** Les mots du badge d'une image tirée (défaut : « media au hasard », « 1 parmi 7 ») — les
+   *  traductions de l'hôte, cf. `MediaLabels`. */
+  mediaLabels?: MediaLabels;
   /**
    * Le lecteur est l'AUTEUR des entrées à fournir : il écrit l'exemple d'un texte à
    * personnaliser, ses frappes ne le règlent pas (cf. userTexts). Sans : l'utilisateur final,

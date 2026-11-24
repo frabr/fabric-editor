@@ -15,15 +15,18 @@ import { drawFrameBadge, paintBadge } from "./ui/badges";
  */
 
 /** `media` : ce qu'une image liée désigne — le rang d'une photo du sujet, `"each"`, le nom
- *  d'une image du lecteur (cf. imageSlots), ou `"draw"` : une image que l'hôte tire parmi
- *  `candidates` (ses nœuds de média, opaques ici). `hint` : la consigne d'une image à fournir
+ *  d'une image du lecteur (cf. imageSlots), ou `"draw"` : une image que l'hôte tire, parmi
+ *  `candidates` (ses nœuds de média, opaques ici) quand le binding en porte, parmi les images
+ *  du sujet sinon. `key` : la liste d'images du sujet que la référence lit, quand il en a
+ *  plusieurs (absente : sa liste par défaut). `hint` : la consigne d'une image à fournir
  *  (scope `user`, cf. userSlots). Un `text` de scope `user` est un texte à personnaliser
  *  (userTexts). */
 export type BindingSpec = {
-  expr?: string; scope?: string; resolved?: boolean; hint?: string; media?: number | string; candidates?: unknown[];
+  expr?: string; scope?: string; resolved?: boolean; hint?: string; media?: number | string; key?: string;
+  candidates?: unknown[];
 };
 
-/** `media` d'une image tirée parmi les candidates du binding. */
+/** `media` d'une image tirée, parmi les candidates du binding ou parmi les images du sujet. */
 export const DRAW_MEDIA = "draw";
 export type Bindings = Record<string, BindingSpec>;
 
@@ -68,7 +71,7 @@ export function setTextContent(obj: FabricObject, text: string): void {
  * tokens liés ($NOM), les images liées (`media 3`, `avatar`), les images à fournir et les
  * textes à personnaliser du calque.
  */
-export function bindingBadgeLabel(obj: FabricObject, labels: UserInputLabels = {}): string | null {
+export function bindingBadgeLabel(obj: FabricObject, labels: BindingLabels = {}): string | null {
   if (!hasPendingBindings(obj)) return null;
 
   return bindingLabel(obj, labels);
@@ -79,37 +82,54 @@ export function drawBindingBadge(
   ctx: CanvasRenderingContext2D,
   obj: FabricObject,
   color: string,
-  labels: UserInputLabels = {},
+  labels: BindingLabels = {},
 ): void {
   const label = bindingBadgeLabel(obj, labels);
   if (label) drawFrameBadge(ctx, obj, label, color);
 }
 
-/** Les badges des entrées à fournir — l'hôte passe ses traductions (`EditorConfig.userSlotLabel`,
- *  `userTextLabel`). */
-export interface UserInputLabels {
+/** Les mots des badges d'un calque lié — l'hôte passe ses traductions
+ *  (`EditorConfig.userSlotLabel`, `userTextLabel`, `mediaLabels`). */
+export interface BindingLabels {
   userSlot?: string;
   userText?: string;
+  media?: MediaLabels;
 }
+
+/** Les mots d'une image tirée, à traduire par l'hôte : `draw` pour un tirage parmi les images
+ *  du sujet (`%{list}` : la liste lue), `drawAmong` pour un tirage parmi les candidates du
+ *  binding (`%{count}` : leur nombre). */
+export interface MediaLabels {
+  draw?: string;
+  drawAmong?: string;
+}
+
+export const DEFAULT_MEDIA_LABELS: Required<MediaLabels> = { draw: "%{list} au hasard", drawAmong: "1 parmi %{count}" };
 
 export const DEFAULT_USER_SLOT_LABEL = "À fournir";
 export const DEFAULT_USER_TEXT_LABEL = "À personnaliser";
 
-/** Le nom d'une image liée : `media 3`, `media i` (l'itération), `1 parmi 7` (une image tirée
- *  parmi les candidates du binding), ou le nom de l'image du lecteur (`avatar`). C'est ce que
- *  le badge et la timeline de l'hôte affichent. */
-export function mediaLabel(spec: BindingSpec): string {
-  if (typeof spec.media === "number") return `media ${spec.media}`;
-  if (spec.media === DRAW_MEDIA) return `1 parmi ${Array.isArray(spec.candidates) ? spec.candidates.length : 0}`;
-  return spec.media === "each" ? "media i" : String(spec.media ?? "");
+/** Le nom d'une image liée : `media 3`, `media i` (l'itération), `media au hasard` (une image
+ *  tirée parmi celles du sujet), `1 parmi 7` (tirée parmi les candidates du binding), ou le
+ *  nom de l'image du lecteur (`avatar`). Une référence qui dit sa liste (`key`) la nomme à la
+ *  place de `media` : `galerie 3`. C'est ce que le badge et la timeline de l'hôte affichent ;
+ *  les mots d'un tirage sont ceux de l'hôte (`labels`), le français à défaut. */
+export function mediaLabel(spec: BindingSpec, labels: MediaLabels = {}): string {
+  const list = spec.key || "media";
+  if (typeof spec.media === "number") return `${list} ${spec.media}`;
+  if (spec.media === "each") return `${list} i`;
+  if (spec.media !== DRAW_MEDIA) return String(spec.media ?? "");
+  if (!Array.isArray(spec.candidates)) return (labels.draw ?? DEFAULT_MEDIA_LABELS.draw).replace("%{list}", list);
+
+  return (labels.drawAmong ?? DEFAULT_MEDIA_LABELS.drawAmong).replace("%{count}", String(spec.candidates.length));
 }
 
-function bindingLabel(obj: FabricObject, { userSlot, userText }: UserInputLabels): string {
+function bindingLabel(obj: FabricObject, { userSlot, userText, media }: BindingLabels): string {
   const labels = Object.entries(pendingBindings(obj)).flatMap(([field, spec]) => {
     if (spec?.scope === "user") {
       return [field === "text" ? userText ?? DEFAULT_USER_TEXT_LABEL : userSlot ?? DEFAULT_USER_SLOT_LABEL];
     }
-    if (spec?.media !== undefined) return [mediaLabel(spec)];
+    if (spec?.media !== undefined) return [mediaLabel(spec, media)];
     return String(spec?.expr ?? "").match(/\$\w+/g) || [];
   });
   return labels.length ? [...new Set(labels)].join(" ") : "$";
@@ -162,7 +182,7 @@ export function drawInertMediaBadge(
   ctx: CanvasRenderingContext2D,
   obj: FabricObject,
   color: string,
-  labels: UserInputLabels = {},
+  labels: BindingLabels = {},
 ): void {
   if (obj.evented !== false || !obj.visible || !obj.canvas) return;
   if (!Object.keys(pendingBindings(obj)).some((field) => field.startsWith("image."))) return;

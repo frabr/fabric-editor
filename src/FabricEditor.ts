@@ -101,6 +101,7 @@ export class FabricEditor {
     applyControlStyle(this.canvas, gc, (obj) => this.selection.resolveTarget(obj), {
       userSlot: config.userSlotLabel,
       userText: config.userTextLabel,
+      media: config.mediaLabels,
     });
     const slotStyle: UserSlotStyle = {
       color: gc,

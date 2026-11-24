@@ -539,8 +539,10 @@ type LockMode$1 = "free" | "position" | "full";
  *   (guideColor), et un liseré permanent sur les médias dynamiques.
  */
 /** `media` : ce qu'une image liée désigne — le rang d'une photo du sujet, `"each"`, le nom
- *  d'une image du lecteur (cf. imageSlots), ou `"draw"` : une image que l'hôte tire parmi
- *  `candidates` (ses nœuds de média, opaques ici). `hint` : la consigne d'une image à fournir
+ *  d'une image du lecteur (cf. imageSlots), ou `"draw"` : une image que l'hôte tire, parmi
+ *  `candidates` (ses nœuds de média, opaques ici) quand le binding en porte, parmi les images
+ *  du sujet sinon. `key` : la liste d'images du sujet que la référence lit, quand il en a
+ *  plusieurs (absente : sa liste par défaut). `hint` : la consigne d'une image à fournir
  *  (scope `user`, cf. userSlots). Un `text` de scope `user` est un texte à personnaliser
  *  (userTexts). */
 type BindingSpec = {
@@ -549,6 +551,7 @@ type BindingSpec = {
     resolved?: boolean;
     hint?: string;
     media?: number | string;
+    key?: string;
     candidates?: unknown[];
 };
 type Bindings = Record<string, BindingSpec>;

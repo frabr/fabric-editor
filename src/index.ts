@@ -162,7 +162,7 @@ export { textUnits, renderTextRange, textUnitTiles, textParts, tilePadding } fro
 export type { TextUnit, TextUnitBox, TextUnitKind, TextTile, TextUnitTiles, TextLayerPart, RenderRangeOptions } from "./text-units";
 export { isGhost, setGhost, isEclipsed, setEclipsed, GHOST_OPACITY } from "./ghost";
 export { displayFill, setDisplayFill } from "./displayStyle";
-export type { Bindings, BindingSpec, UserInputLabels } from "./bindings";
+export type { Bindings, BindingSpec, BindingLabels, MediaLabels } from "./bindings";
 export { isUserSlot, userSlotHint, userSlotBinding, USER_SCOPE, USER_SLOT_FIELD } from "./userSlots";
 export { isUserText, isUserOwnedText, userTextBinding, USER_TEXT_FIELD } from "./userTexts";
 export { collectUserInputs, userInputKindOf } from "./userInputs";

@@ -580,8 +580,10 @@ declare function isPositionLocked(obj: FabricObject): boolean;
  *   (guideColor), et un liseré permanent sur les médias dynamiques.
  */
 /** `media` : ce qu'une image liée désigne — le rang d'une photo du sujet, `"each"`, le nom
- *  d'une image du lecteur (cf. imageSlots), ou `"draw"` : une image que l'hôte tire parmi
- *  `candidates` (ses nœuds de média, opaques ici). `hint` : la consigne d'une image à fournir
+ *  d'une image du lecteur (cf. imageSlots), ou `"draw"` : une image que l'hôte tire, parmi
+ *  `candidates` (ses nœuds de média, opaques ici) quand le binding en porte, parmi les images
+ *  du sujet sinon. `key` : la liste d'images du sujet que la référence lit, quand il en a
+ *  plusieurs (absente : sa liste par défaut). `hint` : la consigne d'une image à fournir
  *  (scope `user`, cf. userSlots). Un `text` de scope `user` est un texte à personnaliser
  *  (userTexts). */
 type BindingSpec = {
@@ -590,9 +592,10 @@ type BindingSpec = {
     resolved?: boolean;
     hint?: string;
     media?: number | string;
+    key?: string;
     candidates?: unknown[];
 };
-/** `media` d'une image tirée parmi les candidates du binding. */
+/** `media` d'une image tirée, parmi les candidates du binding ou parmi les images du sujet. */
 declare const DRAW_MEDIA = "draw";
 type Bindings = Record<string, BindingSpec>;
 declare function pendingBindings(obj: FabricObject): Bindings;
@@ -609,19 +612,29 @@ declare function setTextContent(obj: FabricObject, text: string): void;
  * tokens liés ($NOM), les images liées (`media 3`, `avatar`), les images à fournir et les
  * textes à personnaliser du calque.
  */
-declare function bindingBadgeLabel(obj: FabricObject, labels?: UserInputLabels): string | null;
+declare function bindingBadgeLabel(obj: FabricObject, labels?: BindingLabels): string | null;
 /** Peint le badge de liaison d'un calque (la couche des badges le fait pour l'éditeur). */
-declare function drawBindingBadge(ctx: CanvasRenderingContext2D, obj: FabricObject, color: string, labels?: UserInputLabels): void;
-/** Les badges des entrées à fournir — l'hôte passe ses traductions (`EditorConfig.userSlotLabel`,
- *  `userTextLabel`). */
-interface UserInputLabels {
+declare function drawBindingBadge(ctx: CanvasRenderingContext2D, obj: FabricObject, color: string, labels?: BindingLabels): void;
+/** Les mots des badges d'un calque lié — l'hôte passe ses traductions
+ *  (`EditorConfig.userSlotLabel`, `userTextLabel`, `mediaLabels`). */
+interface BindingLabels {
     userSlot?: string;
     userText?: string;
+    media?: MediaLabels;
 }
-/** Le nom d'une image liée : `media 3`, `media i` (l'itération), `1 parmi 7` (une image tirée
- *  parmi les candidates du binding), ou le nom de l'image du lecteur (`avatar`). C'est ce que
- *  le badge et la timeline de l'hôte affichent. */
-declare function mediaLabel(spec: BindingSpec): string;
+/** Les mots d'une image tirée, à traduire par l'hôte : `draw` pour un tirage parmi les images
+ *  du sujet (`%{list}` : la liste lue), `drawAmong` pour un tirage parmi les candidates du
+ *  binding (`%{count}` : leur nombre). */
+interface MediaLabels {
+    draw?: string;
+    drawAmong?: string;
+}
+/** Le nom d'une image liée : `media 3`, `media i` (l'itération), `media au hasard` (une image
+ *  tirée parmi celles du sujet), `1 parmi 7` (tirée parmi les candidates du binding), ou le
+ *  nom de l'image du lecteur (`avatar`). Une référence qui dit sa liste (`key`) la nomme à la
+ *  place de `media` : `galerie 3`. C'est ce que le badge et la timeline de l'hôte affichent ;
+ *  les mots d'un tirage sont ceux de l'hôte (`labels`), le français à défaut. */
+declare function mediaLabel(spec: BindingSpec, labels?: MediaLabels): string;
 
 /**
  * La pile qui place `obj`, s'il est dans une pile (pas dans un groupe) : sa place est
@@ -1385,6 +1398,9 @@ interface EditorConfig {
     userSlotPrompt?: string;
     /** Badge des textes à personnaliser (défaut : « À personnaliser ») — la traduction de l'hôte. */
     userTextLabel?: string;
+    /** Les mots du badge d'une image tirée (défaut : « media au hasard », « 1 parmi 7 ») — les
+     *  traductions de l'hôte, cf. `MediaLabels`. */
+    mediaLabels?: MediaLabels;
     /**
      * Le lecteur est l'AUTEUR des entrées à fournir : il écrit l'exemple d'un texte à
      * personnaliser, ses frappes ne le règlent pas (cf. userTexts). Sans : l'utilisateur final,
@@ -4100,8 +4116,8 @@ declare function isUserOwnedText(obj: FabricObject): boolean;
 /**
  * Les emplacements d'image (apibots : les médias dynamiques) : un cadre dont la source est
  * LIÉE. Le binding dit ce que l'image sera, par `media` — le rang d'une photo du sujet (compté
- * à partir de 1), `"each"` pour celle de l'itération, ou le nom d'une image du lecteur
- * (`"avatar"`, `"logo"`) :
+ * à partir de 1), `"each"` pour celle de l'itération, `"draw"` pour une image tirée, ou le nom
+ * d'une image du lecteur (`"avatar"`, `"logo"`) :
  *
  *   bindings: { "image.src": { scope: "subject", media: 3 } }
  *   bindings: { "image.src": { scope: "company", media: "avatar" } }
@@ -4110,7 +4126,8 @@ declare function isUserOwnedText(obj: FabricObject): boolean;
  * source à côté, et surtout pas un dessin d'exemple. Le rendu s'en déduit — tant que rien ne
  * vient remplir le cadre (ImageFrame#showValue, l'expansion côté hôte), il se dessine
  * lui-même : un aplat dans la couleur d'édition, un disque, et le repère de ce qu'il attend
- * (le rang de la photo, `i` pour l'itération, un pictogramme pour une image nommée).
+ * (le rang de la photo, `i` pour l'itération, `?` pour une image tirée, un pictogramme pour
+ * une image nommée).
  *
  * Comme les images à fournir (userSlots, le scope `user`), le dessin est dans le rendu de
  * l'objet, pas en overlay : les aperçus (PreviewCanvas, vignettes) le montrent aussi.
@@ -4130,8 +4147,8 @@ type SlotMark = {
 };
 /** Le binding d'image liée en attente — hors images à fournir (scope `user`, cf. userSlots). */
 declare function imageSlotBinding(obj: FabricObject): BindingSpec | null;
-/** Le repère d'un emplacement : le rang d'une photo, `i` pour l'itération, sinon un
- *  pictogramme — une personne pour l'avatar, une photo par défaut. */
+/** Le repère d'un emplacement : le rang d'une photo, `i` pour l'itération, `?` pour une image
+ *  tirée, sinon un pictogramme — une personne pour l'avatar, une photo par défaut. */
 declare function slotMark(spec: BindingSpec): SlotMark;
 /**
  * Dessine un emplacement de `width` × `height` centré sur l'origine du repère courant : le
@@ -4157,4 +4174,4 @@ declare const DEFAULT_GUIDE_COLOR = "#d946ef";
  */
 declare const DEFAULT_SNAP_GUIDE_COLOR = "#ff00ff";
 
-export { type AlignEdge, type AlignItems, type AlignSelf, type Arrangement, type BadgeLabeler, type BindingSpec, type Bindings, type Box, CANVAS_SHORTCUTS, CanvasGuides, type CatalogShape, type CatalogShapeInput, type ChildData, type ClipData, type ContainerData, ContainerizeSession, type ControlOption, type Crop, CropMode, CustomTextbox, DEFAULT_GUIDE_COLOR, DEFAULT_SNAP_GUIDE_COLOR, DRAW_MEDIA, type Delta, DesignCanvas, type DistributeAxis, type DragPayload, DropHandler, type DropHandlerConfig, type DropResult, EACH_MEDIA, type EditorConfig, FabCircle, FabGroup, FabPath, FabRect, FabricEditor, type FlexDirection, type FontConfig, type FontsConfig, type FrameRect, FreeResizeSession, GHOST_OPACITY, GestureManager, type GestureShortcut, type GradientStop, HEART_PATH, HEXAGON_PATH, type HistoryCallbacks, HistoryManager, type HistoryState, type HtmlLayerOutput, type HtmlRenderOptions, IMAGE_SLOT_FIELD, type ImageFit, ImageFrame, type ImageLayerOptions, InsertChildSession, type JustifyContent, type KeyShortcut, LAYER_PROPS, type LayerData, LayerManager, type LayoutData, LayoutManager, type LayoutManagerCallbacks, type LayoutParents, type LayoutSession, type LockMode$1 as LockMode, type Lockable, MAX_CROP_SCALE, MIN_PAD, MIXED, MaskManager, type Modifier, NO_CROP, type NormalizedShape, type NormalizedShapePath, type ObjectControlsConfig, type ObjectKind, type ObjectRules, PendingUploadsManager, PersistenceManager, type Platform, PreviewCanvas, ROTATION_STEP, type RenderRangeOptions, ResizeSession, type ResizeSnapResult, type SaveOptions, type SaveResult, ScaleSession, type SelectionCallbacks, type SelectionKind, SelectionManager, type ShapeCatalogEntry, type ShapeLayerOptions, type ShapePathData, type ShapeType, type ShortcutContext, type ShortcutEntry, type ShortcutGroup, ShortcutManager, type ShortcutManagerOptions, type ShortcutScope, type SizeMode, type SizePreset, type SizingData, type SlotGlyph, type SlotMark, type SnappingConfig, SnappingManager, StackResizeSession, TEXT_STYLE_KEYS, type TextLayerOptions, type TextLayerPart, type TextOverflow, type TextStyleKey, type TextStyleState, type TextStyleValue, type TextTile, type TextUnit, type TextUnitBox, type TextUnitKind, type TextUnitTiles, type ToolId, type ToolboxImageReaction, type TreeLayer, USER_SCOPE, USER_SLOT_FIELD, USER_TEXT_FIELD, type UserInput, type UserInputKind, type UserInputLabels, type WorkspaceOptions, addCircleClip, addCropControls, addHeartClip, addHexagonClip, alignAxis, alignDelta, antiScale, applyClip, applyLockMode, badgeLabel, bindingBadgeLabel, canvasImageSource, clampTopLeft, clipDataFor, collectUserInputs, createCircle, createDropSession, createHeart, createHexagon, createImage, createPathShape, createPathsShape, createRect, createShape, cropFromRect, detectPlatform, displayFill, distributeDeltas, drawBindingBadge, drawFrameBadge, drawImageSlot, fabricToHtml, fitFreeContainer, fontFamiliesOf, forgetFontMeasures, formatCombo, formatModifier, getAvailableShapes, getCatalogShape, getLockMode, getNextLockMode, getShapeCatalog, hasExceededOffset, hasPendingBindings, imageSlotBinding, imageSlotDataUrl, initYoga, isBold, isContentLocked, isCropped, isEclipsed, isFreeContainer, isGhost, isKeyShortcut, isMonoPath, isPositionLocked, isStyleLocked, isUserOwnedText, isUserSlot, isUserText, isValidShape, kindOf, layerToHtmlStandalone, layoutChildren, layoutDescendants, layoutParents, layoutRoot, mediaLabel, nextShape, normalizeShape, panCrop, parseCombo, pendingBindings, photoRect, pointInObject, registerShapes, registeredShapes, removeCropControls, renderTextRange, rulesOf, runLayout, scaledSize, selectionKindOf, setDisplayFill, setEclipsed, setGhost, setTextContent, slotMark, stackBlock, stackParentOf, summarizeObject, summarizeStyles, switchClip, switchShape, textParts, textUnitTiles, textUnits, tilePadding, toolsFor, topLeft, unionBox, userInputKindOf, userSlotBinding, userSlotHint, userTextBinding, wrapContainerAroundChild, yogaLayout, zoomCrop };
+export { type AlignEdge, type AlignItems, type AlignSelf, type Arrangement, type BadgeLabeler, type BindingLabels, type BindingSpec, type Bindings, type Box, CANVAS_SHORTCUTS, CanvasGuides, type CatalogShape, type CatalogShapeInput, type ChildData, type ClipData, type ContainerData, ContainerizeSession, type ControlOption, type Crop, CropMode, CustomTextbox, DEFAULT_GUIDE_COLOR, DEFAULT_SNAP_GUIDE_COLOR, DRAW_MEDIA, type Delta, DesignCanvas, type DistributeAxis, type DragPayload, DropHandler, type DropHandlerConfig, type DropResult, EACH_MEDIA, type EditorConfig, FabCircle, FabGroup, FabPath, FabRect, FabricEditor, type FlexDirection, type FontConfig, type FontsConfig, type FrameRect, FreeResizeSession, GHOST_OPACITY, GestureManager, type GestureShortcut, type GradientStop, HEART_PATH, HEXAGON_PATH, type HistoryCallbacks, HistoryManager, type HistoryState, type HtmlLayerOutput, type HtmlRenderOptions, IMAGE_SLOT_FIELD, type ImageFit, ImageFrame, type ImageLayerOptions, InsertChildSession, type JustifyContent, type KeyShortcut, LAYER_PROPS, type LayerData, LayerManager, type LayoutData, LayoutManager, type LayoutManagerCallbacks, type LayoutParents, type LayoutSession, type LockMode$1 as LockMode, type Lockable, MAX_CROP_SCALE, MIN_PAD, MIXED, MaskManager, type MediaLabels, type Modifier, NO_CROP, type NormalizedShape, type NormalizedShapePath, type ObjectControlsConfig, type ObjectKind, type ObjectRules, PendingUploadsManager, PersistenceManager, type Platform, PreviewCanvas, ROTATION_STEP, type RenderRangeOptions, ResizeSession, type ResizeSnapResult, type SaveOptions, type SaveResult, ScaleSession, type SelectionCallbacks, type SelectionKind, SelectionManager, type ShapeCatalogEntry, type ShapeLayerOptions, type ShapePathData, type ShapeType, type ShortcutContext, type ShortcutEntry, type ShortcutGroup, ShortcutManager, type ShortcutManagerOptions, type ShortcutScope, type SizeMode, type SizePreset, type SizingData, type SlotGlyph, type SlotMark, type SnappingConfig, SnappingManager, StackResizeSession, TEXT_STYLE_KEYS, type TextLayerOptions, type TextLayerPart, type TextOverflow, type TextStyleKey, type TextStyleState, type TextStyleValue, type TextTile, type TextUnit, type TextUnitBox, type TextUnitKind, type TextUnitTiles, type ToolId, type ToolboxImageReaction, type TreeLayer, USER_SCOPE, USER_SLOT_FIELD, USER_TEXT_FIELD, type UserInput, type UserInputKind, type WorkspaceOptions, addCircleClip, addCropControls, addHeartClip, addHexagonClip, alignAxis, alignDelta, antiScale, applyClip, applyLockMode, badgeLabel, bindingBadgeLabel, canvasImageSource, clampTopLeft, clipDataFor, collectUserInputs, createCircle, createDropSession, createHeart, createHexagon, createImage, createPathShape, createPathsShape, createRect, createShape, cropFromRect, detectPlatform, displayFill, distributeDeltas, drawBindingBadge, drawFrameBadge, drawImageSlot, fabricToHtml, fitFreeContainer, fontFamiliesOf, forgetFontMeasures, formatCombo, formatModifier, getAvailableShapes, getCatalogShape, getLockMode, getNextLockMode, getShapeCatalog, hasExceededOffset, hasPendingBindings, imageSlotBinding, imageSlotDataUrl, initYoga, isBold, isContentLocked, isCropped, isEclipsed, isFreeContainer, isGhost, isKeyShortcut, isMonoPath, isPositionLocked, isStyleLocked, isUserOwnedText, isUserSlot, isUserText, isValidShape, kindOf, layerToHtmlStandalone, layoutChildren, layoutDescendants, layoutParents, layoutRoot, mediaLabel, nextShape, normalizeShape, panCrop, parseCombo, pendingBindings, photoRect, pointInObject, registerShapes, registeredShapes, removeCropControls, renderTextRange, rulesOf, runLayout, scaledSize, selectionKindOf, setDisplayFill, setEclipsed, setGhost, setTextContent, slotMark, stackBlock, stackParentOf, summarizeObject, summarizeStyles, switchClip, switchShape, textParts, textUnitTiles, textUnits, tilePadding, toolsFor, topLeft, unionBox, userInputKindOf, userSlotBinding, userSlotHint, userTextBinding, wrapContainerAroundChild, yogaLayout, zoomCrop };

@@ -51,6 +51,10 @@ describe("slotMark", () => {
     expect(slotMark({ scope: "subject", media: "each" })).toEqual({ label: "i" });
   });
 
+  it("une image tirée ne dit pas laquelle : ?", () => {
+    expect(slotMark({ scope: "subject", media: "draw" })).toEqual({ label: "?" });
+  });
+
   it("une image nommée a son pictogramme : une personne pour l'avatar, une photo sinon", () => {
     expect(slotMark({ scope: "company", media: "avatar" })).toEqual({ glyph: "person" });
     expect(slotMark({ scope: "company", media: "logo" })).toEqual({ glyph: "photo" });
@@ -67,6 +71,25 @@ describe("mediaLabel", () => {
     expect(mediaLabel({ media: "each" })).toBe("media i");
     expect(mediaLabel({ media: "avatar" })).toBe("avatar");
     expect(mediaLabel({ media: "draw", candidates: [{}, {}, {}] })).toBe("1 parmi 3");
+  });
+
+  it("un tirage parmi les images du sujet n'a pas de compte : il le dit", () => {
+    expect(mediaLabel({ media: "draw" })).toBe("media au hasard");
+  });
+
+  it("les mots d'un tirage sont ceux de l'hôte, le français à défaut", () => {
+    const labels = { draw: "random %{list}", drawAmong: "1 of %{count}" };
+
+    expect(mediaLabel({ media: "draw" }, labels)).toBe("random media");
+    expect(mediaLabel({ key: "gallery", media: "draw" }, labels)).toBe("random gallery");
+    expect(mediaLabel({ media: "draw", candidates: [{}, {}] }, labels)).toBe("1 of 2");
+    expect(mediaLabel({ media: "draw", candidates: [{}, {}] }, { draw: "random %{list}" })).toBe("1 parmi 2");
+  });
+
+  it("une référence qui dit sa liste la nomme", () => {
+    expect(mediaLabel({ key: "galerie", media: 3 })).toBe("galerie 3");
+    expect(mediaLabel({ key: "galerie", media: "each" })).toBe("galerie i");
+    expect(mediaLabel({ key: "galerie", media: "draw" })).toBe("galerie au hasard");
   });
 });
 

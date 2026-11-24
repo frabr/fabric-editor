@@ -8,7 +8,7 @@
 import { FabricObject, Control, controlsUtils, type TPointerEvent } from "#fabric";
 import type { DesignCanvas } from "../DesignCanvas";
 import { parseHex } from "./color";
-import { bindingBadgeLabel, drawDynamicMediaOutline, drawInertMediaBadge, type UserInputLabels } from "../bindings";
+import { bindingBadgeLabel, drawDynamicMediaOutline, drawInertMediaBadge, type BindingLabels } from "../bindings";
 import { drawActiveTokenPills } from "../tokens";
 import { installBadgeLayer } from "./badges";
 
@@ -24,7 +24,7 @@ export function applyControlStyle(
   canvas: DesignCanvas,
   guideColor: string,
   resolveTarget?: ResolveTargetFn,
-  userInputLabels?: UserInputLabels,
+  userInputLabels?: BindingLabels,
 ): void {
   const gc = guideColor;
 
@@ -311,7 +311,7 @@ function installHoverBorder(
   canvas: DesignCanvas,
   guideColor: string,
   resolveTarget?: ResolveTargetFn,
-  userInputLabels?: UserInputLabels,
+  userInputLabels?: BindingLabels,
 ): void {
   let hoveredObj: FabricObject | null = null;
 

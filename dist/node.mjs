@@ -371,6 +371,7 @@ import { Pattern, util as util2 } from "#fabric";
 
 // src/bindings.ts
 import { util } from "#fabric";
+var DRAW_MEDIA = "draw";
 function pendingBindings(obj) {
   const bindings = obj.get("bindings") || {};
   return Object.fromEntries(Object.entries(bindings).filter(([, spec]) => spec?.resolved !== true));
@@ -2114,6 +2115,7 @@ function slotMark(spec) {
   const { media } = spec;
   if (typeof media === "number") return { label: String(media) };
   if (media === EACH_MEDIA) return { label: "i" };
+  if (media === DRAW_MEDIA) return { label: "?" };
   return { glyph: NAMED_GLYPHS[String(media)] ?? "photo" };
 }
 function slotKey(spec) {
