@@ -1,4 +1,4 @@
-import { Canvas } from "#fabric";
+import type { DesignCanvas } from "./DesignCanvas";
 import type { LayerManager } from "./LayerManager";
 import type { PendingUploadsManager } from "./PendingUploadsManager";
 import type { SaveOptions, SaveResult, LayerData } from "./types";
@@ -10,7 +10,7 @@ export class PersistenceManager {
   private pendingUploads: PendingUploadsManager | null = null;
 
   constructor(
-    private canvas: Canvas,
+    private canvas: DesignCanvas,
     private layers: LayerManager
   ) { }
 
@@ -70,22 +70,8 @@ export class PersistenceManager {
    * Rasterise le canvas en image base64
    */
   async rasterize(): Promise<string> {
-    // Sauvegarder le zoom actuel
-    const currentZoom = this.canvas.getZoom();
-
-    // Réinitialiser le zoom pour le rendu
-    this.canvas.setZoom(1);
-
-    const dataUrl = this.canvas.toDataURL({
-      format: "png",
-      quality: 1,
-      multiplier: 1,
-    });
-
-    // Restaurer le zoom
-    this.canvas.setZoom(currentZoom);
-
-    return dataUrl;
+    // Le cadre seul, à la taille du document, quelle que soit la vue (zoom, plan de travail)
+    return this.canvas.toFrameDataURL({ format: "png", quality: 1, multiplier: 1 });
   }
 
   /**

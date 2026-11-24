@@ -4,6 +4,7 @@ import {
   buildTransform,
   stylesToString,
   getTransformOrigin,
+  fillToCss,
 } from "../cssUtils";
 
 /**
@@ -48,7 +49,7 @@ export function rectToHtml(layer: RectLayerData, zIndex: number): HtmlLayerOutpu
   }
 
   // Couleurs
-  styles.background = fill || "transparent";
+  styles.background = fillToCss(fill);
 
   if (opacity !== 1) {
     styles.opacity = String(opacity);

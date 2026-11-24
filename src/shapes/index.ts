@@ -1,14 +1,38 @@
 // Shapes module - création et gestion des formes
 
-export { HEART_PATH, HEXAGON_PATH } from "./paths";
-export { nextShape, isValidShape, getAvailableShapes } from "./shapeWheel";
+// OOP shape classes
+export { FabRect } from "./FabRect";
+export { FabCircle } from "./FabCircle";
+export { FabPath } from "./FabPath";
+export { FabGroup } from "./FabGroup";
+export { type Lockable } from "./lockMixin";
+
+// Factory functions (return Fab* instances)
 export {
   createRect,
-  createRoundedRect,
   createCircle,
-  createHeart,
-  createHexagon,
   createImage,
   createShape,
-  switchShape,
+  createPathShape,
+  createPathsShape,
+  getShapeCatalog,
+  type ShapeCatalogEntry,
 } from "./factories";
+
+// Le registre injecté par l'hôte — la lib n'embarque aucune forme.
+export {
+  registerShapes,
+  registeredShapes,
+  getCatalogShape,
+  isMonoPath,
+  clipDataFor,
+  type CatalogShape,
+  type CatalogShapeInput,
+  type ShapePathData,
+  type ClipData,
+} from "./registry";
+
+// @legacy — shape switching and old path strings
+export { HEART_PATH, HEXAGON_PATH } from "./paths";
+export { nextShape, isValidShape, getAvailableShapes } from "./shapeWheel";
+export { createHeart, createHexagon, switchShape } from "./factories";

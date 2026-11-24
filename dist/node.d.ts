@@ -1,16 +1,505 @@
-import { IText, Group, FabricImage, Canvas, FabricObject, StaticCanvas } from '#fabric';
+import { Canvas, FabricObject, TPointerEvent, Textbox, Group, FabricImage, StaticCanvas } from '#fabric';
 
 /**
- * Textbox personnalisé qui :
- * 1. Place le textarea caché à l'intérieur du canvas container (pour le focus dans les modales)
- * 2. Force sa position à (0, 0) pour éviter les problèmes de layout/scroll
+ * DesignCanvas — wraps a Fabric Canvas to separate design size from display size.
  *
- * Nécessaire car les modales (dialog) avec showModal() créent un
- * "focus trap" qui empêche le focus d'aller sur des éléments
- * en dehors du dialog. En plaçant le textarea dans le canvas
- * container (qui est dans le dialog), il peut recevoir le focus.
+ * `width` and `height` always return the logical design dimensions.
+ * The underlying Fabric Canvas buffer may be a different size (after fitToSize).
+ *
+ * Access the raw Fabric Canvas via `originalFabricCanvas` — the verbose name
+ * is intentional: prefer using delegation methods when possible.
  */
-declare class CustomTextbox extends IText {
+
+/**
+ * Plan de travail : le canvas remplit son panneau, le cadre du document — (0,0)–(w,h)
+ * en coordonnées du document — y est centré par la vue. Hors cadre, les objets restent
+ * visibles et manipulables sous un voile ; le cadre se lit par un liseré.
+ *
+ * Le repère ne change pas (origine = coin haut-gauche du cadre) : seule la vue change,
+ * rien n'est sauvegardé. Plan : apibots docs/plans/workspace-viewport.md.
+ */
+interface WorkspaceOptions {
+    /** Espace minimal entre le cadre et le bord du panneau, à zoom 1 (px écran). */
+    margin?: number;
+    /** Fond du plan de travail, hors cadre (le fond du damier). */
+    color?: string;
+    /** Opacité du voile sur ce qui dépasse du cadre (1 : le hors-cadre est masqué). */
+    veilOpacity?: number;
+    /**
+     * Plan de travail en damier (défaut) ou uni (`color`). Le damier est celui du cadre
+     * transparent côté hôte : à la même taille et aux mêmes couleurs, une zone vide hors
+     * cadre ne se distingue pas de l'intérieur — seuls les objets qui débordent sont voilés.
+     */
+    veil?: "checker" | "solid";
+    /** Cases foncées du damier, posées sur `color` (une sur deux : haut-droite, bas-gauche). */
+    checkerColor?: string;
+    /** Côté d'une case du damier (px écran). */
+    checkerSize?: number;
+    /** Couleur du liseré du cadre (celle des guides de l'éditeur). */
+    frameColor?: string;
+}
+/** Le cadre du document à l'écran, en px CSS relatifs à l'élément canvas. */
+interface FrameRect {
+    left: number;
+    top: number;
+    width: number;
+    height: number;
+}
+declare class DesignCanvas {
+    readonly originalFabricCanvas: Canvas;
+    private _width;
+    private _height;
+    private _scale;
+    private _frame;
+    private _workspace;
+    private _pan;
+    private _lastFit;
+    /** Dimensions logiques de l'espace design (mutables : le format se décide, cf. resizeDesign). */
+    get width(): number;
+    get height(): number;
+    /**
+     * Redimensionne l'espace design : le contenu reste en place, seul le cadre change —
+     * l'appelant refait un fitToSize pour recalculer l'affichage.
+     */
+    resizeDesign(width: number, height: number): void;
+    constructor(canvasElement: HTMLCanvasElement, opts: {
+        width: number;
+        height: number;
+    } & Record<string, any>);
+    /** Current viewport scale factor (set by fitToSize). */
+    get scale(): number;
+    /** Le cadre du document à l'écran (px CSS, relatifs à l'élément canvas). */
+    get frameRect(): FrameRect;
+    /** Le fond du plan de travail (sa couleur unie), ou null hors plan de travail. */
+    get workspaceColor(): string | null;
+    get isWorkspace(): boolean;
+    /**
+     * Passe en plan de travail : le rendu peint le fond du plan de travail sous les objets,
+     * puis le voile et le liseré par-dessus. L'intérieur du cadre reste transparent (sauf
+     * couleur de fond du document) : ce qui est posé SOUS le canvas (iframe vidéo, fonds
+     * HTML, damier) s'y voit. Les exports (autre contexte de dessin) n'ont ni fond de plan
+     * de travail ni voile.
+     */
+    enableWorkspace(options?: WorkspaceOptions): void;
+    /**
+     * Plan de travail : le canvas prend toute la taille du panneau, le cadre y est centré
+     * (marge à zoom 1), décalé du déplacement en cours. Returns the computed scale.
+     */
+    fitWorkspace(containerW: number, containerH: number, userZoom?: number): number;
+    /** Déplace la vue (px écran). */
+    panBy(dx: number, dy: number): void;
+    resetPan(): void;
+    /**
+     * Le cadre seul, à la résolution du document (multiplier 1 = taille du document),
+     * quelle que soit la vue — sans plan de travail ni voile.
+     */
+    toFrameDataURL(opts?: {
+        format?: "png" | "jpeg";
+        quality?: number;
+        multiplier?: number;
+    }): string;
+    /** Centre un objet dans le cadre du document (pas dans le canvas). */
+    centerObject(obj: FabricObject): void;
+    /** Fond du plan de travail hors cadre ; couleur de fond du document dans le cadre. */
+    private _paintWorkspace;
+    private _checker;
+    /** Le damier du voile, en px écran (indépendant du zoom) — construit une fois par couleurs. */
+    private _checkerPattern;
+    /**
+     * Peint tout le canvas sauf le cadre — en damier calé sur le coin du cadre (le
+     * quadrillage continue celui du cadre de part et d'autre du liseré), ou uni.
+     */
+    private _fillOutsideFrame;
+    /** Voile sur ce qui dépasse du cadre, puis le liseré (1px écran, quel que soit le zoom). */
+    private _paintVeil;
+    /**
+     * Resize the canvas buffer to fit a container and scale content
+     * via Fabric's viewportTransform. Returns the computed scale.
+     */
+    fitToSize(containerW: number, containerH: number, userZoom?: number): number;
+    /**
+     * Shift the active drag's grab offset by (dx, dy).
+     *
+     * During a drag, Fabric places the object at `cursor + offset`.
+     * Adjusting the offset "teleports" the object without breaking
+     * the drag delta calculation.
+     */
+    adjustGrabOffset(dx: number, dy: number): void;
+    getObjects(): FabricObject[];
+    add(...objects: FabricObject[]): void;
+    insertAt(index: number, ...objects: FabricObject[]): void;
+    remove(...objects: FabricObject[]): void;
+    renderAll(): void;
+    requestRenderAll(): void;
+    on(eventName: string, handler: (...args: any[]) => void): void;
+    off(eventName: string, handler?: (...args: any[]) => void): void;
+    getActiveObject(): FabricObject | null;
+    setActiveObject(obj: FabricObject): void;
+    discardActiveObject(): void;
+    getScenePoint(e: TPointerEvent): {
+        x: number;
+        y: number;
+    };
+    setDimensions(dims: {
+        width: number;
+        height: number;
+    }): void;
+    bringObjectForward(obj: FabricObject, intersecting?: boolean): void;
+    sendObjectBackwards(obj: FabricObject): void;
+    moveObjectTo(obj: FabricObject, index: number): void;
+    getZoom(): number;
+    setZoom(zoom: number): void;
+    toDataURL(opts?: any): string;
+    clear(): void;
+    dispose(): void;
+    set backgroundColor(color: string);
+    get backgroundColor(): string;
+    set renderOnAddRemove(value: boolean);
+    get renderOnAddRemove(): boolean;
+}
+
+/**
+ * Layout system types — Flexbox model backed by Yoga.
+ *
+ * Every participating Fabric object carries a single `layout: LayoutData`
+ * property with independent, optional blocks:
+ *
+ * - `sizing`: how the object sizes itself, per axis — shared by containers
+ *   and texts (a text's "content" is its text, a container's is its children)
+ * - `container`: present when the object has children (is a parent)
+ * - `child`: present when the object is inside another container
+ * - `overflow`: what a text does when its box is smaller than its content
+ *
+ * Container and child can coexist — a nested container is both.
+ *
+ * Outside a container, objects are positioned absolutely by Fabric.
+ * Inside a container, objects follow Flexbox rules (Yoga engine).
+ */
+/**
+ * Size mode per axis:
+ * - "hug": the object adapts to its content (text, or children)
+ * - "fixed": the object keeps its size, content must adapt (wrap/shrink/clip)
+ */
+type SizeMode = "hug" | "fixed";
+/** "How I size myself" — on containers and texts. */
+interface SizingData {
+    x: SizeMode;
+    y: SizeMode;
+    /**
+     * Floor set by the resize handles on a "hug" axis: the object is
+     * `max(content, minSize)`. Ignored on a "fixed" axis.
+     */
+    minSize?: {
+        w: number;
+        h: number;
+    };
+}
+/**
+ * What a text does when its box is smaller than its content (fixed height,
+ * or a height constrained by its container):
+ * - "shrink": font size goes down (to MIN_FONT_SIZE) until it fits
+ * - "clip": the text is cut at the box edge
+ * - "visible": the text overflows the box
+ */
+type TextOverflow = "shrink" | "clip" | "visible";
+/** Cross-axis alignment for a single child (maps to Yoga alignSelf). */
+type AlignSelf = "auto" | "stretch" | "flex-start" | "flex-end" | "center";
+/** Main-axis distribution (maps to Yoga justifyContent). */
+type JustifyContent = "flex-start" | "flex-end" | "center" | "space-between" | "space-around";
+/** Cross-axis alignment for all children (maps to Yoga alignItems). */
+type AlignItems = "stretch" | "flex-start" | "flex-end" | "center";
+/** Flex direction (maps to Yoga flexDirection). */
+type FlexDirection = "column" | "row";
+/**
+ * How a container places its children:
+ * - "stack": Flexbox (Yoga) — direction, gap, alignment (default)
+ * - "free": children keep the place they were put at; the container's box
+ *   follows them (their union, plus the padding) — a group
+ */
+type Arrangement = "stack" | "free";
+/** "I am a parent" — present when the object has children. */
+interface ContainerData {
+    /** How the children are placed (default: "stack"). */
+    arrangement?: Arrangement;
+    /**
+     * "group": the container was created by grouping (⌘G) — a carrier with nothing of
+     * its own, removed when its children are ungrouped.
+     */
+    origin?: "group";
+    /** Flex direction: column (vertical, default) or row (horizontal). */
+    flexDirection?: FlexDirection;
+    /** Gap between children in the main axis direction (pixels). */
+    gap?: number;
+    /** Padding between container edges and children. */
+    padding?: {
+        top: number;
+        right: number;
+        bottom: number;
+        left: number;
+    };
+    /** Cross-axis alignment for children (default: "flex-start"). */
+    alignItems?: AlignItems;
+    /** Main-axis distribution (default: "flex-start"). */
+    justifyContent?: JustifyContent;
+}
+/** "I am a child" — present when the object is inside a container. */
+interface ChildData {
+    parentId: string;
+    /** Override the container's alignItems for this child. */
+    alignSelf?: AlignSelf;
+    /** How much this child grows to fill remaining space (default: 0). */
+    flexGrow?: number;
+    /** Position in the flex flow (lower = earlier). Children without order go by insertion order. */
+    order?: number;
+}
+/** The `layout` property on any participating Fabric object. */
+interface LayoutData {
+    sizing?: SizingData;
+    container?: ContainerData;
+    child?: ChildData;
+    /** Texts only (default "shrink"). */
+    overflow?: TextOverflow;
+}
+
+/**
+ * Boîte d'un texte : fonction pure de son mode de taille, de la contrainte que lui
+ * donne son container (le temps d'une passe), de son overflow et d'une mesure.
+ *
+ * Aucun état : CustomTextbox fournit la mesure (Fabric) et applique le résultat.
+ */
+
+/**
+ * Ce que le container donne au texte pour une passe de layout — jamais conservé.
+ * - `maxW` : largeur disponible, que le texte ne dépasse pas (il wrappe)
+ * - `w` / `h` : taille exacte calculée par Yoga (stretch, flexGrow, flexShrink)
+ */
+interface TextConstraint {
+    maxW?: number;
+    w?: number;
+    h?: number;
+}
+
+/**
+ * Textbox de l'éditeur : un objet de layout comme les autres.
+ *
+ * Il porte les mêmes modes de taille que les containers (`layout.sizing`), son
+ * « contenu » étant son texte :
+ * - largeur `hug` : une ligne, la boîte suit le texte ; `fixed` : wrap à la largeur ;
+ *   dans les deux cas, jamais plus large que la place que donne le container (le
+ *   container pousse la largeur fixe, qui reste acquise) ;
+ * - hauteur `hug` : la boîte suit le texte, avec un plancher `minSize.h` posé par les
+ *   poignées ; `fixed` : la boîte garde sa hauteur et `layout.overflow` décide
+ *   (réduire la police, couper, déborder).
+ *
+ * La boîte est calculée par `resolveTextBox` (layout/text-box.ts) ; le texte ne fait
+ * que fournir la mesure et appliquer le résultat.
+ *
+ * Contrainte du container : un seul écrivain, le moteur de layout (`layoutWith`, à
+ * chaque passe). Fabric recalcule aussi le texte de lui-même, hors de toute passe et
+ * sans événement pour relancer le layout (sortie d'édition, rendu après un changement
+ * de styles) : ce recalcul reprend la dernière contrainte reçue. Un enfant jamais mis
+ * en page (document tout juste chargé) s'affiche tel que sauvegardé ; un texte hors
+ * container ignore toute contrainte.
+ *
+ * Les poignées ne déforment jamais (jamais de scale) : un bord change la boîte, un coin
+ * agrandit le texte avec elle, proportions gardées — la police absorbe le facteur
+ * (`scaleText`, layout/text.ts), comme pour tout agrandissement proportionnel d'un texte.
+ *
+ * `fontSize` est la taille effective (celle qui est rendue et sauvegardée, pour qu'un
+ * document s'affiche juste sans relayout) ; `fontSizeIntent` est la taille voulue par
+ * l'utilisateur, d'où repart l'autofit à chaque calcul.
+ *
+ * Un texte à personnaliser (binding `text` de scope `user`, cf. userTexts) se dessine avec son
+ * liseré tant qu'il est en attente, et se règle à la première frappe de l'utilisateur final.
+ *
+ * Hérite de Textbox (et non IText) pour le line-wrapping natif. Place aussi le textarea
+ * caché dans le container du canvas, pour le focus dans les modales (`showModal()`
+ * piège le focus hors du dialog).
+ */
+type WordEntry = {
+    word: string[];
+    width: number;
+    _isChunk?: boolean;
+};
+type GraphemeData = {
+    largestWordWidth: number;
+    wordsData: WordEntry[][];
+};
+declare class CustomTextbox extends Textbox {
+    static customProperties: string[];
+    /** Taille de police voulue — l'effective (`fontSize`) peut être réduite par l'autofit. */
+    fontSizeIntent: number;
+    /**
+     * Le texte est encore l'exemple posé à sa création (« Tapez votre texte ici ») : personne
+     * n'a tapé dedans. L'hôte s'en sert pour qu'une variable insérée REMPLACE l'exemple au
+     * lieu de s'y ajouter. Levé à la première frappe qui change le texte, ou par
+     * `setTextContent` — jamais au simple focus. Sérialisé avec le calque.
+     */
+    placeholder?: boolean;
+    /** Le contenu dépasse la boîte (overflow clip / visible). */
+    _overflowing?: boolean;
+    /** Dernière contrainte reçue du container (absente : jamais mis en page). */
+    _constraint?: TextConstraint;
+    constructor(text: string, options?: Record<string, unknown>);
+    /**
+     * Sans bloc `sizing` (le temps de la construction, avant _ensureSizing), la boîte
+     * stockée fait foi : largeur fixe.
+     */
+    get sizing(): SizingData;
+    get textOverflow(): TextOverflow;
+    /** Remplace le bloc `sizing` (nouvel objet `layout`, jamais muté en place). */
+    setSizing(sizing: SizingData): void;
+    setTextOverflow(overflow: TextOverflow): void;
+    /**
+     * Largeur naturelle à la police courante : la plus longue ligne, sans wrap. Mesurée d'un
+     * bloc, une ligne peut être un peu plus étroite que la somme de ses mots, que mesure le
+     * retour à la ligne (crénage d'une police comme Garet) : wrappé à cette largeur exacte, le
+     * texte se couperait. On élargit donc jusqu'à ce qu'il tienne sur ses lignes dures.
+     */
+    naturalWidth(): number;
+    /**
+     * Largeur minimale du texte : son graphème le plus large. Un mot trop long se découpe
+     * (break-word, `getGraphemeDataForRender`), donc rien n'arrête une poignée avant la
+     * lettre — le même plancher que Fabric impose de lui-même (`dynamicMinWidth`) une fois
+     * le texte wrappé à cette largeur. Mesuré en wrappant à 1 px, puis la boîte est remise
+     * telle quelle.
+     */
+    minContentWidth(): number;
+    /**
+     * Les plages atomiques du texte (les variables d'un texte lié, posées par l'hôte), en
+     * index plats de graphèmes sans les retours à la ligne — la convention des styles
+     * sérialisés. Non sérialisé : l'hôte les recalcule à l'affichage et pendant l'édition.
+     * Le curseur les saute, une suppression les emporte entières, une plage s'étend à leurs
+     * bornes ; une pastille les montre (`drawTokenPills`).
+     */
+    tokenSpans?: [number, number][];
+    /** La sélection d'avant le dernier mouvement : dit dans quel sens on traverse un token. */
+    private _lastSelection;
+    /** Les plages atomiques en index de `_text` (graphèmes, retours à la ligne compris). */
+    atomicSpans(): [number, number][];
+    /** Toute sélection passe ici avant d'être annoncée : elle se cale sur les tokens. */
+    _fireSelectionChanged(): void;
+    /**
+     * Un curseur dans un token en sort : d'un pas (flèche), de l'autre côté ; sinon (clic) à
+     * la borne la plus proche. Une plage s'étend aux bornes des tokens qu'elle coupe.
+     */
+    private _snapSelectionToTokens;
+    /**
+     * Retour arrière juste après un token, ou Suppr juste avant : le token est d'abord
+     * sélectionné (textarea compris), puis la suppression native l'emporte entier — on ne
+     * touche jamais au flux de saisie de Fabric.
+     */
+    onKeyDown(e: KeyboardEvent): void;
+    /**
+     * Une frappe (ou un collage) qui change le texte : ce n'est plus l'exemple — et un texte à
+     * personnaliser l'est, sauf sous la main de son auteur, qui en écrit l'exemple.
+     */
+    onInput(e: Event): void;
+    /** Fabric efface la zone du texte sur le calque du dessus à chaque clignotement du
+     *  curseur : les pastilles du texte en édition sont repeintes avec lui. */
+    renderCursorOrSelection(): void;
+    /**
+     * Une pastille derrière chaque token (couleur d'édition de l'hôte), sur le calque du
+     * dessus : un repère d'édition, jamais exporté. `ctx` est en coordonnées écran.
+     */
+    drawTokenPills(ctx: CanvasRenderingContext2D): void;
+    /**
+     * Les rectangles d'un token, un par ligne affichée (un token peut wrapper) : la boîte des
+     * glyphes, celle du fond de texte natif de Fabric — depuis le haut de la ligne, sur la
+     * hauteur de police (`getHeightOfLine / lineHeight`) ; l'interligne, en dessous, reste hors
+     * de la pastille.
+     */
+    private _tokenBoxes;
+    /**
+     * Pas de glisser-déposer du texte sélectionné (Fabric) : presser sur une plage sélectionnée
+     * et tirer re-sélectionne, comme dans un champ de texte — le glisser-déposer emportait le
+     * texte quand on voulait étendre la sélection.
+     */
+    initBehavior(): void;
+    /**
+     * Une passe de layout : calcule la boîte sous la contrainte du container et la
+     * retient. `null` : le texte a quitté son container.
+     */
+    layoutWith(constraint: TextConstraint | null): void;
+    /** Recalcul (Fabric, ou layoutWith) sous la contrainte courante. */
+    initDimensions(): void;
+    private _applyBox;
+    /**
+     * Mesure via Fabric (mute l'objet ; _applyBox pose l'état final ensuite). Méthode et
+     * non champ : Fabric mesure déjà pendant le super() du constructeur.
+     */
+    private _measure;
+    /** Wrap à `width` puis mesure (la largeur peut grandir au mot le plus long). */
+    private _wrapAt;
+    /** Toute nouvelle `fontSize` posée via set() est une intention de l'utilisateur. */
+    _set(key: string, value: any): this;
+    /** Le texte, puis le liseré d'un texte à personnaliser encore en attente. */
+    _render(ctx: CanvasRenderingContext2D): void;
+    /** overflow "clip" : le texte est coupé au bord de sa boîte. */
+    private _renderClipped;
+    /** Le liseré suit l'état : poser ou régler le binding ne salit pas le cache aux yeux de
+     *  Fabric, c'est le passage en attente (ou sa fin) qui le fait. */
+    isCacheDirty(skipCanvas?: boolean): boolean;
+    private _wasUserText?;
+    /**
+     * Bord gauche/droit : la largeur passe en fixe et prend la valeur tirée.
+     * Bord haut/bas : en hauteur contenu, pose le plancher `minSize.h` ; en hauteur fixe,
+     * change la hauteur.
+     */
+    handleEdgeResize(transform: any, x: number, y: number): boolean;
+    /**
+     * Coin : le texte et sa boîte grandissent ensemble, proportions gardées, le coin opposé
+     * immobile. Le facteur est celui de toute poignée de coin (cornerScaleFactor), appliqué
+     * depuis l'état du début du geste : les modes de taille ne changent pas, la police
+     * absorbe tout.
+     */
+    handleCornerResize(transform: any, x: number, y: number): boolean;
+    /** Le geste de coin en cours (un par objet `transform` de Fabric). */
+    private _cornerStart?;
+    /**
+     * Taille programmatique (`setShapeSize`, comme une forme) : le facteur uniforme — la
+     * moyenne des deux axes — passe dans la police, jamais dans un scale.
+     */
+    setSize(w: number, h: number): void;
+    /** Placé par une pile — un groupe (container libre) laisse ses enfants à leur propre taille. */
+    private _isChild;
+    private _withAnchor;
+    private _resizeWidth;
+    private _resizeHeight;
+    /**
+     * Un texte étiré (scaleX/scaleY) est ramené à scale 1 : le scale passe dans la
+     * largeur et la police (`scaleText`). Exact pour un scale uniforme ; un étirement non
+     * uniforme est perdu (les glyphes reprennent leurs proportions, la largeur garde son
+     * propre facteur).
+     */
+    private _bakeLegacyScale;
+    /**
+     * Un texte sans `layout.sizing` (nouveau, ou document d'avant les modes de taille)
+     * reçoit un mode explicite :
+     * - nouveau texte, ou enfant de container (sa largeur était dictée par le container) :
+     *   largeur contenu ;
+     * - sinon : largeur contenu si la boîte épouse le texte sur une ligne, fixe sinon
+     *   (texte qui wrappe, ou boîte élargie pour un alignement).
+     */
+    private _ensureSizing;
+    /**
+     * overflow-wrap: break-word — pré-découpe les mots trop longs
+     * en chunks et les marque pour que _wrapLine ne mette pas
+     * d'espace entre eux.
+     */
+    getGraphemeDataForRender(lines: string[]): GraphemeData;
+    /**
+     * Copie fidèle de Textbox._wrapLine, sauf :
+     * - pas d'espace (infix) entre les chunks d'un même mot (_isChunk)
+     * - pas d'incrément d'offset pour l'espace entre chunks
+     */
+    _wrapLine(lineIndex: number, desiredWidth: number, { largestWordWidth, wordsData }: GraphemeData, reservedSpace?: number): string[][];
+    /**
+     * Fix curseur : missingNewlineOffset retourne toujours 1 en mode
+     * non-splitByGrapheme car Fabric suppose que chaque wrap mange un
+     * espace. Pour les coupures mid-word, il n'y a pas d'espace → 0.
+     */
+    missingNewlineOffset(lineIndex: number, skipWrapping?: boolean): 0 | 1;
     /**
      * Override pour ajouter le textarea au canvas container
      * au lieu du body (comportement par défaut de Fabric.js).
@@ -37,301 +526,35 @@ declare class CustomTextbox extends IText {
  */
 type LockMode$1 = "free" | "position" | "full";
 
-interface FontConfig {
-    family: string;
-    url: string;
-    weight?: string;
-}
-
-interface LayerData {
-    type: string;
-    layerId?: string;
-    left?: number;
-    top?: number;
-    scaleX?: number;
-    scaleY?: number;
-    angle?: number;
-    fill?: string;
-    stroke?: string;
-    strokeWidth?: number;
-    opacity?: number;
-    /** Mode de verrouillage du calque */
-    lockMode?: LockMode;
-    /** Indique si le contenu (image) est verrouillé */
-    lockContent?: boolean;
-    [key: string]: unknown;
-}
-interface TextLayerOptions {
-    text?: string;
-    left?: number;
-    top?: number;
-    fontFamily?: string;
-    fontSize?: number;
-    fontWeight?: string;
-    fill?: string;
-    layerId?: string;
-}
-interface ImageLayerOptions {
-    left?: number;
-    top?: number;
-    scaleX?: number;
-    scaleY?: number;
-    originX?: "left" | "center" | "right";
-    originY?: "top" | "center" | "bottom";
-    layerId?: string;
-}
-interface ShapeLayerOptions {
-    left?: number;
-    top?: number;
-    width?: number;
-    height?: number;
-    fill?: string;
-    stroke?: string;
-    strokeWidth?: number;
-    layerId?: string;
-    shapeType?: ShapeType;
-}
-type ShapeType = "rect" | "rounded" | "circle" | "heart" | "hexagon";
-interface SaveOptions {
-    rasterize?: boolean;
-    ajaxCall?: boolean;
-    form?: HTMLFormElement;
-}
-interface SaveResult {
-    layers: LayerData[];
-    dataUrl?: string;
-    /** URLs Cloudinary des assets uploadés pendant la sauvegarde */
-    uploadedAssets?: string[];
-}
-declare module "fabric" {
-    interface FabricObject {
-        layerId?: string;
-        layerType?: string;
-    }
-}
-
-interface ImageFrameOptions {
-    left?: number;
-    top?: number;
-    angle?: number;
-    layerId?: string;
-    lockMode?: LockMode$1;
-    clipShape?: ShapeType;
-    imageOffsetX?: number;
-    imageOffsetY?: number;
-    imageScale?: number;
-    /** Scale initial du frame (pour limiter la taille à l'import) */
-    frameScale?: number;
-    /** Dimensions explicites du frame (prioritaires sur frameScale) */
-    frameWidth?: number;
-    frameHeight?: number;
-}
-interface ImageFrameData {
-    type: "ImageFrame";
-    left: number;
-    top: number;
-    angle: number;
-    scaleX: number;
-    scaleY: number;
-    frameWidth: number;
-    frameHeight: number;
-    clipShape?: ShapeType;
-    layerId?: string;
-    lockMode?: LockMode$1;
-    lockContent?: boolean;
-    opacity?: number;
-    image: {
-        src: string;
-        offsetX: number;
-        offsetY: number;
-        scale: number;
-    };
-}
 /**
- * ImageFrame - Un conteneur pour images avec cadre fixe
+ * Les bindings du dialecte template (apibots, plan media-template-generators §4) : un calque
+ * peut porter `bindings` — { champ: { expr, scope, resolved } } — et le champ stocké reste
+ * une valeur plate (le sample), donc le canvas rend le calque tel quel. L'éditeur, lui, doit
+ * SAVOIR qu'un champ est lié :
  *
- * L'image est toujours contenue dans un cadre (frame) de dimensions fixes.
- * Lors du remplacement d'image, le cadre garde ses dimensions et la nouvelle image
- * s'adapte en mode "cover". Le clipPath s'applique sur le Group entier.
+ * - la donnée voyage avec le calque (sérialisation/désérialisation, comme layerId) ;
+ * - un texte lié s'édite dans sa textbox, valeurs affichées : l'hôte reporte les frappes dans
+ *   l'expression et pose ses variables comme plages atomiques (`tokenSpans`, CustomTextbox) ;
+ * - le lien se voit : un badge au coin du cadre (survol, sélection), dans la couleur d'édition
+ *   (guideColor), et un liseré permanent sur les médias dynamiques.
  */
-declare class ImageFrame extends Group {
-    frameWidth: number;
-    frameHeight: number;
-    clipShape?: ShapeType;
-    private _imageOffsetX;
-    private _imageOffsetY;
-    private _imageScale;
-    private _image;
-    constructor(image: FabricImage, options?: ImageFrameOptions);
-    get image(): FabricImage;
-    get imageSrc(): string;
-    get imageOffsetX(): number;
-    get imageOffsetY(): number;
-    /**
-     * Vérifie si l'image peut être repositionnée dans le cadre.
-     * Retourne true si l'image déborde du cadre (avec une marge de tolérance).
-     * @param tolerancePercent - Marge de tolérance en pourcentage (défaut: 5%)
-     */
-    canRepositionImage(tolerancePercent?: number): boolean;
-    /**
-     * Repositionne l'image dans le frame (pan)
-     */
-    setImageOffset(offsetX: number, offsetY: number): void;
-    /**
-     * Change le zoom de l'image (min = cover)
-     */
-    setImageScale(scale: number): void;
-    /**
-     * Remplace l'image du frame en mode cover
-     */
-    replaceImage(newImage: FabricImage): void;
-    /**
-     * Redimensionne le frame (l'image s'adapte en cover)
-     */
-    resizeFrame(newWidth: number, newHeight: number): void;
-    /**
-     * Applique une forme de clip au frame
-     */
-    applyClipShape(shapeType: ShapeType): void;
-    /**
-     * Cycle vers la forme de clip suivante
-     */
-    nextClipShape(): void;
-    private _applyImageOffset;
-    private _clampOffset;
-    private _applyClip;
-    /**
-     * Fallback : absorbe le scale si les contrôles natifs sont utilisés
-     */
-    private _setupScaleAbsorption;
-    private _setupControls;
-    toObject(propertiesToInclude?: any[]): any;
-    static fromObject(data: ImageFrameData): Promise<ImageFrame>;
-    /**
-     * Convertit une image legacy (FabricImage avec scale/clipPath) en ImageFrame
-     * Préserve les dimensions affichées et le clip shape
-     */
-    static fromLegacyImage(img: FabricImage, options?: {
-        clipShape?: ShapeType;
-        layerId?: string;
-        lockMode?: LockMode$1;
-    }): ImageFrame;
-}
-
-/**
- * Gère les calques (layers) du canvas Fabric.js
- * Responsable de l'ajout, suppression et organisation des objets
- */
-declare class LayerManager {
-    private canvas;
-    constructor(canvas: Canvas);
-    /**
-     * Retourne tous les calques (excluant l'image de fond)
-     */
-    get all(): FabricObject[];
-    /**
-     * Retourne l'image de fond
-     */
-    get background(): FabricObject | undefined;
-    /**
-     * Trouve un calque par son ID
-     */
-    findById(layerId: string): FabricObject | undefined;
-    /**
-     * Charge l'image de fond
-     */
-    loadBackgroundImage(url: string): Promise<FabricImage>;
-    /**
-     * Charge plusieurs calques depuis leurs données JSON
-     */
-    loadLayers(layers: LayerData[]): Promise<FabricObject[]>;
-    /**
-     * Ajoute un objet au canvas et le sélectionne (si interactif)
-     */
-    add(obj: FabricObject): FabricObject;
-    /**
-     * Supprime un objet du canvas
-     */
-    remove(obj: FabricObject): void;
-    /**
-     * Supprime plusieurs objets
-     */
-    removeMany(objects: FabricObject[]): void;
-    /**
-     * Monte l'objet d'un niveau (vers l'avant)
-     */
-    bringForward(obj: FabricObject): void;
-    /**
-     * Descend l'objet d'un niveau (vers l'arrière)
-     * Ne peut pas descendre en dessous de l'image de fond
-     */
-    sendBackward(obj: FabricObject): void;
-    /**
-     * Crée et ajoute un calque texte
-     */
-    addText(options?: TextLayerOptions): CustomTextbox;
-    /**
-     * Crée et ajoute un calque image dans un ImageFrame
-     */
-    addImage(url: string, options?: ImageLayerOptions): Promise<ImageFrame>;
-    /**
-     * Crée et ajoute une image simple (legacy, sans frame)
-     * Utilisé pour le background ou cas spéciaux
-     */
-    addImageLegacy(url: string, options?: ImageLayerOptions): Promise<FabricImage>;
-    /**
-     * Remplace la source d'une image existante en conservant toutes ses propriétés
-     * Supporte à la fois ImageFrame et FabricImage legacy
-     *
-     * @param options.opacity - Opacité à appliquer (utile si target.opacity est temporairement modifiée)
-     */
-    replaceImageSource(target: ImageFrame | FabricImage, newUrl: string, options?: {
-        opacity?: number;
-    }): Promise<ImageFrame | FabricImage>;
-    /**
-     * Remplace la source d'une image legacy (FabricImage sans frame)
-     * @internal
-     */
-    private _replaceImageSourceLegacy;
-    /**
-     * Remplace une forme (shape) par un ImageFrame contenant l'image donnée.
-     * La forme sert de masque : l'image épouse ses dimensions et son clipShape.
-     * L'ImageFrame est inséré au même z-index que la forme d'origine.
-     */
-    replaceShapeWithImage(shape: FabricObject, imageUrl: string): Promise<ImageFrame>;
-    /**
-     * Crée et ajoute un calque forme (rectangle par défaut)
-     */
-    addShape(options?: ShapeLayerOptions): FabricObject;
-    /**
-     * Groupe plusieurs objets ensemble
-     */
-    groupObjects(objects: FabricObject[]): Group;
-    /**
-     * Sérialise tous les calques en JSON
-     * Inclut les propriétés custom : layerId, lockMode, lockContent
-     */
-    serialize(): LayerData[];
-    /**
-     * Désérialise un calque depuis ses données JSON
-     * Les images legacy (type "Image") sont automatiquement migrées vers ImageFrame
-     */
-    private deserialize;
-    /**
-     * Applique un mode de verrouillage à un objet
-     * Délègue à la fonction du module locking.ts
-     */
-    applyLockMode(obj: FabricObject, mode: LockMode$1): void;
-    /**
-     * Génère un ID unique pour un calque
-     */
-    private generateId;
-    /**
-     * Détecte le type de clip depuis un clipPath legacy sérialisé
-     */
-    private detectLegacyClipShape;
-    private detectClipPath;
-}
+/** `media` : ce qu'une image liée désigne — le rang d'une photo du sujet, `"each"`, le nom
+ *  d'une image du lecteur (cf. imageSlots), ou `"draw"` : une image que l'hôte tire, parmi
+ *  `candidates` (ses nœuds de média, opaques ici) quand le binding en porte, parmi les images
+ *  du sujet sinon. `key` : la liste d'images du sujet que la référence lit, quand il en a
+ *  plusieurs (absente : sa liste par défaut). `hint` : la consigne d'une image à fournir
+ *  (scope `user`, cf. userSlots). Un `text` de scope `user` est un texte à personnaliser
+ *  (userTexts). */
+type BindingSpec = {
+    expr?: string;
+    scope?: string;
+    resolved?: boolean;
+    hint?: string;
+    media?: number | string;
+    key?: string;
+    candidates?: unknown[];
+};
+type Bindings = Record<string, BindingSpec>;
 
 /**
  * Gère les fichiers en attente d'upload vers Cloudinary
@@ -390,7 +613,7 @@ declare class PersistenceManager {
     private canvas;
     private layers;
     private pendingUploads;
-    constructor(canvas: Canvas, layers: LayerManager);
+    constructor(canvas: DesignCanvas, layers: LayerManager);
     /**
      * Configure le gestionnaire d'uploads en attente
      */
@@ -453,7 +676,7 @@ declare class HistoryManager {
     private maxSize;
     private callbacks;
     private isRestoring;
-    constructor(canvas: Canvas, layers: LayerManager, options?: {
+    constructor(canvas: DesignCanvas, layers: LayerManager, options?: {
         maxSize?: number;
     });
     /**
@@ -509,6 +732,603 @@ declare class HistoryManager {
      * Notifie les callbacks du changement d'état
      */
     private notifyStateChange;
+}
+
+/**
+ * Un path du catalogue : géométrie normalisée 100x100, apparence d'auteur optionnelle.
+ * Sans fill ni stroke = géométrie recolorable (le défaut de l'appelant s'applique) ;
+ * stroke sans fill = forme en contour (fill transparent, jamais le défaut).
+ */
+interface ShapePathData {
+    d: string;
+    fill?: string;
+    stroke?: string;
+    /** Normalisé dans l'espace 100x100, comme le `d`. */
+    strokeWidth?: number;
+    /** Les trous d'une icône pleine ; absent = nonzero (le défaut SVG et Fabric). */
+    fillRule?: "evenodd";
+}
+/**
+ * Le clip inliné d'un ImageFrame : le `d` voyage DANS le document (autoporteur),
+ * l'id de catalogue n'est plus qu'un affichage/cycle. width/height = dims du
+ * dessin dans la boîte 100x100 (le rendu HTML en a besoin pour son contain).
+ */
+interface ClipData {
+    d: string;
+    width: number;
+    height: number;
+    /** La règle du path d'origine : une découpe evenodd garde ses trous. */
+    fillRule?: "evenodd";
+}
+
+interface FontConfig {
+    family: string;
+    url: string;
+    weight?: string;
+}
+
+interface LayerData {
+    type: string;
+    layerId?: string;
+    left?: number;
+    top?: number;
+    scaleX?: number;
+    scaleY?: number;
+    angle?: number;
+    fill?: string | Record<string, unknown>;
+    stroke?: string;
+    strokeWidth?: number;
+    opacity?: number;
+    /** Mode de verrouillage du calque */
+    lockMode?: LockMode;
+    /** Indique si le contenu (image) est verrouillé */
+    lockContent?: boolean;
+    /** Layout data (container or child) — see layout/types.ts */
+    layout?: LayoutData;
+    /** Bindings du dialecte template (apibots) : { champ: { expr, scope, resolved } } */
+    bindings?: Bindings;
+    [key: string]: unknown;
+}
+interface TextLayerOptions {
+    text?: string;
+    left?: number;
+    top?: number;
+    fontFamily?: string;
+    fontSize?: number;
+    fontWeight?: string;
+    fill?: string;
+    layerId?: string;
+    /** Le texte est un exemple à remplacer (CustomTextbox#placeholder). */
+    placeholder?: boolean;
+}
+interface ImageLayerOptions {
+    left?: number;
+    top?: number;
+    scaleX?: number;
+    scaleY?: number;
+    originX?: "left" | "center" | "right";
+    originY?: "top" | "center" | "bottom";
+    layerId?: string;
+    /** Les clés de `image` posées par l'hôte à côté de `src` (cf. ImageFrameOptions.imageMeta). */
+    imageMeta?: Record<string, unknown>;
+}
+interface ShapeLayerOptions {
+    left?: number;
+    top?: number;
+    width?: number;
+    height?: number;
+    fill?: string;
+    stroke?: string;
+    strokeWidth?: number;
+    layerId?: string;
+    shapeType?: ShapeType;
+    /**
+     * Données de paths inline (payload toolbox) : prioritaires sur shapeType —
+     * l'asset devient du contenu à l'insertion. N paths → Group de FabPath.
+     */
+    paths?: ShapePathData[];
+}
+type ShapeType = "rect" | "circle" | (string & {});
+interface SaveOptions {
+    rasterize?: boolean;
+    ajaxCall?: boolean;
+    form?: HTMLFormElement;
+}
+interface SaveResult {
+    layers: LayerData[];
+    dataUrl?: string;
+    /** URLs Cloudinary des assets uploadés pendant la sauvegarde */
+    uploadedAssets?: string[];
+}
+declare module "fabric" {
+    interface FabricObject {
+        layerId?: string;
+        layerType?: string;
+        layout?: LayoutData;
+    }
+}
+
+/**
+ * Le recadrage d'une image dans son cadre (ImageFrame) : trois nombres, normalisés.
+ *
+ * L'image couvre d'abord le cadre tout juste (cover), puis se grossit de `scale` (≥ 1) et
+ * se cale à `x`, `y` (0 → 1, 0.5 = centrée). Dans le repère du cadre (largeur W, hauteur
+ * H, origine en haut à gauche), l'image affichée occupe :
+ *   Iw = largeur cover × scale          L = x × (W − Iw)
+ *   Ih = hauteur cover × scale          T = y × (H − Ih)
+ *
+ * Normalisé plutôt qu'en pixels : la zone choisie survit au cadre qui change de taille et
+ * à l'image remplacée par une autre (binding), sans connaître la taille de l'image. L'image
+ * couvre toujours le cadre : on ne peut pas la tirer au point de laisser un vide.
+ */
+interface Crop {
+    x: number;
+    y: number;
+    scale: number;
+}
+/** Une boîte dans le repère du cadre. */
+interface Rect {
+    x: number;
+    y: number;
+    w: number;
+    h: number;
+}
+
+interface ImageFrameOptions {
+    left?: number;
+    top?: number;
+    angle?: number;
+    layerId?: string;
+    lockMode?: LockMode$1;
+    clipShape?: ShapeType;
+    /** Clip inliné (formes hors catalogue global — le document reste autoporteur). */
+    clipData?: ClipData;
+    /** Corner radius in pixels for "rect" clip shape (0 = sharp corners). */
+    cornerRadius?: number;
+    /** Le recadrage de l'image dans le cadre (cf. crop.ts) ; centrée, cover, sans. */
+    crop?: Partial<Crop>;
+    /** Cf. ImageFrameData.fit ; en contain, frameWidth/frameHeight sont la boîte. */
+    fit?: ImageFit;
+    /** @deprecated Documents d'avant : le décalage du centre de l'image en pixels de cadre. */
+    imageOffsetX?: number;
+    imageOffsetY?: number;
+    /** Scale initial du frame (pour limiter la taille à l'import) */
+    frameScale?: number;
+    /** Dimensions explicites du frame (prioritaires sur frameScale) */
+    frameWidth?: number;
+    frameHeight?: number;
+    /** Les clés de `image` que l'hôte pose à côté de `src` (apibots : `content_medium_id`).
+     *  Elles suivent la SOURCE : une image remplacée arrive avec les siennes, ou sans. */
+    imageMeta?: ImageMeta;
+    /** Cf. ImageFrameData.blur. */
+    blur?: number;
+}
+type ImageMeta = Record<string, unknown>;
+/** Le cadre impose sa forme à l'image (cover), ou la prend d'elle (contain). */
+type ImageFit = "cover" | "contain";
+interface ImageFrameData {
+    originX?: "left" | "center" | "right";
+    originY?: "top" | "center" | "bottom";
+    stroke?: string;
+    strokeWidth?: number;
+    type: "ImageFrame";
+    left: number;
+    top: number;
+    angle: number;
+    scaleX: number;
+    scaleY: number;
+    frameWidth: number;
+    frameHeight: number;
+    clipShape?: ShapeType;
+    /**
+     * Le `d` du clip, inliné au save : les nouveaux documents ne dépendent plus du
+     * registre pour se recharger — l'id (clipShape) reste pour l'affichage et le
+     * cycle. Le stock legacy (id seul) se résout via le registre et s'upgrade au
+     * prochain save.
+     */
+    clipData?: ClipData;
+    /** Corner radius in pixels (only meaningful when clipShape is "rect"). */
+    cornerRadius?: number;
+    /**
+     * `contain` : le cadre prend la forme de son image — le côté le plus long de l'image se cale
+     * sur la boîte `frameWidth` × `frameHeight`, l'autre suit le ratio. Pour une image dont le
+     * ratio change d'un lecteur à l'autre (le logo d'une company) : le cadre a la taille concrète
+     * de l'image, la mise en page se déroule autour (une pastille qui épouse le logo). La boîte
+     * est ce qui se sauve ; un cadre sans image l'occupe entière. Absent = cover.
+     */
+    fit?: ImageFit;
+    /**
+     * Le flou de l'image, en px de cadre (le `filter: blur(Npx)` du CSS : l'écart-type du
+     * gaussien). Calculé en JS (cf. imageBlur), pareil dans l'éditeur et au rendu. Absent = net.
+     */
+    blur?: number;
+    layerId?: string;
+    lockMode?: LockMode$1;
+    lockContent?: boolean;
+    opacity?: number;
+    /** L'ombre portée (Shadow#toObject) : couleur, flou, décalages. */
+    shadow?: Record<string, unknown>;
+    /**
+     * `src` absent = cadre EN ATTENTE : le fichier n'existe pas encore (média en cours de
+     * production côté hôte), ou la source est liée (imageSlots : le binding la donnera). Il se
+     * dessine en damier — en emplacement s'il est lié — et se sauve tel quel, sans `src` ; ses
+     * autres clés (l'identité du média) survivent au tour éditeur.
+     *
+     * Le recadrage est `cropX`, `cropY` (0 → 1) et `scale` (≥ 1) — voir crop.ts. Les
+     * documents d'avant portent `offsetX`, `offsetY` (pixels) : lus, convertis, plus écrits.
+     */
+    image: {
+        src?: string;
+        cropX?: number;
+        cropY?: number;
+        scale?: number;
+        /** @deprecated */
+        offsetX?: number;
+        /** @deprecated */
+        offsetY?: number;
+        [key: string]: unknown;
+    };
+}
+/**
+ * ImageFrame - Un conteneur pour images avec cadre fixe
+ *
+ * L'image est toujours contenue dans un cadre (frame) de dimensions fixes.
+ * Lors du remplacement d'image, le cadre garde ses dimensions et la nouvelle image
+ * s'adapte en mode "cover". Le clipPath s'applique sur le Group entier.
+ */
+declare class ImageFrame extends Group {
+    frameWidth: number;
+    frameHeight: number;
+    clipShape?: ShapeType;
+    clipData?: ClipData;
+    /** Corner radius in pixels for "rect" clip shape. 0 = sharp corners. */
+    cornerRadius: number;
+    /** Cf. ImageFrameData.fit. */
+    fit: ImageFit;
+    /** Cf. ImageFrameData.blur. */
+    blur: number;
+    /** Le flou posé sur l'image au dernier calcul (élément source, échelle, rayon) : rien à refaire
+     *  tant qu'il ne change pas. */
+    private _blurKey;
+    /** En contain, la boîte où l'image se cale ; frameWidth/frameHeight sont alors sa taille. */
+    private _box;
+    private _crop;
+    private _image;
+    private _imageMeta;
+    private _source;
+    /** Le damier est effacé (concealPlaceholder) : l'hôte montre son propre aperçu dessous. */
+    private _concealed;
+    /** L'emplacement au dernier rendu, par sa clé (isCacheDirty). */
+    private _drawnSlot;
+    constructor(image: FabricImage, options?: ImageFrameOptions);
+    get image(): FabricImage;
+    /** La source du DOCUMENT — vide pour un cadre en attente, quoi qu'il affiche. */
+    get imageSrc(): string;
+    /** La source AFFICHÉE : celle du document, un aperçu de session, la valeur d'une liaison —
+     *  vide pour un cadre qui ne montre rien. */
+    get displayedSrc(): string;
+    /** Les clés de `image` qui ne sont pas à la lib (cf. ImageFrameOptions.imageMeta). */
+    get imageMeta(): ImageMeta;
+    /** Cadre en attente de sa source : pas de `src` au save (cf. ImageSource). `replaceImage`
+     *  le sort de l'attente. */
+    get pending(): boolean;
+    /** Un cadre en attente : l'image est le damier, aux dimensions du cadre. */
+    static pending(options: ImageFrameOptions & {
+        frameWidth: number;
+        frameHeight: number;
+    }): ImageFrame;
+    /** L'image affichée n'est pas celle du document (une url de session, le temps d'un
+     *  upload) : le cadre se sauve sans `src` jusqu'à ce que la vraie source la remplace. */
+    markSourcePending(): void;
+    /**
+     * Le cadre montre la VALEUR de sa source liée pour le lecteur du moment (son avatar, son
+     * logo) : affichée, recadrable, jamais sauvée — le document garde le binding, sans `src`.
+     * Le recadrage du document s'applique à elle. Sans `image`, celle déjà affichée devient
+     * cette valeur (une carte posée avec l'image du lecteur, puis liée).
+     */
+    showValue(image?: FabricImage): void;
+    /**
+     * Le cadre lâche sa source : il redevient vide (en attente), son recadrage gardé pour
+     * l'image qui viendra. Lié, il se dessine en emplacement (imageSlots) ; sinon en damier.
+     */
+    clearSource(): void;
+    /** Un cadre en attente dont l'hôte montre lui-même l'aperçu sous le canvas : le damier
+     *  s'efface (transparent, et pas d'emplacement dessiné), le cadre reste en attente — rien
+     *  ne change au save. */
+    concealPlaceholder(): void;
+    get crop(): Crop;
+    /** Se recadre : une vraie image, en place pour de bon — celle du document, ou la valeur
+     *  d'une source liée ; ni un damier, ni un emplacement, ni un aperçu d'upload. */
+    get croppable(): boolean;
+    get isCropped(): boolean;
+    /** La taille native de l'image. */
+    get naturalSize(): {
+        w: number;
+        h: number;
+    };
+    setCrop(crop: Partial<Crop>): void;
+    resetCrop(): void;
+    /** L'image entière, dans le repère du cadre. */
+    photoRect(): Rect;
+    /** L'image posée en `rect` (repère du cadre) : bornée pour couvrir le cadre. */
+    setPhotoRect(rect: Rect): void;
+    /** Décale l'image de (dx, dy) pixels de cadre depuis `from` (le recadrage au début du geste). */
+    panCrop(dx: number, dy: number, from?: Crop): void;
+    /** Change l'échelle en gardant fixe le point (px, py) du cadre, depuis `from`. */
+    zoomCrop(scale: number, px?: number, py?: number, from?: Crop): void;
+    /**
+     * Remplace l'image du frame en mode cover. Les clés `imageMeta` sont celles de la NOUVELLE
+     * source — jamais héritées : une image remplacée qui garderait l'identité de l'ancienne
+     * est exactement le bug qu'elles servent à éviter.
+     */
+    replaceImage(newImage: FabricImage, imageMeta?: ImageMeta): void;
+    /** L'image du groupe change, en cover, au recadrage courant ; le cadre ne bouge pas. */
+    private _swapImage;
+    /**
+     * Redimensionne le frame : l'image reste en cover, le recadrage (normalisé) garde la même
+     * zone autant que possible.
+     */
+    resizeFrame(newWidth: number, newHeight: number): void;
+    /** Taille visuelle (contrat des formes, utilisé par le layout) : le frame, image en cover. */
+    setSize(w: number, h: number): void;
+    /**
+     * Applique une forme de clip au frame
+     */
+    applyClipShape(shapeType: ShapeType): void;
+    /**
+     * Cycle vers la forme de clip suivante
+     */
+    nextClipShape(): void;
+    /**
+     * Set the corner radius (in pixels) for the "rect" clip shape.
+     * Automatically switches to "rect" if another clip shape is active.
+     */
+    setCornerRadius(radius: number): void;
+    getCornerRadius(): number;
+    /**
+     * Contour (capacité de forme) : un Group ne dessine pas de trait — on trace la forme
+     * de découpe par-dessus, hors clip, trait centré sur le bord comme pour une forme.
+     */
+    render(ctx: CanvasRenderingContext2D): void;
+    /** Le binding de l'emplacement à dessiner — null dès que le cadre montre une image, ou que
+     *  l'hôte a pris l'aperçu à sa charge. */
+    private _slot;
+    /** Le cadre a toujours son cache (clipPath) : poser, changer ou retirer le binding ne le
+     *  salit pas aux yeux de fabric — c'est le changement d'emplacement qui le fait. */
+    isCacheDirty(skipCanvas?: boolean): boolean;
+    /** Le contenu du cadre : son image — ou, vide et lié, l'emplacement, sous la même découpe. */
+    drawObject(ctx: CanvasRenderingContext2D, forClipping: boolean | undefined, context: any): void;
+    /**
+     * La taille du cadre : en contain, celle de l'image calée dans la boîte (la boîte entière
+     * sans image) ; sinon frameWidth/frameHeight tels quels. Le groupe suit.
+     */
+    private _fitFrame;
+    /** L'image dans le groupe (origine au centre) : cover × échelle, centre décalé selon le recadrage. */
+    private _applyCrop;
+    /** Floute l'image (ou la rend nette) : elle s'affiche floutée à son échelle courante. */
+    setBlur(radius: number): void;
+    /**
+     * L'élément dessiné par l'image : la source, ou sa version floutée à la résolution
+     * d'affichage (cf. imageBlur) — la source reste `_originalElement`, celle qui se sauve. Le
+     * damier d'un cadre en attente ne se floute pas. Recalculé seulement quand la source,
+     * l'échelle (à 2 % près) ou le rayon changent.
+     */
+    private _applyBlur;
+    private _applyClip;
+    private _rectClip;
+    /**
+     * Fallback : absorbe le scale si les contrôles natifs sont utilisés
+     */
+    private _setupScaleAbsorption;
+    private _setupControls;
+    toObject(propertiesToInclude?: any[]): any;
+    static fromObject(data: ImageFrameData): Promise<ImageFrame>;
+    /**
+     * Convertit une image legacy (FabricImage avec scale/clipPath) en ImageFrame
+     * Préserve les dimensions affichées et le clip shape
+     */
+    static fromLegacyImage(img: FabricImage, options?: {
+        clipShape?: ShapeType;
+        layerId?: string;
+        lockMode?: LockMode$1;
+    }): ImageFrame;
+}
+
+declare class LayerManager {
+    private canvas;
+    /** La dernière valeur demandée pour chaque cadre lié (showImageValue) : un chargement
+     *  dépassé ne s'affiche pas. */
+    private valueRequests;
+    constructor(canvas: DesignCanvas);
+    /**
+     * Retourne tous les calques (excluant l'image de fond)
+     */
+    get all(): FabricObject[];
+    /**
+     * Retourne l'image de fond
+     */
+    get background(): FabricObject | undefined;
+    /**
+     * Trouve un calque par son ID
+     */
+    findById(layerId: string): FabricObject | undefined;
+    /**
+     * Charge l'image de fond
+     */
+    loadBackgroundImage(url: string): Promise<FabricImage>;
+    /**
+     * Désérialise plusieurs calques sans les ajouter au canvas — la moitié asynchrone
+     * (chargement d'images compris) du chargement, pour que l'appelant puisse faire le swap
+     * ancien/nouveau contenu de façon synchrone (anti-flicker).
+     */
+    deserializeAll(layers: LayerData[]): Promise<(FabricObject | null)[]>;
+    /**
+     * Charge plusieurs calques depuis leurs données JSON
+     */
+    loadLayers(layers: LayerData[]): Promise<FabricObject[]>;
+    /**
+     * Ajoute un objet au canvas et le sélectionne (si interactif)
+     */
+    add(obj: FabricObject): FabricObject;
+    /** Le centre du document. */
+    private get center();
+    /**
+     * La boîte d'un calque neuf (forme, image) : NEW_LAYER_RATIO du document dans chaque sens.
+     * Un calque y entre en gardant ses proportions. 40 % depuis le 2026-10-28 (c'était la
+     * moitié : trop grand, surtout pour une icône).
+     */
+    private get newLayerBox();
+    private fitNewLayerBox;
+    /** Un calque ajouté sans position (un clic, pas un lâcher) se pose au centre du document. */
+    private centerUnplaced;
+    /**
+     * Supprime un objet du canvas
+     */
+    remove(obj: FabricObject): void;
+    /**
+     * Supprime plusieurs objets
+     */
+    removeMany(objects: FabricObject[]): void;
+    /**
+     * Monte l'objet (ou les objets) devant le premier objet de même niveau qui le
+     * chevauche. Un container emmène ses descendants (toujours au-dessus de lui) ; un enfant
+     * reste parmi les enfants de son container ; des objets montés ensemble ne se doublent pas.
+     */
+    bringForward(obj: FabricObject | FabricObject[]): void;
+    /**
+     * Descend l'objet (ou les objets) d'un niveau, mêmes règles de blocs que bringForward.
+     * Ne peut pas descendre en dessous de l'image de fond.
+     */
+    sendBackward(obj: FabricObject | FabricObject[]): void;
+    private applyStackOrder;
+    /**
+     * Crée et ajoute un calque texte
+     */
+    /**
+     * Crée un calque texte sans l'ajouter au canvas.
+     * Source unique des défauts texte — utilisé par addText et par le
+     * drag externe (DropHandler).
+     */
+    createText(options?: TextLayerOptions): CustomTextbox;
+    addText(options?: TextLayerOptions): CustomTextbox;
+    /**
+     * Crée et ajoute un calque image dans un ImageFrame
+     */
+    addImage(url: string, options?: ImageLayerOptions): Promise<ImageFrame>;
+    /**
+     * Crée et ajoute une image simple (legacy, sans frame)
+     * Utilisé pour le background ou cas spéciaux
+     */
+    addImageLegacy(url: string, options?: ImageLayerOptions): Promise<FabricImage>;
+    /**
+     * Remplace la source d'une image existante en conservant toutes ses propriétés
+     * Supporte à la fois ImageFrame et FabricImage legacy
+     *
+     * @param options.opacity - Opacité à appliquer (utile si target.opacity est temporairement modifiée)
+     * @param options.imageMeta - Les clés de la nouvelle source (une forme-image seulement)
+     * @param options.select - Sélectionner l'image remplacée (défaut)
+     *
+     * C'est un geste d'auteur : « cette image-ci, ici ». Un cadre dont la source était liée
+     * (imageSlots) se délie — sinon la liaison reprendrait la main au prochain affichage, et à
+     * l'expansion. L'hôte qui pose une image liée relie après (son binding), et montre la valeur
+     * d'une liaison par showImageValue, jamais par ici.
+     */
+    replaceImageSource(target: ImageFrame | FabricImage, newUrl: string, options?: {
+        opacity?: number;
+        imageMeta?: ImageMeta;
+        select?: boolean;
+    }): Promise<ImageFrame | FabricImage>;
+    /**
+     * Montre dans une forme-image la VALEUR de sa source liée (imageSlots) pour le lecteur du
+     * moment — ou, sans valeur (`null`), la vide : le cadre se dessine alors en emplacement.
+     * Affichage seul : rien n'entre dans le document (le cadre reste en attente, sauvé sans
+     * `src`), la sélection ne bouge pas. Sans effet sur ce qui n'est pas une forme-image.
+     */
+    showImageValue(target: FabricObject, url: string | null): Promise<void>;
+    /** Un cadre en contain change de taille avec son image : ses containers s'y refont. */
+    private _reflowContained;
+    /**
+     * Remplace la source d'une image legacy (FabricImage sans frame)
+     * @internal
+     */
+    private _replaceImageSourceLegacy;
+    /**
+     * Remplace une forme (shape) par un ImageFrame contenant l'image donnée.
+     * La forme sert de masque : l'image épouse ses dimensions et son clipShape.
+     * L'ImageFrame est inséré au même z-index que la forme d'origine.
+     */
+    replaceShapeWithImage(shape: FabricObject, imageUrl: string, imageMeta?: ImageMeta): Promise<ImageFrame>;
+    /**
+     * Demande l'image à l'utilisateur final (userSlots) : le calque devient une forme liée à
+     * une image à fournir, avec sa consigne. Une forme le reste ; une forme-image redevient la
+     * forme de sa découpe, aux mêmes dimensions — son image est abandonnée (pas d'exemple :
+     * le damier dit « à fournir »), ses autres bindings la suivent.
+     *
+     * Rend la forme, ou null si le calque ne peut pas recevoir d'image (texte, groupe de paths).
+     */
+    requestUserImage(obj: FabricObject, hint?: string): FabricObject | null;
+    /**
+     * Donne un texte à personnaliser à l'utilisateur final (userTexts), ou le reprend
+     * (`requested: false`) : le texte du calque devient — ou cesse d'être — l'exemple. Un texte
+     * lié à une expression cesse de l'être. Son verrou est réappliqué : un texte à personnaliser
+     * s'édite même verrouillé.
+     *
+     * Rend le texte, ou null si le calque n'en est pas un.
+     */
+    setUserText(obj: FabricObject, requested?: boolean): FabricObject | null;
+    /**
+     * Un calque en remplace un autre à sa place : son layout (container, enfant) et son
+     * verrouillage — sinon ses enfants restent orphelins, ou il sort de son container — et
+     * son rang dans la pile (sous ses enfants).
+     */
+    private takeOver;
+    /**
+     * Crée et ajoute un calque forme (rectangle par défaut)
+     */
+    /**
+     * Crée un calque forme sans l'ajouter au canvas.
+     * Source unique des défauts forme — utilisé par addShape et par le
+     * drag externe (DropHandler).
+     */
+    createShape(options?: ShapeLayerOptions): FabricObject;
+    /** Crée un cadre à fournir (un rect lié, cf. userSlots) sans l'ajouter au canvas. */
+    createUserSlot(options?: ShapeLayerOptions & {
+        hint?: string;
+    }): FabricObject;
+    addUserSlot(options?: ShapeLayerOptions & {
+        hint?: string;
+    }): FabricObject;
+    addShape(options?: ShapeLayerOptions): FabricObject;
+    /**
+     * @legacy Fusionne des objets dans un `fabric.Group` (éditeur SAFTI legacy, « fusionner
+     * les calques »). Pour grouper dans l'éditeur : `FabricEditor.groupSelection` (un groupe
+     * libre, ses objets restent des calques).
+     */
+    groupObjects(objects: FabricObject[]): Group;
+    /**
+     * Sérialise tous les calques en JSON
+     * Inclut les propriétés custom : layerId, lockMode, lockContent
+     */
+    serialize(): LayerData[];
+    /**
+     * Désérialise un calque depuis ses données JSON
+     * Les images legacy (type "Image") sont automatiquement migrées vers ImageFrame
+     */
+    deserialize(layer: LayerData): Promise<FabricObject | null>;
+    /**
+     * Applique un mode de verrouillage à un objet
+     * Délègue à la fonction du module locking.ts
+     */
+    applyLockMode(obj: FabricObject, mode: LockMode$1): void;
+    /**
+     * Génère un ID unique pour un calque
+     */
+    private generateId;
+    /**
+     * Détecte le type de clip depuis un clipPath legacy sérialisé
+     */
+    private detectLegacyClipShape;
+    private detectClipPath;
 }
 
 /**

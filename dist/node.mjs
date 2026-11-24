@@ -119,17 +119,998 @@ import { createRequire } from "module";
 import { StaticCanvas, FabricObject as FabricObject4 } from "#fabric";
 
 // src/LayerManager.ts
-import {
-  FabricImage as FabricImage4,
-  Group as Group2,
-  Rect as Rect3,
-  Path as Path2,
-  Circle as Circle2
-} from "#fabric";
+import { FabricImage as FabricImage5, Group as Group5, Point as Point4, util as util7 } from "#fabric";
 
 // src/controls/CustomTextbox.ts
-import { IText, Point } from "#fabric";
-var CustomTextbox = class extends IText {
+import { Textbox, Point, controlsUtils as controlsUtils2 } from "#fabric";
+
+// src/layout/types.ts
+var MIN_FONT_SIZE = 8;
+
+// src/layout/text-box.ts
+function resolveTextBox(input, measure) {
+  const { sizing, overflow, constraint } = input;
+  if (constraint === "as-stored") {
+    const m2 = measure.wrapped(input.width, input.fontSize);
+    return { width: m2.width, height: Math.max(m2.height, input.height), fontSize: input.fontSize, overflowing: false };
+  }
+  const maxW = constraint.maxW ?? Infinity;
+  const width = constraint.w ?? (sizing.x === "hug" ? Math.min(measure.natural(input.fontSizeIntent), maxW) : Math.min(input.width, maxW));
+  const boundH = constraint.h ?? (sizing.y === "fixed" ? input.height : void 0);
+  let fontSize = input.fontSizeIntent;
+  let m = measure.wrapped(width, fontSize);
+  if (overflow === "shrink" && !fits(m, width, boundH)) {
+    fontSize = largestFittingFont(width, boundH, input.fontSizeIntent, measure);
+    m = measure.wrapped(width, fontSize);
+  }
+  const minH = sizing.y === "hug" ? sizing.minSize?.h ?? 0 : 0;
+  const shrunkHug = sizing.y === "hug" && fontSize < input.fontSizeIntent;
+  const height = boundH != null && !shrunkHug ? boundH : Math.max(m.height, minH);
+  return { width: m.width, height, fontSize, overflowing: m.height > height + 0.5 };
+}
+function fits(m, width, boundH) {
+  return m.width <= width + 0.5 && (boundH == null || m.height <= boundH + 0.5);
+}
+function largestFittingFont(width, boundH, intent, measure) {
+  let lo = Math.min(MIN_FONT_SIZE, intent);
+  let hi = intent;
+  while (hi - lo > 0.5) {
+    const mid = (lo + hi) / 2;
+    if (fits(measure.wrapped(width, mid), width, boundH)) lo = mid;
+    else hi = mid;
+  }
+  return Math.floor(lo * 2) / 2;
+}
+
+// src/layout/text.ts
+var TEXT_TYPES = ["i-text", "textbox"];
+function isTextObject(obj) {
+  return TEXT_TYPES.includes(obj.type);
+}
+function scaleStyleFontSizes(styles, k) {
+  const scaled = JSON.parse(JSON.stringify(styles ?? {}));
+  for (const line of Object.values(scaled)) {
+    for (const style of Object.values(line)) if (style.fontSize) style.fontSize *= k;
+  }
+  return scaled;
+}
+function textScaleState(obj) {
+  const t = obj;
+  return {
+    width: t.width,
+    height: t.height,
+    fontSize: t.fontSize,
+    fontSizeIntent: t.fontSizeIntent ?? t.fontSize,
+    styles: scaleStyleFontSizes(t.styles, 1),
+    minSize: obj.layout?.sizing?.minSize
+  };
+}
+function scaleText(obj, state, k) {
+  const t = obj;
+  t.styles = scaleStyleFontSizes(state.styles, k);
+  t.fontSizeIntent = state.fontSizeIntent * k;
+  t.fontSize = state.fontSize * k;
+  t.width = state.width * k;
+  const layout = obj.layout;
+  if (layout?.sizing) {
+    if (layout.sizing.y === "fixed") t.height = state.height * k;
+    if (state.minSize) {
+      const minSize = { w: state.minSize.w * k, h: state.minSize.h * k };
+      obj.set("layout", { ...layout, sizing: { ...layout.sizing, minSize } });
+    }
+  }
+  t.initDimensions();
+  obj.dirty = true;
+}
+
+// src/layout/model.ts
+function layoutOf(obj) {
+  return obj?.get?.("layout");
+}
+function idOf(obj) {
+  return obj.get("layerId");
+}
+var BACKGROUND_ID = "bg";
+var LEGACY_BACKGROUND_ID = "originalImage";
+function isBackground(obj) {
+  const id = idOf(obj);
+  return id === BACKGROUND_ID || id === LEGACY_BACKGROUND_ID;
+}
+function containerDataOf(obj) {
+  return layoutOf(obj)?.container;
+}
+function childDataOf(obj) {
+  return layoutOf(obj)?.child;
+}
+function parentIdOf(obj) {
+  return childDataOf(obj)?.parentId;
+}
+function isContainerObject(obj) {
+  return containerDataOf(obj) != null;
+}
+function isFreeContainer(obj) {
+  return containerDataOf(obj)?.arrangement === "free";
+}
+function isStackContainer(obj) {
+  const cd = containerDataOf(obj);
+  return cd != null && cd.arrangement !== "free";
+}
+function directionOf(cd) {
+  return cd?.flexDirection ?? "column";
+}
+var ZERO_PADDING = Object.freeze({ top: 0, right: 0, bottom: 0, left: 0 });
+function paddingOf(cd) {
+  return cd?.padding ?? { ...ZERO_PADDING };
+}
+var DEFAULT_SIZING = { x: "hug", y: "hug" };
+function sizingOf(obj) {
+  return layoutOf(obj)?.sizing ?? DEFAULT_SIZING;
+}
+
+// src/ghost.ts
+function isEclipsed(obj) {
+  return obj.eclipsed === true;
+}
+
+// src/layout/hierarchy.ts
+function canvasObjects(obj) {
+  return obj.canvas?.getObjects() ?? [];
+}
+function findById(objects, layerId) {
+  return objects.find((o) => o.get("layerId") === layerId);
+}
+function parentOf(obj, objects = canvasObjects(obj)) {
+  const parentId = parentIdOf(obj);
+  if (!parentId) return void 0;
+  const parent = findById(objects, parentId);
+  return parent === obj ? void 0 : parent;
+}
+function parentContainerOf(obj, objects = canvasObjects(obj)) {
+  const parent = parentOf(obj, objects);
+  return parent && isContainerObject(parent) ? parent : null;
+}
+function stackParentOf(obj, objects = canvasObjects(obj)) {
+  const parent = parentOf(obj, objects);
+  return isStackContainer(parent) ? parent : void 0;
+}
+function childrenOf(objects, container) {
+  const id = idOf(container);
+  const out = [];
+  for (const obj of objects) {
+    const cl = childDataOf(obj);
+    if (cl?.parentId === id && obj !== container) out.push({ obj, cl });
+  }
+  return out;
+}
+function sortChildrenByOrder(children) {
+  if (children.length <= 1) return children;
+  return [...children].sort((a, b) => (a.cl.order ?? Infinity) - (b.cl.order ?? Infinity));
+}
+function flowChildrenOf(objects, container) {
+  return sortChildrenByOrder(childrenOf(objects, container).filter(({ obj }) => !isEclipsed(obj)));
+}
+function descendantSet(objects, roots) {
+  const byParent = /* @__PURE__ */ new Map();
+  for (const obj of objects) {
+    const parentId = parentIdOf(obj);
+    if (parentId) byParent.set(parentId, [...byParent.get(parentId) ?? [], obj]);
+  }
+  const found = /* @__PURE__ */ new Set();
+  const queue = [...roots];
+  while (queue.length) {
+    for (const child of byParent.get(idOf(queue.shift())) ?? []) {
+      if (found.has(child) || roots.includes(child)) continue;
+      found.add(child);
+      queue.push(child);
+    }
+  }
+  return found;
+}
+function descendantsOf(objects, roots) {
+  const found = descendantSet(objects, roots);
+  return objects.filter((o) => found.has(o));
+}
+function subtreeOf(objects, roots) {
+  const found = descendantSet(objects, roots);
+  return objects.filter((o) => roots.includes(o) || found.has(o));
+}
+function translateObjects(objects, dx, dy) {
+  if (!dx && !dy) return;
+  for (const obj of objects) {
+    obj.set({ left: obj.left + dx, top: obj.top + dy });
+    obj.setCoords();
+  }
+}
+
+// src/shapes/resizeUtils.ts
+import { controlsUtils } from "#fabric";
+var { getLocalPoint } = controlsUtils;
+function isTransformCentered(transform) {
+  return transform.originX === "center" && transform.originY === "center";
+}
+var MIN_CORNER_SCALE = 0.05;
+function cornerScaleFactor(obj, transform, x, y) {
+  if (transform._cornerDistance === void 0) {
+    const dim = obj._getTransformedDimensions();
+    transform._cornerDistance = Math.abs(dim.x) + Math.abs(dim.y);
+  }
+  const start = transform._cornerDistance;
+  if (start === 0) return 1;
+  const local = getLocalPoint(transform, transform.originX, transform.originY, x, y);
+  let k = (Math.abs(local.x) + Math.abs(local.y)) / start;
+  if (isTransformCentered(transform)) k *= 2;
+  return Math.max(MIN_CORNER_SCALE, k);
+}
+
+// src/tokens.ts
+var TOKEN_COLOR_KEY = "tokenColor";
+function tokenColorOf(obj) {
+  return obj.canvas?.[TOKEN_COLOR_KEY] ?? null;
+}
+
+// src/ui/color.ts
+function parseHex(hex) {
+  const h = hex.replace("#", "");
+  if (h.length === 3) {
+    return [
+      parseInt(h[0] + h[0], 16),
+      parseInt(h[1] + h[1], 16),
+      parseInt(h[2] + h[2], 16)
+    ];
+  }
+  return [
+    parseInt(h.slice(0, 2), 16),
+    parseInt(h.slice(2, 4), 16),
+    parseInt(h.slice(4, 6), 16)
+  ];
+}
+var DEFAULT_GUIDE_COLOR = "#d946ef";
+
+// src/userSlots.ts
+import { Pattern, util as util2 } from "#fabric";
+
+// src/bindings.ts
+import { util } from "#fabric";
+var DRAW_MEDIA = "draw";
+function pendingBindings(obj) {
+  const bindings = obj.get("bindings") || {};
+  return Object.fromEntries(Object.entries(bindings).filter(([, spec]) => spec?.resolved !== true));
+}
+function restoreBindings(obj, data) {
+  if (!data.bindings) return;
+  obj.set("bindings", data.bindings);
+}
+
+// src/userSlots.ts
+var USER_SCOPE = "user";
+var USER_SLOT_FIELD = "image.src";
+function userSlotBinding(obj) {
+  const spec = pendingBindings(obj)[USER_SLOT_FIELD];
+  return spec?.scope === USER_SCOPE ? spec : null;
+}
+function isUserSlot(obj) {
+  return userSlotBinding(obj) !== null;
+}
+function userSlotHint(obj) {
+  return String(userSlotBinding(obj)?.hint ?? "");
+}
+function resolveUserSlot(bindings) {
+  const spec = bindings?.[USER_SLOT_FIELD];
+  if (spec?.scope !== USER_SCOPE) return bindings;
+  return { ...bindings, [USER_SLOT_FIELD]: { ...spec, resolved: true } };
+}
+var CELL = 16;
+var CHECKER_LIGHT = "#f9fafb";
+var CHECKER_DARK = "#e5e7eb";
+var checkerSource = null;
+function checkerTile() {
+  if (checkerSource) return checkerSource;
+  const tile = util2.createCanvasElement();
+  tile.width = tile.height = CELL * 2;
+  const ctx = tile.getContext("2d");
+  ctx.fillStyle = CHECKER_LIGHT;
+  ctx.fillRect(0, 0, CELL * 2, CELL * 2);
+  ctx.fillStyle = CHECKER_DARK;
+  ctx.fillRect(0, 0, CELL, CELL);
+  ctx.fillRect(CELL, CELL, CELL, CELL);
+  checkerSource = tile;
+  return tile;
+}
+function checkerCanvas(width, height) {
+  const el = util2.createCanvasElement();
+  el.width = Math.max(1, Math.round(width));
+  el.height = Math.max(1, Math.round(height));
+  const ctx = el.getContext("2d");
+  ctx.fillStyle = ctx.createPattern(checkerTile(), "repeat") ?? CHECKER_LIGHT;
+  ctx.fillRect(0, 0, el.width, el.height);
+  return el;
+}
+function transparentCanvas(width, height) {
+  const el = util2.createCanvasElement();
+  el.width = Math.max(1, Math.round(width));
+  el.height = Math.max(1, Math.round(height));
+  return el;
+}
+function checkerPattern(obj) {
+  const sx = obj.scaleX || 1;
+  const sy = obj.scaleY || 1;
+  return new Pattern({ source: checkerTile(), repeat: "repeat", patternTransform: [1 / sx, 0, 0, 1 / sy, 0, 0] });
+}
+var USER_SLOT_STYLE_KEY = "userSlotStyle";
+var DEFAULT_COLOR = DEFAULT_GUIDE_COLOR;
+var BASE = { icon: 20, font: 10, line: 13, gap: 6, pad: 8 };
+var SCALES = [4, 3.5, 3, 2.5, 2, 1.6];
+var fontAt = (scale) => `500 ${BASE.font * scale}px ui-sans-serif, system-ui, sans-serif`;
+function slotLayout(ctx, text, w, h) {
+  for (const scale2 of text ? SCALES : []) {
+    ctx.font = fontAt(scale2);
+    const pad = BASE.pad * scale2;
+    const lines = wrapLines(ctx, text, w - pad * 2);
+    const height = (BASE.icon + BASE.gap + lines.length * BASE.line) * scale2 + pad * 2;
+    if (lines.length && height <= h) return { scale: scale2, lines };
+  }
+  const scale = SCALES.find((s) => (BASE.icon + BASE.pad * 2) * s <= Math.min(w, h));
+  return scale ? { scale, lines: [] } : null;
+}
+function drawSlotContent(ctx, obj) {
+  const style = obj.canvas?.[USER_SLOT_STYLE_KEY];
+  const { x: zx, y: zy } = obj.getTotalObjectScaling();
+  ctx.save();
+  ctx.scale(1 / zx, 1 / zy);
+  const layout = slotLayout(ctx, userSlotHint(obj) || style?.prompt || "", obj.width * zx, obj.height * zy);
+  if (!layout) return ctx.restore();
+  const { scale, lines } = layout;
+  const icon = BASE.icon * scale;
+  const line = BASE.line * scale;
+  const gap = BASE.gap * scale;
+  const top = -(icon + (lines.length ? gap + lines.length * line : 0)) / 2;
+  const color = style?.color ?? DEFAULT_COLOR;
+  drawUploadIcon(ctx, top, icon, color);
+  ctx.font = fontAt(scale);
+  ctx.fillStyle = color;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  lines.forEach((text, i) => ctx.fillText(text, 0, top + icon + gap + line * (i + 0.5)));
+  ctx.restore();
+}
+function wrapLines(ctx, text, maxWidth) {
+  const lines = [];
+  for (const word of text.split(/\s+/).filter(Boolean)) {
+    if (ctx.measureText(word).width > maxWidth) return [];
+    const last = lines[lines.length - 1];
+    const joined = last ? `${last} ${word}` : word;
+    if (last && ctx.measureText(joined).width <= maxWidth) lines[lines.length - 1] = joined;
+    else lines.push(word);
+  }
+  return lines;
+}
+function drawUploadIcon(ctx, top, size, color) {
+  ctx.save();
+  ctx.translate(-size / 2, top);
+  ctx.scale(size / 24, size / 24);
+  ctx.lineWidth = 1.5;
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  ctx.strokeStyle = color;
+  ctx.beginPath();
+  ctx.moveTo(3, 16.5);
+  ctx.lineTo(3, 18.75);
+  ctx.quadraticCurveTo(3, 21, 5.25, 21);
+  ctx.lineTo(18.75, 21);
+  ctx.quadraticCurveTo(21, 21, 21, 18.75);
+  ctx.lineTo(21, 16.5);
+  ctx.moveTo(7.5, 7.5);
+  ctx.lineTo(12, 3);
+  ctx.lineTo(16.5, 7.5);
+  ctx.moveTo(12, 3);
+  ctx.lineTo(12, 16.5);
+  ctx.stroke();
+  ctx.restore();
+}
+function installUserSlotRendering(target) {
+  const proto = target;
+  const original = proto._render;
+  const originalIsCacheDirty = proto.isCacheDirty;
+  proto.isCacheDirty = function(skipCanvas) {
+    const slot = isUserSlot(this);
+    if (slot !== Boolean(this._wasUserSlot)) {
+      this._wasUserSlot = slot;
+      this.dirty = true;
+    }
+    return originalIsCacheDirty.call(this, skipCanvas);
+  };
+  proto._render = function(ctx) {
+    if (!isUserSlot(this)) return original.call(this, ctx);
+    const fill = this.fill;
+    this.fill = checkerPattern(this);
+    try {
+      original.call(this, ctx);
+    } finally {
+      this.fill = fill;
+    }
+    drawSlotContent(ctx, this);
+  };
+}
+
+// src/userTexts.ts
+var USER_TEXT_FIELD = "text";
+function textBinding(obj) {
+  const spec = obj.get("bindings")?.[USER_TEXT_FIELD];
+  return spec?.scope === USER_SCOPE ? spec : null;
+}
+function userTextBinding(obj) {
+  const spec = textBinding(obj);
+  return spec && spec.resolved !== true ? spec : null;
+}
+function isUserText(obj) {
+  return userTextBinding(obj) !== null;
+}
+function isUserOwnedText(obj) {
+  return textBinding(obj) !== null;
+}
+function requestUserText(bindings) {
+  return { ...bindings, [USER_TEXT_FIELD]: { scope: USER_SCOPE } };
+}
+function releaseUserText(bindings) {
+  const { [USER_TEXT_FIELD]: spec, ...rest } = bindings ?? {};
+  return spec?.scope === USER_SCOPE ? rest : { ...bindings };
+}
+function resolveUserText(bindings) {
+  const spec = bindings?.[USER_TEXT_FIELD];
+  if (spec?.scope !== USER_SCOPE) return bindings;
+  return { ...bindings, [USER_TEXT_FIELD]: { ...spec, resolved: true } };
+}
+function styleOf(obj) {
+  return obj.canvas?.[USER_SLOT_STYLE_KEY];
+}
+function authorsUserInputs(obj) {
+  return styleOf(obj)?.authoring === true;
+}
+function drawUserTextOutline(ctx, obj) {
+  const { x: zx, y: zy } = obj.getTotalObjectScaling();
+  ctx.save();
+  ctx.scale(1 / zx, 1 / zy);
+  ctx.strokeStyle = styleOf(obj)?.color ?? DEFAULT_GUIDE_COLOR;
+  ctx.lineWidth = 1.5;
+  ctx.setLineDash([6, 4]);
+  ctx.globalAlpha = 0.9;
+  ctx.strokeRect(-obj.width / 2 * zx, -obj.height / 2 * zy, obj.width * zx, obj.height * zy);
+  ctx.restore();
+}
+
+// src/controls/CustomTextbox.ts
+var { changeObjectWidth, changeObjectHeight } = controlsUtils2;
+var UNBOUNDED_WIDTH = 1e4;
+var CustomTextbox = class extends Textbox {
+  constructor(text, options) {
+    super(text, options);
+    /** La sélection d'avant le dernier mouvement : dit dans quel sens on traverse un token. */
+    this._lastSelection = [0, 0];
+    if (typeof options?.fontSizeIntent === "number") this.fontSizeIntent = options.fontSizeIntent;
+    this.fontSizeIntent ?? (this.fontSizeIntent = this.fontSize);
+    this._bakeLegacyScale();
+    this._ensureSizing(options?.width != null);
+    this.initDimensions();
+    this.setCoords();
+  }
+  // ── Sizing ─────────────────────────────────────────────────────────
+  /**
+   * Sans bloc `sizing` (le temps de la construction, avant _ensureSizing), la boîte
+   * stockée fait foi : largeur fixe.
+   */
+  get sizing() {
+    return layoutOf(this)?.sizing ?? { x: "fixed", y: "hug" };
+  }
+  get textOverflow() {
+    return layoutOf(this)?.overflow ?? "shrink";
+  }
+  /** Remplace le bloc `sizing` (nouvel objet `layout`, jamais muté en place). */
+  setSizing(sizing) {
+    const layout = layoutOf(this) ?? {};
+    this.set("layout", { ...layout, sizing });
+    this.initDimensions();
+    this.setCoords();
+  }
+  setTextOverflow(overflow) {
+    const layout = layoutOf(this) ?? {};
+    this.set("layout", { ...layout, overflow });
+    this.initDimensions();
+    this.setCoords();
+  }
+  /**
+   * Largeur naturelle à la police courante : la plus longue ligne, sans wrap. Mesurée d'un
+   * bloc, une ligne peut être un peu plus étroite que la somme de ses mots, que mesure le
+   * retour à la ligne (crénage d'une police comme Garet) : wrappé à cette largeur exacte, le
+   * texte se couperait. On élargit donc jusqu'à ce qu'il tienne sur ses lignes dures.
+   */
+  naturalWidth() {
+    this.width = UNBOUNDED_WIDTH;
+    super.initDimensions();
+    const hardLines = this._textLines.length;
+    let width = Math.ceil(this.calcTextWidth());
+    const step = Math.max(1, Math.ceil(this.fontSize / 40));
+    for (let tries = 0; tries < 40; tries++) {
+      this._wrapAt(width);
+      if (this._textLines.length <= hardLines) break;
+      width += step;
+    }
+    return width;
+  }
+  /**
+   * Largeur minimale du texte : son graphème le plus large. Un mot trop long se découpe
+   * (break-word, `getGraphemeDataForRender`), donc rien n'arrête une poignée avant la
+   * lettre — le même plancher que Fabric impose de lui-même (`dynamicMinWidth`) une fois
+   * le texte wrappé à cette largeur. Mesuré en wrappant à 1 px, puis la boîte est remise
+   * telle quelle.
+   */
+  minContentWidth() {
+    const { width, height } = this;
+    this._wrapAt(1);
+    const min = Math.ceil(this.dynamicMinWidth);
+    this._wrapAt(width);
+    this.height = height;
+    return min;
+  }
+  /** Les plages atomiques en index de `_text` (graphèmes, retours à la ligne compris). */
+  atomicSpans() {
+    const spans = (this.tokenSpans ?? []).filter(([start, end]) => end > start);
+    if (spans.length === 0) return [];
+    const at = [];
+    this._text.forEach((grapheme, i) => grapheme !== "\n" && at.push(i));
+    const textIndex = (flat) => at[flat] ?? this._text.length;
+    return spans.map(([start, end]) => [textIndex(start), textIndex(end - 1) + 1]);
+  }
+  /** Toute sélection passe ici avant d'être annoncée : elle se cale sur les tokens. */
+  _fireSelectionChanged() {
+    this._snapSelectionToTokens();
+    this._lastSelection = [this.selectionStart, this.selectionEnd];
+    super._fireSelectionChanged();
+  }
+  /**
+   * Un curseur dans un token en sort : d'un pas (flèche), de l'autre côté ; sinon (clic) à
+   * la borne la plus proche. Une plage s'étend aux bornes des tokens qu'elle coupe.
+   */
+  _snapSelectionToTokens() {
+    const spans = this.atomicSpans();
+    if (spans.length === 0) return;
+    const inside = (i) => spans.find(([start2, end2]) => start2 < i && i < end2);
+    const { selectionStart: start, selectionEnd: end } = this;
+    if (start === end) {
+      const span = inside(start);
+      if (!span) return;
+      const [from, to] = span;
+      const [last] = this._lastSelection;
+      const stepped = Math.abs(start - last) === 1;
+      let at;
+      if (stepped && last <= from) at = to;
+      else if (stepped && last >= to) at = from;
+      else at = start - from <= to - start ? from : to;
+      this.selectionStart = this.selectionEnd = at;
+      return;
+    }
+    const head = inside(start);
+    const tail = inside(end);
+    if (head) this.selectionStart = head[0];
+    if (tail) this.selectionEnd = tail[1];
+  }
+  /**
+   * Retour arrière juste après un token, ou Suppr juste avant : le token est d'abord
+   * sélectionné (textarea compris), puis la suppression native l'emporte entier — on ne
+   * touche jamais au flux de saisie de Fabric.
+   */
+  onKeyDown(e) {
+    const erase = e.key === "Backspace" || e.key === "Delete";
+    if (this.isEditing && erase && this.selectionStart === this.selectionEnd && !e.altKey && !e.metaKey && !e.ctrlKey) {
+      const at = this.selectionStart;
+      const span = this.atomicSpans().find(([start, end]) => e.key === "Backspace" ? end === at : start === at);
+      if (span) {
+        [this.selectionStart, this.selectionEnd] = span;
+        this._updateTextarea();
+      }
+    }
+    super.onKeyDown(e);
+  }
+  /**
+   * Une frappe (ou un collage) qui change le texte : ce n'est plus l'exemple — et un texte à
+   * personnaliser l'est, sauf sous la main de son auteur, qui en écrit l'exemple.
+   */
+  onInput(e) {
+    const before = this.text;
+    super.onInput(e);
+    if (this.text === before) return;
+    if (this.placeholder) this.placeholder = false;
+    if (isUserText(this) && !authorsUserInputs(this)) {
+      this.set("bindings", resolveUserText(this.get("bindings")));
+    }
+  }
+  /** Fabric efface la zone du texte sur le calque du dessus à chaque clignotement du
+   *  curseur : les pastilles du texte en édition sont repeintes avec lui. */
+  renderCursorOrSelection() {
+    super.renderCursorOrSelection();
+    const ctx = this.canvas?.contextTop;
+    if (this.isEditing && ctx) this.drawTokenPills(ctx);
+  }
+  /**
+   * Une pastille derrière chaque token (couleur d'édition de l'hôte), sur le calque du
+   * dessus : un repère d'édition, jamais exporté. `ctx` est en coordonnées écran.
+   */
+  drawTokenPills(ctx) {
+    const spans = this.atomicSpans();
+    const color = tokenColorOf(this);
+    if (spans.length === 0 || !this.canvas || !color) return;
+    ctx.save();
+    ctx.transform(...this.canvas.viewportTransform);
+    ctx.transform(...this.calcTransformMatrix());
+    ctx.beginPath();
+    ctx.rect(-this.width / 2, -this.height / 2, this.width, this.height);
+    ctx.clip();
+    ctx.fillStyle = color;
+    ctx.strokeStyle = color;
+    for (const [start, end] of spans) {
+      for (const box of this._tokenBoxes(start, end)) {
+        ctx.beginPath();
+        ctx.roundRect(box.x, box.y, box.w, box.h, box.h * 0.25);
+        ctx.globalAlpha = 0.14;
+        ctx.fill();
+        ctx.globalAlpha = 0.55;
+        ctx.lineWidth = 1 / (this.canvas.getZoom() * (this.scaleX || 1));
+        ctx.stroke();
+      }
+    }
+    ctx.restore();
+  }
+  /**
+   * Les rectangles d'un token, un par ligne affichée (un token peut wrapper) : la boîte des
+   * glyphes, celle du fond de texte natif de Fabric — depuis le haut de la ligne, sur la
+   * hauteur de police (`getHeightOfLine / lineHeight`) ; l'interligne, en dessous, reste hors
+   * de la pastille.
+   */
+  _tokenBoxes(start, end) {
+    const a = this.get2DCursorLocation(start);
+    const b = this.get2DCursorLocation(end);
+    const pad = this.fontSize * 0.06;
+    const boxes = [];
+    let top = this._getTopOffset();
+    for (let line = 0; line <= b.lineIndex && line < this._textLines.length; line++) {
+      if (line >= a.lineIndex) {
+        const from = line === a.lineIndex ? a.charIndex : 0;
+        const to = line === b.lineIndex ? b.charIndex : this._textLines[line].length;
+        if (!this.__charBounds[line]) this.measureLine(line);
+        const bounds = this.__charBounds[line];
+        if (to > from && bounds?.[from] && bounds[to - 1]) {
+          const left = this._getLeftOffset() + this._getLineLeftOffset(line);
+          const glyphs = this.getHeightOfLine(line) / this.lineHeight;
+          boxes.push({
+            x: left + bounds[from].left - pad,
+            y: top,
+            w: bounds[to - 1].left + bounds[to - 1].width - bounds[from].left + 2 * pad,
+            h: glyphs
+          });
+        }
+      }
+      top += this.getHeightOfLine(line);
+    }
+    return boxes;
+  }
+  /**
+   * Pas de glisser-déposer du texte sélectionné (Fabric) : presser sur une plage sélectionnée
+   * et tirer re-sélectionne, comme dans un champ de texte — le glisser-déposer emportait le
+   * texte quand on voulait étendre la sélection.
+   */
+  initBehavior() {
+    super.initBehavior();
+    this.draggableTextDelegate.start = () => false;
+  }
+  /**
+   * Une passe de layout : calcule la boîte sous la contrainte du container et la
+   * retient. `null` : le texte a quitté son container.
+   */
+  layoutWith(constraint) {
+    if (constraint) this._constraint = constraint;
+    else delete this._constraint;
+    this.initDimensions();
+  }
+  /** Recalcul (Fabric, ou layoutWith) sous la contrainte courante. */
+  initDimensions() {
+    if (!this.initialized) {
+      super.initDimensions();
+      return;
+    }
+    if (!this._isChild()) this._applyBox({});
+    else this._applyBox(this._constraint ?? "as-stored");
+  }
+  _applyBox(constraint) {
+    const before = { width: this.width, height: this.height, fontSize: this.fontSize };
+    const box = resolveTextBox({
+      sizing: this.sizing,
+      overflow: this.textOverflow,
+      constraint,
+      fontSizeIntent: this.fontSizeIntent ?? this.fontSize,
+      fontSize: this.fontSize,
+      width: this.width,
+      height: this.height
+    }, this._measure());
+    this.fontSize = box.fontSize;
+    this._wrapAt(box.width);
+    this.height = box.height;
+    this._overflowing = box.overflowing;
+    if (before.width !== this.width || before.height !== this.height || before.fontSize !== this.fontSize) {
+      this.dirty = true;
+    }
+    this.objectCaching = !(box.overflowing && this.textOverflow === "visible");
+  }
+  /**
+   * Mesure via Fabric (mute l'objet ; _applyBox pose l'état final ensuite). Méthode et
+   * non champ : Fabric mesure déjà pendant le super() du constructeur.
+   */
+  _measure() {
+    return {
+      wrapped: (width, fontSize) => {
+        this.fontSize = fontSize;
+        this._wrapAt(width);
+        return { width: this.width, height: this.height };
+      },
+      natural: (fontSize) => {
+        this.fontSize = fontSize;
+        return this.naturalWidth();
+      }
+    };
+  }
+  /** Wrap à `width` puis mesure (la largeur peut grandir au mot le plus long). */
+  _wrapAt(width) {
+    this.width = width;
+    super.initDimensions();
+  }
+  /** Toute nouvelle `fontSize` posée via set() est une intention de l'utilisateur. */
+  _set(key, value) {
+    if (key === "fontSize") this.fontSizeIntent = value;
+    return super._set(key, value);
+  }
+  /** Le texte, puis le liseré d'un texte à personnaliser encore en attente. */
+  _render(ctx) {
+    this._renderClipped(ctx);
+    if (isUserText(this)) drawUserTextOutline(ctx, this);
+  }
+  /** overflow "clip" : le texte est coupé au bord de sa boîte. */
+  _renderClipped(ctx) {
+    if (!this._overflowing || this.textOverflow !== "clip") {
+      super._render(ctx);
+      return;
+    }
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(-this.width / 2, -this.height / 2, this.width, this.height);
+    ctx.clip();
+    super._render(ctx);
+    ctx.restore();
+  }
+  /** Le liseré suit l'état : poser ou régler le binding ne salit pas le cache aux yeux de
+   *  Fabric, c'est le passage en attente (ou sa fin) qui le fait. */
+  isCacheDirty(skipCanvas) {
+    const awaiting = isUserText(this);
+    if (awaiting !== Boolean(this._wasUserText)) {
+      this._wasUserText = awaiting;
+      this.dirty = true;
+    }
+    return super.isCacheDirty(skipCanvas);
+  }
+  // ── Poignées ───────────────────────────────────────────────────────
+  /**
+   * Bord gauche/droit : la largeur passe en fixe et prend la valeur tirée.
+   * Bord haut/bas : en hauteur contenu, pose le plancher `minSize.h` ; en hauteur fixe,
+   * change la hauteur.
+   */
+  handleEdgeResize(transform, x, y) {
+    const corner = transform.corner;
+    return corner === "ml" || corner === "mr" ? this._withAnchor(transform, () => this._resizeWidth(transform, x, y)) : this._withAnchor(transform, () => this._resizeHeight(transform, x, y));
+  }
+  /**
+   * Coin : le texte et sa boîte grandissent ensemble, proportions gardées, le coin opposé
+   * immobile. Le facteur est celui de toute poignée de coin (cornerScaleFactor), appliqué
+   * depuis l'état du début du geste : les modes de taille ne changent pas, la police
+   * absorbe tout.
+   */
+  handleCornerResize(transform, x, y) {
+    let start = this._cornerStart;
+    if (!start || start.transform !== transform) {
+      start = { transform, state: textScaleState(this) };
+      this._cornerStart = start;
+    }
+    const k = cornerScaleFactor(this, transform, x, y);
+    return this._withAnchor(transform, () => {
+      const before = { width: this.width, height: this.height, fontSize: this.fontSize };
+      scaleText(this, start.state, k);
+      return before.width !== this.width || before.height !== this.height || before.fontSize !== this.fontSize;
+    });
+  }
+  /**
+   * Taille programmatique (`setShapeSize`, comme une forme) : le facteur uniforme — la
+   * moyenne des deux axes — passe dans la police, jamais dans un scale.
+   */
+  setSize(w, h) {
+    const k = (w / (this.width || 1) + h / (this.height || 1)) / 2;
+    scaleText(this, textScaleState(this), k);
+  }
+  /** Placé par une pile — un groupe (container libre) laisse ses enfants à leur propre taille. */
+  _isChild() {
+    if (parentIdOf(this) == null) return false;
+    const parent = parentOf(this);
+    return !isFreeContainer(parent);
+  }
+  _withAnchor(transform, resize) {
+    const { originX, originY } = transform;
+    const anchor = this.getPositionByOrigin(originX, originY);
+    const changed = resize();
+    this.setPositionByOrigin(anchor, originX, originY);
+    return changed;
+  }
+  _resizeWidth(transform, x, y) {
+    if (this.sizing.x !== "fixed") {
+      const layout = layoutOf(this) ?? {};
+      this.set("layout", { ...layout, sizing: { ...this.sizing, x: "fixed" } });
+    }
+    return changeObjectWidth({}, transform, x, y);
+  }
+  _resizeHeight(transform, x, y) {
+    const before = this.height;
+    if (!changeObjectHeight({}, transform, x, y)) return false;
+    const sizing = this.sizing;
+    if (sizing.y === "hug") {
+      const minSize = { w: sizing.minSize?.w ?? 0, h: this.height };
+      const layout = layoutOf(this) ?? {};
+      this.set("layout", { ...layout, sizing: { ...sizing, minSize } });
+    }
+    this.initDimensions();
+    return before !== this.height;
+  }
+  // ── Données legacy ─────────────────────────────────────────────────
+  /**
+   * Un texte étiré (scaleX/scaleY) est ramené à scale 1 : le scale passe dans la
+   * largeur et la police (`scaleText`). Exact pour un scale uniforme ; un étirement non
+   * uniforme est perdu (les glyphes reprennent leurs proportions, la largeur garde son
+   * propre facteur).
+   */
+  _bakeLegacyScale() {
+    const sx = this.scaleX || 1;
+    const sy = this.scaleY || 1;
+    if (sx === 1 && sy === 1) return;
+    const state = textScaleState(this);
+    this.scaleX = 1;
+    this.scaleY = 1;
+    scaleText(this, state, sy);
+    this.width = state.width * sx;
+  }
+  /**
+   * Un texte sans `layout.sizing` (nouveau, ou document d'avant les modes de taille)
+   * reçoit un mode explicite :
+   * - nouveau texte, ou enfant de container (sa largeur était dictée par le container) :
+   *   largeur contenu ;
+   * - sinon : largeur contenu si la boîte épouse le texte sur une ligne, fixe sinon
+   *   (texte qui wrappe, ou boîte élargie pour un alignement).
+   */
+  _ensureSizing(hasExplicitWidth) {
+    const layout = layoutOf(this);
+    if (layout?.sizing) return;
+    let x = "hug";
+    if (hasExplicitWidth && !layout?.child) {
+      const width = this.width;
+      const natural = this.naturalWidth();
+      this.width = width;
+      if (Math.abs(width - natural) > 2) x = "fixed";
+    }
+    this.set("layout", { ...layout ?? {}, sizing: { x, y: "hug" } });
+  }
+  /**
+   * overflow-wrap: break-word — pré-découpe les mots trop longs
+   * en chunks et les marque pour que _wrapLine ne mette pas
+   * d'espace entre eux.
+   */
+  getGraphemeDataForRender(lines) {
+    const data = super.getGraphemeDataForRender(lines);
+    if (!this.width) return data;
+    const maxWidth = this.width;
+    let newLargest = 0;
+    data.wordsData = data.wordsData.map(
+      (lineWords, lineIndex) => lineWords.flatMap((entry) => {
+        if (entry.width <= maxWidth) {
+          newLargest = Math.max(newLargest, entry.width);
+          return [entry];
+        }
+        const chunks = [];
+        let chunk = [];
+        let chunkWidth = 0;
+        let offset = 0;
+        for (const grapheme of entry.word) {
+          const gWidth = this._measureWord([grapheme], lineIndex, offset);
+          if (chunkWidth + gWidth > maxWidth && chunk.length > 0) {
+            chunks.push({ word: chunk, width: chunkWidth, _isChunk: chunks.length > 0 });
+            newLargest = Math.max(newLargest, chunkWidth);
+            chunk = [];
+            chunkWidth = 0;
+          }
+          chunk.push(grapheme);
+          chunkWidth += gWidth;
+          offset++;
+        }
+        if (chunk.length > 0) {
+          chunks.push({ word: chunk, width: chunkWidth, _isChunk: chunks.length > 0 });
+          newLargest = Math.max(newLargest, chunkWidth);
+        }
+        return chunks;
+      })
+    );
+    data.largestWordWidth = newLargest;
+    return data;
+  }
+  /**
+   * Copie fidèle de Textbox._wrapLine, sauf :
+   * - pas d'espace (infix) entre les chunks d'un même mot (_isChunk)
+   * - pas d'incrément d'offset pour l'espace entre chunks
+   */
+  _wrapLine(lineIndex, desiredWidth, { largestWordWidth, wordsData }, reservedSpace = 0) {
+    const additionalSpace = this._getWidthOfCharSpacing();
+    const graphemeLines = [];
+    let lineWidth = 0;
+    let line = [];
+    let offset = 0;
+    let infixWidth = 0;
+    let lineJustStarted = true;
+    desiredWidth -= reservedSpace;
+    const maxWidth = Math.max(desiredWidth, largestWordWidth, this.dynamicMinWidth);
+    const data = wordsData[lineIndex];
+    offset = 0;
+    let i;
+    for (i = 0; i < data.length; i++) {
+      const entry = data[i];
+      const { word, width: wordWidth } = entry;
+      const isChunk = !!entry._isChunk;
+      offset += word.length;
+      lineWidth += (isChunk ? 0 : infixWidth) + wordWidth - additionalSpace;
+      if (lineWidth > maxWidth && !lineJustStarted) {
+        graphemeLines.push(line);
+        line = [];
+        lineWidth = wordWidth;
+        lineJustStarted = true;
+      } else {
+        lineWidth += additionalSpace;
+      }
+      if (!lineJustStarted && !isChunk) {
+        line.push(" ");
+      }
+      line = line.concat(word);
+      if (isChunk) {
+        infixWidth = 0;
+      } else {
+        infixWidth = this._measureWord([" "], lineIndex, offset);
+        offset++;
+      }
+      lineJustStarted = false;
+    }
+    i && graphemeLines.push(line);
+    if (largestWordWidth + reservedSpace > this.dynamicMinWidth) {
+      this.dynamicMinWidth = largestWordWidth - additionalSpace + reservedSpace;
+    }
+    return graphemeLines;
+  }
+  /**
+   * Fix curseur : missingNewlineOffset retourne toujours 1 en mode
+   * non-splitByGrapheme car Fabric suppose que chaque wrap mange un
+   * espace. Pour les coupures mid-word, il n'y a pas d'espace → 0.
+   */
+  missingNewlineOffset(lineIndex, skipWrapping) {
+    if (skipWrapping) return 1;
+    if (!this._styleMap[lineIndex + 1]) return 1;
+    if (this._styleMap[lineIndex + 1].line !== this._styleMap[lineIndex].line) {
+      return 1;
+    }
+    const currentOffset = this._styleMap[lineIndex].offset;
+    const currentLen = this._textLines[lineIndex].length;
+    const nextOffset = this._styleMap[lineIndex + 1].offset;
+    if (nextOffset === currentOffset + currentLen) {
+      return 0;
+    }
+    return 1;
+  }
   /**
    * Override pour ajouter le textarea au canvas container
    * au lieu du body (comportement par défaut de Fabric.js).
@@ -182,18 +1163,659 @@ var CustomTextbox = class extends IText {
     };
   }
 };
+CustomTextbox.customProperties = ["fontSizeIntent", "placeholder"];
+
+// src/layout/legacy.ts
+function migrateLegacyLayout(layout) {
+  const legacy = layout?.container;
+  if (!layout || !legacy) return null;
+  if (!("sizeMode" in legacy) && !("minSize" in legacy) && !("overflow" in legacy)) return null;
+  const { sizeMode, minSize, overflow: _overflow, ...container } = legacy;
+  const sizing = layout.sizing ?? {
+    x: sizeMode?.x ?? "hug",
+    y: sizeMode?.y ?? "hug",
+    ...minSize ? { minSize } : {}
+  };
+  return { ...layout, sizing, container };
+}
+
+// src/layout/z-order.ts
+function stackBlock(objects, root) {
+  return subtreeOf(objects, [root]);
+}
+function siblingsOf(objects, obj) {
+  const parentId = parentIdOf(obj);
+  return objects.filter((o) => o === obj || parentIdOf(o) === parentId && !isEclipsed(o));
+}
+function placeBlockAbove(objects, root, above) {
+  const block = stackBlock(objects, root);
+  const rest = objects.filter((o) => !block.includes(o));
+  const anchor = stackBlock(rest, above);
+  const at = rest.indexOf(anchor[anchor.length - 1]) + 1;
+  return [...rest.slice(0, at), ...block, ...rest.slice(at)];
+}
+function placeBelow(objects, root, below) {
+  const block = stackBlock(objects, root);
+  const rest = objects.filter((o) => !block.includes(o));
+  const at = rest.indexOf(below);
+  return [...rest.slice(0, at), ...block, ...rest.slice(at)];
+}
+function bringBlocksForward(objects, moved, overlaps) {
+  let order = objects;
+  let changed = false;
+  for (const obj of [...moved].sort((a, b) => objects.indexOf(b) - objects.indexOf(a))) {
+    const siblings = siblingsOf(order, obj);
+    const above = siblings.slice(siblings.indexOf(obj) + 1).filter((s) => !moved.includes(s));
+    const next = above.find((s) => overlaps(obj, s)) ?? above[0];
+    if (!next) continue;
+    order = placeBlockAbove(order, obj, next);
+    changed = true;
+  }
+  return changed ? order : null;
+}
+function sendBlocksBackward(objects, moved) {
+  let order = objects;
+  let changed = false;
+  for (const obj of [...moved].sort((a, b) => objects.indexOf(a) - objects.indexOf(b))) {
+    const siblings = siblingsOf(order, obj);
+    const prev = siblings.slice(0, siblings.indexOf(obj)).reverse().find((s) => !moved.includes(s));
+    if (!prev || isBackground(prev)) continue;
+    order = placeBelow(order, obj, prev);
+    changed = true;
+  }
+  return changed ? order : null;
+}
+
+// src/capabilities.ts
+import { FabricImage, Group as Group2, Rect as Rect2 } from "#fabric";
+
+// src/locking.ts
+function getLockMode(obj) {
+  return obj.lockMode || "free";
+}
+function applyLockMode(obj, mode) {
+  obj.lockMode = mode;
+  const lockPosition = mode === "position" || mode === "full";
+  obj.lockMovementX = lockPosition;
+  obj.lockMovementY = lockPosition;
+  obj.lockRotation = lockPosition;
+  obj.lockScalingX = lockPosition;
+  obj.lockScalingY = lockPosition;
+  obj.hasControls = mode === "free";
+  obj.lockContent = mode === "full";
+  if (obj.type === "i-text" || obj.type === "textbox") {
+    obj.editable = mode !== "full" || isUserOwnedText(obj);
+  }
+}
+
+// src/shapes/FabRect.ts
+import { Rect, classRegistry, controlsUtils as controlsUtils3 } from "#fabric";
+
+// src/shapes/lockMixin.ts
+var LOCK_MODES = ["free", "position", "full"];
+function installLockMethods(proto) {
+  proto.applyLockMode = function(mode) {
+    this.lockMode = mode;
+    const lockPosition = mode === "position" || mode === "full";
+    this.lockMovementX = lockPosition;
+    this.lockMovementY = lockPosition;
+    this.lockRotation = lockPosition;
+    this.lockScalingX = lockPosition;
+    this.lockScalingY = lockPosition;
+    this.hasControls = mode === "free";
+    this.lockContent = mode === "full";
+  };
+  proto.getLockMode = function() {
+    return this.lockMode || "free";
+  };
+  proto.getNextLockMode = function() {
+    const currentIndex = LOCK_MODES.indexOf(this.getLockMode());
+    return LOCK_MODES[(currentIndex + 1) % LOCK_MODES.length];
+  };
+  proto.isPositionLocked = function() {
+    const mode = this.getLockMode();
+    return mode === "position" || mode === "full";
+  };
+  proto.isStyleLocked = function() {
+    const mode = this.getLockMode();
+    return mode === "position" || mode === "full";
+  };
+  proto.isContentLocked = function() {
+    return this.lockContent === true;
+  };
+}
+
+// src/shapes/outerShadow.ts
+import { Color } from "#fabric";
+var FAR = 1e5;
+function seesThrough(fill) {
+  if (!fill || typeof fill !== "string") return true;
+  if (fill === "transparent" || fill === "none") return true;
+  return new Color(fill).getAlpha() < 1;
+}
+function installOuterShadow(target, buildPath) {
+  const proto = target;
+  const originalRender = proto.render;
+  proto.render = function(ctx) {
+    const shadow = this.shadow;
+    if (!shadow || !seesThrough(this.fill) || this.isNotVisible()) return originalRender.call(this, ctx);
+    drawOuterShadow(this, ctx, buildPath);
+    this.shadow = null;
+    try {
+      originalRender.call(this, ctx);
+    } finally {
+      this.shadow = shadow;
+    }
+  };
+}
+function traceShapePath(shape, ctx, buildPath) {
+  const target = shape;
+  target._renderPaintInOrder = () => {
+  };
+  try {
+    buildPath.call(shape, ctx);
+  } finally {
+    delete target._renderPaintInOrder;
+  }
+}
+function drawOuterShadow(shape, ctx, buildPath) {
+  const paint = shape._renderPaintInOrder;
+  ctx.save();
+  try {
+    shape._setupCompositeOperation(ctx);
+    shape.transform(ctx);
+    shape._setOpacity(ctx);
+    traceShapePath(shape, ctx, buildPath);
+    ctx.rect(-FAR, -FAR, 2 * FAR, 2 * FAR);
+    ctx.clip("evenodd");
+    shape._setShadow(ctx);
+    shape._renderPaintInOrder = (c) => {
+      c.fillStyle = "#000";
+      c.fill();
+    };
+    buildPath.call(shape, ctx);
+  } finally {
+    delete shape._renderPaintInOrder;
+    if (shape._renderPaintInOrder !== paint) shape._renderPaintInOrder = paint;
+    ctx.restore();
+  }
+}
+
+// src/shapes/backdropBlur.ts
+import { util as util4 } from "#fabric";
+
+// src/imageBlur.ts
+import { util as util3 } from "#fabric";
+function blurredCanvas(source, displayScale, radius) {
+  const workScale = Math.min(1, Math.max(displayScale, 1e-3));
+  const el = util3.createCanvasElement();
+  el.width = Math.max(1, Math.round(source.width * workScale));
+  el.height = Math.max(1, Math.round(source.height * workScale));
+  const ctx = el.getContext("2d");
+  ctx.drawImage(source, 0, 0, el.width, el.height);
+  const sigma = radius / Math.max(displayScale, 1e-3) * workScale;
+  if (sigma < 0.5) return el;
+  const image = ctx.getImageData(0, 0, el.width, el.height);
+  gaussianApprox(image.data, el.width, el.height, sigma);
+  ctx.putImageData(image, 0, 0);
+  return el;
+}
+function gaussianApprox(data, width, height, sigma) {
+  const boxes = boxSizes(sigma, 3);
+  const tmp = new Uint8ClampedArray(data.length);
+  for (const size of boxes) {
+    const r = (size - 1) / 2;
+    boxBlurH(data, tmp, width, height, r);
+    boxBlurV(tmp, data, width, height, r);
+  }
+}
+function boxSizes(sigma, n) {
+  const ideal = Math.sqrt(12 * sigma * sigma / n + 1);
+  let lower = Math.floor(ideal);
+  if (lower % 2 === 0) lower--;
+  const upper = lower + 2;
+  const m = Math.round((12 * sigma * sigma - n * lower * lower - 4 * n * lower - 3 * n) / (-4 * lower - 4));
+  return Array.from({ length: n }, (_, i) => i < m ? lower : upper);
+}
+function boxBlurH(src, dst, w, h, r) {
+  const span = 2 * r + 1;
+  for (let y = 0; y < h; y++) {
+    const row = y * w * 4;
+    for (let c = 0; c < 4; c++) {
+      const at = (x) => src[row + Math.min(w - 1, Math.max(0, x)) * 4 + c];
+      let sum = 0;
+      for (let x = -r; x <= r; x++) sum += at(x);
+      for (let x = 0; x < w; x++) {
+        dst[row + x * 4 + c] = sum / span;
+        sum += at(x + r + 1) - at(x - r);
+      }
+    }
+  }
+}
+function boxBlurV(src, dst, w, h, r) {
+  const span = 2 * r + 1;
+  for (let x = 0; x < w; x++) {
+    for (let c = 0; c < 4; c++) {
+      const at = (y) => src[(Math.min(h - 1, Math.max(0, y)) * w + x) * 4 + c];
+      let sum = 0;
+      for (let y = -r; y <= r; y++) sum += at(y);
+      for (let y = 0; y < h; y++) {
+        dst[(y * w + x) * 4 + c] = sum / span;
+        sum += at(y + r + 1) - at(y - r);
+      }
+    }
+  }
+}
+
+// src/shapes/backdropBlur.ts
+function installBackdropBlur(target, buildPath) {
+  const proto = target;
+  const originalRender = proto.render;
+  proto.render = function(ctx) {
+    if (this.backdropBlur && this.backdropBlur > 0 && !this.isNotVisible()) {
+      drawBackdrop(this, ctx, buildPath, this.backdropBlur);
+    }
+    originalRender.call(this, ctx);
+  };
+}
+function drawBackdrop(shape, ctx, buildPath, radius) {
+  ctx.save();
+  try {
+    shape.transform(ctx);
+    const m = ctx.getTransform();
+    const scale = Math.sqrt(Math.abs(m.a * m.d - m.b * m.c)) || 1;
+    const sigma = radius * scale;
+    const margin = Math.ceil(3 * sigma);
+    const box = deviceBox(m, shape.width / 2, shape.height / 2, margin, ctx.canvas);
+    if (!box) return;
+    const pixels = ctx.getImageData(box.x, box.y, box.w, box.h);
+    gaussianApprox(pixels.data, box.w, box.h, sigma);
+    const tile = util4.createCanvasElement();
+    tile.width = box.w;
+    tile.height = box.h;
+    tile.getContext("2d").putImageData(pixels, 0, 0);
+    traceShapePath(shape, ctx, buildPath);
+    ctx.clip();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.globalAlpha = shape.opacity ?? 1;
+    ctx.drawImage(tile, box.x, box.y);
+  } finally {
+    ctx.restore();
+  }
+}
+function deviceBox(m, hw, hh, margin, canvas) {
+  const corners = [[-hw, -hh], [hw, -hh], [hw, hh], [-hw, hh]].map(([x2, y2]) => [
+    m.a * x2 + m.c * y2 + m.e,
+    m.b * x2 + m.d * y2 + m.f
+  ]);
+  const xs = corners.map((c) => c[0]);
+  const ys = corners.map((c) => c[1]);
+  const x = Math.max(0, Math.floor(Math.min(...xs) - margin));
+  const y = Math.max(0, Math.floor(Math.min(...ys) - margin));
+  const right = Math.min(canvas.width, Math.ceil(Math.max(...xs) + margin));
+  const bottom = Math.min(canvas.height, Math.ceil(Math.max(...ys) + margin));
+  if (right - x < 1 || bottom - y < 1) return null;
+  return { x, y, w: right - x, h: bottom - y };
+}
+
+// src/shapes/FabRect.ts
+var { changeObjectWidth: changeObjectWidth2, changeObjectHeight: changeObjectHeight2 } = controlsUtils3;
+var FabRect = class extends Rect {
+  constructor(options) {
+    super({
+      originX: "center",
+      originY: "center",
+      ...options
+    });
+    this.set("id", "rect");
+  }
+  setCornerRadius(radius) {
+    const maxRadius = Math.min(this.width, this.height) / 2;
+    const r = Math.max(0, Math.min(radius, maxRadius));
+    this.set({ rx: r, ry: r });
+    this.dirty = true;
+    this.canvas?.requestRenderAll();
+  }
+  getCornerRadius() {
+    return this.rx ?? 0;
+  }
+  /** Corner resize: free resize on both axes (no ratio lock). */
+  /**
+   * Coin : proportions gardées, le facteur passe dans width/height (jamais dans un scale),
+   * depuis la taille de départ du geste. Un container y ajoute son contenu (ScaleSession).
+   */
+  handleCornerResize(transform, x, y) {
+    const { originX, originY } = transform;
+    const anchor = this.getPositionByOrigin(originX, originY);
+    transform._startSize ?? (transform._startSize = { w: this.width, h: this.height });
+    const start = transform._startSize;
+    const k = cornerScaleFactor(this, transform, x, y);
+    const before = { w: this.width, h: this.height };
+    this.set({ width: start.w * k, height: start.h * k });
+    this.setPositionByOrigin(anchor, originX, originY);
+    return before.w !== this.width || before.h !== this.height;
+  }
+  /** Edge resize: single-axis width or height change. */
+  handleEdgeResize(transform, x, y) {
+    const { originX, originY } = transform;
+    const anchor = this.getPositionByOrigin(originX, originY);
+    const corner = transform.corner;
+    const changed = corner === "ml" || corner === "mr" ? changeObjectWidth2({}, transform, x, y) : changeObjectHeight2({}, transform, x, y);
+    this.setPositionByOrigin(anchor, originX, originY);
+    return changed;
+  }
+  setSize(w, h) {
+    this.set({ width: w, height: h });
+  }
+};
+FabRect.type = "Rect";
+FabRect.customProperties = ["layerId", "layerType", "lockMode", "lockContent", "backdropBlur"];
+installLockMethods(FabRect.prototype);
+installOuterShadow(FabRect.prototype, Rect.prototype._render);
+installBackdropBlur(FabRect.prototype, Rect.prototype._render);
+installUserSlotRendering(FabRect.prototype);
+classRegistry.setClass(FabRect, "Rect");
+
+// src/shapes/FabCircle.ts
+import { Circle, classRegistry as classRegistry2, controlsUtils as controlsUtils4 } from "#fabric";
+var { changeObjectWidth: changeObjectWidth3, changeObjectHeight: changeObjectHeight3 } = controlsUtils4;
+var FabCircle = class extends Circle {
+  constructor(options) {
+    super({
+      originX: "center",
+      originY: "center",
+      ...options
+    });
+    this.set("id", "circle");
+    const size = Math.min(this.width, this.height);
+    this.radius = size / 2;
+    this.width = size;
+    this.height = size;
+    this._naturalSize = size;
+  }
+  /** Corner resize: uniform scaling (aspect ratio locked). */
+  handleCornerResize(transform, x, y) {
+    const { originX, originY } = transform;
+    const anchor = this.getPositionByOrigin(originX, originY);
+    const scale = cornerScaleFactor(this, transform, x, y);
+    const oldScaleX = this.scaleX;
+    const oldScaleY = this.scaleY;
+    this.set("scaleX", transform.original.scaleX * scale);
+    this.set("scaleY", transform.original.scaleY * scale);
+    this.setPositionByOrigin(anchor, originX, originY);
+    return oldScaleX !== this.scaleX || oldScaleY !== this.scaleY;
+  }
+  /** Edge resize: single-axis stretch, absorbed into scale. */
+  handleEdgeResize(transform, x, y) {
+    const { originX, originY } = transform;
+    const anchor = this.getPositionByOrigin(originX, originY);
+    const corner = transform.corner;
+    const changed = corner === "ml" || corner === "mr" ? changeObjectWidth3({}, transform, x, y) : changeObjectHeight3({}, transform, x, y);
+    this.scaleX *= this.width / this._naturalSize;
+    this.scaleY *= this.height / this._naturalSize;
+    this.width = this._naturalSize;
+    this.height = this._naturalSize;
+    this.radius = this._naturalSize / 2;
+    this.setPositionByOrigin(anchor, originX, originY);
+    return changed;
+  }
+  setSize(w, h) {
+    this.set({
+      scaleX: w / this._naturalSize,
+      scaleY: h / this._naturalSize
+    });
+  }
+};
+FabCircle.type = "Circle";
+FabCircle.customProperties = ["layerId", "layerType", "lockMode", "lockContent", "backdropBlur"];
+installLockMethods(FabCircle.prototype);
+installOuterShadow(FabCircle.prototype, Circle.prototype._render);
+installBackdropBlur(FabCircle.prototype, Circle.prototype._render);
+installUserSlotRendering(FabCircle.prototype);
+classRegistry2.setClass(FabCircle, "Circle");
+
+// src/shapes/FabPath.ts
+import { Path, classRegistry as classRegistry3, controlsUtils as controlsUtils5 } from "#fabric";
+
+// src/shapes/registry.ts
+var registry = [];
+function registeredShapes() {
+  return registry;
+}
+function getCatalogShape(id) {
+  return registry.find((s) => s.id === id);
+}
+function isMonoPath(shape) {
+  return shape.paths.length === 1;
+}
+function clipDataFor(id) {
+  const shape = getCatalogShape(id);
+  if (!shape || !isMonoPath(shape)) return void 0;
+  const path = shape.paths[0];
+  return { d: path.d, width: shape.width, height: shape.height, ...path.fillRule ? { fillRule: path.fillRule } : {} };
+}
+
+// src/shapes/FabPath.ts
+var { changeObjectWidth: changeObjectWidth4, changeObjectHeight: changeObjectHeight4 } = controlsUtils5;
+var DEFAULT_SIZE = 300;
+var _FabPath = class _FabPath extends Path {
+  constructor(path, options) {
+    super(path, {
+      originX: "center",
+      originY: "center",
+      ...options
+    });
+    this._naturalW = this.width;
+    this._naturalH = this.height;
+  }
+  /** Corner resize: uniform scaling (aspect ratio locked). */
+  handleCornerResize(transform, x, y) {
+    const { originX, originY } = transform;
+    const anchor = this.getPositionByOrigin(originX, originY);
+    const scale = cornerScaleFactor(this, transform, x, y);
+    const oldScaleX = this.scaleX;
+    const oldScaleY = this.scaleY;
+    this.set("scaleX", transform.original.scaleX * scale);
+    this.set("scaleY", transform.original.scaleY * scale);
+    this.setPositionByOrigin(anchor, originX, originY);
+    return oldScaleX !== this.scaleX || oldScaleY !== this.scaleY;
+  }
+  /** Edge resize: single-axis stretch, absorbed into scale. */
+  handleEdgeResize(transform, x, y) {
+    const { originX, originY } = transform;
+    const anchor = this.getPositionByOrigin(originX, originY);
+    const corner = transform.corner;
+    const changed = corner === "ml" || corner === "mr" ? changeObjectWidth4({}, transform, x, y) : changeObjectHeight4({}, transform, x, y);
+    this.scaleX *= this.width / this._naturalW;
+    this.scaleY *= this.height / this._naturalH;
+    this.width = this._naturalW;
+    this.height = this._naturalH;
+    this.setPositionByOrigin(anchor, originX, originY);
+    return changed;
+  }
+  setSize(w, h) {
+    this.set({ scaleX: w / this._naturalW, scaleY: h / this._naturalH });
+  }
+  /**
+   * Create a FabPath from raw path data (normalized `d` + optional authored fill).
+   * The authored fill wins over options.fill: callers pass their GENERIC default
+   * there (LayerManager's DEFAULT_SHAPE_FILL) — a colorless path takes it, an authored one
+   * keeps its charte color. Recoloring happens on the object afterwards, never here.
+   *
+   * Dimension logic:
+   * - Both width & height: scale to fill both
+   * - Only width: scale height proportionally
+   * - Only height: scale width proportionally
+   * - Neither: longest axis = 300px
+   */
+  static fromPathData(pathData, options) {
+    const fill = pathData.fill ?? (pathData.stroke ? "" : options?.fill);
+    const stroke = pathData.stroke ?? options?.stroke;
+    const strokeWidth = pathData.strokeWidth ?? options?.strokeWidth;
+    const path = new _FabPath(pathData.d, {
+      ...options,
+      ...fill != null ? { fill } : {},
+      ...stroke != null ? { stroke } : {},
+      ...strokeWidth != null ? { strokeWidth } : {},
+      ...pathData.fillRule ? { fillRule: pathData.fillRule } : {}
+    });
+    path.fitTo(options?.width, options?.height);
+    return path;
+  }
+  /** Scale to the requested box (see fromPathData) — natural dims stay untouched. */
+  fitTo(width, height) {
+    const ratio = this._naturalW / this._naturalH;
+    let targetW;
+    let targetH;
+    if (width != null && height != null) {
+      targetW = width;
+      targetH = height;
+    } else if (width != null) {
+      targetW = width;
+      targetH = targetW / ratio;
+    } else if (height != null) {
+      targetH = height;
+      targetW = targetH * ratio;
+    } else {
+      const scale = DEFAULT_SIZE / Math.max(this._naturalW, this._naturalH);
+      targetW = this._naturalW * scale;
+      targetH = this._naturalH * scale;
+    }
+    this.scaleX = targetW / this._naturalW;
+    this.scaleY = targetH / this._naturalH;
+  }
+  /**
+   * Create a FabPath from the injected shape registry (mono-path entries only —
+   * multi-path artwork goes through createPathsShape, and is never a clip).
+   */
+  static createFromCatalog(shapeId, options) {
+    const shape = getCatalogShape(shapeId);
+    if (!shape) {
+      throw new Error(
+        `Unknown path shape: "${shapeId}". Did the host app call registerShapes()?`
+      );
+    }
+    if (shape.paths.length !== 1) {
+      throw new Error(`Shape "${shapeId}" is multi-path artwork \u2014 not usable as a single path.`);
+    }
+    return _FabPath.fromPathData(shape.paths[0], { id: shapeId, ...options });
+  }
+};
+_FabPath.type = "Path";
+_FabPath.customProperties = ["layerId", "layerType", "lockMode", "lockContent", "backdropBlur"];
+var FabPath = _FabPath;
+installLockMethods(FabPath.prototype);
+installOuterShadow(FabPath.prototype, Path.prototype._render);
+installBackdropBlur(FabPath.prototype, Path.prototype._render);
+installUserSlotRendering(FabPath.prototype);
+classRegistry3.setClass(FabPath, "Path");
+
+// src/shapes/FabGroup.ts
+import { Group, classRegistry as classRegistry4 } from "#fabric";
+var FabGroup = class extends Group {
+  /** La couleur commune des enfants ; null quand ils diffèrent (une œuvre polychrome). */
+  commonFill() {
+    const fills = this.getObjects().map((child) => child.fill);
+    const [first] = fills;
+    return fills.every((fill) => sameFill(fill, first)) ? first ?? null : null;
+  }
+  /** Une seule couleur pour tout le groupe : un logo bicolore s'aplatit, c'est le choix fait. */
+  setFill(fill) {
+    this.getObjects().forEach((child) => child.set({ fill }));
+    this.dirty = true;
+  }
+};
+FabGroup.customProperties = ["layerId", "layerType", "lockMode", "lockContent"];
+function sameFill(a, b) {
+  if (a === b) return true;
+  if (!a || !b || typeof a === "string" || typeof b === "string") return false;
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+classRegistry4.setClass(FabGroup, "Group");
+
+// src/capabilities.ts
+function kindOf(obj) {
+  const layerType = obj.layerType;
+  if (isTextObject(obj)) return "text";
+  if (layerType === "imageFrame") return "imageShape";
+  if (obj instanceof FabricImage) return "legacyImage";
+  if (layerType === "shape" || obj instanceof Rect2) return "shape";
+  return "other";
+}
+function rulesOf(obj, { ignoreLock = false } = {}) {
+  const rules = kindRules(obj, kindOf(obj));
+  if (isOutOfPlay(obj)) Object.assign(rules, { onToolboxImage: null, hosts: false });
+  if (isFreeContainer(obj)) Object.assign(rules, { onToolboxImage: null, hosts: false });
+  if (stackParentOf(obj)) rules.restacks = false;
+  const locked = lockedRules(rules, ignoreLock ? "free" : getLockMode(obj));
+  if (rules.onToolboxImage !== "fill" || !isUserSlot(obj)) return locked;
+  return { ...locked, onToolboxImage: "fill", options: [...locked.options, "image"] };
+}
+function lockedRules(rules, lockMode) {
+  switch (lockMode) {
+    case "position":
+      return {
+        ...rules,
+        options: rules.options.filter((option) => option === "image"),
+        restyles: false,
+        restacks: false,
+        deletes: false
+      };
+    case "full":
+      return {
+        ...rules,
+        onToolboxImage: null,
+        hosts: false,
+        options: [],
+        restyles: false,
+        restacks: false,
+        deletes: false
+      };
+    default:
+      return rules;
+  }
+}
+function kindRules(obj, kind) {
+  const free = { restyles: true, restacks: true, deletes: true };
+  switch (kind) {
+    case "text":
+      return { kind, onToolboxImage: null, hosts: false, options: ["color", "font"], ...free };
+    case "shape":
+      return {
+        kind,
+        onToolboxImage: obj instanceof Group2 ? null : "fill",
+        hosts: true,
+        options: shapeOptions(obj),
+        ...free
+      };
+    case "imageShape":
+      return {
+        kind,
+        onToolboxImage: "replaceImage",
+        hosts: true,
+        options: ["outline", "clip", "corner_radius", "image"],
+        ...free
+      };
+    case "legacyImage":
+      return { kind, onToolboxImage: "replaceImage", hosts: false, options: [], ...free };
+    default:
+      return { kind, onToolboxImage: null, hosts: false, options: [], ...free };
+  }
+}
+function shapeOptions(obj) {
+  if (obj instanceof FabRect) return ["outline", "clip", "color", "corner_radius"];
+  if (obj instanceof FabCircle || obj instanceof FabPath) return ["outline", "clip", "color"];
+  if (obj instanceof FabGroup) return ["color"];
+  return [];
+}
+function isOutOfPlay(obj) {
+  return obj.get("layerId") === "originalImage" || obj.evented === false || obj.excludeFromExport === true;
+}
 
 // src/shapes/factories.ts
 import {
-  Path,
-  FabricImage as FabricImage2,
-  Rect,
-  Circle
+  FabricImage as FabricImage3
 } from "#fabric";
-
-// src/shapes/paths.ts
-var HEART_PATH = "M 0 13 Q -1 13 -4 11 C -12 5 -17 -3 -12 -10 C -9 -14 -2 -13 0 -7 C 2 -13 9 -14 12 -10 C 17 -3 11 5 4 11 Q 1 13 0 13 Z";
-var HEXAGON_PATH = "M-2 -23.3453C-0.7624 -24.0598 0.7624 -24.0598 2 -23.3453L19.2176 -13.4047C20.4552 -12.6902 21.2176 -11.3697 21.2176 -9.9406V10.4406C21.2176 11.8697 20.4552 13.1902 19.2176 13.9047L2 23.8453C0.7624 24.5598 -0.7624 24.5598 -2 23.8453L-19.2176 13.9047C-20.4552 13.1902 -21.2176 11.8697 -21.2176 10.4406V-9.9406C-21.2176 -11.3697 -20.4552 -12.6902 -19.2176 -13.4047L-2 -23.3453Z";
 
 // src/controls/cropControls.ts
 import {
@@ -304,67 +1926,13 @@ function addCropControls(obj) {
 
 // src/shapes/factories.ts
 function createRect(options) {
-  return new Rect({
-    id: "rect",
-    originX: "center",
-    originY: "center",
-    ...options
-  });
-}
-function createRoundedRect(options) {
-  const width = options?.width || 40;
-  const height = options?.height || 40;
-  const rect = new Rect({
-    id: "rounded",
-    originX: "center",
-    originY: "center",
-    ry: height * 0.15,
-    rx: width * 0.15,
-    ...options
-  });
-  rect.noScaleCache = false;
-  rect.on("scaling", () => {
-    const sX = rect.scaleX;
-    const sY = rect.scaleY;
-    rect.width *= sX;
-    rect.height *= sY;
-    rect.scaleX = 1;
-    rect.scaleY = 1;
-  });
-  return rect;
+  return new FabRect(options);
 }
 function createCircle(options) {
-  return new Circle({
-    id: "circle",
-    originX: "center",
-    originY: "center",
-    ...options
-  });
-}
-function createHeart(options) {
-  const minSize = Math.min(options?.height || 40, options?.width || 40) / 2;
-  const scaleFactor = minSize / 14;
-  return new Path(HEART_PATH, {
-    id: "heart",
-    originX: "center",
-    originY: "center",
-    stroke: "#000000",
-    fill: "",
-    scaleX: scaleFactor,
-    scaleY: scaleFactor,
-    ...options
-  });
-}
-function createHexagon(options) {
-  return new Path(HEXAGON_PATH, {
-    id: "hexagon",
-    originX: "center",
-    originY: "center",
-    ...options
-  });
+  return new FabCircle(options);
 }
 async function createImage(url, options) {
-  const img = await FabricImage2.fromURL(url, { crossOrigin: "anonymous" });
+  const img = await FabricImage3.fromURL(url, { crossOrigin: "anonymous" });
   let scale = 1;
   if (img.width > 300 || img.height > 300) {
     scale = Math.min(300 / img.width, 300 / img.height);
@@ -379,85 +1947,327 @@ async function createImage(url, options) {
   addCropControls(img);
   return img;
 }
-function createShape(shapeType, options) {
-  const { fill, stroke, left, top, height, width, radius } = options;
+var DEFAULT_SIZE2 = 300;
+function createPathsShape(paths, options = {}) {
+  if (paths.length === 0) throw new Error("createPathsShape: empty paths");
+  const { fill, stroke, left, top, id } = options;
+  const strokeWidth = options.strokeWidth ?? (stroke ? 4 : 0);
+  if (paths.length === 1) {
+    return FabPath.fromPathData(paths[0], withoutUndefined({
+      id,
+      fill,
+      stroke,
+      strokeWidth,
+      left,
+      top,
+      width: options.width,
+      height: options.height
+    }));
+  }
+  const children = paths.map((p) => {
+    const child = new FabPath(p.d, withoutUndefined({
+      fill: p.fill ?? (p.stroke ? "" : fill),
+      stroke: p.stroke ?? stroke,
+      strokeWidth: p.strokeWidth ?? strokeWidth,
+      fillRule: p.fillRule
+    }));
+    child.set({ left: child.pathOffset.x, top: child.pathOffset.y });
+    child.setCoords();
+    return child;
+  });
+  const group = new FabGroup(children, { originX: "center", originY: "center", ...withoutUndefined({ left, top }) });
+  if (id) group.set({ id });
+  const target = targetDims(group.width, group.height, options.width, options.height);
+  group.set({ scaleX: target.width / group.width, scaleY: target.height / group.height });
+  group.setCoords();
+  return group;
+}
+function withoutUndefined(obj) {
+  return Object.fromEntries(Object.entries(obj).filter(([, v]) => v !== void 0));
+}
+function targetDims(naturalW, naturalH, width, height) {
+  const ratio = naturalW / naturalH;
+  if (width != null && height != null) return { width, height };
+  if (width != null) return { width, height: width / ratio };
+  if (height != null) return { width: height * ratio, height };
+  const scale = DEFAULT_SIZE2 / Math.max(naturalW, naturalH);
+  return { width: naturalW * scale, height: naturalH * scale };
+}
+function createShape(shapeType, options = {}) {
+  const { fill, stroke, left, top } = options;
   const strokeWidth = stroke ? 4 : 0;
+  const w = options.width ?? DEFAULT_SIZE2;
+  const h = options.height ?? DEFAULT_SIZE2;
   switch (shapeType) {
     case "rect":
-      return createRect({ fill, stroke, left, top, height, width, strokeWidth });
-    case "rounded":
-      return createRoundedRect({ fill, stroke, left, top, height, width, strokeWidth });
-    case "circle":
+      return createRect({ fill, stroke, left, top, height: h, width: w, strokeWidth });
+    case "circle": {
+      const radius = Math.min(w, h) / 2;
       return createCircle({ radius, fill, stroke, left, top, strokeWidth });
-    case "heart":
-      return createHeart({
-        fill,
-        stroke,
-        left,
-        top,
-        height,
-        width,
-        strokeWidth: radius ? strokeWidth / (radius / 14) : strokeWidth,
-        scaleY: radius ? radius / 14 : 1,
-        scaleX: radius ? radius / 14 : 1
-      });
-    case "hexagon":
-      return createHexagon({
-        fill,
-        stroke,
-        left,
-        top,
-        height,
-        width,
-        strokeWidth: radius ? strokeWidth / (radius / 24) : strokeWidth,
-        scaleY: radius ? radius / 24 : 1,
-        scaleX: radius ? radius / 24 : 1
-      });
-    default:
-      return createRect({ fill, stroke, left, top, height, width, strokeWidth });
+    }
+    default: {
+      const entry = getCatalogShape(shapeType);
+      if (entry) {
+        return createPathsShape(entry.paths, {
+          id: shapeType,
+          fill,
+          stroke,
+          left,
+          top,
+          height: options.height,
+          width: options.width,
+          strokeWidth
+        });
+      }
+      return createRect({ fill, stroke, left, top, height: h, width: w, strokeWidth });
+    }
   }
+}
+function getShapeCatalog() {
+  return [
+    { id: "rect", path: "M0 0H100V100H0Z", viewBox: "0 0 100 100" },
+    { id: "circle", path: "M50 0A50 50 0 1 1 50 100A50 50 0 1 1 50 0Z", viewBox: "0 0 100 100" },
+    ...registeredShapes().filter(isMonoPath).map((s) => ({ id: s.id, path: s.paths[0].d, viewBox: "0 0 100 100" }))
+  ];
 }
 
 // src/shapes/shapeWheel.ts
-var SHAPE_WHEEL = [
-  "rect",
-  "rounded",
-  "circle",
-  "heart",
-  "hexagon"
-];
+function shapeIds() {
+  return getShapeCatalog().map((s) => s.id);
+}
 function isValidShape(id) {
-  return SHAPE_WHEEL.includes(id);
+  return shapeIds().includes(id);
 }
 
-// src/locking.ts
-function getLockMode(obj) {
-  return obj.lockMode || "free";
+// src/layout/geometry.ts
+import { Point as Point2 } from "#fabric";
+function scaledSize(obj) {
+  return {
+    w: obj.width * (obj.scaleX || 1),
+    h: obj.height * (obj.scaleY || 1)
+  };
 }
-function applyLockMode(obj, mode) {
-  obj.lockMode = mode;
-  const lockPosition = mode === "position" || mode === "full";
-  obj.lockMovementX = lockPosition;
-  obj.lockMovementY = lockPosition;
-  obj.lockRotation = lockPosition;
-  obj.lockScalingX = lockPosition;
-  obj.lockScalingY = lockPosition;
-  obj.hasControls = mode === "free";
-  obj.lockContent = mode === "full";
-  if (obj.type === "i-text" || obj.type === "textbox") {
-    obj.editable = mode !== "full";
+function setShapeSize(obj, w, h) {
+  const sized = obj;
+  if (typeof sized.setSize === "function") sized.setSize(w, h);
+  else obj.set({ scaleX: w / (obj.width || 1), scaleY: h / (obj.height || 1) });
+}
+function topLeft(obj) {
+  const { w, h } = scaledSize(obj);
+  const center = obj.getRelativeCenterPoint();
+  return { x: center.x - w / 2, y: center.y - h / 2 };
+}
+function boxOf(obj) {
+  obj.setCoords();
+  const { left, top, width, height } = obj.getBoundingRect();
+  return { left, top, width, height };
+}
+function unionBox(boxes) {
+  const left = Math.min(...boxes.map((b) => b.left));
+  const top = Math.min(...boxes.map((b) => b.top));
+  const right = Math.max(...boxes.map((b) => b.left + b.width));
+  const bottom = Math.max(...boxes.map((b) => b.top + b.height));
+  return { left, top, width: right - left, height: bottom - top };
+}
+function insetBox(box, pad) {
+  return {
+    left: box.left + pad.left,
+    top: box.top + pad.top,
+    width: box.width - pad.left - pad.right,
+    height: box.height - pad.top - pad.bottom
+  };
+}
+function outsetBox(box, pad) {
+  return insetBox(box, { top: -pad.top, right: -pad.right, bottom: -pad.bottom, left: -pad.left });
+}
+function placeTopLeft(obj, x, y) {
+  obj.setPositionByOrigin(new Point2(x, y), "left", "top");
+  obj.setCoords();
+}
+function syncCoords(container, children) {
+  container.setCoords();
+  for (const { obj } of children) {
+    obj.setCoords();
   }
 }
 
 // src/ImageFrame.ts
 import {
-  Group,
-  Rect as Rect2,
-  FabricImage as FabricImage3,
-  classRegistry,
+  Group as Group4,
+  FabricImage as FabricImage4,
+  classRegistry as classRegistry5,
   LayoutManager,
-  FixedLayout
+  FixedLayout,
+  Shadow
 } from "#fabric";
+
+// src/imageSlots.ts
+import { util as util5 } from "#fabric";
+var IMAGE_SLOT_FIELD = "image.src";
+var EACH_MEDIA = "each";
+function imageSlotBinding(obj) {
+  const spec = pendingBindings(obj)[IMAGE_SLOT_FIELD];
+  if (!spec || spec.scope === USER_SCOPE) return null;
+  return spec.media !== void 0 || spec.expr ? spec : null;
+}
+var NAMED_GLYPHS = { avatar: "person" };
+function slotMark(spec) {
+  const { media } = spec;
+  if (typeof media === "number") return { label: String(media) };
+  if (media === EACH_MEDIA) return { label: "i" };
+  if (media === DRAW_MEDIA) return { label: "?" };
+  return { glyph: NAMED_GLYPHS[String(media)] ?? "photo" };
+}
+function slotKey(spec) {
+  return spec.media !== void 0 ? `media:${spec.media}` : `expr:${spec.expr}`;
+}
+function slotColorOf(obj) {
+  const style = obj.canvas?.[USER_SLOT_STYLE_KEY];
+  return style?.color ?? DEFAULT_GUIDE_COLOR;
+}
+var UNIT = 1080;
+var DISC_RADIUS = 300;
+var DISC = "rgba(255, 255, 255, 0.22)";
+var INK = "#ffffff";
+var LIGHT = 0.72;
+function tint(color, amount) {
+  const rgb = parseHex(color);
+  if (rgb.some(Number.isNaN)) return color;
+  const [r, g, b] = rgb.map((channel) => Math.round(channel + (255 - channel) * amount));
+  return `rgb(${r}, ${g}, ${b})`;
+}
+function drawImageSlot(ctx, width, height, mark, color = DEFAULT_GUIDE_COLOR) {
+  ctx.save();
+  const gradient = ctx.createLinearGradient(-width / 2, -height / 2, width / 2, height / 2);
+  gradient.addColorStop(0, tint(color, LIGHT));
+  gradient.addColorStop(1, color);
+  ctx.fillStyle = gradient;
+  ctx.fillRect(-width / 2, -height / 2, width, height);
+  const scale = Math.min(width, height) / UNIT;
+  ctx.scale(scale, scale);
+  ctx.fillStyle = DISC;
+  ctx.beginPath();
+  ctx.arc(0, 0, DISC_RADIUS, 0, Math.PI * 2);
+  ctx.fill();
+  if ("label" in mark) drawLabel(ctx, mark.label);
+  else GLYPHS[mark.glyph](ctx);
+  ctx.restore();
+}
+function drawLabel(ctx, label) {
+  const size = label.length > 1 ? 240 : 320;
+  ctx.fillStyle = INK;
+  ctx.font = `700 ${size}px Helvetica, Arial, sans-serif`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "alphabetic";
+  ctx.fillText(label, 0, size * 0.36);
+}
+var GLYPHS = {
+  // Une silhouette : la tête et les épaules
+  person(ctx) {
+    ctx.fillStyle = INK;
+    ctx.beginPath();
+    ctx.arc(0, -90, 115, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(-205, 215);
+    ctx.bezierCurveTo(-205, 80, -110, 45, 0, 45);
+    ctx.bezierCurveTo(110, 45, 205, 80, 205, 215);
+    ctx.closePath();
+    ctx.fill();
+  },
+  // Une photo (heroicons photo) : le cadre, deux reliefs, le soleil
+  photo(ctx) {
+    ctx.save();
+    ctx.scale(15, 15);
+    ctx.translate(-12, -12);
+    ctx.strokeStyle = INK;
+    ctx.fillStyle = INK;
+    ctx.lineWidth = 1.5;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.beginPath();
+    ctx.moveTo(3.75, 4.5);
+    ctx.arcTo(21.75, 4.5, 21.75, 19.5, 1.5);
+    ctx.arcTo(21.75, 19.5, 2.25, 19.5, 1.5);
+    ctx.arcTo(2.25, 19.5, 2.25, 4.5, 1.5);
+    ctx.arcTo(2.25, 4.5, 21.75, 4.5, 1.5);
+    ctx.closePath();
+    ctx.moveTo(2.25, 15.75);
+    ctx.lineTo(7.409, 10.591);
+    ctx.quadraticCurveTo(9, 9, 10.591, 10.591);
+    ctx.lineTo(15.75, 15.75);
+    ctx.moveTo(14.25, 14.25);
+    ctx.lineTo(15.659, 12.841);
+    ctx.quadraticCurveTo(17.25, 11.25, 18.841, 12.841);
+    ctx.lineTo(21.75, 15.75);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(14.6, 8.25, 0.9, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+};
+
+// src/crop.ts
+var NO_CROP = { x: 0.5, y: 0.5, scale: 1 };
+var MAX_CROP_SCALE = 4;
+var clamp01 = (v) => Math.max(0, Math.min(1, v));
+var clampScale = (s) => Math.max(1, Math.min(MAX_CROP_SCALE, s));
+var isCropped = (c) => c.scale > 1.001 || Math.abs(c.x - 0.5) > 1e-3 || Math.abs(c.y - 0.5) > 1e-3;
+function normalizeCrop(c) {
+  return {
+    x: clamp01(Number.isFinite(c.x) ? c.x : 0.5),
+    y: clamp01(Number.isFinite(c.y) ? c.y : 0.5),
+    scale: clampScale(Number.isFinite(c.scale) ? c.scale : 1)
+  };
+}
+var coverScale = (W, H, nat) => Math.max(W / nat.w, H / nat.h);
+function photoRect(W, H, nat, c) {
+  const s = coverScale(W, H, nat) * c.scale;
+  const Iw = nat.w * s;
+  const Ih = nat.h * s;
+  return { x: c.x * (W - Iw) + 0, y: c.y * (H - Ih) + 0, w: Iw, h: Ih };
+}
+function cropFromRect(W, H, nat, r) {
+  const scale = clampScale(r.w / (nat.w * coverScale(W, H, nat)));
+  const s = coverScale(W, H, nat) * scale;
+  const Iw = nat.w * s;
+  const Ih = nat.h * s;
+  const x = Math.abs(W - Iw) < 0.5 ? 0.5 : clamp01(r.x / (W - Iw));
+  const y = Math.abs(H - Ih) < 0.5 ? 0.5 : clamp01(r.y / (H - Ih));
+  return { x: x + 0, y: y + 0, scale };
+}
+function panCrop(W, H, nat, c, dx, dy) {
+  const r = photoRect(W, H, nat, c);
+  return cropFromRect(W, H, nat, { ...r, x: r.x + dx, y: r.y + dy });
+}
+function zoomCrop(W, H, nat, c, scale, px = W / 2, py = H / 2) {
+  const r = photoRect(W, H, nat, c);
+  const k = clampScale(scale) / c.scale;
+  return cropFromRect(W, H, nat, { x: px - (px - r.x) * k, y: py - (py - r.y) * k, w: r.w * k, h: r.h * k });
+}
+function centerOffset(W, H, nat, c) {
+  const r = photoRect(W, H, nat, c);
+  return { x: r.x + r.w / 2 - W / 2, y: r.y + r.h / 2 - H / 2 };
+}
+function cropFromCenterOffset(W, H, nat, offsetX, offsetY, scale) {
+  const s = coverScale(W, H, nat) * clampScale(scale);
+  const Iw = nat.w * s;
+  const Ih = nat.h * s;
+  return normalizeCrop({
+    x: Iw - W < 0.5 ? 0.5 : 0.5 - offsetX / (Iw - W),
+    y: Ih - H < 0.5 ? 0.5 : 0.5 - offsetY / (Ih - H),
+    scale
+  });
+}
+
+// src/ImageFrame.ts
+var IMAGE_KEYS = ["src", "cropX", "cropY", "scale", "offsetX", "offsetY"];
+function imageMetaOf(image) {
+  const meta = { ...image };
+  IMAGE_KEYS.forEach((key) => delete meta[key]);
+  return meta;
+}
 function rotatePoint(dx, dy, angleDeg) {
   const angle = -angleDeg * Math.PI / 180;
   return {
@@ -465,15 +2275,15 @@ function rotatePoint(dx, dy, angleDeg) {
     y: dx * Math.sin(angle) + dy * Math.cos(angle)
   };
 }
-var ImageFrame = class _ImageFrame extends Group {
+var ImageFrame = class _ImageFrame extends Group4 {
   constructor(image, options = {}) {
     const frameScale = options.frameScale ?? 1;
     const frameWidth = options.frameWidth ?? image.width * frameScale;
     const frameHeight = options.frameHeight ?? image.height * frameScale;
-    const coverScale = Math.max(frameWidth / image.width, frameHeight / image.height);
+    const coverScale2 = Math.max(frameWidth / image.width, frameHeight / image.height);
     image.set({
-      scaleX: coverScale,
-      scaleY: coverScale,
+      scaleX: coverScale2,
+      scaleY: coverScale2,
       originX: "center",
       originY: "center",
       clipPath: null,
@@ -497,90 +2307,182 @@ var ImageFrame = class _ImageFrame extends Group {
       // Désactiver le cache pour que le clipPath soit redessiné à chaque frame
       objectCaching: false
     });
-    this._imageOffsetX = 0;
-    this._imageOffsetY = 0;
-    this._imageScale = 1;
+    /** Corner radius in pixels for "rect" clip shape. 0 = sharp corners. */
+    this.cornerRadius = 0;
+    /** Cf. ImageFrameData.fit. */
+    this.fit = "cover";
+    /** Cf. ImageFrameData.blur. */
+    this.blur = 0;
+    /** Le flou posé sur l'image au dernier calcul (élément source, échelle, rayon) : rien à refaire
+     *  tant qu'il ne change pas. */
+    this._blurKey = null;
+    /** En contain, la boîte où l'image se cale ; frameWidth/frameHeight sont alors sa taille. */
+    this._box = null;
+    this._crop = NO_CROP;
+    this._imageMeta = {};
+    this._source = "document";
+    /** Le damier est effacé (concealPlaceholder) : l'hôte montre son propre aperçu dessous. */
+    this._concealed = false;
+    /** L'emplacement au dernier rendu, par sa clé (isCacheDirty). */
+    this._drawnSlot = null;
     this._image = image;
     this.frameWidth = frameWidth;
     this.frameHeight = frameHeight;
-    this._imageOffsetX = options.imageOffsetX ?? 0;
-    this._imageOffsetY = options.imageOffsetY ?? 0;
-    this._imageScale = options.imageScale ?? 1;
+    this._crop = options.crop ? normalizeCrop(options.crop) : cropFromCenterOffset(
+      frameWidth,
+      frameHeight,
+      { w: image.width, h: image.height },
+      options.imageOffsetX ?? 0,
+      options.imageOffsetY ?? 0,
+      1
+    );
+    this._imageMeta = { ...options.imageMeta ?? {} };
+    if (options.fit === "contain") {
+      this.fit = "contain";
+      this._box = { w: frameWidth, h: frameHeight };
+      this._fitFrame();
+    }
+    this.blur = options.blur ?? 0;
     if (options.layerId) {
       this.set("layerId", options.layerId);
     }
     this.set("layerType", "imageFrame");
+    this.cornerRadius = options.cornerRadius ?? 0;
+    this.clipData = options.clipData;
     this._applyClip(options.clipShape || "rect");
     this._setupControls();
     this._setupScaleAbsorption();
-    this._applyImageOffset();
+    this._applyCrop();
   }
   get image() {
     return this._image;
   }
+  /** La source du DOCUMENT — vide pour un cadre en attente, quoi qu'il affiche. */
   get imageSrc() {
-    return this._image.getSrc() || "";
+    return this.pending ? "" : this._image.getSrc() || "";
   }
-  get imageOffsetX() {
-    return this._imageOffsetX;
+  /** La source AFFICHÉE : celle du document, un aperçu de session, la valeur d'une liaison —
+   *  vide pour un cadre qui ne montre rien. */
+  get displayedSrc() {
+    return this._source === "none" ? "" : this._image.getSrc() || "";
   }
-  get imageOffsetY() {
-    return this._imageOffsetY;
+  /** Les clés de `image` qui ne sont pas à la lib (cf. ImageFrameOptions.imageMeta). */
+  get imageMeta() {
+    return this._imageMeta;
+  }
+  /** Cadre en attente de sa source : pas de `src` au save (cf. ImageSource). `replaceImage`
+   *  le sort de l'attente. */
+  get pending() {
+    return this._source !== "document";
+  }
+  /** Un cadre en attente : l'image est le damier, aux dimensions du cadre. */
+  static pending(options) {
+    const img = new FabricImage4(checkerCanvas(options.frameWidth, options.frameHeight));
+    const frame = new _ImageFrame(img, options);
+    frame._source = "none";
+    frame._fitFrame();
+    frame._applyCrop();
+    return frame;
+  }
+  /** L'image affichée n'est pas celle du document (une url de session, le temps d'un
+   *  upload) : le cadre se sauve sans `src` jusqu'à ce que la vraie source la remplace. */
+  markSourcePending() {
+    this._source = "session";
   }
   /**
-   * Vérifie si l'image peut être repositionnée dans le cadre.
-   * Retourne true si l'image déborde du cadre (avec une marge de tolérance).
-   * @param tolerancePercent - Marge de tolérance en pourcentage (défaut: 5%)
+   * Le cadre montre la VALEUR de sa source liée pour le lecteur du moment (son avatar, son
+   * logo) : affichée, recadrable, jamais sauvée — le document garde le binding, sans `src`.
+   * Le recadrage du document s'applique à elle. Sans `image`, celle déjà affichée devient
+   * cette valeur (une carte posée avec l'image du lecteur, puis liée).
    */
-  canRepositionImage(tolerancePercent = 5) {
-    const imgWidth = this._image.width * this._image.scaleX;
-    const imgHeight = this._image.height * this._image.scaleY;
-    const toleranceX = this.frameWidth * (tolerancePercent / 100);
-    const toleranceY = this.frameHeight * (tolerancePercent / 100);
-    const canMoveX = imgWidth > this.frameWidth + toleranceX;
-    const canMoveY = imgHeight > this.frameHeight + toleranceY;
-    return canMoveX || canMoveY;
+  showValue(image) {
+    this._imageMeta = {};
+    this._source = "value";
+    if (image) this._swapImage(image);
+    else this._applyBlur();
+    this.dirty = true;
+    this.canvas?.requestRenderAll();
   }
   /**
-   * Repositionne l'image dans le frame (pan)
+   * Le cadre lâche sa source : il redevient vide (en attente), son recadrage gardé pour
+   * l'image qui viendra. Lié, il se dessine en emplacement (imageSlots) ; sinon en damier.
    */
-  setImageOffset(offsetX, offsetY) {
-    const clamped = this._clampOffset(offsetX, offsetY);
-    this._imageOffsetX = clamped.x;
-    this._imageOffsetY = clamped.y;
-    this._applyImageOffset();
+  clearSource() {
+    this._imageMeta = {};
+    this._source = "none";
+    this._swapImage(new FabricImage4(checkerCanvas(this.frameWidth, this.frameHeight)));
+    this.dirty = true;
+    this.canvas?.requestRenderAll();
+  }
+  /** Un cadre en attente dont l'hôte montre lui-même l'aperçu sous le canvas : le damier
+   *  s'efface (transparent, et pas d'emplacement dessiné), le cadre reste en attente — rien
+   *  ne change au save. */
+  concealPlaceholder() {
+    if (!this.pending) return;
+    this._image.setElement(transparentCanvas(this._image.width, this._image.height));
+    this._concealed = true;
     this.dirty = true;
   }
-  /**
-   * Change le zoom de l'image (min = cover)
-   */
-  setImageScale(scale) {
-    const coverScale = Math.max(this.frameWidth / this._image.width, this.frameHeight / this._image.height);
-    this._imageScale = Math.max(1, scale);
-    this._image.set({
-      scaleX: coverScale * this._imageScale,
-      scaleY: coverScale * this._imageScale
-    });
-    const clamped = this._clampOffset(this._imageOffsetX, this._imageOffsetY);
-    this._imageOffsetX = clamped.x;
-    this._imageOffsetY = clamped.y;
-    this._applyImageOffset();
+  // ─────────────────────────────────────────────────────────────
+  // Recadrage (cf. crop.ts) : tout est dans le repère du cadre, origine en haut à gauche
+  // ─────────────────────────────────────────────────────────────
+  get crop() {
+    return this._crop;
+  }
+  /** Se recadre : une vraie image, en place pour de bon — celle du document, ou la valeur
+   *  d'une source liée ; ni un damier, ni un emplacement, ni un aperçu d'upload. */
+  get croppable() {
+    return this._source === "document" || this._source === "value";
+  }
+  get isCropped() {
+    return isCropped(this._crop);
+  }
+  /** La taille native de l'image. */
+  get naturalSize() {
+    return { w: this._image.width, h: this._image.height };
+  }
+  setCrop(crop) {
+    this._crop = normalizeCrop({ ...this._crop, ...crop });
+    this._applyCrop();
     this.dirty = true;
   }
+  resetCrop() {
+    this.setCrop(NO_CROP);
+  }
+  /** L'image entière, dans le repère du cadre. */
+  photoRect() {
+    return photoRect(this.frameWidth, this.frameHeight, this.naturalSize, this._crop);
+  }
+  /** L'image posée en `rect` (repère du cadre) : bornée pour couvrir le cadre. */
+  setPhotoRect(rect) {
+    this.setCrop(cropFromRect(this.frameWidth, this.frameHeight, this.naturalSize, rect));
+  }
+  /** Décale l'image de (dx, dy) pixels de cadre depuis `from` (le recadrage au début du geste). */
+  panCrop(dx, dy, from = this._crop) {
+    this.setCrop(panCrop(this.frameWidth, this.frameHeight, this.naturalSize, from, dx, dy));
+  }
+  /** Change l'échelle en gardant fixe le point (px, py) du cadre, depuis `from`. */
+  zoomCrop(scale, px, py, from = this._crop) {
+    this.setCrop(zoomCrop(this.frameWidth, this.frameHeight, this.naturalSize, from, scale, px, py));
+  }
   /**
-   * Remplace l'image du frame en mode cover
+   * Remplace l'image du frame en mode cover. Les clés `imageMeta` sont celles de la NOUVELLE
+   * source — jamais héritées : une image remplacée qui garderait l'identité de l'ancienne
+   * est exactement le bug qu'elles servent à éviter.
    */
-  replaceImage(newImage) {
+  replaceImage(newImage, imageMeta = {}) {
+    this._imageMeta = { ...imageMeta };
+    this._source = "document";
+    this._crop = NO_CROP;
+    this._swapImage(newImage);
+    this.dirty = true;
+    this.canvas?.requestRenderAll();
+  }
+  /** L'image du groupe change, en cover, au recadrage courant ; le cadre ne bouge pas. */
+  _swapImage(newImage) {
     const savedClipShape = this.clipShape || "rect";
-    const coverScale = Math.max(this.frameWidth / newImage.width, this.frameHeight / newImage.height);
-    newImage.set({
-      scaleX: coverScale,
-      scaleY: coverScale,
-      originX: "center",
-      originY: "center",
-      left: 0,
-      top: 0
-    });
+    this._concealed = false;
+    newImage.set({ originX: "center", originY: "center" });
     const index = this._objects.indexOf(this._image);
     this._image.group = void 0;
     if (index !== -1) {
@@ -590,33 +2492,21 @@ var ImageFrame = class _ImageFrame extends Group {
     }
     newImage.group = this;
     this._image = newImage;
-    this.width = this.frameWidth;
-    this.height = this.frameHeight;
+    this._fitFrame();
     this._applyClip(savedClipShape);
     this.setCoords();
-    this._imageOffsetX = 0;
-    this._imageOffsetY = 0;
-    this._imageScale = 1;
-    this.dirty = true;
-    this.canvas?.requestRenderAll();
+    this._applyCrop();
   }
   /**
-   * Redimensionne le frame (l'image s'adapte en cover)
+   * Redimensionne le frame : l'image reste en cover, le recadrage (normalisé) garde la même
+   * zone autant que possible.
    */
   resizeFrame(newWidth, newHeight) {
-    const coverScale = Math.max(newWidth / this._image.width, newHeight / this._image.height);
+    if (this._box) this._box = { w: newWidth, h: newHeight };
     this.frameWidth = newWidth;
     this.frameHeight = newHeight;
-    this.width = newWidth;
-    this.height = newHeight;
-    this._image.set({
-      scaleX: coverScale * this._imageScale,
-      scaleY: coverScale * this._imageScale
-    });
-    const clamped = this._clampOffset(this._imageOffsetX, this._imageOffsetY);
-    this._imageOffsetX = clamped.x;
-    this._imageOffsetY = clamped.y;
-    this._applyImageOffset();
+    this._fitFrame();
+    this._applyCrop();
     this._applyClip(this.clipShape || "rect");
     if (this.clipPath) {
       this.clipPath.setCoords();
@@ -624,6 +2514,11 @@ var ImageFrame = class _ImageFrame extends Group {
     }
     this.setCoords();
     this.dirty = true;
+  }
+  /** Taille visuelle (contrat des formes, utilisé par le layout) : le frame, image en cover. */
+  setSize(w, h) {
+    this.set({ scaleX: 1, scaleY: 1 });
+    this.resizeFrame(w, h);
   }
   /**
    * Applique une forme de clip au frame
@@ -636,64 +2531,176 @@ var ImageFrame = class _ImageFrame extends Group {
    * Cycle vers la forme de clip suivante
    */
   nextClipShape() {
-    const shapes = ["rect", "rounded", "circle", "heart", "hexagon"];
+    const shapes = getShapeCatalog().map((s) => s.id);
     const currentIndex = this.clipShape ? shapes.indexOf(this.clipShape) : -1;
     this.applyClipShape(shapes[(currentIndex + 1) % shapes.length]);
+  }
+  /**
+   * Set the corner radius (in pixels) for the "rect" clip shape.
+   * Automatically switches to "rect" if another clip shape is active.
+   */
+  setCornerRadius(radius) {
+    this.cornerRadius = Math.max(0, radius);
+    if (this.clipShape !== "rect") {
+      this.clipShape = "rect";
+    }
+    this._applyClip("rect");
+    this.dirty = true;
+    this.canvas?.requestRenderAll();
+  }
+  getCornerRadius() {
+    return this.cornerRadius;
+  }
+  /**
+   * Contour (capacité de forme) : un Group ne dessine pas de trait — on trace la forme
+   * de découpe par-dessus, hors clip, trait centré sur le bord comme pour une forme.
+   */
+  render(ctx) {
+    super.render(ctx);
+    const outline = this.clipPath;
+    if (!this.visible || !outline || !this.stroke || !this.strokeWidth) return;
+    const saved = { fill: outline.fill, stroke: outline.stroke, strokeWidth: outline.strokeWidth };
+    ctx.save();
+    this.transform(ctx);
+    outline.set({ fill: "transparent", stroke: this.stroke, strokeWidth: this.strokeWidth });
+    outline.render(ctx);
+    outline.set(saved);
+    ctx.restore();
+  }
+  // ─────────────────────────────────────────────────────────────
+  // Emplacement d'image (cf. imageSlots) : un cadre lié qui ne montre rien se dessine
+  // lui-même, d'après son binding
+  // ─────────────────────────────────────────────────────────────
+  /** Le binding de l'emplacement à dessiner — null dès que le cadre montre une image, ou que
+   *  l'hôte a pris l'aperçu à sa charge. */
+  _slot() {
+    if (this._source !== "none" || this._concealed) return null;
+    return imageSlotBinding(this);
+  }
+  /** Le cadre a toujours son cache (clipPath) : poser, changer ou retirer le binding ne le
+   *  salit pas aux yeux de fabric — c'est le changement d'emplacement qui le fait. */
+  isCacheDirty(skipCanvas = false) {
+    const slot = this._slot();
+    const key = slot && slotKey(slot);
+    if (key !== this._drawnSlot) {
+      this._drawnSlot = key;
+      this.dirty = true;
+    }
+    return super.isCacheDirty(skipCanvas);
+  }
+  /** Le contenu du cadre : son image — ou, vide et lié, l'emplacement, sous la même découpe. */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  drawObject(ctx, forClipping, context) {
+    const slot = this._slot();
+    if (!slot) return super.drawObject(ctx, forClipping, context);
+    this._renderBackground(ctx);
+    drawImageSlot(ctx, this.width, this.height, slotMark(slot), slotColorOf(this));
+    this._drawClipPath(ctx, this.clipPath, context);
   }
   // ─────────────────────────────────────────────────────────────
   // Méthodes privées
   // ─────────────────────────────────────────────────────────────
-  _applyImageOffset() {
-    this._image.set({ left: this._imageOffsetX, top: this._imageOffsetY });
+  /**
+   * La taille du cadre : en contain, celle de l'image calée dans la boîte (la boîte entière
+   * sans image) ; sinon frameWidth/frameHeight tels quels. Le groupe suit.
+   */
+  _fitFrame() {
+    if (this._box) {
+      const { w: bw, h: bh } = this._box;
+      const nat = this.naturalSize;
+      const s = this._source === "none" || !nat.w || !nat.h ? 0 : Math.min(bw / nat.w, bh / nat.h);
+      this.frameWidth = s ? nat.w * s : bw;
+      this.frameHeight = s ? nat.h * s : bh;
+    }
+    this.width = this.frameWidth;
+    this.height = this.frameHeight;
   }
-  _clampOffset(offsetX, offsetY) {
-    const imgWidth = this._image.width * this._image.scaleX;
-    const imgHeight = this._image.height * this._image.scaleY;
-    const maxOffsetX = Math.max(0, (imgWidth - this.frameWidth) / 2);
-    const maxOffsetY = Math.max(0, (imgHeight - this.frameHeight) / 2);
-    return {
-      x: Math.max(-maxOffsetX, Math.min(maxOffsetX, offsetX)),
-      y: Math.max(-maxOffsetY, Math.min(maxOffsetY, offsetY))
-    };
+  /** L'image dans le groupe (origine au centre) : cover × échelle, centre décalé selon le recadrage. */
+  _applyCrop() {
+    const nat = this.naturalSize;
+    const s = coverScale(this.frameWidth, this.frameHeight, nat) * this._crop.scale;
+    const offset = centerOffset(this.frameWidth, this.frameHeight, nat, this._crop);
+    this._image.set({ scaleX: s, scaleY: s, left: offset.x, top: offset.y });
+    this._applyBlur();
+  }
+  /** Floute l'image (ou la rend nette) : elle s'affiche floutée à son échelle courante. */
+  setBlur(radius) {
+    this.blur = Math.max(0, radius || 0);
+    this._applyBlur();
+    this.dirty = true;
+    this.canvas?.requestRenderAll();
+  }
+  /**
+   * L'élément dessiné par l'image : la source, ou sa version floutée à la résolution
+   * d'affichage (cf. imageBlur) — la source reste `_originalElement`, celle qui se sauve. Le
+   * damier d'un cadre en attente ne se floute pas. Recalculé seulement quand la source,
+   * l'échelle (à 2 % près) ou le rayon changent.
+   */
+  _applyBlur() {
+    const img = this._image;
+    const source = img._originalElement;
+    if (!source) return;
+    if (!this.blur || this._source === "none") {
+      if (img._element !== source) {
+        img._element = source;
+        img._filterScalingX = img._filterScalingY = 1;
+        img.dirty = true;
+      }
+      this._blurKey = null;
+      return;
+    }
+    const scale = img.scaleX;
+    const key = this._blurKey;
+    if (key && key.element === source && key.radius === this.blur && Math.abs(key.scale - scale) <= key.scale * 0.02) {
+      return;
+    }
+    const blurred = blurredCanvas(source, scale, this.blur);
+    img._element = blurred;
+    img._filterScalingX = blurred.width / source.width;
+    img._filterScalingY = blurred.height / source.height;
+    img.dirty = true;
+    this.dirty = true;
+    this._blurKey = { element: source, scale, radius: this.blur };
   }
   _applyClip(shapeType) {
     this.clipShape = shapeType;
     const minSize = Math.min(this.frameWidth, this.frameHeight);
     switch (shapeType) {
       case "rect":
-        this.clipPath = new Rect2({
-          width: this.frameWidth,
-          height: this.frameHeight,
-          originX: "center",
-          originY: "center",
-          left: 0,
-          top: 0
-        });
+        this.clipData = void 0;
+        this.clipPath = this._rectClip(minSize);
         break;
       case "circle":
+        this.clipData = void 0;
         this.clipPath = createCircle({ radius: minSize / 2 });
         break;
-      case "rounded":
-        this.clipPath = createRoundedRect({
-          width: this.frameWidth,
-          height: this.frameHeight,
-          rx: minSize * 0.15,
-          ry: minSize * 0.15
-        });
+      default: {
+        this.clipData = clipDataFor(shapeType) ?? this.clipData;
+        if (this.clipData) {
+          this.clipPath = FabPath.fromPathData(this.clipData, {
+            width: this.frameWidth,
+            height: this.frameHeight,
+            left: 0,
+            top: 0
+          });
+        } else {
+          console.warn(`[ImageFrame] clip "${shapeType}" inconnu (registre non inject\xE9 ?) \u2014 affichage rect`);
+          this.clipPath = this._rectClip(minSize);
+        }
         break;
-      case "heart":
-        this.clipPath = createHeart({
-          scaleX: minSize / 28,
-          scaleY: minSize / 28
-        });
-        break;
-      case "hexagon":
-        this.clipPath = createHexagon({
-          scaleX: minSize / 48,
-          scaleY: minSize / 48
-        });
-        break;
+      }
     }
+  }
+  _rectClip(minSize) {
+    const r = Math.min(this.cornerRadius, minSize / 2);
+    return createRect({
+      width: this.frameWidth,
+      height: this.frameHeight,
+      rx: r,
+      ry: r,
+      left: 0,
+      top: 0
+    });
   }
   /**
    * Fallback : absorbe le scale si les contrôles natifs sont utilisés
@@ -722,13 +2729,17 @@ var ImageFrame = class _ImageFrame extends Group {
         const canvas = target.canvas;
         if (!canvas) return false;
         const pointer = canvas.getScenePoint(eventData);
+        const anchorX = changeX === 1 ? "left" : changeX === -1 ? "right" : "center";
+        const anchorY = changeY === 1 ? "top" : changeY === -1 ? "bottom" : "center";
         if (transform._startWidth === void 0) {
+          const center = target.getCenterPoint();
           transform._startWidth = target.frameWidth;
           transform._startHeight = target.frameHeight;
           transform._startPointerX = pointer.x;
           transform._startPointerY = pointer.y;
-          transform._startLeft = target.left;
-          transform._startTop = target.top;
+          transform._startLeft = center.x;
+          transform._startTop = center.y;
+          transform._anchor = target.getPositionByOrigin(anchorX, anchorY);
         }
         const rotated = rotatePoint(
           pointer.x - transform._startPointerX,
@@ -737,6 +2748,13 @@ var ImageFrame = class _ImageFrame extends Group {
         );
         let newWidth = Math.max(20, transform._startWidth + rotated.x * changeX);
         let newHeight = Math.max(20, transform._startHeight + rotated.y * changeY);
+        const corner = changeX !== 0 && changeY !== 0;
+        const ratio = transform._startHeight / transform._startWidth;
+        if (corner) {
+          const k = (newWidth + newHeight) / (transform._startWidth + transform._startHeight);
+          newWidth = transform._startWidth * k;
+          newHeight = transform._startHeight * k;
+        }
         const startCenterX = transform._startLeft;
         const startCenterY = transform._startTop;
         const startHalfWidth = transform._startWidth / 2;
@@ -785,21 +2803,16 @@ var ImageFrame = class _ImageFrame extends Group {
         const snappingManager = canvas.snappingManager;
         if (snappingManager) {
           const snapResult = snappingManager.calculateResizeSnap(bounds, changeX, changeY, pointer);
-          if (snapResult.width !== null) {
-            newWidth = snapResult.width;
-          }
-          if (snapResult.height !== null) {
-            newHeight = snapResult.height;
-          }
+          if (snapResult.width !== null) newWidth = snapResult.width;
+          if (snapResult.height !== null) newHeight = snapResult.height;
+          if (corner && snapResult.width !== null) newHeight = newWidth * ratio;
+          else if (corner && snapResult.height !== null) newWidth = newHeight / ratio;
         }
-        const deltaWidth = newWidth - transform._startWidth;
-        const deltaHeight = newHeight - transform._startHeight;
-        const offsetX = deltaWidth / 2 * changeX;
-        const offsetY = deltaHeight / 2 * changeY;
-        const rotatedOffset = rotatePoint(offsetX, offsetY, -target.angle);
-        target.left = transform._startLeft + rotatedOffset.x;
-        target.top = transform._startTop + rotatedOffset.y;
         target.resizeFrame(newWidth, newHeight);
+        target.setPositionByOrigin(transform._anchor, anchorX, anchorY);
+        target.setCoords();
+        target.fire("resizing");
+        canvas.fire?.("object:resizing", { target, e: eventData, transform, pointer });
         canvas.requestRenderAll();
         return true;
       };
@@ -809,7 +2822,7 @@ var ImageFrame = class _ImageFrame extends Group {
         const x = key.includes("l") ? -1 : 1;
         const y = key.includes("t") ? -1 : 1;
         this.controls[key].actionHandler = resizeHandler(x, y);
-        this.controls[key].actionName = "resizeFrame";
+        this.controls[key].actionName = "resizing";
       }
     });
     [
@@ -820,7 +2833,7 @@ var ImageFrame = class _ImageFrame extends Group {
     ].forEach(({ key, x, y }) => {
       if (this.controls[key]) {
         this.controls[key].actionHandler = resizeHandler(x, y);
-        this.controls[key].actionName = "resizeFrame";
+        this.controls[key].actionName = "resizing";
       }
     });
   }
@@ -830,59 +2843,89 @@ var ImageFrame = class _ImageFrame extends Group {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   toObject(propertiesToInclude) {
     const base = super.toObject(propertiesToInclude);
+    const extras = {};
+    (propertiesToInclude || []).forEach((key) => {
+      if (base[key] !== void 0) extras[key] = base[key];
+    });
+    if (this.selectable === false) extras.selectable = false;
+    if (this.evented === false) extras.evented = false;
     return {
+      ...extras,
       type: "ImageFrame",
       left: this.left,
       top: this.top,
+      originX: this.originX,
+      originY: this.originY,
       angle: this.angle,
       scaleX: this.scaleX,
       scaleY: this.scaleY,
-      frameWidth: this.frameWidth,
-      frameHeight: this.frameHeight,
+      frameWidth: this._box?.w ?? this.frameWidth,
+      frameHeight: this._box?.h ?? this.frameHeight,
+      fit: this._box ? "contain" : void 0,
+      blur: this.blur || void 0,
       clipShape: this.clipShape,
+      clipData: this.clipData,
+      cornerRadius: this.cornerRadius || void 0,
       layerId: base.layerId,
       lockMode: base.lockMode,
       lockContent: base.lockContent,
       opacity: this.opacity,
+      shadow: this.shadow ? this.shadow.toObject() : void 0,
+      stroke: this.stroke || void 0,
+      strokeWidth: this.stroke ? this.strokeWidth : void 0,
       image: {
-        src: this.imageSrc,
-        offsetX: this._imageOffsetX,
-        offsetY: this._imageOffsetY,
-        scale: this._imageScale
+        ...this._imageMeta,
+        ...this.pending ? {} : { src: this.imageSrc },
+        cropX: this._crop.x,
+        cropY: this._crop.y,
+        scale: this._crop.scale
       }
     };
   }
   static async fromObject(data) {
-    const img = await FabricImage3.fromURL(data.image.src, { crossOrigin: "anonymous" });
-    const frame = new _ImageFrame(img, {
+    const { src, cropX, cropY, offsetX = 0, offsetY = 0, scale = 1 } = data.image;
+    const options = {
       left: data.left,
       top: data.top,
       angle: data.angle,
       layerId: data.layerId,
       lockMode: data.lockMode,
-      imageOffsetX: data.image.offsetX,
-      imageOffsetY: data.image.offsetY,
-      imageScale: data.image.scale
-    });
-    frame.frameWidth = data.frameWidth;
-    frame.frameHeight = data.frameHeight;
-    frame.width = data.frameWidth;
-    frame.height = data.frameHeight;
-    const coverScale = Math.max(data.frameWidth / img.width, data.frameHeight / img.height);
-    frame._image.set({
-      scaleX: coverScale * data.image.scale,
-      scaleY: coverScale * data.image.scale,
-      left: data.image.offsetX,
-      top: data.image.offsetY
-    });
-    if (data.clipShape) {
-      frame.applyClipShape(data.clipShape);
+      frameWidth: data.frameWidth,
+      frameHeight: data.frameHeight,
+      fit: data.fit,
+      blur: data.blur,
+      imageMeta: imageMetaOf(data.image)
+    };
+    const img = src ? await FabricImage4.fromURL(src, { crossOrigin: "anonymous" }) : null;
+    options.crop = cropX !== void 0 || cropY !== void 0 ? { x: cropX, y: cropY, scale } : cropFromCenterOffset(
+      data.frameWidth,
+      data.frameHeight,
+      { w: img?.width || 1, h: img?.height || 1 },
+      offsetX,
+      offsetY,
+      scale
+    );
+    const frame = img ? new _ImageFrame(img, options) : _ImageFrame.pending({ ...options, frameWidth: data.frameWidth, frameHeight: data.frameHeight });
+    if (data.layout) frame.set("layout", data.layout);
+    if (data.originX) frame.set({ originX: data.originX, originY: data.originY ?? data.originX });
+    if (data.stroke) frame.set({ stroke: data.stroke, strokeWidth: data.strokeWidth ?? 4 });
+    if (data.clipData) frame.clipData = data.clipData;
+    let clipShape = data.clipShape;
+    if (clipShape === "rounded") {
+      frame.cornerRadius = data.cornerRadius ?? Math.min(data.frameWidth, data.frameHeight) * 0.15;
+      clipShape = "rect";
+    } else {
+      frame.cornerRadius = data.cornerRadius ?? 0;
+    }
+    if (clipShape) {
+      frame.applyClipShape(clipShape);
     }
     frame.scaleX = data.scaleX;
     frame.scaleY = data.scaleY;
     if (data.opacity !== void 0) {
       frame.opacity = data.opacity;
     }
+    if (data.shadow) frame.set("shadow", new Shadow(data.shadow));
     return frame;
   }
   /**
@@ -905,14 +2948,374 @@ var ImageFrame = class _ImageFrame extends Group {
     });
   }
 };
-classRegistry.setClass(ImageFrame);
-classRegistry.setClass(ImageFrame, "ImageFrame");
+classRegistry5.setClass(ImageFrame);
+classRegistry5.setClass(ImageFrame, "ImageFrame");
+
+// src/layout/stack/engine.ts
+var yoga = null;
+var yogaConfig = null;
+async function initYoga() {
+  if (yoga) return;
+  const { loadYoga } = await import("yoga-layout/load");
+  yoga = await loadYoga();
+  yogaConfig = yoga.Config.create();
+  yogaConfig.setPointScaleFactor(0);
+}
+function getYoga() {
+  if (!yoga) throw new Error("Yoga not initialized. Call initYoga() first.");
+  return yoga;
+}
+function yogaLayout(children, containerLeft, containerTop, containerW, containerH, cd, sizing, allObjects) {
+  if (children.length === 0) return { w: 0, h: 0 };
+  const Y = getYoga();
+  const modeX = sizing.x;
+  const modeY = sizing.y;
+  const root = Y.Node.create(yogaConfig);
+  applyContainerStyle(root, cd, Y);
+  if (modeX === "fixed") root.setWidth(containerW);
+  else root.setWidthAuto();
+  if (modeY === "fixed") root.setHeight(containerH);
+  else root.setHeightAuto();
+  applyHugFloor(root, sizing);
+  const built = buildChildren(root, children, cd, sizing, allObjects, Y);
+  root.calculateLayout(
+    modeX === "fixed" ? containerW : void 0,
+    modeY === "fixed" ? containerH : void 0
+  );
+  if (refitShrunkTexts(built)) {
+    root.calculateLayout(
+      modeX === "fixed" ? containerW : void 0,
+      modeY === "fixed" ? containerH : void 0
+    );
+  }
+  placeChildren(built, containerLeft, containerTop, 0);
+  const w = root.getComputedWidth();
+  const h = root.getComputedHeight();
+  root.freeRecursive();
+  return { w, h };
+}
+function applyContainerStyle(node, cd, Y) {
+  const isColumn = directionOf(cd) === "column";
+  node.setFlexDirection(isColumn ? Y.FLEX_DIRECTION_COLUMN : Y.FLEX_DIRECTION_ROW);
+  node.setAlignItems(mapAlignItems(cd.alignItems ?? "flex-start", Y));
+  node.setJustifyContent(mapJustifyContent(cd.justifyContent ?? "flex-start", Y));
+  const gap = cd.gap ?? 0;
+  if (gap > 0) node.setGap(isColumn ? Y.GUTTER_ROW : Y.GUTTER_COLUMN, gap);
+  const pad = cd.padding;
+  if (pad) {
+    node.setPadding(Y.EDGE_TOP, pad.top);
+    node.setPadding(Y.EDGE_RIGHT, pad.right);
+    node.setPadding(Y.EDGE_BOTTOM, pad.bottom);
+    node.setPadding(Y.EDGE_LEFT, pad.left);
+  }
+}
+function applyHugFloor(node, sizing) {
+  const minSize = sizing.minSize;
+  if (!minSize) return;
+  if (sizing.x === "hug" && minSize.w > 0) node.setMinWidth(minSize.w);
+  if (sizing.y === "hug" && minSize.h > 0) node.setMinHeight(minSize.h);
+}
+function nestedChildren(obj, allObjects) {
+  if (!allObjects || isTextObject(obj) || isFreeContainer(obj)) return null;
+  const layout = layoutOf(obj);
+  if (!layout?.container) return null;
+  const children = flowChildrenOf(allObjects, obj);
+  return children.length > 0 ? children : null;
+}
+function buildChildren(parent, children, cd, sizing, allObjects, Y) {
+  const isColumn = directionOf(cd) === "column";
+  const alignItems = cd.alignItems ?? "flex-start";
+  for (const { obj } of children) {
+    if (isTextObject(obj)) continue;
+    const ext = obj;
+    if (ext._layoutIntrinsic) {
+      setShapeSize(obj, ext._layoutIntrinsic.w, ext._layoutIntrinsic.h);
+      delete ext._layoutIntrinsic;
+    }
+  }
+  const built = [];
+  for (let i = 0; i < children.length; i++) {
+    const { obj, cl } = children[i];
+    const node = Y.Node.create(yogaConfig);
+    const alignSelf = cl.alignSelf ?? "auto";
+    if (alignSelf !== "auto") node.setAlignSelf(mapAlignSelf(alignSelf, Y));
+    const flexGrow = cl.flexGrow ?? 0;
+    if (flexGrow > 0 && !isFreeContainer(obj)) node.setFlexGrow(flexGrow);
+    const effectiveAlign = alignSelf !== "auto" ? alignSelf : alignItems;
+    const willStretch = effectiveAlign === "stretch";
+    const entry = { obj, node };
+    const nested = nestedChildren(obj, allObjects);
+    const mainHug = nested && (isColumn ? sizingOf(obj).y : sizingOf(obj).x) === "hug";
+    const foldingText = isTextObject(obj) && (layoutOf(obj)?.overflow ?? "shrink") === "shrink";
+    node.setFlexShrink(foldingText || mainHug ? 1 : 0);
+    if (isTextObject(obj)) {
+      setupTextMeasure(node, obj, Y);
+    } else if (isFreeContainer(obj)) {
+      setRigidSize(node, obj, { isColumn, willStretch: false, parentSizing: sizing, flexGrow: 0 });
+      if (allObjects) entry.followers = descendantsOf(allObjects, [obj]);
+    } else if (nested) {
+      const childCd = layoutOf(obj).container;
+      const childSizing = sizingOf(obj);
+      applyContainerStyle(node, childCd, Y);
+      setNestedSize(node, obj, childSizing, { isColumn, willStretch, parentSizing: sizing, flexGrow });
+      entry.children = buildChildren(node, nested, childCd, childSizing, allObjects, Y);
+    } else {
+      setRigidSize(node, obj, { isColumn, willStretch, parentSizing: sizing, flexGrow });
+    }
+    parent.insertChild(node, i);
+    built.push(entry);
+  }
+  return built;
+}
+function setRigidSize(node, obj, slot) {
+  const { isColumn, willStretch, parentSizing, flexGrow } = slot;
+  const { w, h } = scaledSize(obj);
+  if (isColumn) {
+    node.setHeight(h);
+    if (!willStretch || parentSizing.x === "hug") node.setWidth(w);
+  } else {
+    node.setWidth(w);
+    if (!willStretch || parentSizing.y === "hug") node.setHeight(h);
+  }
+  if (flexGrow > 0) {
+    if (isColumn) node.setHeightAuto();
+    else node.setWidthAuto();
+  }
+}
+function setNestedSize(node, obj, sizing, slot) {
+  const { isColumn, willStretch, parentSizing, flexGrow } = slot;
+  const { w, h } = scaledSize(obj);
+  const parentCrossIsHug = isColumn ? parentSizing.x === "hug" : parentSizing.y === "hug";
+  const main = isColumn ? sizing.y : sizing.x;
+  const cross = isColumn ? sizing.x : sizing.y;
+  const setMain = (v) => isColumn ? node.setHeight(v) : node.setWidth(v);
+  const setCross = (v) => isColumn ? node.setWidth(v) : node.setHeight(v);
+  if (main === "fixed" && flexGrow === 0) setMain(isColumn ? h : w);
+  if (cross === "fixed" && (!willStretch || parentCrossIsHug)) setCross(isColumn ? w : h);
+  applyHugFloor(node, sizing);
+}
+function placeChildren(built, parentLeft, parentTop, depth) {
+  for (const { obj, node, children, followers } of built) {
+    const before = followers && topLeft(obj);
+    const left = parentLeft + node.getComputedLeft();
+    const top = parentTop + node.getComputedTop();
+    const computedW = node.getComputedWidth();
+    const computedH = node.getComputedHeight();
+    const currentSize = scaledSize(obj);
+    const changedW = Math.abs(computedW - currentSize.w) > 0.5;
+    const changedH = Math.abs(computedH - currentSize.h) > 0.5;
+    if (isTextObject(obj)) {
+      if (changedW || changedH) obj.layoutWith({ w: computedW, h: computedH });
+    } else {
+      const ext = obj;
+      if (!children && (computedW < currentSize.w - 0.5 || computedH < currentSize.h - 0.5) && !ext._layoutIntrinsic) {
+        ext._layoutIntrinsic = currentSize;
+      }
+      if (changedW || changedH) {
+        setShapeSize(obj, changedW ? computedW : currentSize.w, changedH ? computedH : currentSize.h);
+      }
+    }
+    const { w: childW, h: childH } = scaledSize(obj);
+    const objLeft = obj.originX === "center" ? left + childW / 2 : obj.originX === "right" ? left + childW : left;
+    const objTop = obj.originY === "center" ? top + childH / 2 : obj.originY === "bottom" ? top + childH : top;
+    obj.set({ left: objLeft, top: objTop });
+    if (before) {
+      const after = topLeft(obj);
+      translateObjects(followers, after.x - before.x, after.y - before.y);
+    }
+    if (depth > 0) obj.setCoords();
+    if (children) placeChildren(children, left, top, depth + 1);
+  }
+}
+function refitShrunkTexts(built) {
+  let refit = false;
+  for (const { obj, node, children } of built) {
+    if (children) refit = refitShrunkTexts(children) || refit;
+    if (!isTextObject(obj) || sizingOf(obj).y !== "hug") continue;
+    if ((layoutOf(obj)?.overflow ?? "shrink") !== "shrink") continue;
+    const w = node.getComputedWidth();
+    const h = node.getComputedHeight();
+    if (h >= scaledSize(obj).h - 0.5) continue;
+    obj.layoutWith({ w, h });
+    const folded = scaledSize(obj).h;
+    if (folded >= h - 0.5) continue;
+    node.setWidth(w);
+    node.setHeight(folded);
+    node.setFlexShrink(0);
+    refit = true;
+  }
+  return refit;
+}
+function mapAlignItems(align, Y) {
+  switch (align) {
+    case "stretch":
+      return Y.ALIGN_STRETCH;
+    case "flex-start":
+      return Y.ALIGN_FLEX_START;
+    case "flex-end":
+      return Y.ALIGN_FLEX_END;
+    case "center":
+      return Y.ALIGN_CENTER;
+    default:
+      return Y.ALIGN_FLEX_START;
+  }
+}
+function mapAlignSelf(align, Y) {
+  switch (align) {
+    case "stretch":
+      return Y.ALIGN_STRETCH;
+    case "flex-start":
+      return Y.ALIGN_FLEX_START;
+    case "flex-end":
+      return Y.ALIGN_FLEX_END;
+    case "center":
+      return Y.ALIGN_CENTER;
+    default:
+      return Y.ALIGN_AUTO;
+  }
+}
+function mapJustifyContent(justify, Y) {
+  switch (justify) {
+    case "flex-start":
+      return Y.JUSTIFY_FLEX_START;
+    case "flex-end":
+      return Y.JUSTIFY_FLEX_END;
+    case "center":
+      return Y.JUSTIFY_CENTER;
+    case "space-between":
+      return Y.JUSTIFY_SPACE_BETWEEN;
+    case "space-around":
+      return Y.JUSTIFY_SPACE_AROUND;
+    default:
+      return Y.JUSTIFY_FLEX_START;
+  }
+}
+function setupTextMeasure(node, obj, Y) {
+  const t = obj;
+  node.setMeasureFunc((width, widthMode) => {
+    if (widthMode === Y.MEASURE_MODE_EXACTLY) t.layoutWith({ w: width });
+    else if (widthMode === Y.MEASURE_MODE_AT_MOST) t.layoutWith({ maxW: width });
+    else t.layoutWith({});
+    const { w, h } = scaledSize(obj);
+    return { width: w, height: h };
+  });
+}
+
+// src/layout/rotation.ts
+import { util as util6 } from "#fabric";
+function rotateAbout(obj, pivot, delta) {
+  if (!delta) return;
+  const center = obj.getCenterPoint().rotate(util6.degreesToRadians(delta), pivot);
+  obj.set({ angle: (obj.angle || 0) + delta });
+  obj.setPositionByOrigin(center, "center", "center");
+  obj.setCoords();
+}
+function inLocalFrame(root, objects, fn) {
+  const angle = root.angle || 0;
+  if (Math.abs(angle) < 1e-6) return fn();
+  const pivot = root.getCenterPoint();
+  const subtree = subtreeOf(objects, [root]);
+  for (const obj of subtree) rotateAbout(obj, pivot, -angle);
+  try {
+    return fn();
+  } finally {
+    for (const obj of subtree) rotateAbout(obj, pivot, angle);
+  }
+}
+
+// src/layout/free/fit.ts
+function fitFreeContainer(container, objects) {
+  inLocalFrame(container, objects, () => fitFreeContainerLocal(container, objects));
+}
+function fitFreeContainerLocal(container, objects) {
+  const children = childrenOf(objects, container).map((c) => c.obj).filter((child) => !isEclipsed(child));
+  if (children.length === 0) return;
+  for (const child of children) {
+    if (isFreeContainer(child)) fitFreeContainer(child, objects);
+    else if (isTextObject(child)) child.layoutWith({});
+  }
+  const box = outsetBox(unionBox(children.map(boxOf)), paddingOf(containerDataOf(container)));
+  setShapeSize(container, box.width, box.height);
+  placeTopLeft(container, box.left, box.top);
+}
+
+// src/layout/run.ts
+function runLayout(objects) {
+  for (const obj of objects) {
+    const layout = layoutOf(obj);
+    if (!layout?.container) continue;
+    if (parentContainerOf(obj, objects)) continue;
+    layoutTree(obj, objects);
+  }
+}
+function layoutTree(container, objects) {
+  inLocalFrame(container, objects, () => layoutTreeLocal(container, objects));
+}
+function layoutTreeLocal(container, objects) {
+  const cd = layoutOf(container).container;
+  const children = flowChildrenOf(objects, container);
+  if (children.length === 0) return;
+  if (cd.arrangement === "free") {
+    for (const { obj } of children) {
+      if (containerDataOf(obj)) layoutTree(obj, objects);
+    }
+    fitFreeContainer(container, objects);
+    return;
+  }
+  fitGroupsUnder(container, objects);
+  layoutContainer(container, cd, children, objects);
+}
+function fitGroupsUnder(container, objects) {
+  for (const { obj } of childrenOf(objects, container)) {
+    if (!containerDataOf(obj)) continue;
+    if (isFreeContainer(obj)) layoutTree(obj, objects);
+    else fitGroupsUnder(obj, objects);
+  }
+}
+function relayoutAncestors(obj, allObjects) {
+  for (let parent = parentContainerOf(obj, allObjects); parent; parent = parentContainerOf(parent, allObjects)) {
+    layoutTree(parent, allObjects);
+  }
+}
+function layoutContainer(container, cd, children, allObjects) {
+  const sizing = sizingOf(container);
+  const minW = sizing.minSize?.w ?? 0;
+  const minH = sizing.minSize?.h ?? 0;
+  const { w: visW, h: visH } = scaledSize(container);
+  const currentW = sizing.x === "hug" ? Math.max(visW, minW) : visW;
+  const currentH = sizing.y === "hug" ? Math.max(visH, minH) : visH;
+  const tl = topLeft(container);
+  const { w: requiredW, h: requiredH } = yogaLayout(
+    children,
+    tl.x,
+    tl.y,
+    currentW,
+    currentH,
+    cd,
+    sizing,
+    allObjects
+  );
+  const finalW = sizing.x === "hug" ? Math.max(requiredW, minW) : currentW;
+  const finalH = sizing.y === "hug" ? Math.max(requiredH, minH) : currentH;
+  setShapeSize(container, finalW, finalH);
+  if (finalW !== currentW || finalH !== currentH) {
+    const tl2 = topLeft(container);
+    yogaLayout(children, tl2.x, tl2.y, finalW, finalH, cd, sizing, allObjects);
+  }
+  syncCoords(container, children);
+}
 
 // src/LayerManager.ts
-var BACKGROUND_LAYER_ID = "originalImage";
+var NEW_LAYER_RATIO = 0.4;
+var BACKGROUND_LAYER_ID = LEGACY_BACKGROUND_ID;
+var DEFAULT_SHAPE_FILL = "#d9d9d9";
+var LAYER_PROPS = ["layerId", "lockMode", "lockContent", "layout", "bindings", "bindingSegments"];
 var LayerManager = class {
   constructor(canvas) {
     this.canvas = canvas;
+    /** La dernière valeur demandée pour chaque cadre lié (showImageValue) : un chargement
+     *  dépassé ne s'affiche pas. */
+    this.valueRequests = /* @__PURE__ */ new WeakMap();
   }
   /**
    * Retourne tous les calques (excluant l'image de fond)
@@ -930,13 +3333,13 @@ var LayerManager = class {
    * Trouve un calque par son ID
    */
   findById(layerId) {
-    return this.canvas.getObjects().find((obj) => obj.get("layerId") === layerId);
+    return findById(this.canvas.getObjects(), layerId);
   }
   /**
    * Charge l'image de fond
    */
   async loadBackgroundImage(url) {
-    const img = await FabricImage4.fromURL(url, { crossOrigin: "anonymous" });
+    const img = await FabricImage5.fromURL(url, { crossOrigin: "anonymous" });
     const scaleX = this.canvas.width / img.width;
     const scaleY = this.canvas.height / img.height;
     const scale = Math.max(scaleX, scaleY);
@@ -955,17 +3358,27 @@ var LayerManager = class {
     return img;
   }
   /**
-   * Charge plusieurs calques depuis leurs données JSON
+   * Désérialise plusieurs calques sans les ajouter au canvas — la moitié asynchrone
+   * (chargement d'images compris) du chargement, pour que l'appelant puisse faire le swap
+   * ancien/nouveau contenu de façon synchrone (anti-flicker).
    */
-  async loadLayers(layers) {
+  async deserializeAll(layers) {
     const objects = await Promise.all(layers.map((l) => this.deserialize(l)));
     objects.forEach((obj, i) => {
       if (!obj) return;
       const data = layers[i];
-      if (data.selectable === false) obj.selectable = false;
-      if (data.evented === false) obj.evented = false;
-      this.add(obj);
+      const isBackground2 = data.layerId === BACKGROUND_ID;
+      if (isBackground2 || data.selectable === false) obj.selectable = false;
+      if (isBackground2 || data.evented === false) obj.evented = false;
     });
+    return objects;
+  }
+  /**
+   * Charge plusieurs calques depuis leurs données JSON
+   */
+  async loadLayers(layers) {
+    const objects = await this.deserializeAll(layers);
+    objects.forEach((obj) => obj && this.add(obj));
     return objects.filter(Boolean);
   }
   /**
@@ -977,6 +3390,30 @@ var LayerManager = class {
       this.canvas.setActiveObject(obj);
     }
     return obj;
+  }
+  /** Le centre du document. */
+  get center() {
+    return new Point4(this.canvas.width / 2, this.canvas.height / 2);
+  }
+  /**
+   * La boîte d'un calque neuf (forme, image) : NEW_LAYER_RATIO du document dans chaque sens.
+   * Un calque y entre en gardant ses proportions. 40 % depuis le 2026-10-28 (c'était la
+   * moitié : trop grand, surtout pour une icône).
+   */
+  get newLayerBox() {
+    return { w: this.canvas.width * NEW_LAYER_RATIO, h: this.canvas.height * NEW_LAYER_RATIO };
+  }
+  fitNewLayerBox(obj) {
+    const { w, h } = scaledSize(obj);
+    const box = this.newLayerBox;
+    const scale = Math.min(box.w / w, box.h / h);
+    setShapeSize(obj, w * scale, h * scale);
+  }
+  /** Un calque ajouté sans position (un clic, pas un lâcher) se pose au centre du document. */
+  centerUnplaced(obj, options) {
+    if (options.left != null || options.top != null) return;
+    obj.setPositionByOrigin(this.center, "center", "center");
+    obj.setCoords();
   }
   /**
    * Supprime un objet du canvas
@@ -991,44 +3428,63 @@ var LayerManager = class {
     objects.forEach((obj) => this.canvas.remove(obj));
   }
   /**
-   * Monte l'objet d'un niveau (vers l'avant)
+   * Monte l'objet (ou les objets) devant le premier objet de même niveau qui le
+   * chevauche. Un container emmène ses descendants (toujours au-dessus de lui) ; un enfant
+   * reste parmi les enfants de son container ; des objets montés ensemble ne se doublent pas.
    */
   bringForward(obj) {
-    this.canvas.bringObjectForward(obj, true);
-    this.canvas.renderAll();
+    const moved = Array.isArray(obj) ? obj : [obj];
+    const order = bringBlocksForward(this.canvas.getObjects(), moved, (a, b) => a.isOverlapping(b));
+    if (order) this.applyStackOrder(order);
   }
   /**
-   * Descend l'objet d'un niveau (vers l'arrière)
-   * Ne peut pas descendre en dessous de l'image de fond
+   * Descend l'objet (ou les objets) d'un niveau, mêmes règles de blocs que bringForward.
+   * Ne peut pas descendre en dessous de l'image de fond.
    */
   sendBackward(obj) {
-    const index = this.canvas._objects.indexOf(obj);
-    if (index > 1) {
-      this.canvas.sendObjectBackwards(obj);
-      this.canvas.renderAll();
-    }
+    const moved = Array.isArray(obj) ? obj : [obj];
+    const order = sendBlocksBackward(this.canvas.getObjects(), moved);
+    if (order) this.applyStackOrder(order);
+  }
+  applyStackOrder(order) {
+    order.forEach((obj, index) => this.canvas.moveObjectTo(obj, index));
+    this.canvas.renderAll();
   }
   /**
    * Crée et ajoute un calque texte
    */
-  addText(options = {}) {
+  /**
+   * Crée un calque texte sans l'ajouter au canvas.
+   * Source unique des défauts texte — utilisé par addText et par le
+   * drag externe (DropHandler).
+   */
+  createText(options = {}) {
     const {
       text = "Tapez votre texte ici",
       left = 100,
       top = 100,
-      fontFamily = "InterRegular",
+      fontFamily = "Inter",
       fontSize = 32,
+      fontWeight = "normal",
       fill = "#000000",
-      layerId = this.generateId()
+      layerId = this.generateId(),
+      placeholder = false
     } = options;
     const textObj = new CustomTextbox(text, {
       left,
       top,
       fontFamily,
       fontSize,
+      fontWeight,
       fill
     });
     textObj.set("layerId", layerId);
+    if (placeholder) textObj.placeholder = true;
+    return textObj;
+  }
+  addText(options = {}) {
+    const textObj = this.createText(options);
+    this.centerUnplaced(textObj, options);
     this.add(textObj);
     return textObj;
   }
@@ -1036,13 +3492,12 @@ var LayerManager = class {
    * Crée et ajoute un calque image dans un ImageFrame
    */
   async addImage(url, options = {}) {
-    const { left = 100, top = 100, layerId = this.generateId() } = options;
-    const img = await FabricImage4.fromURL(url, { crossOrigin: "anonymous" });
-    let frameScale = 1;
-    if (img.width > 300 || img.height > 300) {
-      frameScale = Math.min(300 / img.width, 300 / img.height);
-    }
-    const frame = new ImageFrame(img, { left, top, layerId, frameScale });
+    const center = this.center;
+    const { left = center.x, top = center.y, layerId = this.generateId(), imageMeta } = options;
+    const img = await FabricImage5.fromURL(url, { crossOrigin: "anonymous" });
+    const box = this.newLayerBox;
+    const frameScale = Math.min(box.w / img.width, box.h / img.height);
+    const frame = new ImageFrame(img, { left, top, layerId, frameScale, imageMeta });
     this.add(frame);
     return frame;
   }
@@ -1061,21 +3516,58 @@ var LayerManager = class {
    * Supporte à la fois ImageFrame et FabricImage legacy
    *
    * @param options.opacity - Opacité à appliquer (utile si target.opacity est temporairement modifiée)
+   * @param options.imageMeta - Les clés de la nouvelle source (une forme-image seulement)
+   * @param options.select - Sélectionner l'image remplacée (défaut)
+   *
+   * C'est un geste d'auteur : « cette image-ci, ici ». Un cadre dont la source était liée
+   * (imageSlots) se délie — sinon la liaison reprendrait la main au prochain affichage, et à
+   * l'expansion. L'hôte qui pose une image liée relie après (son binding), et montre la valeur
+   * d'une liaison par showImageValue, jamais par ici.
    */
   async replaceImageSource(target, newUrl, options) {
-    const layerType = target.layerType;
-    if (layerType === "imageFrame" || target instanceof ImageFrame) {
+    if (kindOf(target) === "imageShape") {
       const frame = target;
-      const newImg = await FabricImage4.fromURL(newUrl, { crossOrigin: "anonymous" });
-      await frame.replaceImage(newImg);
+      const newImg = await FabricImage5.fromURL(newUrl, { crossOrigin: "anonymous" });
+      frame.replaceImage(newImg, options?.imageMeta);
+      this._reflowContained(frame);
+      if (imageSlotBinding(frame)) {
+        const { [IMAGE_SLOT_FIELD]: _unbound, ...bindings } = frame.get("bindings") ?? {};
+        frame.set("bindings", bindings);
+      }
       if (options?.opacity !== void 0) {
         frame.opacity = options.opacity;
       }
-      this.canvas.setActiveObject(frame);
+      if (frame.selectable !== false && options?.select !== false) this.canvas.setActiveObject(frame);
       this.canvas.renderAll();
       return frame;
     }
     return this._replaceImageSourceLegacy(target, newUrl, options);
+  }
+  /**
+   * Montre dans une forme-image la VALEUR de sa source liée (imageSlots) pour le lecteur du
+   * moment — ou, sans valeur (`null`), la vide : le cadre se dessine alors en emplacement.
+   * Affichage seul : rien n'entre dans le document (le cadre reste en attente, sauvé sans
+   * `src`), la sélection ne bouge pas. Sans effet sur ce qui n'est pas une forme-image.
+   */
+  async showImageValue(target, url) {
+    if (kindOf(target) !== "imageShape") return;
+    const frame = target;
+    this.valueRequests.set(frame, url);
+    if (!url) {
+      if (frame.displayedSrc) frame.clearSource();
+    } else if (url === frame.displayedSrc) {
+      if (!frame.pending) frame.showValue();
+    } else {
+      const image = await FabricImage5.fromURL(url, { crossOrigin: "anonymous" });
+      if (this.valueRequests.get(frame) !== url || !imageSlotBinding(target)) return;
+      frame.showValue(image);
+    }
+    this._reflowContained(frame);
+    this.canvas.requestRenderAll();
+  }
+  /** Un cadre en contain change de taille avec son image : ses containers s'y refont. */
+  _reflowContained(frame) {
+    if (frame.fit === "contain") relayoutAncestors(frame, this.canvas.getObjects());
   }
   /**
    * Remplace la source d'une image legacy (FabricImage sans frame)
@@ -1092,31 +3584,31 @@ var LayerManager = class {
       layerType: target.get("layerType")
     };
     const lockMode = getLockMode(target);
-    const newImg = await FabricImage4.fromURL(newUrl, { crossOrigin: "anonymous" });
+    const newImg = await FabricImage5.fromURL(newUrl, { crossOrigin: "anonymous" });
     const oldWidth = target.width * target.scaleX;
     const oldHeight = target.height * target.scaleY;
-    const coverScale = Math.max(oldWidth / newImg.width, oldHeight / newImg.height);
+    const coverScale2 = Math.max(oldWidth / newImg.width, oldHeight / newImg.height);
     let adjustedClipPath = target.clipPath;
     if (target.clipPath) {
       adjustedClipPath = await target.clipPath.clone();
-      const clipScaleX = (adjustedClipPath.scaleX || 1) * (target.scaleX / coverScale);
-      const clipScaleY = (adjustedClipPath.scaleY || 1) * (target.scaleY / coverScale);
+      const clipScaleX = (adjustedClipPath.scaleX || 1) * (target.scaleX / coverScale2);
+      const clipScaleY = (adjustedClipPath.scaleY || 1) * (target.scaleY / coverScale2);
       adjustedClipPath.set({ scaleX: clipScaleX, scaleY: clipScaleY });
     }
     newImg.set({
       ...props,
-      scaleX: coverScale,
-      scaleY: coverScale,
+      scaleX: coverScale2,
+      scaleY: coverScale2,
       clipPath: adjustedClipPath,
       originX: "center",
       originY: "center",
       left: oldCenter.x,
       top: oldCenter.y
     });
-    const index = this.canvas._objects.indexOf(target);
+    const index = this.canvas.getObjects().indexOf(target);
     this.canvas.remove(target);
     this.canvas.add(newImg);
-    if (index >= 0 && index < this.canvas._objects.length) {
+    if (index >= 0 && index < this.canvas.getObjects().length) {
       this.canvas.moveObjectTo(newImg, index);
     }
     if (lockMode !== "free") {
@@ -1131,55 +3623,142 @@ var LayerManager = class {
    * La forme sert de masque : l'image épouse ses dimensions et son clipShape.
    * L'ImageFrame est inséré au même z-index que la forme d'origine.
    */
-  async replaceShapeWithImage(shape, imageUrl) {
-    const shapeId = shape.id || "";
-    const clipShape = isValidShape(shapeId) ? shapeId : "rect";
-    const displayedWidth = shape.width * (shape.scaleX || 1);
-    const displayedHeight = shape.height * (shape.scaleY || 1);
-    const center = shape.getCenterPoint();
-    const zIndex = this.canvas._objects.indexOf(shape);
-    const img = await FabricImage4.fromURL(imageUrl, { crossOrigin: "anonymous" });
+  async replaceShapeWithImage(shape, imageUrl, imageMeta) {
+    const { clipShape, clipData, cornerRadius } = clipOfShape(shape);
+    const { w: displayedWidth, h: displayedHeight } = scaledSize(shape);
+    const center = shape.getRelativeCenterPoint();
+    const img = await FabricImage5.fromURL(imageUrl, { crossOrigin: "anonymous" });
     const frame = new ImageFrame(img, {
       left: center.x,
       top: center.y,
       angle: shape.angle,
       layerId: shape.layerId || this.generateId(),
       clipShape,
+      clipData,
+      imageMeta,
       frameWidth: displayedWidth,
-      frameHeight: displayedHeight
+      frameHeight: displayedHeight,
+      cornerRadius
     });
-    this.canvas.remove(shape);
-    this.canvas.add(frame);
-    if (zIndex >= 0 && zIndex < this.canvas._objects.length) {
-      this.canvas.moveObjectTo(frame, zIndex);
-    }
-    this.canvas.setActiveObject(frame);
-    this.canvas.renderAll();
+    const bindings = resolveUserSlot(shape.get("bindings"));
+    if (bindings) frame.set("bindings", bindings);
+    this.takeOver(shape, frame);
     return frame;
+  }
+  /**
+   * Demande l'image à l'utilisateur final (userSlots) : le calque devient une forme liée à
+   * une image à fournir, avec sa consigne. Une forme le reste ; une forme-image redevient la
+   * forme de sa découpe, aux mêmes dimensions — son image est abandonnée (pas d'exemple :
+   * le damier dit « à fournir »), ses autres bindings la suivent.
+   *
+   * Rend la forme, ou null si le calque ne peut pas recevoir d'image (texte, groupe de paths).
+   */
+  requestUserImage(obj, hint = "") {
+    const bindings = {
+      ...obj.get("bindings") || {},
+      [USER_SLOT_FIELD]: { scope: USER_SCOPE, hint }
+    };
+    if (obj instanceof ImageFrame) {
+      const shape = shapeOfFrame(obj);
+      shape.set({
+        layerId: obj.get("layerId") || this.generateId(),
+        layerType: "shape",
+        angle: obj.angle,
+        bindings
+      });
+      shape.setPositionByOrigin(obj.getRelativeCenterPoint(), "center", "center");
+      this.takeOver(obj, shape);
+      return shape;
+    }
+    if (rulesOf(obj, { ignoreLock: true }).onToolboxImage !== "fill") return null;
+    obj.set({ bindings });
+    this.canvas.requestRenderAll();
+    return obj;
+  }
+  /**
+   * Donne un texte à personnaliser à l'utilisateur final (userTexts), ou le reprend
+   * (`requested: false`) : le texte du calque devient — ou cesse d'être — l'exemple. Un texte
+   * lié à une expression cesse de l'être. Son verrou est réappliqué : un texte à personnaliser
+   * s'édite même verrouillé.
+   *
+   * Rend le texte, ou null si le calque n'en est pas un.
+   */
+  setUserText(obj, requested = true) {
+    if (!isTextObject(obj)) return null;
+    const bindings = obj.get("bindings");
+    obj.set({ bindings: requested ? requestUserText(bindings) : releaseUserText(bindings) });
+    applyLockMode(obj, getLockMode(obj));
+    this.canvas.requestRenderAll();
+    return obj;
+  }
+  /**
+   * Un calque en remplace un autre à sa place : son layout (container, enfant) et son
+   * verrouillage — sinon ses enfants restent orphelins, ou il sort de son container — et
+   * son rang dans la pile (sous ses enfants).
+   */
+  takeOver(previous, next) {
+    const layout = layoutOf(previous);
+    if (layout) next.set("layout", JSON.parse(JSON.stringify(layout)));
+    const lockMode = getLockMode(previous);
+    if (lockMode !== "free") applyLockMode(next, lockMode);
+    const zIndex = this.canvas.getObjects().indexOf(previous);
+    this.canvas.remove(previous);
+    this.canvas.add(next);
+    if (zIndex >= 0 && zIndex < this.canvas.getObjects().length) {
+      this.canvas.moveObjectTo(next, zIndex);
+    }
+    this.canvas.setActiveObject(next);
+    this.canvas.renderAll();
   }
   /**
    * Crée et ajoute un calque forme (rectangle par défaut)
    */
-  addShape(options = {}) {
+  /**
+   * Crée un calque forme sans l'ajouter au canvas.
+   * Source unique des défauts forme — utilisé par addShape et par le
+   * drag externe (DropHandler).
+   */
+  createShape(options = {}) {
     const {
       left = 100,
       top = 100,
-      width = 300,
-      height = 300,
-      fill = "#ffffff",
+      fill = DEFAULT_SHAPE_FILL,
+      stroke,
       shapeType = "rect",
       layerId = this.generateId()
     } = options;
-    const shape = createShape(shapeType, { fill, left, top, width, height, radius: Math.min(width, height) / 2 });
+    const common = { fill, stroke, left, top, width: options.width, height: options.height };
+    const shape = options.paths?.length ? createPathsShape(options.paths, { id: shapeType, ...common }) : createShape(shapeType, common);
     shape.set({ layerId, layerType: "shape" });
+    if (options.width == null && options.height == null) this.fitNewLayerBox(shape);
+    return shape;
+  }
+  /** Crée un cadre à fournir (un rect lié, cf. userSlots) sans l'ajouter au canvas. */
+  createUserSlot(options = {}) {
+    const { hint = "", ...shapeOptions2 } = options;
+    const shape = this.createShape({ fill: "#ffffff", ...shapeOptions2, shapeType: "rect" });
+    shape.set({ bindings: { [USER_SLOT_FIELD]: { scope: USER_SCOPE, hint } } });
+    return shape;
+  }
+  addUserSlot(options = {}) {
+    const shape = this.createUserSlot(options);
+    this.centerUnplaced(shape, options);
+    this.add(shape);
+    return shape;
+  }
+  addShape(options = {}) {
+    const shape = this.createShape(options);
+    this.centerUnplaced(shape, options);
     this.add(shape);
     return shape;
   }
   /**
-   * Groupe plusieurs objets ensemble
+   * @legacy Fusionne des objets dans un `fabric.Group` (éditeur SAFTI legacy, « fusionner
+   * les calques »). Pour grouper dans l'éditeur : `FabricEditor.groupSelection` (un groupe
+   * libre, ses objets restent des calques).
    */
   groupObjects(objects) {
-    const group = new Group2(objects);
+    const group = new Group5(objects);
     objects.forEach((obj) => this.canvas.remove(obj));
     this.canvas.add(group);
     this.canvas.setActiveObject(group);
@@ -1191,7 +3770,7 @@ var LayerManager = class {
    * Inclut les propriétés custom : layerId, lockMode, lockContent
    */
   serialize() {
-    return this.all.map((obj) => obj.toObject(["layerId", "lockMode", "lockContent"]));
+    return this.all.map((obj) => obj.toObject([...LAYER_PROPS]));
   }
   /**
    * Désérialise un calque depuis ses données JSON
@@ -1201,7 +3780,9 @@ var LayerManager = class {
     let obj = null;
     switch (layer.type) {
       case "IText":
-      case "i-text": {
+      case "i-text":
+      case "Textbox":
+      case "textbox": {
         const text = await CustomTextbox.fromObject(layer);
         text.charSpacing = text.charSpacing || 1;
         obj = text;
@@ -1214,7 +3795,7 @@ var LayerManager = class {
       }
       case "Image":
       case "image": {
-        const img = await FabricImage4.fromObject({
+        const img = await FabricImage5.fromObject({
           ...layer,
           crossOrigin: "anonymous"
         });
@@ -1228,26 +3809,34 @@ var LayerManager = class {
       }
       case "Group":
       case "group":
-        obj = await Group2.fromObject(layer);
+        obj = await FabGroup.fromObject(layer);
         break;
       case "Rect":
       case "rect":
-        obj = await Rect3.fromObject(layer);
+        obj = await FabRect.fromObject(layer);
         break;
       case "Path":
       case "path":
-        obj = await Path2.fromObject(layer);
+        obj = await FabPath.fromObject(layer);
         break;
       case "Circle":
       case "circle":
-        obj = await Circle2.fromObject(layer);
+        obj = await FabCircle.fromObject(layer);
         break;
       default:
         console.warn(`Type de calque inconnu: ${layer.type}`);
         return null;
     }
+    const migrated = obj && migrateLegacyLayout(layoutOf(obj));
+    if (obj && migrated) obj.set("layout", migrated);
+    if (obj) restoreBindings(obj, layer);
     if (obj && layer.lockMode) {
-      applyLockMode(obj, layer.lockMode);
+      const mode = layer.lockMode;
+      if ("applyLockMode" in obj && typeof obj.applyLockMode === "function") {
+        obj.applyLockMode(mode);
+      } else {
+        applyLockMode(obj, mode);
+      }
     }
     return obj;
   }
@@ -1270,7 +3859,7 @@ var LayerManager = class {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   detectLegacyClipShape(clipPath) {
     if (!clipPath) return void 0;
-    if (clipPath.id && ["rounded", "circle", "heart", "hexagon"].includes(clipPath.id)) {
+    if (clipPath.id && isValidShape(clipPath.id)) {
       return clipPath.id;
     }
     const type = clipPath.type?.toLowerCase();
@@ -1278,9 +3867,6 @@ var LayerManager = class {
       return "circle";
     }
     if (type === "rect") {
-      if (clipPath.rx || clipPath.ry) {
-        return "rounded";
-      }
       return "rect";
     }
     if (type === "path") {
@@ -1316,6 +3902,35 @@ var LayerManager = class {
     return "heart";
   }
 };
+function shapeOfFrame(frame) {
+  const { w, h } = scaledSize(frame);
+  const fill = "#ffffff";
+  const strokeWidth = 0;
+  const clipShape = frame.clipShape || "rect";
+  if (clipShape === "circle") {
+    const circle = new FabCircle({ radius: Math.min(w, h) / 2, fill, strokeWidth });
+    circle.setSize(w, h);
+    return circle;
+  }
+  const clipData = clipShape === "rect" ? void 0 : frame.clipData ?? clipDataFor(clipShape);
+  if (clipData) return FabPath.fromPathData({ d: clipData.d }, { id: clipShape, fill, strokeWidth, width: w, height: h });
+  return new FabRect({ width: w, height: h, rx: frame.cornerRadius, ry: frame.cornerRadius, fill, strokeWidth });
+}
+function clipOfShape(shape) {
+  if (shape instanceof FabRect) return { clipShape: "rect", cornerRadius: shape.getCornerRadius() };
+  if (shape instanceof FabCircle) return { clipShape: "circle", cornerRadius: 0 };
+  if (shape instanceof FabPath) {
+    const id = shape.id;
+    const clipData = {
+      d: util7.joinPath(shape.path),
+      width: shape.width,
+      height: shape.height,
+      ...shape.fillRule === "evenodd" ? { fillRule: "evenodd" } : {}
+    };
+    return { clipShape: id && isValidShape(id) ? id : id || "custom", clipData, cornerRadius: 0 };
+  }
+  return { clipShape: "rect", cornerRadius: 0 };
+}
 
 // src/PersistenceManager.ts
 var PersistenceManager = class {
@@ -1369,15 +3984,7 @@ var PersistenceManager = class {
    * Rasterise le canvas en image base64
    */
   async rasterize() {
-    const currentZoom = this.canvas.getZoom();
-    this.canvas.setZoom(1);
-    const dataUrl = this.canvas.toDataURL({
-      format: "png",
-      quality: 1,
-      multiplier: 1
-    });
-    this.canvas.setZoom(currentZoom);
-    return dataUrl;
+    return this.canvas.toFrameDataURL({ format: "png", quality: 1, multiplier: 1 });
   }
   /**
    * Compacte le canvas autour des calques (pour le mode standalone)
@@ -1597,9 +4204,11 @@ var _NodeEditor = class _NodeEditor {
    * Initialise l'éditeur avec une image de fond et des calques optionnels
    */
   async initialize(backgroundImageUrl, layers = []) {
+    await initYoga();
     await this.layers.loadBackgroundImage(backgroundImageUrl);
     if (layers.length > 0) {
       await this.layers.loadLayers(layers);
+      runLayout(this.canvas.getObjects());
     }
     this.canvas.renderAll();
     this.history.initialize();

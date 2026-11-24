@@ -1,46 +1,41 @@
 import type { ShapeType } from "../types";
-import { HEART_PATH, HEXAGON_PATH } from "../shapes/paths";
+import { getCatalogShape, isMonoPath, type ClipData } from "../shapes/registry";
 
 /**
- * Génère le CSS clip-path pour une forme simple (circle, rounded)
+ * Génère le CSS clip-path pour une forme simple (circle, rect with cornerRadius)
  * Pour heart/hexagon, retourne undefined car ils nécessitent un SVG inline
  * @param shapeType Le type de forme
  * @param width Largeur de l'élément
  * @param height Hauteur de l'élément
+ * @param cornerRadius Rayon des coins en pixels (uniquement pour "rect")
  * @returns La valeur CSS clip-path ou undefined
  */
 export function getClipPathCss(
   shapeType: ShapeType | undefined,
   width?: number,
-  height?: number
+  height?: number,
+  cornerRadius?: number,
 ): string | undefined {
-  if (!shapeType || shapeType === "rect") {
-    return undefined;
-  }
+  if (!shapeType) return undefined;
 
   const w = width ?? 100;
   const h = height ?? 100;
   const minSize = Math.min(w, h);
 
   switch (shapeType) {
+    case "rect": {
+      if (!cornerRadius) return undefined;
+      const r = Math.min(cornerRadius, minSize / 2);
+      return `inset(0 round ${r}px)`;
+    }
+
     case "circle": {
-      // Cercle basé sur minSize, centré
       const radius = minSize / 2;
       return `circle(${radius}px at ${w / 2}px ${h / 2}px)`;
     }
 
-    case "rounded": {
-      // 15% du côté le plus petit, comme dans Fabric
-      const radius = minSize * 0.15;
-      return `inset(0 round ${radius}px)`;
-    }
-
-    case "heart":
-    case "hexagon":
-      // Ces formes nécessitent un SVG inline, géré par getInlineSvgClip
-      return undefined;
-
     default:
+      // Path shapes (heart, hexagon, etc.) use SVG inline via getInlineSvgClip
       return undefined;
   }
 }
@@ -50,33 +45,32 @@ export function getClipPathCss(
  */
 interface SvgPathInfo {
   path: string;
-  // Dimensions du path original (bounding box)
+  /** La règle du path : une découpe evenodd garde ses trous (clip-rule en SVG). */
+  fillRule?: "evenodd";
+  /** Actual width of the path within the 100x100 box. */
   width: number;
+  /** Actual height of the path within the 100x100 box. */
   height: number;
-  // Centre du path (pour le positionnement)
+  /** Center is always 50,50 (paths are centered in the box). */
   centerX: number;
   centerY: number;
 }
 
-const SVG_PATH_INFO: Record<string, SvgPathInfo> = {
-  heart: {
-    path: HEART_PATH,
-    // Dans Fabric: scaleX = minSize / 28, donc la taille de référence est 28
-    // Le path est carré (28x28) pour le scaling
-    width: 28,
-    height: 28,
-    centerX: 0,
-    centerY: -0.5, // (13 + -14) / 2 = -0.5
-  },
-  hexagon: {
-    path: HEXAGON_PATH,
-    // Dans Fabric: scaleX = minSize / 48, donc la taille de référence est 48
-    width: 48,
-    height: 48,
-    centerX: 0,
-    centerY: 0,
-  },
-};
+/**
+ * Résolution paresseuse : le registre est injecté à l'init (registerShapes), une
+ * map construite au chargement du module serait toujours vide. clipData inliné
+ * (nouveaux documents) prime sur le registre (stock legacy par id).
+ */
+function svgPathInfo(shapeType: ShapeType, clipData?: ClipData): SvgPathInfo | undefined {
+  if (clipData) {
+    return { path: clipData.d, fillRule: clipData.fillRule, width: clipData.width, height: clipData.height, centerX: 50, centerY: 50 };
+  }
+  const shape = getCatalogShape(shapeType);
+  if (!shape || !isMonoPath(shape)) return undefined;
+
+  const path = shape.paths[0];
+  return { path: path.d, fillRule: path.fillRule, width: shape.width, height: shape.height, centerX: 50, centerY: 50 };
+}
 
 /**
  * Génère un SVG inline pour le clip-path de formes complexes (heart, hexagon)
@@ -93,9 +87,10 @@ export function getInlineSvgClip(
   shapeType: ShapeType,
   frameWidth: number,
   frameHeight: number,
-  clipId: string
+  clipId: string,
+  clipData?: ClipData,
 ): string | undefined {
-  const pathInfo = SVG_PATH_INFO[shapeType];
+  const pathInfo = svgPathInfo(shapeType, clipData);
   if (!pathInfo) return undefined;
 
   // Scale uniforme pour "contain" le path dans le frame (comme object-fit: contain)
@@ -118,7 +113,7 @@ export function getInlineSvgClip(
   return `<svg width="${frameWidth}" height="${frameHeight}" style="position: absolute; top: 0; left: 0; pointer-events: none;">
   <defs>
     <clipPath id="${clipId}">
-      <path d="${pathInfo.path}" transform="${transform}" />
+      <path d="${pathInfo.path}" transform="${transform}"${pathInfo.fillRule ? ` clip-rule="${pathInfo.fillRule}"` : ""} />
     </clipPath>
   </defs>
 </svg>`;

@@ -37,6 +37,7 @@ export function pathToHtml(layer: PathLayerData, zIndex: number): HtmlLayerOutpu
     fill = "transparent",
     stroke,
     strokeWidth = 1,
+    fillRule,
     originX = "center",
     originY = "center",
     pathCenterY = 0,
@@ -74,7 +75,7 @@ export function pathToHtml(layer: PathLayerData, zIndex: number): HtmlLayerOutpu
 
   const html = `<div style="${stylesToString(containerStyles)}">
   <svg width="${width}" height="${height}" viewBox="${-halfWidth} ${-halfHeight + pathCenterY} ${width} ${height}" xmlns="http://www.w3.org/2000/svg">
-    <path d="${pathString}" fill="${fill || "none"}" stroke="${stroke || "none"}" stroke-width="${strokeWidth}" />
+    <path d="${pathString}" fill="${fill || "none"}"${fillRule === "evenodd" ? ' fill-rule="evenodd"' : ""} stroke="${stroke || "none"}" stroke-width="${strokeWidth}" />
   </svg>
 </div>`;
 

@@ -1,22 +1,12 @@
-import { ActiveSelection, type Canvas, type FabricObject } from "#fabric";
+import { ActiveSelection, Point, type FabricObject } from "#fabric";
+import type { DesignCanvas } from "./DesignCanvas";
 import { isPositionLocked } from "./locking";
-import type { SelectionCallbacks, ControlOption } from "./types";
 
-/**
- * Configuration des contrôles disponibles par type d'objet
- */
-const OBJECT_CONTROLS: Record<string, ControlOption[]> = {
-  // Formes créées par l'éditeur (layerType: "shape")
-  shape: ["outline", "clip", "color"],
-  // Types Fabric.js natifs (fallback)
-  rect: ["outline", "clip", "color"],
-  circle: ["outline", "clip", "color"],
-  path: ["outline", "clip", "color"],
-  image: ["clip"],
-  imageframe: ["clip"], // ImageFrame : permet de changer la forme du clip
-  group: [],
-  "i-text": ["color", "font"],
-};
+import type { SelectionCallbacks, ControlOption } from "./types";
+import { rulesOf } from "./capabilities";
+import { ancestorsOf, findById, parentOf, stackParentOf } from "./layout/hierarchy";
+import { idOf, parentIdOf, containerDataOf } from "./layout/model";
+import { isTextObject } from "./layout/text";
 
 /**
  * Gère la sélection des objets sur le canvas
@@ -27,8 +17,24 @@ export class SelectionManager {
   private isTransforming = false;
   private _silenced = false;
 
-  constructor(private canvas: Canvas) {
+  /**
+   * When set, we are "inside" this container: hover and click target
+   * children directly instead of redirecting to the container.
+   */
+  private _enteredId: string | null = null;
+
+  constructor(private canvas: DesignCanvas) {
     this.setupListeners();
+  }
+
+  /** The layerId of the container we're currently editing inside, or null. */
+  get enteredContainerId(): string | null {
+    return this._enteredId;
+  }
+
+  /** @deprecated Use `enteredContainerId` (any container can be entered, not only a group). */
+  get activeGroupId(): string | null {
+    return this._enteredId;
   }
 
   /**
@@ -79,6 +85,13 @@ export class SelectionManager {
   }
 
   /**
+   * Définit le callback onSelectMany
+   */
+  set onSelectMany(callback: ((objects: FabricObject[]) => void) | undefined) {
+    this.callbacks.onSelectMany = callback;
+  }
+
+  /**
    * Définit le callback onDeselect
    */
   set onDeselect(callback: (() => void) | undefined) {
@@ -100,16 +113,30 @@ export class SelectionManager {
   }
 
   /**
+   * Given a Fabric target (the object under the cursor), return the object
+   * that should actually be hovered / selected / dragged: a layout child
+   * outside the entered container resolves to its container, up the chain (a
+   * grandchild resolves to the outermost container that isn't the active
+   * entered container's child).
+   */
+  resolveTarget(obj: FabricObject): FabricObject {
+    let current = obj;
+    for (;;) {
+      const parentId = parentIdOf(current);
+      // Not a child, or inside the entered container → this is the target
+      if (!parentId || parentId === this._enteredId) return current;
+      const parent = parentOf(current, this.canvas.getObjects());
+      if (!parent) return current;
+      current = parent;
+    }
+  }
+
+  /**
    * Retourne les contrôles disponibles pour l'objet sélectionné
    */
   getAvailableControls(): ControlOption[] {
     const obj = this.current;
-    if (!obj) return [];
-
-    // Utiliser layerType en priorité (pour ImageFrame), sinon type Fabric.js
-    const layerType = (obj as { layerType?: string }).layerType;
-    const type = (layerType || obj.type || "").toLowerCase();
-    return OBJECT_CONTROLS[type] || [];
+    return obj ? rulesOf(obj).options : [];
   }
 
   /**
@@ -155,35 +182,168 @@ export class SelectionManager {
   }
 
   /**
-   * Sélectionne un objet par son layerId
+   * Sélectionne un objet par son layerId — depuis l'extérieur du canvas (la piste Calques
+   * d'une vidéo, un panneau). Un enfant de container est sélectionné LUI, pas son container :
+   * on entre dans le container comme un double-clic, sinon resolveTarget remonterait la
+   * sélection d'un cran.
    */
   selectByLayerId(layerId: string): boolean {
-    const obj = this.canvas.getObjects().find(
-      (o) => o.get("layerId") === layerId,
-    );
+    const obj = findById(this.canvas.getObjects(), layerId);
     if (!obj) return false;
+    this._enteredId = parentIdOf(obj) ?? null;
     this.select(obj);
     return true;
+  }
+
+  /**
+   * Sélectionne plusieurs objets (normalisés comme une sélection à la souris). Un seul
+   * objet retenu : sélection simple ; aucun : rien n'est sélectionné.
+   */
+  selectMany(objects: FabricObject[]): void {
+    const kept = this.normalizeMany(objects);
+    if (kept.length === 0) this.clear();
+    else if (kept.length === 1) this.select(kept[0]);
+    else {
+      this.canvas.setActiveObject(new ActiveSelection(kept, { canvas: this.canvas.originalFabricCanvas }));
+      this.canvas.renderAll();
+    }
+  }
+
+  /**
+   * Travaille sur les objets sélectionnés hors de la sélection de Fabric — dedans, leurs
+   * positions sont relatives à elle — puis les resélectionne, dans le même container entré. L'hôte
+   * n'entend que la resélection : la barre se replace sur la nouvelle boîte.
+   */
+  withSelectionReleased(fn: (objects: FabricObject[]) => void): void {
+    const objects = this.selected;
+    const enteredId = this._enteredId;
+
+    const silenced = this._silenced;
+    this._silenced = true;
+    this.canvas.discardActiveObject();
+    this._silenced = silenced;
+    this._enteredId = enteredId;
+
+    fn(objects);
+    this.selectMany(objects);
   }
 
   /**
    * Configure les écouteurs d'événements du canvas
    */
   private setupListeners(): void {
+    this.redirectTargetSearch();
+    this.canvas.on("mouse:down:before", this.handleMouseDownBefore.bind(this));
+    this.canvas.on("mouse:down", this.handleMouseDown.bind(this));
+    this.canvas.on("mouse:up", this.handleMouseUp.bind(this));
+    this.canvas.on("mouse:dblclick", this.handleDoubleClick.bind(this));
     this.canvas.on("selection:created", this.handleSelection.bind(this));
     this.canvas.on("selection:updated", this.handleSelection.bind(this));
     this.canvas.on("selection:cleared", this.handleDeselection.bind(this));
     this.canvas.on("object:moving", this.handleTransformStart.bind(this));
-    this.canvas.on("object:scaling", this.handleTransformStart.bind(this));
+    this.canvas.on("object:resizing", this.handleTransformStart.bind(this));
     this.canvas.on("object:rotating", this.handleTransformStart.bind(this));
     this.canvas.on("object:modified", this.handleModified.bind(this));
+  }
+
+  /**
+   * Fabric picks the target of a press (and of hover) in searchPossibleTargets:
+   * redirecting there — not after the selection — makes a press on a child
+   * outside its entered container a press on its container, so that a click + drag moves
+   * the container right away instead of grabbing the child.
+   */
+  private redirectTargetSearch(): void {
+    const fc = this.canvas.originalFabricCanvas as unknown as {
+      searchPossibleTargets(objects: FabricObject[], pointer: unknown): { target?: FabricObject; container?: FabricObject };
+    };
+    const search = fc.searchPossibleTargets.bind(fc);
+    fc.searchPossibleTargets = (objects, pointer) => {
+      const info = search(objects, pointer);
+      if (info.target) {
+        const resolved = this.resolveTarget(info.target);
+        if (resolved !== info.target) {
+          info.target = resolved;
+          info.container = resolved;
+        }
+      }
+      return info;
+    };
+  }
+
+  /** What was selected before this press — Fabric selects before firing mouse:down. */
+  private _selectedBeforePress: FabricObject | null = null;
+
+  private handleMouseDownBefore(): void {
+    this._selectedBeforePress = this.current;
+  }
+
+  /**
+   * Exit: a press outside the entered container (or on empty canvas) leaves it.
+   * Entering is decided on release (see handleMouseUp), so that a drag on a
+   * selected container still moves it.
+   */
+  private handleMouseDown(e: any): void {
+    if (!this._enteredId) return;
+
+    const target = e.target as FabricObject | undefined;
+    const isTheContainer = target?.get("layerId") === this._enteredId;
+    const isItsChild = parentIdOf(target) === this._enteredId;
+    if (!target || (!isTheContainer && !isItsChild)) this._enteredId = null;
+  }
+
+  /**
+   * Enter: a click (no drag) on a container that was already selected
+   * enters it and selects its child under the pointer.
+   */
+  private handleMouseUp(e: any): void {
+    const before = this._selectedBeforePress;
+    this._selectedBeforePress = null;
+    if (!e.isClick || !before || e.target !== before) return;
+    if (!containerDataOf(before)) return;
+
+    this.enterContainer(before, this.canvas.getScenePoint(e.e));
+  }
+
+  /** Enter `container` and select its topmost child under `point`. */
+  private enterContainer(container: FabricObject, point: { x: number; y: number }): void {
+    const id = idOf(container);
+    this._enteredId = id;
+
+    const child = this.canvas.getObjects().slice().reverse().find((o) =>
+      parentIdOf(o) === id &&
+      o.containsPoint(new Point(point.x, point.y)),
+    );
+    if (child) this.canvas.setActiveObject(child);
+    this.canvas.requestRenderAll();
+  }
+
+  /**
+   * Double-click on a text inside a container: its two clicks entered the
+   * container and selected the text (the press targeted the container, so
+   * Fabric's own double-click editing didn't run) — edit it now, word under
+   * the pointer selected, like Fabric does.
+   */
+  private handleDoubleClick(e: any): void {
+    const text = this.current as (FabricObject & {
+      isEditing?: boolean;
+      editable?: boolean;
+      enterEditing(e?: unknown): void;
+      getSelectionStartFromPointer(e: unknown): number;
+      selectWord(index: number): void;
+    }) | null;
+    if (!text || !isTextObject(text) || text.isEditing || text.editable === false) return;
+    if (parentIdOf(text) !== this._enteredId) return;
+
+    text.enterEditing(e.e);
+    text.selectWord(text.getSelectionStartFromPointer(e.e));
+    this.canvas.requestRenderAll();
   }
 
   /**
    * Gère la création/mise à jour de sélection
    * Les objets verrouillés sont exclus des sélections multiples
    */
-  private handleSelection(e: { selected?: FabricObject[] }): void {
+  private handleSelection(): void {
     if (this._silenced) return;
 
     const activeObject = this.canvas.getActiveObject();
@@ -191,52 +351,23 @@ export class SelectionManager {
     if (!activeObject) return;
 
     // Sélection multiple (activeSelection)
-    if (activeObject.type === "activeselection" && e.selected) {
-      // Filtrer les objets verrouillés de la sélection
-      const unlocked = e.selected.filter((obj) => !isPositionLocked(obj));
+    if (activeObject instanceof ActiveSelection) {
+      this.handleMultipleSelection(activeObject);
+      return;
+    }
 
-      // Si tous les objets sont verrouillés, annuler la sélection
-      if (unlocked.length === 0) {
-        this.canvas.discardActiveObject();
-        this._current = null;
-        if (this.callbacks.onDeselect) {
-          this.callbacks.onDeselect();
-        }
-        return;
-      }
-
-      // Si un seul objet non verrouillé, le sélectionner individuellement
-      if (unlocked.length === 1) {
-        this.canvas.discardActiveObject();
-        this.canvas.setActiveObject(unlocked[0]);
-        this._current = unlocked[0];
-        if (this.callbacks.onSelect) {
-          this.callbacks.onSelect(unlocked[0]);
-        }
-        return;
-      }
-
-      // Si des objets verrouillés ont été filtrés, recréer la sélection sans eux
-      if (unlocked.length < e.selected.length) {
-        this.canvas.discardActiveObject();
-        const newSelection = new ActiveSelection(unlocked, { canvas: this.canvas });
-        this.canvas.setActiveObject(newSelection);
-        this._current = unlocked;
-        if (this.callbacks.onSelect && unlocked[0]) {
-          this.callbacks.onSelect(unlocked[0]);
-        }
-        return;
-      }
-
-      // Sélection normale (aucun objet verrouillé)
-      this._current = e.selected;
-      if (this.callbacks.onSelect && e.selected[0]) {
-        this.callbacks.onSelect(e.selected[0]);
+    // Sélection simple — redirect child → container if not inside it
+    const resolved = this.resolveTarget(activeObject);
+    if (resolved !== activeObject) {
+      this.canvas.discardActiveObject();
+      this.canvas.setActiveObject(resolved);
+      this._current = resolved;
+      if (this.callbacks.onSelect) {
+        this.callbacks.onSelect(resolved);
       }
       return;
     }
 
-    // Sélection simple
     this._current = activeObject;
     if (this.callbacks.onSelect) {
       this.callbacks.onSelect(activeObject);
@@ -244,10 +375,66 @@ export class SelectionManager {
   }
 
   /**
+   * Une sélection multiple ne garde que des objets du niveau visé : chacun remonte à son
+   * container comme un clic (resolveTarget), un objet dont l'ancêtre est pris suit cet
+   * ancêtre, les verrouillés restent dehors. Si la sélection de Fabric n'est pas déjà
+   * celle-là, on la remplace — l'événement qui suit repasse ici, sélection conforme.
+   * Pas de poignées de taille ni de rotation : un redimensionnement ne s'empile jamais
+   * en `scale`, et la sélection n'a pas encore le sien (cf. groupes libres). Des enfants
+   * d'une pile ne se déplacent pas à plusieurs : leur place est celle que la pile leur
+   * donne (ceux d'un groupe, si).
+   */
+  private handleMultipleSelection(selection: ActiveSelection): void {
+    const members = selection.getObjects();
+    const kept = this.normalizeMany(members);
+
+    if (kept.length === 0) {
+      this.canvas.discardActiveObject();
+      this.canvas.requestRenderAll();
+      return;
+    }
+    if (kept.length === 1) {
+      this.canvas.setActiveObject(kept[0]);
+      this.canvas.requestRenderAll();
+      return;
+    }
+    if (kept.length !== members.length || kept.some((obj) => !members.includes(obj))) {
+      this.canvas.setActiveObject(new ActiveSelection(kept, { canvas: this.canvas.originalFabricCanvas }));
+      this.canvas.requestRenderAll();
+      return;
+    }
+
+    const pinned = kept.some((obj) => stackParentOf(obj));
+    selection.set({ hasControls: false, lockMovementX: pinned, lockMovementY: pinned });
+    this._current = kept;
+    if (this.callbacks.onSelectMany) this.callbacks.onSelectMany(kept);
+    else this.callbacks.onSelect?.(kept[0]);
+  }
+
+  /**
+   * Les objets d'une sélection multiple ramenés au niveau visé, dans l'ordre de la pile.
+   * Le container dans lequel on est entré n'en fait pas partie : c'est le cadre de la
+   * sélection, pas un de ses éléments.
+   */
+  normalizeMany(objects: FabricObject[]): FabricObject[] {
+    const picked = new Set<FabricObject>();
+    for (const obj of objects) {
+      const resolved = this.resolveTarget(obj);
+      if (this._enteredId && resolved.get("layerId") === this._enteredId) continue;
+      if (isPositionLocked(resolved)) continue;
+      picked.add(resolved);
+    }
+
+    const all = this.canvas.getObjects();
+    return all.filter((obj) => picked.has(obj) && !ancestorsOf(obj, all).some((a) => picked.has(a)));
+  }
+
+  /**
    * Gère la désélection
    */
   private handleDeselection(): void {
     this._current = null;
+    this._enteredId = null;
     if (this._silenced) return;
     if (this.callbacks.onDeselect) {
       this.callbacks.onDeselect();
@@ -272,9 +459,13 @@ export class SelectionManager {
    */
   private handleModified(e: { target?: FabricObject }): void {
     this.isTransforming = false;
-    if (this.callbacks.onModified) {
-      this.callbacks.onModified(e.target || null);
-    }
+    this.notifyModified(e.target || null);
+  }
+
+  /** Le canal « quelque chose a changé » : ce que l'hôte écoute après un geste — les
+   *  commandes de l'éditeur (coller, décaler, dupliquer) le préviennent par là aussi. */
+  notifyModified(target: FabricObject | null): void {
+    this.callbacks.onModified?.(target);
   }
 
   /**
@@ -285,7 +476,7 @@ export class SelectionManager {
     this.canvas.off("selection:updated");
     this.canvas.off("selection:cleared");
     this.canvas.off("object:moving");
-    this.canvas.off("object:scaling");
+    this.canvas.off("object:resizing");
     this.canvas.off("object:rotating");
     this.canvas.off("object:modified");
   }

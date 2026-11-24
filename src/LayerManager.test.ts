@@ -1,6 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { LayerManager } from "./LayerManager";
+import { LAYER_PROPS, LayerManager } from "./LayerManager";
 import type { Canvas, FabricObject } from "#fabric";
+import { FabRect } from "./shapes/FabRect";
+import { FabPath } from "./shapes/FabPath";
+import { FabCircle } from "./shapes/FabCircle";
+import { applyLockMode, getLockMode } from "./locking";
 
 // Mock du canvas Fabric
 function createMockCanvas() {
@@ -16,6 +20,11 @@ function createMockCanvas() {
       if (idx > -1) objects.splice(idx, 1);
     }),
     getObjects: vi.fn(() => canvas._objects),
+    moveObjectTo: vi.fn((obj: FabricObject, index: number) => {
+      const list = (canvas as any)._objects as FabricObject[];
+      list.splice(list.indexOf(obj), 1);
+      list.splice(index, 0, obj);
+    }),
     setActiveObject: vi.fn(),
     renderAll: vi.fn(),
     requestRenderAll: vi.fn(),
@@ -40,6 +49,7 @@ function createMockObject(layerId: string, type = "rect"): FabricObject {
     set: vi.fn(),
     toJSON: vi.fn(() => ({ type, layerId })),
     toObject: vi.fn(() => ({ type, layerId })),
+    isOverlapping: vi.fn(() => true),
   } as unknown as FabricObject;
 }
 
@@ -139,12 +149,14 @@ describe("LayerManager", () => {
   });
 
   describe("bringForward", () => {
-    it("déplace l'objet vers l'avant", () => {
-      const obj = createMockObject("layer_1");
+    it("déplace l'objet devant le suivant qui le chevauche", () => {
+      const layer1 = createMockObject("layer_1");
+      const layer2 = createMockObject("layer_2");
+      (canvas as any)._objects = [layer1, layer2];
 
-      manager.bringForward(obj);
+      manager.bringForward(layer1);
 
-      expect(canvas.bringObjectForward).toHaveBeenCalledWith(obj, true);
+      expect((canvas as any)._objects).toEqual([layer2, layer1]);
       expect(canvas.renderAll).toHaveBeenCalled();
     });
   });
@@ -159,7 +171,7 @@ describe("LayerManager", () => {
 
       manager.sendBackward(layer2);
 
-      expect(canvas.sendObjectBackwards).toHaveBeenCalledWith(layer2);
+      expect((canvas as any)._objects).toEqual([bg, layer2, layer1]);
       expect(canvas.renderAll).toHaveBeenCalled();
     });
 
@@ -171,7 +183,8 @@ describe("LayerManager", () => {
 
       manager.sendBackward(layer1);
 
-      expect(canvas.sendObjectBackwards).not.toHaveBeenCalled();
+      expect((canvas as any)._objects).toEqual([bg, layer1]);
+      expect(canvas.moveObjectTo).not.toHaveBeenCalled();
     });
   });
 
@@ -189,8 +202,54 @@ describe("LayerManager", () => {
       const result = manager.serialize();
 
       expect(result).toHaveLength(2);
-      expect(layer1.toObject).toHaveBeenCalledWith(["layerId", "lockMode", "lockContent"]);
-      expect(layer2.toObject).toHaveBeenCalledWith(["layerId", "lockMode", "lockContent"]);
+      expect(layer1.toObject).toHaveBeenCalledWith([...LAYER_PROPS]);
+      expect(layer2.toObject).toHaveBeenCalledWith([...LAYER_PROPS]);
+    });
+  });
+
+  describe("replaceShapeWithImage", () => {
+    // PNG 1×1 transparent : FabricImage.fromURL le charge sans réseau
+    const PIXEL = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
+
+    it("la forme-image reprend le layout, le verrouillage et les bindings de la forme", async () => {
+      const shape = new FabRect({ width: 100, height: 50 });
+      const layout = { sizing: { x: "hug", y: "hug" }, container: { gap: 4 }, child: { parentId: "p" } };
+      shape.set({ layerId: "s", layerType: "shape", layout, bindings: { src: { expr: "{{logo}}" } } } as any);
+      applyLockMode(shape as unknown as FabricObject, "position");
+      (canvas as any)._objects = [shape];
+
+      const frame = await manager.replaceShapeWithImage(shape as unknown as FabricObject, PIXEL);
+
+      expect(frame.get("layerId")).toBe("s");
+      expect(frame.get("layout")).toEqual(layout);
+      expect(frame.get("layout")).not.toBe(layout);
+      expect(getLockMode(frame as unknown as FabricObject)).toBe("position");
+      expect(frame.get("bindings")).toEqual({ src: { expr: "{{logo}}" } });
+    });
+  });
+
+  describe("replaceShapeWithImage — la forme-image reprend la forme", () => {
+    const PIXEL = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
+
+    it("un path absent du catalogue donne sa propre découpe, pas un rectangle", async () => {
+      const path = FabPath.fromPathData({ d: "M50 90 L10 40 A20 20 0 0 1 50 20 A20 20 0 0 1 90 40 Z" }, { id: "blob", width: 120, height: 120 });
+      path.set({ layerType: "shape", layerId: "p" } as any);
+      (canvas as any)._objects = [path];
+      const frame = await manager.replaceShapeWithImage(path as unknown as FabricObject, PIXEL);
+      expect(frame.clipPath?.type).toBe("path");
+      expect(frame.clipData?.d).toContain("M");
+    });
+
+    it("un rect garde son rayon, un cercle reste un cercle", async () => {
+      const rect = new FabRect({ width: 100, height: 50, rx: 12, ry: 12 });
+      rect.set({ layerType: "shape", layerId: "r" } as any);
+      const circle = new FabCircle({ radius: 40 });
+      circle.set({ layerType: "shape", layerId: "c" } as any);
+      (canvas as any)._objects = [rect, circle];
+      const r = await manager.replaceShapeWithImage(rect as unknown as FabricObject, PIXEL);
+      const c = await manager.replaceShapeWithImage(circle as unknown as FabricObject, PIXEL);
+      expect(r.cornerRadius).toBe(12);
+      expect(c.clipShape).toBe("circle");
     });
   });
 });

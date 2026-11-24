@@ -6,17 +6,28 @@ import {
   type TPointerEvent,
   type Transform,
   type Canvas,
+  type Point,
   LayoutManager,
   FixedLayout,
+  Shadow,
 } from "#fabric";
 import type { ShapeType, LockMode } from "./types";
 import {
   createCircle,
-  createHeart,
-  createHexagon,
-  createRoundedRect,
+  createRect,
+  getShapeCatalog,
 } from "./shapes/factories";
+import { FabPath } from "./shapes/FabPath";
+import { clipDataFor, type ClipData } from "./shapes/registry";
 import type { SnappingManager } from "./SnappingManager";
+import { checkerCanvas, transparentCanvas } from "./userSlots";
+import { blurredCanvas } from "./imageBlur";
+import type { BindingSpec } from "./bindings";
+import { drawImageSlot, imageSlotBinding, slotColorOf, slotKey, slotMark } from "./imageSlots";
+import {
+  NO_CROP, centerOffset, coverScale, cropFromCenterOffset, cropFromRect, isCropped, normalizeCrop, panCrop,
+  photoRect, zoomCrop, type Crop, type Rect as CropRect,
+} from "./crop";
 
 /** Interface pour accéder au SnappingManager depuis le canvas */
 interface CanvasWithSnapping extends Canvas {
@@ -30,17 +41,39 @@ export interface ImageFrameOptions {
   layerId?: string;
   lockMode?: LockMode;
   clipShape?: ShapeType;
+  /** Clip inliné (formes hors catalogue global — le document reste autoporteur). */
+  clipData?: ClipData;
+  /** Corner radius in pixels for "rect" clip shape (0 = sharp corners). */
+  cornerRadius?: number;
+  /** Le recadrage de l'image dans le cadre (cf. crop.ts) ; centrée, cover, sans. */
+  crop?: Partial<Crop>;
+  /** Cf. ImageFrameData.fit ; en contain, frameWidth/frameHeight sont la boîte. */
+  fit?: ImageFit;
+  /** @deprecated Documents d'avant : le décalage du centre de l'image en pixels de cadre. */
   imageOffsetX?: number;
   imageOffsetY?: number;
-  imageScale?: number;
   /** Scale initial du frame (pour limiter la taille à l'import) */
   frameScale?: number;
   /** Dimensions explicites du frame (prioritaires sur frameScale) */
   frameWidth?: number;
   frameHeight?: number;
+  /** Les clés de `image` que l'hôte pose à côté de `src` (apibots : `content_medium_id`).
+   *  Elles suivent la SOURCE : une image remplacée arrive avec les siennes, ou sans. */
+  imageMeta?: ImageMeta;
+  /** Cf. ImageFrameData.blur. */
+  blur?: number;
 }
 
+export type ImageMeta = Record<string, unknown>;
+
+/** Le cadre impose sa forme à l'image (cover), ou la prend d'elle (contain). */
+export type ImageFit = "cover" | "contain";
+
 export interface ImageFrameData {
+  originX?: "left" | "center" | "right";
+  originY?: "top" | "center" | "bottom";
+  stroke?: string;
+  strokeWidth?: number;
   type: "ImageFrame";
   left: number;
   top: number;
@@ -50,17 +83,73 @@ export interface ImageFrameData {
   frameWidth: number;
   frameHeight: number;
   clipShape?: ShapeType;
+  /**
+   * Le `d` du clip, inliné au save : les nouveaux documents ne dépendent plus du
+   * registre pour se recharger — l'id (clipShape) reste pour l'affichage et le
+   * cycle. Le stock legacy (id seul) se résout via le registre et s'upgrade au
+   * prochain save.
+   */
+  clipData?: ClipData;
+  /** Corner radius in pixels (only meaningful when clipShape is "rect"). */
+  cornerRadius?: number;
+  /**
+   * `contain` : le cadre prend la forme de son image — le côté le plus long de l'image se cale
+   * sur la boîte `frameWidth` × `frameHeight`, l'autre suit le ratio. Pour une image dont le
+   * ratio change d'un lecteur à l'autre (le logo d'une company) : le cadre a la taille concrète
+   * de l'image, la mise en page se déroule autour (une pastille qui épouse le logo). La boîte
+   * est ce qui se sauve ; un cadre sans image l'occupe entière. Absent = cover.
+   */
+  fit?: ImageFit;
+  /**
+   * Le flou de l'image, en px de cadre (le `filter: blur(Npx)` du CSS : l'écart-type du
+   * gaussien). Calculé en JS (cf. imageBlur), pareil dans l'éditeur et au rendu. Absent = net.
+   */
+  blur?: number;
   layerId?: string;
   lockMode?: LockMode;
   lockContent?: boolean;
   opacity?: number;
+  /** L'ombre portée (Shadow#toObject) : couleur, flou, décalages. */
+  shadow?: Record<string, unknown>;
+  /**
+   * `src` absent = cadre EN ATTENTE : le fichier n'existe pas encore (média en cours de
+   * production côté hôte), ou la source est liée (imageSlots : le binding la donnera). Il se
+   * dessine en damier — en emplacement s'il est lié — et se sauve tel quel, sans `src` ; ses
+   * autres clés (l'identité du média) survivent au tour éditeur.
+   *
+   * Le recadrage est `cropX`, `cropY` (0 → 1) et `scale` (≥ 1) — voir crop.ts. Les
+   * documents d'avant portent `offsetX`, `offsetY` (pixels) : lus, convertis, plus écrits.
+   */
   image: {
-    src: string;
-    offsetX: number;
-    offsetY: number;
-    scale: number;
+    src?: string;
+    cropX?: number;
+    cropY?: number;
+    scale?: number;
+    /** @deprecated */
+    offsetX?: number;
+    /** @deprecated */
+    offsetY?: number;
+    [key: string]: unknown;
   };
 }
+
+const IMAGE_KEYS = ["src", "cropX", "cropY", "scale", "offsetX", "offsetY"] as const;
+
+function imageMetaOf(image: ImageFrameData["image"]): ImageMeta {
+  const meta: ImageMeta = { ...image };
+  IMAGE_KEYS.forEach((key) => delete meta[key]);
+  return meta;
+}
+
+/**
+ * D'où vient l'image qu'un cadre affiche. Seule `document` est sauvée (`image.src`) ; les
+ * autres laissent le cadre en attente :
+ *
+ * - `session` : l'aperçu d'un fichier en cours d'upload (markSourcePending) ;
+ * - `value` : la valeur d'une source liée pour le lecteur du moment (showValue) ;
+ * - `none` : rien — le damier, ou l'emplacement dessiné d'une image liée (imageSlots).
+ */
+type ImageSource = "document" | "session" | "value" | "none";
 
 /** Interface pour stocker l'état des transformations de resize */
 interface TransformState extends Transform {
@@ -70,6 +159,8 @@ interface TransformState extends Transform {
   _startPointerY?: number;
   _startLeft?: number;
   _startTop?: number;
+  /** Point du bord (ou coin) opposé, fixe pendant le resize. */
+  _anchor?: Point;
 }
 
 /**
@@ -95,11 +186,27 @@ export class ImageFrame extends Group {
   frameWidth: number;
   frameHeight: number;
   clipShape?: ShapeType;
+  clipData?: ClipData;
+  /** Corner radius in pixels for "rect" clip shape. 0 = sharp corners. */
+  cornerRadius: number = 0;
+  /** Cf. ImageFrameData.fit. */
+  fit: ImageFit = "cover";
+  /** Cf. ImageFrameData.blur. */
+  blur = 0;
+  /** Le flou posé sur l'image au dernier calcul (élément source, échelle, rayon) : rien à refaire
+   *  tant qu'il ne change pas. */
+  private _blurKey: { element: unknown; scale: number; radius: number } | null = null;
+  /** En contain, la boîte où l'image se cale ; frameWidth/frameHeight sont alors sa taille. */
+  private _box: { w: number; h: number } | null = null;
 
-  private _imageOffsetX: number = 0;
-  private _imageOffsetY: number = 0;
-  private _imageScale: number = 1;
+  private _crop: Crop = NO_CROP;
   private _image: FabricImage;
+  private _imageMeta: ImageMeta = {};
+  private _source: ImageSource = "document";
+  /** Le damier est effacé (concealPlaceholder) : l'hôte montre son propre aperçu dessous. */
+  private _concealed = false;
+  /** L'emplacement au dernier rendu, par sa clé (isCacheDirty). */
+  private _drawnSlot: string | null = null;
 
   constructor(image: FabricImage, options: ImageFrameOptions = {}) {
     // Dimensions du frame : explicites > calculées via frameScale
@@ -140,9 +247,17 @@ export class ImageFrame extends Group {
     this._image = image;
     this.frameWidth = frameWidth;
     this.frameHeight = frameHeight;
-    this._imageOffsetX = options.imageOffsetX ?? 0;
-    this._imageOffsetY = options.imageOffsetY ?? 0;
-    this._imageScale = options.imageScale ?? 1;
+    this._crop = options.crop
+      ? normalizeCrop(options.crop)
+      : cropFromCenterOffset(frameWidth, frameHeight, { w: image.width, h: image.height },
+                             options.imageOffsetX ?? 0, options.imageOffsetY ?? 0, 1);
+    this._imageMeta = { ...(options.imageMeta ?? {}) };
+    if (options.fit === "contain") {
+      this.fit = "contain";
+      this._box = { w: frameWidth, h: frameHeight };
+      this._fitFrame();
+    }
+    this.blur = options.blur ?? 0;
 
     if (options.layerId) {
       this.set("layerId", options.layerId);
@@ -150,95 +265,169 @@ export class ImageFrame extends Group {
     this.set("layerType", "imageFrame");
 
     // Clip par défaut + forme personnalisée si demandée
+    this.cornerRadius = options.cornerRadius ?? 0;
+    this.clipData = options.clipData;
     this._applyClip(options.clipShape || "rect");
 
     this._setupControls();
     this._setupScaleAbsorption();
-    this._applyImageOffset();
+    this._applyCrop();
   }
 
   get image(): FabricImage {
     return this._image;
   }
 
+  /** La source du DOCUMENT — vide pour un cadre en attente, quoi qu'il affiche. */
   get imageSrc(): string {
-    return this._image.getSrc() || "";
+    return this.pending ? "" : this._image.getSrc() || "";
   }
 
-  get imageOffsetX(): number {
-    return this._imageOffsetX;
+  /** La source AFFICHÉE : celle du document, un aperçu de session, la valeur d'une liaison —
+   *  vide pour un cadre qui ne montre rien. */
+  get displayedSrc(): string {
+    return this._source === "none" ? "" : this._image.getSrc() || "";
   }
 
-  get imageOffsetY(): number {
-    return this._imageOffsetY;
+  /** Les clés de `image` qui ne sont pas à la lib (cf. ImageFrameOptions.imageMeta). */
+  get imageMeta(): ImageMeta {
+    return this._imageMeta;
+  }
+
+  /** Cadre en attente de sa source : pas de `src` au save (cf. ImageSource). `replaceImage`
+   *  le sort de l'attente. */
+  get pending(): boolean {
+    return this._source !== "document";
+  }
+
+  /** Un cadre en attente : l'image est le damier, aux dimensions du cadre. */
+  static pending(options: ImageFrameOptions & { frameWidth: number; frameHeight: number }): ImageFrame {
+    const img = new FabricImage(checkerCanvas(options.frameWidth, options.frameHeight));
+    const frame = new ImageFrame(img, options);
+    frame._source = "none";
+    frame._fitFrame();
+    frame._applyCrop();
+    return frame;
+  }
+
+  /** L'image affichée n'est pas celle du document (une url de session, le temps d'un
+   *  upload) : le cadre se sauve sans `src` jusqu'à ce que la vraie source la remplace. */
+  markSourcePending(): void {
+    this._source = "session";
   }
 
   /**
-   * Vérifie si l'image peut être repositionnée dans le cadre.
-   * Retourne true si l'image déborde du cadre (avec une marge de tolérance).
-   * @param tolerancePercent - Marge de tolérance en pourcentage (défaut: 5%)
+   * Le cadre montre la VALEUR de sa source liée pour le lecteur du moment (son avatar, son
+   * logo) : affichée, recadrable, jamais sauvée — le document garde le binding, sans `src`.
+   * Le recadrage du document s'applique à elle. Sans `image`, celle déjà affichée devient
+   * cette valeur (une carte posée avec l'image du lecteur, puis liée).
    */
-  canRepositionImage(tolerancePercent: number = 5): boolean {
-    const imgWidth = this._image.width * this._image.scaleX;
-    const imgHeight = this._image.height * this._image.scaleY;
-
-    // Calcul de la marge de tolérance basée sur la taille du frame
-    const toleranceX = this.frameWidth * (tolerancePercent / 100);
-    const toleranceY = this.frameHeight * (tolerancePercent / 100);
-
-    // L'image peut être repositionnée si elle dépasse le cadre (moins la tolérance)
-    const canMoveX = imgWidth > this.frameWidth + toleranceX;
-    const canMoveY = imgHeight > this.frameHeight + toleranceY;
-
-    return canMoveX || canMoveY;
+  showValue(image?: FabricImage): void {
+    this._imageMeta = {};
+    this._source = "value";
+    if (image) this._swapImage(image);
+    else this._applyBlur();
+    this.dirty = true;
+    this.canvas?.requestRenderAll();
   }
 
   /**
-   * Repositionne l'image dans le frame (pan)
+   * Le cadre lâche sa source : il redevient vide (en attente), son recadrage gardé pour
+   * l'image qui viendra. Lié, il se dessine en emplacement (imageSlots) ; sinon en damier.
    */
-  setImageOffset(offsetX: number, offsetY: number): void {
-    const clamped = this._clampOffset(offsetX, offsetY);
-    this._imageOffsetX = clamped.x;
-    this._imageOffsetY = clamped.y;
-    this._applyImageOffset();
+  clearSource(): void {
+    this._imageMeta = {};
+    this._source = "none";
+    this._swapImage(new FabricImage(checkerCanvas(this.frameWidth, this.frameHeight)));
+    this.dirty = true;
+    this.canvas?.requestRenderAll();
+  }
+
+  /** Un cadre en attente dont l'hôte montre lui-même l'aperçu sous le canvas : le damier
+   *  s'efface (transparent, et pas d'emplacement dessiné), le cadre reste en attente — rien
+   *  ne change au save. */
+  concealPlaceholder(): void {
+    if (!this.pending) return;
+
+    this._image.setElement(transparentCanvas(this._image.width, this._image.height));
+    this._concealed = true;
     this.dirty = true;
   }
 
-  /**
-   * Change le zoom de l'image (min = cover)
-   */
-  setImageScale(scale: number): void {
-    const coverScale = Math.max(this.frameWidth / this._image.width, this.frameHeight / this._image.height);
-    this._imageScale = Math.max(1, scale);
+  // ─────────────────────────────────────────────────────────────
+  // Recadrage (cf. crop.ts) : tout est dans le repère du cadre, origine en haut à gauche
+  // ─────────────────────────────────────────────────────────────
 
-    this._image.set({
-      scaleX: coverScale * this._imageScale,
-      scaleY: coverScale * this._imageScale,
-    });
+  get crop(): Crop {
+    return this._crop;
+  }
 
-    // Re-clamp l'offset avec le nouveau scale
-    const clamped = this._clampOffset(this._imageOffsetX, this._imageOffsetY);
-    this._imageOffsetX = clamped.x;
-    this._imageOffsetY = clamped.y;
-    this._applyImageOffset();
+  /** Se recadre : une vraie image, en place pour de bon — celle du document, ou la valeur
+   *  d'une source liée ; ni un damier, ni un emplacement, ni un aperçu d'upload. */
+  get croppable(): boolean {
+    return this._source === "document" || this._source === "value";
+  }
+
+  get isCropped(): boolean {
+    return isCropped(this._crop);
+  }
+
+  /** La taille native de l'image. */
+  get naturalSize(): { w: number; h: number } {
+    return { w: this._image.width, h: this._image.height };
+  }
+
+  setCrop(crop: Partial<Crop>): void {
+    this._crop = normalizeCrop({ ...this._crop, ...crop });
+    this._applyCrop();
     this.dirty = true;
   }
 
+  resetCrop(): void {
+    this.setCrop(NO_CROP);
+  }
+
+  /** L'image entière, dans le repère du cadre. */
+  photoRect(): CropRect {
+    return photoRect(this.frameWidth, this.frameHeight, this.naturalSize, this._crop);
+  }
+
+  /** L'image posée en `rect` (repère du cadre) : bornée pour couvrir le cadre. */
+  setPhotoRect(rect: CropRect): void {
+    this.setCrop(cropFromRect(this.frameWidth, this.frameHeight, this.naturalSize, rect));
+  }
+
+  /** Décale l'image de (dx, dy) pixels de cadre depuis `from` (le recadrage au début du geste). */
+  panCrop(dx: number, dy: number, from: Crop = this._crop): void {
+    this.setCrop(panCrop(this.frameWidth, this.frameHeight, this.naturalSize, from, dx, dy));
+  }
+
+  /** Change l'échelle en gardant fixe le point (px, py) du cadre, depuis `from`. */
+  zoomCrop(scale: number, px?: number, py?: number, from: Crop = this._crop): void {
+    this.setCrop(zoomCrop(this.frameWidth, this.frameHeight, this.naturalSize, from, scale, px, py));
+  }
+
   /**
-   * Remplace l'image du frame en mode cover
+   * Remplace l'image du frame en mode cover. Les clés `imageMeta` sont celles de la NOUVELLE
+   * source — jamais héritées : une image remplacée qui garderait l'identité de l'ancienne
+   * est exactement le bug qu'elles servent à éviter.
    */
-  replaceImage(newImage: FabricImage): void {
+  replaceImage(newImage: FabricImage, imageMeta: ImageMeta = {}): void {
+    this._imageMeta = { ...imageMeta };
+    this._source = "document";
+    // Une autre image : son recadrage repart de zéro
+    this._crop = NO_CROP;
+    this._swapImage(newImage);
+
+    this.dirty = true;
+    this.canvas?.requestRenderAll();
+  }
+
+  /** L'image du groupe change, en cover, au recadrage courant ; le cadre ne bouge pas. */
+  private _swapImage(newImage: FabricImage): void {
     const savedClipShape = this.clipShape || "rect";
-    const coverScale = Math.max(this.frameWidth / newImage.width, this.frameHeight / newImage.height);
-
-    newImage.set({
-      scaleX: coverScale,
-      scaleY: coverScale,
-      originX: "center",
-      originY: "center",
-      left: 0,
-      top: 0,
-    });
+    this._concealed = false;
+    newImage.set({ originX: "center", originY: "center" });
 
     // Remplacer directement dans _objects pour éviter les effets de bord du LayoutManager
     const index = this._objects.indexOf(this._image);
@@ -251,39 +440,22 @@ export class ImageFrame extends Group {
     newImage.group = this;
     this._image = newImage;
 
-    this.width = this.frameWidth;
-    this.height = this.frameHeight;
+    this._fitFrame();
     this._applyClip(savedClipShape);
     this.setCoords();
-
-    this._imageOffsetX = 0;
-    this._imageOffsetY = 0;
-    this._imageScale = 1;
-
-    this.dirty = true;
-    this.canvas?.requestRenderAll();
+    this._applyCrop();
   }
 
   /**
-   * Redimensionne le frame (l'image s'adapte en cover)
+   * Redimensionne le frame : l'image reste en cover, le recadrage (normalisé) garde la même
+   * zone autant que possible.
    */
   resizeFrame(newWidth: number, newHeight: number): void {
-    const coverScale = Math.max(newWidth / this._image.width, newHeight / this._image.height);
-
+    if (this._box) this._box = { w: newWidth, h: newHeight };
     this.frameWidth = newWidth;
     this.frameHeight = newHeight;
-    this.width = newWidth;
-    this.height = newHeight;
-
-    this._image.set({
-      scaleX: coverScale * this._imageScale,
-      scaleY: coverScale * this._imageScale,
-    });
-
-    const clamped = this._clampOffset(this._imageOffsetX, this._imageOffsetY);
-    this._imageOffsetX = clamped.x;
-    this._imageOffsetY = clamped.y;
-    this._applyImageOffset();
+    this._fitFrame();
+    this._applyCrop();
 
     this._applyClip(this.clipShape || "rect");
     if (this.clipPath) {
@@ -292,6 +464,12 @@ export class ImageFrame extends Group {
     }
     this.setCoords();
     this.dirty = true;
+  }
+
+  /** Taille visuelle (contrat des formes, utilisé par le layout) : le frame, image en cover. */
+  setSize(w: number, h: number): void {
+    this.set({ scaleX: 1, scaleY: 1 });
+    this.resizeFrame(w, h);
   }
 
   /**
@@ -306,29 +484,156 @@ export class ImageFrame extends Group {
    * Cycle vers la forme de clip suivante
    */
   nextClipShape(): void {
-    const shapes: ShapeType[] = ["rect", "rounded", "circle", "heart", "hexagon"];
+    const shapes = getShapeCatalog().map((s) => s.id);
     const currentIndex = this.clipShape ? shapes.indexOf(this.clipShape) : -1;
     this.applyClipShape(shapes[(currentIndex + 1) % shapes.length]);
+  }
+
+  /**
+   * Set the corner radius (in pixels) for the "rect" clip shape.
+   * Automatically switches to "rect" if another clip shape is active.
+   */
+  setCornerRadius(radius: number): void {
+    this.cornerRadius = Math.max(0, radius);
+    if (this.clipShape !== "rect") {
+      this.clipShape = "rect";
+    }
+    this._applyClip("rect");
+    this.dirty = true;
+    this.canvas?.requestRenderAll();
+  }
+
+  getCornerRadius(): number {
+    return this.cornerRadius;
+  }
+
+  /**
+   * Contour (capacité de forme) : un Group ne dessine pas de trait — on trace la forme
+   * de découpe par-dessus, hors clip, trait centré sur le bord comme pour une forme.
+   */
+  render(ctx: CanvasRenderingContext2D): void {
+    super.render(ctx);
+    const outline = this.clipPath;
+    if (!this.visible || !outline || !this.stroke || !this.strokeWidth) return;
+
+    const saved = { fill: outline.fill, stroke: outline.stroke, strokeWidth: outline.strokeWidth };
+    ctx.save();
+    this.transform(ctx);
+    outline.set({ fill: "transparent", stroke: this.stroke, strokeWidth: this.strokeWidth });
+    outline.render(ctx);
+    outline.set(saved);
+    ctx.restore();
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // Emplacement d'image (cf. imageSlots) : un cadre lié qui ne montre rien se dessine
+  // lui-même, d'après son binding
+  // ─────────────────────────────────────────────────────────────
+
+  /** Le binding de l'emplacement à dessiner — null dès que le cadre montre une image, ou que
+   *  l'hôte a pris l'aperçu à sa charge. */
+  private _slot(): BindingSpec | null {
+    if (this._source !== "none" || this._concealed) return null;
+
+    return imageSlotBinding(this);
+  }
+
+  /** Le cadre a toujours son cache (clipPath) : poser, changer ou retirer le binding ne le
+   *  salit pas aux yeux de fabric — c'est le changement d'emplacement qui le fait. */
+  isCacheDirty(skipCanvas = false): boolean {
+    const slot = this._slot();
+    const key = slot && slotKey(slot);
+    if (key !== this._drawnSlot) {
+      this._drawnSlot = key;
+      this.dirty = true;
+    }
+    return super.isCacheDirty(skipCanvas);
+  }
+
+  /** Le contenu du cadre : son image — ou, vide et lié, l'emplacement, sous la même découpe. */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  drawObject(ctx: CanvasRenderingContext2D, forClipping: boolean | undefined, context: any): void {
+    const slot = this._slot();
+    if (!slot) return super.drawObject(ctx, forClipping, context);
+
+    this._renderBackground(ctx);
+    drawImageSlot(ctx, this.width, this.height, slotMark(slot), slotColorOf(this));
+    this._drawClipPath(ctx, this.clipPath, context);
   }
 
   // ─────────────────────────────────────────────────────────────
   // Méthodes privées
   // ─────────────────────────────────────────────────────────────
 
-  private _applyImageOffset(): void {
-    this._image.set({ left: this._imageOffsetX, top: this._imageOffsetY });
+  /**
+   * La taille du cadre : en contain, celle de l'image calée dans la boîte (la boîte entière
+   * sans image) ; sinon frameWidth/frameHeight tels quels. Le groupe suit.
+   */
+  private _fitFrame(): void {
+    if (this._box) {
+      const { w: bw, h: bh } = this._box;
+      const nat = this.naturalSize;
+      const s = this._source === "none" || !nat.w || !nat.h ? 0 : Math.min(bw / nat.w, bh / nat.h);
+      this.frameWidth = s ? nat.w * s : bw;
+      this.frameHeight = s ? nat.h * s : bh;
+    }
+    this.width = this.frameWidth;
+    this.height = this.frameHeight;
   }
 
-  private _clampOffset(offsetX: number, offsetY: number): { x: number; y: number } {
-    const imgWidth = this._image.width * this._image.scaleX;
-    const imgHeight = this._image.height * this._image.scaleY;
-    const maxOffsetX = Math.max(0, (imgWidth - this.frameWidth) / 2);
-    const maxOffsetY = Math.max(0, (imgHeight - this.frameHeight) / 2);
+  /** L'image dans le groupe (origine au centre) : cover × échelle, centre décalé selon le recadrage. */
+  private _applyCrop(): void {
+    const nat = this.naturalSize;
+    const s = coverScale(this.frameWidth, this.frameHeight, nat) * this._crop.scale;
+    const offset = centerOffset(this.frameWidth, this.frameHeight, nat, this._crop);
+    this._image.set({ scaleX: s, scaleY: s, left: offset.x, top: offset.y });
+    this._applyBlur();
+  }
 
-    return {
-      x: Math.max(-maxOffsetX, Math.min(maxOffsetX, offsetX)),
-      y: Math.max(-maxOffsetY, Math.min(maxOffsetY, offsetY)),
+  /** Floute l'image (ou la rend nette) : elle s'affiche floutée à son échelle courante. */
+  setBlur(radius: number): void {
+    this.blur = Math.max(0, radius || 0);
+    this._applyBlur();
+    this.dirty = true;
+    this.canvas?.requestRenderAll();
+  }
+
+  /**
+   * L'élément dessiné par l'image : la source, ou sa version floutée à la résolution
+   * d'affichage (cf. imageBlur) — la source reste `_originalElement`, celle qui se sauve. Le
+   * damier d'un cadre en attente ne se floute pas. Recalculé seulement quand la source,
+   * l'échelle (à 2 % près) ou le rayon changent.
+   */
+  private _applyBlur(): void {
+    const img = this._image as unknown as {
+      _element: CanvasImageSource; _originalElement: CanvasImageSource & { width: number; height: number };
+      _filterScalingX: number; _filterScalingY: number; scaleX: number; dirty: boolean;
     };
+    const source = img._originalElement;
+    if (!source) return;
+
+    if (!this.blur || this._source === "none") {
+      if (img._element !== source) {
+        img._element = source;
+        img._filterScalingX = img._filterScalingY = 1;
+        img.dirty = true;
+      }
+      this._blurKey = null;
+      return;
+    }
+
+    const scale = img.scaleX;
+    const key = this._blurKey;
+    if (key && key.element === source && key.radius === this.blur && Math.abs(key.scale - scale) <= key.scale * 0.02) {
+      return;
+    }
+    const blurred = blurredCanvas(source, scale, this.blur);
+    img._element = blurred;
+    img._filterScalingX = blurred.width / source.width;
+    img._filterScalingY = blurred.height / source.height;
+    img.dirty = true;
+    this.dirty = true;
+    this._blurKey = { element: source, scale, radius: this.blur };
   }
 
   private _applyClip(shapeType: ShapeType): void {
@@ -337,39 +642,45 @@ export class ImageFrame extends Group {
 
     switch (shapeType) {
       case "rect":
-        this.clipPath = new Rect({
-          width: this.frameWidth,
-          height: this.frameHeight,
-          originX: "center",
-          originY: "center",
-          left: 0,
-          top: 0,
-        });
+        this.clipData = undefined;
+        this.clipPath = this._rectClip(minSize);
         break;
       case "circle":
+        this.clipData = undefined;
         this.clipPath = createCircle({ radius: minSize / 2 });
         break;
-      case "rounded":
-        this.clipPath = createRoundedRect({
-          width: this.frameWidth,
-          height: this.frameHeight,
-          rx: minSize * 0.15,
-          ry: minSize * 0.15,
-        });
+      default: {
+        // Le registre prime (une même forme changée de catalogue se rafraîchit) ;
+        // sans lui, le clipData inliné du document se suffit ; sans rien (id legacy,
+        // registre non injecté), on affiche rect SANS toucher clipShape — le save ne
+        // détruit pas l'id, un chargement mieux loti le résoudra.
+        this.clipData = clipDataFor(shapeType) ?? this.clipData;
+        if (this.clipData) {
+          this.clipPath = FabPath.fromPathData(this.clipData, {
+            width: this.frameWidth,
+            height: this.frameHeight,
+            left: 0,
+            top: 0,
+          });
+        } else {
+          console.warn(`[ImageFrame] clip "${shapeType}" inconnu (registre non injecté ?) — affichage rect`);
+          this.clipPath = this._rectClip(minSize);
+        }
         break;
-      case "heart":
-        this.clipPath = createHeart({
-          scaleX: minSize / 28,
-          scaleY: minSize / 28,
-        });
-        break;
-      case "hexagon":
-        this.clipPath = createHexagon({
-          scaleX: minSize / 48,
-          scaleY: minSize / 48,
-        });
-        break;
+      }
     }
+  }
+
+  private _rectClip(minSize: number): Rect {
+    const r = Math.min(this.cornerRadius, minSize / 2);
+    return createRect({
+      width: this.frameWidth,
+      height: this.frameHeight,
+      rx: r,
+      ry: r,
+      left: 0,
+      top: 0,
+    });
   }
 
   /**
@@ -406,13 +717,19 @@ export class ImageFrame extends Group {
 
         const pointer = canvas.getScenePoint(eventData);
 
+        // Le bord (ou coin) opposé reste fixe, quelle que soit l'origine de l'objet (une
+        // forme-image devenue container est en origine haut-gauche)
+        const anchorX = changeX === 1 ? "left" : changeX === -1 ? "right" : "center";
+        const anchorY = changeY === 1 ? "top" : changeY === -1 ? "bottom" : "center";
         if (transform._startWidth === undefined) {
+          const center = target.getCenterPoint();
           transform._startWidth = target.frameWidth;
           transform._startHeight = target.frameHeight;
           transform._startPointerX = pointer.x;
           transform._startPointerY = pointer.y;
-          transform._startLeft = target.left;
-          transform._startTop = target.top;
+          transform._startLeft = center.x;
+          transform._startTop = center.y;
+          transform._anchor = target.getPositionByOrigin(anchorX, anchorY);
         }
 
         const rotated = rotatePoint(
@@ -424,6 +741,16 @@ export class ImageFrame extends Group {
         // Calculer les nouvelles dimensions (sans le * 2, pour un resize non-centré)
         let newWidth = Math.max(20, transform._startWidth + rotated.x * changeX);
         let newHeight = Math.max(20, transform._startHeight! + rotated.y * changeY);
+
+        // Un coin garde les proportions (comme toute poignée de coin) : le facteur est la
+        // distance tirée en somme des deux axes, rapportée à la taille de départ
+        const corner = changeX !== 0 && changeY !== 0;
+        const ratio = transform._startHeight! / transform._startWidth;
+        if (corner) {
+          const k = (newWidth + newHeight) / (transform._startWidth + transform._startHeight!);
+          newWidth = transform._startWidth * k;
+          newHeight = transform._startHeight! * k;
+        }
 
         // === Snapping pendant le resize ===
         // Calculer les bounds actuels de l'objet pour le snapping
@@ -490,31 +817,20 @@ export class ImageFrame extends Group {
         if (snappingManager) {
           const snapResult = snappingManager.calculateResizeSnap(bounds, changeX, changeY, pointer);
 
-          if (snapResult.width !== null) {
-            newWidth = snapResult.width;
-          }
-          if (snapResult.height !== null) {
-            newHeight = snapResult.height;
-          }
+          if (snapResult.width !== null) newWidth = snapResult.width;
+          if (snapResult.height !== null) newHeight = snapResult.height;
+          // Au coin, l'aimant pose un axe et l'autre suit
+          if (corner && snapResult.width !== null) newHeight = newWidth * ratio;
+          else if (corner && snapResult.height !== null) newWidth = newHeight / ratio;
         }
 
-        // Calculer le décalage pour garder le coin opposé fixe
-        // L'objet a son origin au centre, donc on doit compenser le déplacement
-        const deltaWidth = newWidth - transform._startWidth;
-        const deltaHeight = newHeight - transform._startHeight!;
-
-        // Le décalage dépend de quel coin/bord est tiré
-        // changeX: -1 = gauche, 1 = droite, 0 = pas de changement horizontal
-        // changeY: -1 = haut, 1 = bas, 0 = pas de changement vertical
-        const offsetX = (deltaWidth / 2) * changeX;
-        const offsetY = (deltaHeight / 2) * changeY;
-
-        // Appliquer la rotation au décalage
-        const rotatedOffset = rotatePoint(offsetX, offsetY, -target.angle);
-
-        target.left = transform._startLeft! + rotatedOffset.x;
-        target.top = transform._startTop! + rotatedOffset.y;
         target.resizeFrame(newWidth, newHeight);
+        target.setPositionByOrigin(transform._anchor!, anchorX, anchorY);
+        target.setCoords();
+
+        // Même événement que les poignées des formes : le layout (StackResizeSession) suit
+        target.fire("resizing" as any);
+        (canvas as any).fire?.("object:resizing", { target, e: eventData, transform, pointer });
         canvas.requestRenderAll();
         return true;
       };
@@ -526,7 +842,7 @@ export class ImageFrame extends Group {
         const x = key.includes("l") ? -1 : 1;
         const y = key.includes("t") ? -1 : 1;
         this.controls[key].actionHandler = resizeHandler(x as -1 | 1, y as -1 | 1);
-        this.controls[key].actionName = "resizeFrame";
+        this.controls[key].actionName = "resizing";
       }
     });
 
@@ -539,7 +855,7 @@ export class ImageFrame extends Group {
     ].forEach(({ key, x, y }) => {
       if (this.controls[key]) {
         this.controls[key].actionHandler = resizeHandler(x as -1 | 0 | 1, y as -1 | 0 | 1);
-        this.controls[key].actionName = "resizeFrame";
+        this.controls[key].actionName = "resizing";
       }
     });
   }
@@ -552,60 +868,101 @@ export class ImageFrame extends Group {
   toObject(propertiesToInclude?: any[]): any {
     const base = super.toObject(propertiesToInclude) as Record<string, unknown>;
 
+    // Les propriétés DEMANDÉES par l'appelant (layout, bindings…) doivent survivre : la
+    // forme fixe ci-dessous écrasait tout — un ImageFrame sortait de son container au save,
+    // un fond perdait son inertie (evented) et redevenait cible de drop au reload.
+    const extras: Record<string, unknown> = {};
+    (propertiesToInclude || []).forEach((key) => {
+      if (base[key] !== undefined) extras[key] = base[key];
+    });
+    if (this.selectable === false) extras.selectable = false;
+    if (this.evented === false) extras.evented = false;
+
     return {
+      ...extras,
       type: "ImageFrame",
       left: this.left,
       top: this.top,
+      originX: this.originX,
+      originY: this.originY,
       angle: this.angle,
       scaleX: this.scaleX,
       scaleY: this.scaleY,
-      frameWidth: this.frameWidth,
-      frameHeight: this.frameHeight,
+      frameWidth: this._box?.w ?? this.frameWidth,
+      frameHeight: this._box?.h ?? this.frameHeight,
+      fit: this._box ? "contain" : undefined,
+      blur: this.blur || undefined,
       clipShape: this.clipShape,
+      clipData: this.clipData,
+      cornerRadius: this.cornerRadius || undefined,
       layerId: base.layerId,
       lockMode: base.lockMode,
       lockContent: base.lockContent,
       opacity: this.opacity,
+      shadow: this.shadow ? (this.shadow.toObject() as Record<string, unknown>) : undefined,
+      stroke: this.stroke || undefined,
+      strokeWidth: this.stroke ? this.strokeWidth : undefined,
       image: {
-        src: this.imageSrc,
-        offsetX: this._imageOffsetX,
-        offsetY: this._imageOffsetY,
-        scale: this._imageScale,
+        ...this._imageMeta,
+        ...(this.pending ? {} : { src: this.imageSrc }),
+        cropX: this._crop.x,
+        cropY: this._crop.y,
+        scale: this._crop.scale,
       },
     } as ImageFrameData;
   }
 
   static async fromObject(data: ImageFrameData): Promise<ImageFrame> {
-    const img = await FabricImage.fromURL(data.image.src, { crossOrigin: "anonymous" });
-
-    const frame = new ImageFrame(img, {
+    const { src, cropX, cropY, offsetX = 0, offsetY = 0, scale = 1 } = data.image;
+    const options: ImageFrameOptions = {
       left: data.left,
       top: data.top,
       angle: data.angle,
       layerId: data.layerId,
       lockMode: data.lockMode,
-      imageOffsetX: data.image.offsetX,
-      imageOffsetY: data.image.offsetY,
-      imageScale: data.image.scale,
-    });
+      frameWidth: data.frameWidth,
+      frameHeight: data.frameHeight,
+      fit: data.fit,
+      blur: data.blur,
+      imageMeta: imageMetaOf(data.image),
+    };
 
-    // Restaurer les dimensions du frame
-    frame.frameWidth = data.frameWidth;
-    frame.frameHeight = data.frameHeight;
-    frame.width = data.frameWidth;
-    frame.height = data.frameHeight;
+    const img = src ? await FabricImage.fromURL(src, { crossOrigin: "anonymous" }) : null;
+    // Le nouveau format se lit tel quel ; l'ancien (décalage en pixels) se convertit ici,
+    // l'image chargée et sa taille connue — et ne se réécrit plus.
+    options.crop = cropX !== undefined || cropY !== undefined
+      ? { x: cropX, y: cropY, scale }
+      : cropFromCenterOffset(data.frameWidth, data.frameHeight, { w: img?.width || 1, h: img?.height || 1 },
+                             offsetX, offsetY, scale);
 
-    // Recalculer le coverScale
-    const coverScale = Math.max(data.frameWidth / img.width, data.frameHeight / img.height);
-    frame._image.set({
-      scaleX: coverScale * data.image.scale,
-      scaleY: coverScale * data.image.scale,
-      left: data.image.offsetX,
-      top: data.image.offsetY,
-    });
+    const frame = img
+      ? new ImageFrame(img, options)
+      : ImageFrame.pending({ ...options, frameWidth: data.frameWidth, frameHeight: data.frameHeight });
 
-    if (data.clipShape) {
-      frame.applyClipShape(data.clipShape);
+    // Le fromObject est manuel (contrairement aux shapes, servies par le générique de
+    // fabric) : les extras sérialisés doivent être restaurés explicitement.
+    if ((data as any).layout) frame.set("layout", (data as any).layout);
+
+    // left/top sont exprimés dans l'origine sauvegardée (haut-gauche pour une forme-image
+    // devenue container) ; absente (documents d'avant), c'est le centre par défaut.
+    if (data.originX) frame.set({ originX: data.originX, originY: data.originY ?? data.originX });
+    if (data.stroke) frame.set({ stroke: data.stroke, strokeWidth: data.strokeWidth ?? 4 });
+
+    // Le clip inliné se restaure AVANT applyClipShape : un id absent du registre
+    // (forme de groupe, catalogue non injecté) reste résoluble par le document seul.
+    if (data.clipData) frame.clipData = data.clipData;
+
+    // Rétrocompat : ancien "rounded" → rect + cornerRadius
+    let clipShape = data.clipShape;
+    if (clipShape === "rounded") {
+      frame.cornerRadius = data.cornerRadius ?? Math.min(data.frameWidth, data.frameHeight) * 0.15;
+      clipShape = "rect";
+    } else {
+      frame.cornerRadius = data.cornerRadius ?? 0;
+    }
+
+    if (clipShape) {
+      frame.applyClipShape(clipShape);
     }
 
     frame.scaleX = data.scaleX;
@@ -614,6 +971,7 @@ export class ImageFrame extends Group {
     if (data.opacity !== undefined) {
       frame.opacity = data.opacity;
     }
+    if (data.shadow) frame.set("shadow", new Shadow(data.shadow));
 
     return frame;
   }

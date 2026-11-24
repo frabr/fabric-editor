@@ -1,6 +1,6 @@
 {
   "name": "@frabr/fabric-editor",
-  "version": "1.6.0",
+  "version": "1.7.1",
   "description": "Fabric.js-based image editor with layers, clipping, and frame support",
   "imports": {
     "#fabric": {
@@ -23,6 +23,9 @@
       "require": "./dist/node.js"
     }
   },
+  "bin": {
+    "fabric-normalize-shapes": "./dist/normalize-shapes.js"
+  },
   "files": [
     "dist",
     "src"
@@ -38,11 +41,13 @@
   },
   "dependencies": {
     "canvas": "^3.2.1",
-    "fabric": "^7.1.0"
+    "fabric": "^7.1.0",
+    "yoga-layout": "^3.2.1"
   },
   "devDependencies": {
     "@types/node": "^25.0.8",
     "jsdom": "^27.4.0",
+    "svgpath": "^2.6.0",
     "tsup": "^8.0.0",
     "typescript": "^5.3.0",
     "vitest": "^4.0.17"

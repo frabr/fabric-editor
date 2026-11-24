@@ -1,4 +1,5 @@
 import type { FabricObject } from "#fabric";
+import { isUserOwnedText } from "./userTexts";
 
 /**
  * Modes de verrouillage pour les calques
@@ -33,6 +34,9 @@ export function getNextLockMode(currentMode: LockMode): LockMode {
  * - free: contrôles actifs, peut bouger et changer le contenu/style
  * - position: pas de contrôles, ne peut pas bouger, mais peut changer le contenu (texte éditable, pas le style)
  * - full: pas de contrôles, ne peut ni bouger ni changer le contenu
+ *
+ * Un texte à personnaliser (userTexts) reste éditable quel que soit son verrou : l'auteur l'a
+ * confié à l'utilisateur final, le verrou garde sa place et son style.
  */
 export function applyLockMode(obj: FabricObject, mode: LockMode): void {
   // Stocker le mode sur l'objet
@@ -50,13 +54,13 @@ export function applyLockMode(obj: FabricObject, mode: LockMode): void {
   // Masquer les contrôles si verrouillé
   obj.hasControls = mode === "free";
 
-  // Propriété custom pour bloquer le remplacement d'image (utilisé par ImageDropHandler)
+  // Propriété custom pour bloquer le remplacement d'image (utilisé par DropHandler)
   (obj as any).lockContent = mode === "full";
 
   // Pour les textes (IText/Textbox) : éditable seulement en mode free ou position
-  // En mode full, le texte n'est pas éditable du tout
+  // En mode full, le texte n'est pas éditable du tout — sauf un texte à personnaliser
   if (obj.type === "i-text" || obj.type === "textbox") {
-    (obj as any).editable = mode !== "full";
+    (obj as any).editable = mode !== "full" || isUserOwnedText(obj);
   }
 }
 

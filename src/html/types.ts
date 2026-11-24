@@ -1,4 +1,5 @@
 import type { LayerData, ShapeType } from "../types";
+import type { ClipData } from "../shapes/registry";
 
 /**
  * Résultat de la conversion d'un layer en HTML
@@ -91,6 +92,8 @@ export interface CircleLayerData extends LayerData {
 export interface PathLayerData extends LayerData {
   type: "Path";
   path: string | unknown[];
+  /** La règle de remplissage du path (Fabric la sérialise) ; nonzero par défaut. */
+  fillRule?: string;
   originX?: string;
   originY?: string;
   width?: number;
@@ -108,10 +111,15 @@ export interface PathLayerData extends LayerData {
  * Données d'image dans un ImageFrame
  */
 export interface ImageFrameImageData {
-  src: string;
-  offsetX: number;
-  offsetY: number;
-  scale: number;
+  src?: string;
+  /** Recadrage normalisé (cf. crop.ts) : 0 → 1, 0.5 = centré. */
+  cropX?: number;
+  cropY?: number;
+  scale?: number;
+  /** @deprecated Documents d'avant : décalage du centre en pixels de cadre. */
+  offsetX?: number;
+  /** @deprecated */
+  offsetY?: number;
 }
 
 /**
@@ -122,6 +130,8 @@ export interface ImageFrameLayerData extends LayerData {
   frameWidth: number;
   frameHeight: number;
   clipShape?: ShapeType;
+  clipData?: ClipData;
+  cornerRadius?: number;
   image: ImageFrameImageData;
 }
 

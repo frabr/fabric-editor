@@ -1,13 +1,47 @@
-import type { FabricObject, Canvas } from "#fabric";
+import type { FabricObject } from "#fabric";
+import type { CatalogShapeInput, ShapePathData } from "./shapes/registry";
+import type { MediaLabels } from "./bindings";
 
 // Configuration de l'éditeur
 export interface EditorConfig {
   width: number;
   height: number;
   fonts?: FontsConfig;
+  /**
+   * Le catalogue de formes de l'hôte (global + groupe) — la lib n'embarque aucune
+   * forme, mais doit savoir résoudre les clipShape par id du stock (registerShapes).
+   */
+  shapes?: CatalogShapeInput[];
   defaultColor?: string;
+  /** Base color for all visual guides (snap lines, layout margins, hints). */
+  guideColor?: string;
+  /** Les pastilles des variables d'un texte lié (tokens) — défaut : guideColor. */
+  tokenColor?: string;
+  /** Badge des images à fournir (défaut : « À fournir ») — la traduction de l'hôte. */
+  userSlotLabel?: string;
+  /** Invite dans les images à fournir, sous l'icône (si elle tient) — la traduction de l'hôte. */
+  userSlotPrompt?: string;
+  /** Badge des textes à personnaliser (défaut : « À personnaliser ») — la traduction de l'hôte. */
+  userTextLabel?: string;
+  /** Les mots du badge d'une image tirée (défaut : « media au hasard », « 1 parmi 7 ») — les
+   *  traductions de l'hôte, cf. `MediaLabels`. */
+  mediaLabels?: MediaLabels;
+  /**
+   * Le lecteur est l'AUTEUR des entrées à fournir : il écrit l'exemple d'un texte à
+   * personnaliser, ses frappes ne le règlent pas (cf. userTexts). Sans : l'utilisateur final,
+   * dont la première frappe personnalise le texte.
+   */
+  authorsUserInputs?: boolean;
+  /** Les raccourcis : la table de départ, le document écouté, la plateforme (tests). */
+  shortcuts?: import("./shortcuts/ShortcutManager").ShortcutManagerOptions;
   container?: HTMLElement;
   transparent?: boolean;
+  /**
+   * Plan de travail : le canvas remplit le container, le cadre du document y est centré,
+   * le hors-cadre reste visible sous un voile (voir DesignCanvas.enableWorkspace).
+   * Sans : canvas = cadre (le comportement historique).
+   */
+  workspace?: boolean | import("./DesignCanvas").WorkspaceOptions;
 }
 
 // Configuration des polices
@@ -22,6 +56,14 @@ export interface FontConfig {
 // Ré-export depuis locking.ts pour rétrocompatibilité
 export type { LockMode } from "./locking";
 
+/**
+ * Clé posée (via obj.set) sur les objets de preview de drag externe.
+ * Les objets marqués sont ignorés par la détection de cible de drop
+ * (findDropTargetAtPoint) — la preview suit le curseur, elle matcherait
+ * toujours sinon.
+ */
+export const DRAG_PREVIEW_KEY = "dragPreview";
+
 // Données d'un calque (pour sérialisation/désérialisation)
 export interface LayerData {
   type: string;
@@ -31,7 +73,7 @@ export interface LayerData {
   scaleX?: number;
   scaleY?: number;
   angle?: number;
-  fill?: string;
+  fill?: string | Record<string, unknown>;
   stroke?: string;
   strokeWidth?: number;
   opacity?: number;
@@ -39,6 +81,10 @@ export interface LayerData {
   lockMode?: LockMode;
   /** Indique si le contenu (image) est verrouillé */
   lockContent?: boolean;
+  /** Layout data (container or child) — see layout/types.ts */
+  layout?: import("./layout").LayoutData;
+  /** Bindings du dialecte template (apibots) : { champ: { expr, scope, resolved } } */
+  bindings?: import("./bindings").Bindings;
   [key: string]: unknown;
 }
 
@@ -52,6 +98,8 @@ export interface TextLayerOptions {
   fontWeight?: string;
   fill?: string;
   layerId?: string;
+  /** Le texte est un exemple à remplacer (CustomTextbox#placeholder). */
+  placeholder?: boolean;
 }
 
 // Options pour créer un calque image
@@ -63,6 +111,8 @@ export interface ImageLayerOptions {
   originX?: "left" | "center" | "right";
   originY?: "top" | "center" | "bottom";
   layerId?: string;
+  /** Les clés de `image` posées par l'hôte à côté de `src` (cf. ImageFrameOptions.imageMeta). */
+  imageMeta?: Record<string, unknown>;
 }
 
 // Options pour créer un calque forme
@@ -76,10 +126,15 @@ export interface ShapeLayerOptions {
   strokeWidth?: number;
   layerId?: string;
   shapeType?: ShapeType;
+  /**
+   * Données de paths inline (payload toolbox) : prioritaires sur shapeType —
+   * l'asset devient du contenu à l'insertion. N paths → Group de FabPath.
+   */
+  paths?: ShapePathData[];
 }
 
-// Types de formes disponibles
-export type ShapeType = "rect" | "rounded" | "circle" | "heart" | "hexagon";
+// Built-in shape types + any registered catalog shape ID
+export type ShapeType = "rect" | "circle" | (string & {});
 
 // Contrôles disponibles par type d'objet
 export interface ObjectControlsConfig {
@@ -87,11 +142,17 @@ export interface ObjectControlsConfig {
   options: ControlOption[];
 }
 
-export type ControlOption = "clip" | "color" | "font" | "outline";
+/** `image` : les capacités d'image (remplacer, recadrer, promouvoir en fond). */
+export type ControlOption = "clip" | "color" | "font" | "outline" | "corner_radius" | "image";
 
 // Callbacks de sélection
 export interface SelectionCallbacks {
   onSelect?: (object: FabricObject) => void;
+  /**
+   * Sélection de plusieurs objets (déjà normalisée : jamais un objet avec son ancêtre,
+   * jamais un verrouillé). Absent, la lib retombe sur onSelect(premier objet).
+   */
+  onSelectMany?: (objects: FabricObject[]) => void;
   onDeselect?: () => void;
   /** Appelé quand une transformation commence (déplacement, rotation, redimensionnement) */
   onTransformStart?: () => void;
@@ -114,13 +175,14 @@ export interface SaveResult {
   uploadedAssets?: string[];
 }
 
-// Extension du type FabricObject pour inclure layerId
+// Extension du type FabricObject pour inclure layerId et layout
 declare module "fabric" {
   interface FabricObject {
     layerId?: string;
     layerType?: string;
+    layout?: import("./layout").LayoutData;
   }
 }
 
 // Re-export ImageFrame types
-export type { ImageFrameData, ImageFrameOptions } from "./ImageFrame";
+export type { ImageFrameData, ImageFrameOptions, ImageMeta } from "./ImageFrame";

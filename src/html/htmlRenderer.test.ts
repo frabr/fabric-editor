@@ -1,8 +1,29 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeAll } from "vitest";
 import { fabricToHtml } from "./htmlRenderer";
+import { registerShapes } from "../shapes/registry";
 import type { LayerData } from "../types";
 
 describe("fabricToHtml", () => {
+  // Les formes ne sont plus compilées dans la lib : les documents en stock qui
+  // portent un clipShape par id se résolvent via le catalogue injecté par l'hôte
+  // (valeurs = l'ex-catalog.json historique).
+  beforeAll(() => {
+    registerShapes([
+      {
+        id: "heart",
+        d: "M50 89.71Q47.06 89.71 38.24 83.82C14.71 66.18 0 42.65 14.71 22.06 23.53 10.3 44.12 13.24 50 30.88 55.88 13.24 76.47 10.3 85.29 22.06 100 42.65 82.35 66.18 61.76 83.82Q52.94 89.71 50 89.71Z",
+        width: 100,
+        height: 79.41,
+      },
+      {
+        id: "hexagon",
+        d: "M45.84 1.48C48.41 0 51.58 0 54.15 1.48L89.94 22.14C92.51 23.63 94.09 26.37 94.09 29.34V71.7C94.09 74.67 92.51 77.41 89.94 78.9L54.15 99.55C51.58 101.04 48.41 101.04 45.84 99.55L10.06 78.9C7.49 77.41 5.91 74.67 5.91 71.7V29.34C5.91 26.37 7.49 23.63 10.06 22.14L45.84 1.48Z",
+        width: 88.19,
+        height: 100,
+      },
+    ]);
+  });
+
   it("should render hexagon clip", () => {
     const layers: LayerData[] = [
       {

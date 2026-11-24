@@ -1,4 +1,5 @@
-import { Canvas, FabricImage, FabricObject } from "#fabric";
+import { FabricImage, FabricObject } from "#fabric";
+import type { DesignCanvas } from "./DesignCanvas";
 
 const MASK_LAYER_ID = "mask";
 const BACKGROUND_LAYER_ID = "originalImage";
@@ -7,7 +8,7 @@ const BACKGROUND_LAYER_ID = "originalImage";
  * Gère les masques appliqués au canvas
  */
 export class MaskManager {
-  constructor(private canvas: Canvas) {}
+  constructor(private canvas: DesignCanvas) {}
 
   /**
    * Vérifie si un masque est appliqué

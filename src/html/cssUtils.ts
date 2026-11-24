@@ -149,6 +149,32 @@ export function stylesToString(styles: Record<string, string>): string {
 }
 
 /**
+ * Convert a fill value (string or serialized Gradient object) to a CSS background value.
+ */
+export function fillToCss(fill: string | Record<string, unknown> | null | undefined): string {
+  if (!fill) return "transparent";
+  if (typeof fill === "string") return fill;
+
+  // Serialized fabric.Gradient object
+  if (fill.type === "linear" && Array.isArray(fill.colorStops)) {
+    const coords = fill.coords as { x1: number; y1: number; x2: number; y2: number } | undefined;
+    let angle = 180; // default top-to-bottom
+    if (coords) {
+      const dx = (coords.x2 ?? 0.5) - (coords.x1 ?? 0.5);
+      const dy = (coords.y2 ?? 0.5) - (coords.y1 ?? 0.5);
+      angle = Math.round((Math.atan2(dy, dx) * 180) / Math.PI + 90);
+      if (angle < 0) angle += 360;
+    }
+    const stops = (fill.colorStops as Array<{ offset: number; color: string }>)
+      .map((s) => `${s.color} ${Math.round(s.offset * 100)}%`)
+      .join(", ");
+    return `linear-gradient(${angle}deg, ${stops})`;
+  }
+
+  return "transparent";
+}
+
+/**
  * Échappe les caractères HTML
  */
 export function escapeHtml(text: string): string {

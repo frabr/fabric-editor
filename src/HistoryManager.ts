@@ -1,4 +1,4 @@
-import type { Canvas } from "#fabric";
+import type { DesignCanvas } from "./DesignCanvas";
 import type { LayerManager } from "./LayerManager";
 import type { LayerData } from "./types";
 
@@ -26,7 +26,7 @@ export class HistoryManager {
   private isRestoring = false;
 
   constructor(
-    private canvas: Canvas,
+    private canvas: DesignCanvas,
     private layers: LayerManager,
     options: { maxSize?: number } = {}
   ) {

@@ -1,15 +1,38 @@
-import { Canvas, FabricObject, FabricImage, Point, Control, controlsUtils } from "#fabric";
+import { ActiveSelection, FabricObject, FabricImage, Point } from "#fabric";
+import { DesignCanvas, type FrameRect } from "./DesignCanvas";
 import { LayerManager } from "./LayerManager";
 import { SelectionManager } from "./SelectionManager";
 import { MaskManager } from "./MaskManager";
 import { PersistenceManager } from "./PersistenceManager";
 import { HistoryManager } from "./HistoryManager";
-import { SnappingManager, type SnappingConfig } from "./SnappingManager";
-import { switchClip } from "./clipping";
-import { switchShape, nextShape } from "./shapes";
+import { SnappingManager } from "./SnappingManager";
+import { LayoutManager } from "./LayoutManager";
+import { registerShapes } from "./shapes";
+import { forgetFontMeasures } from "./fonts";
 import { ImageFrame } from "./ImageFrame";
-import { isPositionLocked } from "./locking";
+import { applyControlStyle } from "./ui/controls";
+import { hexAlpha, DEFAULT_GUIDE_COLOR } from "./ui/color";
+import { DRAG_PREVIEW_KEY } from "./types";
 import type { EditorConfig, LayerData, FontsConfig, ShapeType } from "./types";
+import type { TextStyleState } from "./text-styles";
+import { initYoga } from "./layout/stack/engine";
+import { isBackground } from "./layout/model";
+import { StyleCommands, type GradientStop } from "./editor/style-commands";
+import { Clipboard } from "./editor/clipboard";
+import { SelectionCommands } from "./editor/selection-commands";
+
+import { type AlignEdge, type DistributeAxis } from "./align";
+import { rulesOf } from "./capabilities";
+import { USER_SLOT_STYLE_KEY, type UserSlotStyle } from "./userSlots";
+import { collectUserInputs, type UserInput } from "./userInputs";
+import type { BindingSpec } from "./bindings";
+import { imageSlotDataUrl, slotMark } from "./imageSlots";
+import { TOKEN_COLOR_KEY } from "./tokens";
+import { installGhostRendering } from "./ghost";
+import { installDisplayStyleRendering } from "./displayStyle";
+import { CropMode } from "./CropMode";
+import { ShortcutManager } from "./shortcuts/ShortcutManager";
+import { GestureManager } from "./gestures";
 
 /**
  * Éditeur d'images basé sur Fabric.js
@@ -18,49 +41,109 @@ import type { EditorConfig, LayerData, FontsConfig, ShapeType } from "./types";
  * pour l'édition d'images avec calques.
  */
 export class FabricEditor {
-  readonly canvas: Canvas;
+  readonly canvas: DesignCanvas;
   readonly layers: LayerManager;
   readonly selection: SelectionManager;
   readonly masks: MaskManager;
   readonly persistence: PersistenceManager;
   readonly history: HistoryManager;
   readonly snapping: SnappingManager;
+  readonly layout: LayoutManager;
+  /** Le recadrage d'une image dans son cadre (CropMode). */
+  readonly crop: CropMode;
+  /** Les raccourcis : la table du canvas, plus ceux que l'hôte enregistre (ShortcutManager). */
+  readonly shortcuts: ShortcutManager;
+  /** Les gestes de souris avec une touche (⌥-dupliquer, ⇧-axe, cran de rotation, Échap). */
+  readonly gestures: GestureManager;
 
   private config: EditorConfig;
   private _displayScale = 1;
   private _userZoom = 1;
   private _resizeObserver: ResizeObserver | null = null;
   private _resizeCallbacks: Array<() => void> = [];
+  private readonly styles = new StyleCommands(this);
+  private readonly clipboard = new Clipboard(this);
+  private readonly commands = new SelectionCommands(this);
+
+  /** Largeur de l'artboard en coordonnées scène. */
+  get width(): number {
+    return this.config.width;
+  }
+
+  /** Hauteur de l'artboard en coordonnées scène. */
+  get height(): number {
+    return this.config.height;
+  }
 
   constructor(canvasElement: HTMLCanvasElement, config: EditorConfig) {
     this.config = config;
 
-    this.canvas = new Canvas(canvasElement, {
+    // Le catalogue de l'hôte, avant tout chargement de document : la résolution des
+    // clipShape par id (stock legacy) en dépend.
+    if (config.shapes) registerShapes(config.shapes);
+
+    const gc = config.guideColor ?? DEFAULT_GUIDE_COLOR;
+
+    this.canvas = new DesignCanvas(canvasElement, {
       width: config.width,
       height: config.height,
       preserveObjectStacking: true,
+      uniformScaling: false,
+      selectionColor: hexAlpha(gc, 0.15),
+      selectionBorderColor: hexAlpha(gc, 0.6),
+      selectionLineWidth: 1,
     });
 
     // Initialiser les managers
     this.layers = new LayerManager(this.canvas);
     this.selection = new SelectionManager(this.canvas);
+
+    applyControlStyle(this.canvas, gc, (obj) => this.selection.resolveTarget(obj), {
+      userSlot: config.userSlotLabel,
+      userText: config.userTextLabel,
+      media: config.mediaLabels,
+    });
+    const slotStyle: UserSlotStyle = {
+      color: gc,
+      prompt: config.userSlotPrompt,
+      authoring: config.authorsUserInputs === true,
+    };
+    (this.canvas.originalFabricCanvas as unknown as Record<string, UserSlotStyle>)[USER_SLOT_STYLE_KEY] = slotStyle;
+    (this.canvas.originalFabricCanvas as unknown as Record<string, string>)[TOKEN_COLOR_KEY] = config.tokenColor ?? gc;
     this.masks = new MaskManager(this.canvas);
     this.persistence = new PersistenceManager(this.canvas, this.layers);
     this.history = new HistoryManager(this.canvas, this.layers);
-    this.snapping = new SnappingManager(this.canvas);
+    // Les guides gardent leur magenta (DEFAULT_SNAP_GUIDE_COLOR) sauf couleur donnée par l'hôte.
+    this.snapping = new SnappingManager(this.canvas, {}, config.guideColor);
+    this.layout = new LayoutManager(
+      this.canvas,
+      { getEnteredContainerId: () => this.selection.enteredContainerId },
+      config.guideColor,
+    );
+
+    this.crop = new CropMode(this.canvas, gc);
+    this.installCropOnDoubleClick();
+    this.shortcuts = new ShortcutManager(this, config.shortcuts);
+    this.gestures = new GestureManager(this);
 
     // Stocker une référence au SnappingManager sur le canvas pour l'accès depuis ImageFrame
-    (this.canvas as unknown as { snappingManager: SnappingManager }).snappingManager = this.snapping;
+    (this.canvas.originalFabricCanvas as unknown as { snappingManager: SnappingManager }).snappingManager = this.snapping;
 
     // Étendre FabricObject pour inclure layerId dans le JSON
     this.extendFabricObject();
 
-    // Déplacer le contrôle de rotation sur le côté droit
-    this.configureRotationControl();
-
     if (config.transparent) {
       this.canvas.backgroundColor = "transparent";
     }
+
+    if (config.workspace) {
+      this.canvas.enableWorkspace({
+        frameColor: gc,
+        ...(typeof config.workspace === "object" ? config.workspace : {}),
+      });
+      this.installWorkspacePan();
+    }
+
   }
 
   private _initialized = false;
@@ -72,6 +155,7 @@ export class FabricEditor {
   async init(): Promise<void> {
     if (this._initialized) return;
     this._initialized = true;
+    await initYoga();
     if (this.config.fonts && Object.keys(this.config.fonts).length > 0) {
       await this.loadFonts(this.config.fonts);
     }
@@ -93,11 +177,22 @@ export class FabricEditor {
    */
   async replaceAllLayers(layers: LayerData[]): Promise<void> {
     await this.init();
+    // Anti-flicker : la désérialisation (chargement d'images compris) se fait AVANT de
+    // retirer l'existant, puis swap + rendu dans la même tâche — l'ancien contenu reste à
+    // l'écran jusqu'au nouveau, aucune frame vide. Les appels concurrents (changements de
+    // slide rapides) se départagent par jeton : le dernier gagne.
+    const token = (this._replaceToken = {});
+    this.crop.cancel();
+    const objects = await this.layers.deserializeAll(layers);
+    if (token !== this._replaceToken) return;
+
     this.layers.all.forEach((obj) => this.layers.remove(obj));
-    await this.layers.loadLayers(layers);
+    objects.forEach((obj) => obj && this.layers.add(obj));
     this.canvas.discardActiveObject();
     this.canvas.renderAll();
   }
+
+  private _replaceToken: object = {};
 
   /**
    * Current CSS scale applied by fitToContainer.
@@ -107,34 +202,42 @@ export class FabricEditor {
   }
 
   /**
-   * CSS-scale the canvas to fit inside its container.
+   * Resize the canvas buffer to fit inside its container and use
+   * Fabric's viewportTransform to scale the content.
    *
-   * The canvas stays at native resolution (config.width × config.height);
-   * a CSS `transform: scale()` on the .canvas-container wrapper makes it
-   * fit the container element.  Returns the computed scale factor.
+   * This avoids CSS `transform: scale()` which causes sub-pixel blur.
+   * The canvas buffer matches the display size exactly → pixel-perfect.
    */
   fitToContainer(): number {
     const container = this.config.container;
     if (!container) return 1;
 
-    const compW = this.config.width;
-    const compH = this.config.height;
     const boxW = container.clientWidth;
     const boxH = container.clientHeight;
-    const fitScale = Math.min(boxW / compW, boxH / compH);
-    const scale = fitScale * this._userZoom;
 
-    this.canvas.setDimensions({ width: compW, height: compH });
+    // Plan de travail : le canvas remplit le container, la vue centre le cadre
+    if (this.canvas.isWorkspace) {
+      const scale = this.canvas.fitWorkspace(boxW, boxH, this._userZoom);
+      const canvasEl = container.querySelector<HTMLElement>(".canvas-container") || container;
+      canvasEl.style.marginLeft = "";
+      canvasEl.style.marginTop = "";
+      container.style.overflow = "hidden";
+      this._displayScale = scale;
+      return scale;
+    }
+
+    const scale = this.canvas.fitToSize(boxW, boxH, this._userZoom);
+
+    const bufferW = Math.round(this.canvas.width * scale);
+    const bufferH = Math.round(this.canvas.height * scale);
 
     const canvasEl = container.querySelector<HTMLElement>(".canvas-container") || container;
-    canvasEl.style.transformOrigin = "top left";
-    canvasEl.style.transform = `scale(${scale})`;
+    canvasEl.style.transform = "";
+    canvasEl.style.transformOrigin = "";
 
-    // Center the scaled canvas within the container
-    const scaledW = compW * scale;
-    const scaledH = compH * scale;
-    const offsetX = Math.max(0, (boxW - scaledW) / 2);
-    const offsetY = Math.max(0, (boxH - scaledH) / 2);
+    // Center the canvas within the container
+    const offsetX = Math.max(0, (boxW - bufferW) / 2);
+    const offsetY = Math.max(0, (boxH - bufferH) / 2);
     canvasEl.style.marginLeft = `${offsetX}px`;
     canvasEl.style.marginTop = `${offsetY}px`;
 
@@ -146,17 +249,73 @@ export class FabricEditor {
   }
 
   /**
+   * Le format se décide en cours d'édition : l'artboard change de dimensions, les calques
+   * restent en place — au caller de mettre à jour son document et son conteneur (ratio).
+   */
+  resizeArtboard(width: number, height: number): void {
+    this.config.width = width;
+    this.config.height = height;
+    this.canvas.resizeDesign(width, height);
+    this.fitToContainer();
+    this._resizeCallbacks.forEach((cb) => cb());
+  }
+
+  /**
    * Set user zoom level (1 = fit to container, >1 = zoom in).
    * Re-runs fitToContainer to apply the new scale.
    */
   setUserZoom(zoom: number): void {
     this._userZoom = Math.max(0.1, zoom);
+    // Revenu à l'ajustement (ou en deçà) : la vue se recentre sur le cadre
+    if (this._userZoom <= 1) this.canvas.resetPan();
     this.fitToContainer();
     this._resizeCallbacks.forEach((cb) => cb());
   }
 
   get userZoom(): number {
     return this._userZoom;
+  }
+
+  /**
+   * Le cadre du document à l'écran (px CSS, relatifs à l'élément canvas) — pour caler
+   * dessus les couches HTML de l'hôte (iframe vidéo, fonds HTML, damier). Change à
+   * chaque ajustement, zoom ou déplacement : voir onResize.
+   */
+  get frameRect(): FrameRect {
+    return this.canvas.frameRect;
+  }
+
+  /**
+   * Plan de travail zoomé : la molette déplace la vue (le minimum pour atteindre le
+   * hors-cadre ; les gestes de zoom et les limites du déplacement viendront plus tard).
+   */
+  private installWorkspacePan(): void {
+    this.canvas.on("mouse:wheel", (opt: { e: WheelEvent }) => {
+      if (this._userZoom <= 1) return;
+      opt.e.preventDefault();
+      this.canvas.panBy(-opt.e.deltaX, -opt.e.deltaY);
+      this.canvas.requestRenderAll();
+      this._resizeCallbacks.forEach((cb) => cb());
+    });
+  }
+
+  /**
+   * Double-clic sur une forme-image : son recadrage ; à vide, dans le cadre : celui du fond
+   * de la page (le calque `bg`, inerte au ciblage), s'il est une image. Le double-clic d'un
+   * texte (édition) ne passe pas ici : ce n'est pas un ImageFrame.
+   */
+  private installCropOnDoubleClick(): void {
+    this.canvas.on("mouse:dblclick", (e: { target?: FabricObject; scenePoint?: Point }) => {
+      const target = e.target ? this.selection.resolveTarget(e.target) : this.backgroundFrame(e.scenePoint);
+      if (!(target instanceof ImageFrame) || !rulesOf(target).options.includes("image")) return;
+      this.crop.start(target);
+    });
+  }
+
+  /** Le fond image de la page, si `point` tombe dans le cadre. */
+  private backgroundFrame(point?: Point): FabricObject | null {
+    if (!point || point.x < 0 || point.y < 0 || point.x > this.width || point.y > this.height) return null;
+    return this.layers.all.find(isBackground) ?? null;
   }
 
   /**
@@ -170,6 +329,10 @@ export class FabricEditor {
     this._resizeObserver?.disconnect();
     this._resizeObserver = new ResizeObserver(() => {
       this.fitToContainer();
+      // Redessin immédiat : setDimensions vide le buffer et Fabric ne programme le rendu que
+      // pour l'image suivante — pendant un redimensionnement continu (une transition de
+      // hauteur), chaque image peinte serait vide, les calques clignoteraient jusqu'à la fin.
+      this.canvas.renderAll();
       this._resizeCallbacks.forEach((cb) => cb());
     });
     this._resizeObserver.observe(container);
@@ -190,23 +353,26 @@ export class FabricEditor {
     return {
       getContainer: () => anchorEl,
       getDisplayScale: () => this._displayScale,
+      // Où tombe l'origine du document (le coin du cadre) dans l'ancre : l'élément canvas,
+      // plus la position du cadre dans le canvas (nulle hors plan de travail)
       getCanvasOffset: () => {
         const container = this.config.container;
         if (!container) return { left: 0, top: 0 };
         const canvasEl = container.querySelector<HTMLElement>(".canvas-container") || container;
         const anchorRect = anchorEl.getBoundingClientRect();
         const canvasRect = canvasEl.getBoundingClientRect();
+        const frame = this.canvas.frameRect;
         return {
-          left: canvasRect.left - anchorRect.left,
-          top: canvasRect.top - anchorRect.top,
+          left: canvasRect.left - anchorRect.left + frame.left,
+          top: canvasRect.top - anchorRect.top + frame.top,
         };
       },
     };
   }
 
   /**
-   * Convertit des coordonnées du canvas Fabric vers des coordonnées CSS affichées.
-   * Utilise le displayScale mis à jour par fitToContainer.
+   * Convertit des coordonnées du document vers des coordonnées CSS relatives à l'élément
+   * canvas : l'échelle, plus la position du cadre (nulle hors plan de travail).
    */
   canvasToDisplayCoords(rect: { left: number; top: number; width: number; height: number }): {
     left: number;
@@ -215,9 +381,10 @@ export class FabricEditor {
     height: number;
   } {
     const s = this._displayScale;
+    const frame = this.canvas.frameRect;
     return {
-      left: rect.left * s,
-      top: rect.top * s,
+      left: frame.left + rect.left * s,
+      top: frame.top + rect.top * s,
       width: rect.width * s,
       height: rect.height * s,
     };
@@ -247,8 +414,9 @@ export class FabricEditor {
     const { anchor = "center", offset = 0, autoFlip = false, clampToContainer = false } = options;
     const displayRect = this.canvasToDisplayCoords(obj.getBoundingRect());
     const s = this._displayScale;
-    const containerWidth = this.config.width * s;
-    const containerHeight = this.config.height * s;
+    // L'espace où l'élément peut se placer : tout le canvas en plan de travail, le cadre sinon
+    const containerWidth = this.canvas.isWorkspace ? this.canvas.originalFabricCanvas.width : this.config.width * s;
+    const containerHeight = this.canvas.isWorkspace ? this.canvas.originalFabricCanvas.height : this.config.height * s;
     const elementWidth = element.offsetWidth || 100;
     const elementHeight = element.offsetHeight || 40;
 
@@ -416,12 +584,8 @@ export class FabricEditor {
    * When disabled, discards selection and marks the canvas as non-interactive.
    * When enabled, discards selection (clean state) and optionally syncs visibility.
    */
-  setInteractive(enabled: boolean): void {
-    if (enabled) {
-      this.canvas.discardActiveObject();
-    } else {
-      this.canvas.discardActiveObject();
-    }
+  setInteractive(_enabled: boolean): void {
+    this.canvas.discardActiveObject();
     this.canvas.renderAll();
   }
 
@@ -452,160 +616,150 @@ export class FabricEditor {
   }
 
   /**
-   * Charge les polices personnalisées
+   * Charge les polices personnalisées.
+   * Une police qui échoue (URL morte, CORS…) est ignorée avec un warning :
+   * le texte retombe sur la police par défaut au lieu de bloquer tout le rendu.
    */
   async loadFonts(fonts: FontsConfig): Promise<void> {
-    const fontFaces = await Promise.all(
-      Object.entries(fonts).map(([, values]) => {
+    const results = await Promise.allSettled(
+      Object.entries(fonts).map(([name, values]) => {
         return new FontFace(values.family, values.url, {
           style: "normal",
           weight: values.weight || "normal",
-        }).load();
+        }).load().catch((e) => {
+          console.warn(`[FabricEditor] Font "${name}" failed to load:`, e);
+          throw e;
+        });
       })
     );
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    fontFaces?.forEach((f) => (document?.fonts as any)?.add(f));
+    results.forEach((r) => {
+      if (r.status !== "fulfilled") return;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (document?.fonts as any)?.add(r.value);
+      // Une preview a pu mesurer cette famille avant son arrivée (lib/fonts)
+      forgetFontMeasures(r.value.family);
+    });
+  }
+
+  // ── Style de la sélection (editor/style-commands) ───────────────
+
+  switchClip(): void { this.styles.switchClip(); }
+  switchShape(): void { this.styles.switchShape(); }
+  changeShape(shapeType: ShapeType): void { this.styles.changeShape(shapeType); }
+  toggleOutline(): void { this.styles.toggleOutline(); }
+  changeColor(color: string): void { this.styles.changeColor(color); }
+  changeOpacity(opacity: number): void { this.styles.changeOpacity(opacity); }
+  setStrokeEnabled(enabled: boolean): void { this.styles.setStrokeEnabled(enabled); }
+  setStrokeWidth(width: number): void { this.styles.setStrokeWidth(width); }
+  setStrokeColor(color: string): void { this.styles.setStrokeColor(color); }
+  setFillColor(color: string): void { this.styles.setFillColor(color); }
+  setFillGradient(stops: GradientStop[], angleDeg: number): void { this.styles.setFillGradient(stops, angleDeg); }
+  setCornerRadius(radius: number): void { this.styles.setCornerRadius(radius); }
+  changeFont(fontFamily: string, fontWeight?: string): void { this.styles.changeFont(fontFamily, fontWeight); }
+  setFontSize(size: number): void { this.styles.setFontSize(size); }
+  setTextAlign(align: "left" | "center" | "right" | "justify"): void { this.styles.setTextAlign(align); }
+  toggleTextStyle(style: "bold" | "italic" | "underline"): void { this.styles.toggleTextStyle(style); }
+  /** Le style du texte sélectionné là où un réglage s'appliquerait (plage, curseur, texte). */
+  textStyle(): TextStyleState | null { return this.styles.textStyle(); }
+  setShadow(opts: { color?: string; blur?: number; offsetX?: number; offsetY?: number }): void { this.styles.setShadow(opts); }
+  removeShadow(): void { this.styles.removeShadow(); }
+
+  // ── Presse-papier (editor/clipboard) ────────────────────────────
+
+  copySelection(): void { this.clipboard.copySelection(); }
+  pasteClipboard(): Promise<FabricObject[]> { return this.clipboard.pasteClipboard(); }
+
+  /**
+   * Le dessin de l'emplacement d'une image liée (imageSlots), dans la couleur de cet éditeur,
+   * en data-URL : ce que l'hôte tient en main le temps de poser un cadre lié qui n'a pas de
+   * valeur à montrer (aperçu de glisser, image de départ). Jamais une source de document.
+   */
+  imageSlotUrl(spec: BindingSpec): string {
+    const gc = this.config.guideColor ?? DEFAULT_GUIDE_COLOR;
+    return imageSlotDataUrl(slotMark(spec), gc);
   }
 
   /**
-   * Bascule le clip de l'objet sélectionné vers la forme suivante
+   * Les entrées à fournir de la page — images à fournir, textes à personnaliser (userInputs) —
+   * boîtes en coordonnées scène.
    */
-  switchClip(): void {
-    const obj = this.selection.current;
-    if (!obj) return;
-
-    if (obj instanceof ImageFrame) {
-      // Pour ImageFrame, utiliser la méthode nextClipShape
-      obj.nextClipShape();
-      obj.dirty = true;
-      this.canvas.requestRenderAll();
-    } else if (obj instanceof FabricImage) {
-      // Legacy: images sans frame
-      switchClip(obj);
-      obj.dirty = true;
-      this.canvas.remove(obj);
-      this.layers.add(obj);
-    }
+  userInputs(): UserInput[] {
+    // L'aperçu d'un drag n'est pas un objet du document
+    return collectUserInputs(this.layers.all.filter((obj) => !obj.get(DRAG_PREVIEW_KEY)));
   }
 
   /**
-   * Bascule la forme de l'objet sélectionné vers la forme suivante
+   * Prévient l'hôte quand les entrées à fournir changent — apparition, disparition (un texte
+   * personnalisé, un cadre rempli), consigne, boîte, visibilité, échelle ou cadrage : de quoi
+   * (re)placer ses bulles, avec `clientRectOf`. Comparé à chaque rendu et à chaque
+   * redimensionnement, appelé seulement sur changement (et une fois tout de suite). Rend la
+   * fonction de désabonnement.
    */
-  switchShape(): void {
-    const obj = this.selection.current;
-    if (!obj || obj instanceof FabricImage) return;
+  onUserInputsChange(callback: (inputs: UserInput[]) => void): () => void {
+    let last: string | null = null;
+    const check = () => {
+      const inputs = this.userInputs();
+      const signature = JSON.stringify([
+        this._displayScale,
+        this._userZoom,
+        this.canvas.originalFabricCanvas.viewportTransform,
+        inputs.map(({ object, layerId, kind, hint, rect }) => [
+          layerId, kind, hint, object.visible,
+          Math.round(rect.left), Math.round(rect.top), Math.round(rect.width), Math.round(rect.height),
+        ]),
+      ]);
+      if (signature === last) return;
 
-    const currentShapeId = (obj as FabricObject & { id?: string }).id as ShapeType | undefined;
-    const nextShapeType = nextShape(currentShapeId);
-    this.changeShape(nextShapeType);
+      last = signature;
+      callback(inputs);
+    };
+
+    this.canvas.on("after:render", check);
+    this._resizeCallbacks.push(check);
+    check();
+    return () => {
+      this.canvas.off("after:render", check);
+      this._resizeCallbacks = this._resizeCallbacks.filter((cb) => cb !== check);
+    };
   }
 
   /**
-   * Change la forme de l'objet sélectionné vers un type précis.
-   * Pour les shapes : remplace l'objet. Pour les ImageFrames : change le clipShape.
+   * La boîte d'un objet À L'ÉCRAN, dans le repère de la fenêtre (celui de
+   * getBoundingClientRect) : de quoi ancrer un élément de l'hôte — une bulle — contre un objet
+   * du canvas. Calculée à l'appel : zoom, cadrage et place du canvas dans la page compris.
    */
-  changeShape(shapeType: ShapeType): void {
-    const obj = this.selection.current;
-    if (!obj) return;
-
-    if (obj instanceof ImageFrame) {
-      obj.applyClipShape(shapeType);
-      obj.dirty = true;
-      this.canvas.requestRenderAll();
-    } else if (!(obj instanceof FabricImage)) {
-      const newObj = switchShape(obj, shapeType);
-      // Préserver le layerId et layerType
-      const layerId = obj.get("layerId");
-      const layerType = obj.get("layerType");
-      if (layerId) newObj.set("layerId", layerId);
-      if (layerType) newObj.set("layerType", layerType);
-
-      // Le remove+add déclenche des événements de sélection parasites.
-      // On mute les callbacks le temps du swap.
-      this.selection.silenceCallbacks();
-
-      const zIndex = this.canvas._objects.indexOf(obj);
-      this.canvas.remove(obj);
-      this.canvas.add(newObj);
-      if (zIndex >= 0 && zIndex < this.canvas._objects.length) {
-        this.canvas.moveObjectTo(newObj, zIndex);
-      }
-      this.canvas.setActiveObject(newObj);
-      this.canvas.requestRenderAll();
-
-      this.selection.restoreCallbacks();
-    }
+  clientRectOf(obj: FabricObject): {
+    x: number; y: number; left: number; top: number; right: number; bottom: number; width: number; height: number;
+  } {
+    const fc = this.canvas.originalFabricCanvas;
+    const page = (fc.upperCanvasEl ?? fc.getElement()).getBoundingClientRect();
+    // Le canvas peut être mis à l'échelle en CSS : pixels d'écran par pixel du canvas
+    const sx = fc.width ? page.width / fc.width : 1;
+    const sy = fc.height ? page.height / fc.height : 1;
+    const [zx, , , zy, dx, dy] = fc.viewportTransform;
+    const box = obj.getBoundingRect();
+    const left = page.left + (box.left * zx + dx) * sx;
+    const top = page.top + (box.top * zy + dy) * sy;
+    const width = box.width * zx * sx;
+    const height = box.height * zy * sy;
+    return { x: left, y: top, left, top, right: left + width, bottom: top + height, width, height };
   }
 
-  /**
-   * Bascule entre remplissage et contour pour l'objet sélectionné
-   */
-  toggleOutline(): void {
-    const obj = this.selection.current;
-    if (!obj) return;
 
-    const { stroke, fill } = obj;
-    obj.set({ fill: stroke, stroke: fill });
-    obj.strokeWidth = obj.stroke ? 4 / obj.scaleY : 0;
-    this.canvas.renderAll();
-  }
+  // ── Commandes de sélection (editor/selection-commands) ──────────
 
-  /**
-   * Change la couleur de l'objet sélectionné
-   */
-  changeColor(color: string): void {
-    const obj = this.selection.current;
-    if (!obj) return;
-
-    if (obj.type === "i-text") {
-      obj.set("fill", color);
-    } else {
-      const property = obj.stroke ? "stroke" : "fill";
-      obj.set(property, color);
-    }
-
-    this.canvas.renderAll();
-  }
-
-  /**
-   * Change l'opacité de l'objet sélectionné
-   */
-  changeOpacity(opacity: number): void {
-    const obj = this.selection.current;
-    if (!obj) return;
-
-    obj.set({ opacity: opacity / 100 });
-    this.canvas.renderAll();
-  }
-
-  /**
-   * Change la police de l'objet texte sélectionné
-   */
-  changeFont(fontFamily: string, fontWeight?: string): void {
-    const obj = this.selection.current;
-    if (!obj || obj.type !== "i-text") return;
-
-    obj.set({ fontFamily, fontWeight: fontWeight || "normal" });
-    this.canvas.requestRenderAll();
-  }
-
-  /**
-   * Supprime l'objet ou les objets sélectionnés
-   * Les objets verrouillés (position ou full) ne peuvent pas être supprimés
-   */
-  deleteSelection(): void {
-    const selected = this.selection.selected;
-    if (selected.length === 0) return;
-
-    // Filtrer les objets verrouillés (ne supprimer que les objets non verrouillés)
-    const deletable = selected.filter((obj) => !isPositionLocked(obj));
-    if (deletable.length === 0) return;
-
-    this.layers.removeMany(deletable);
-    this.canvas.discardActiveObject();
-    this.canvas.renderAll();
-  }
+  groupSelection(): FabricObject | null { return this.commands.groupSelection(); }
+  selectAll(): FabricObject[] { return this.commands.selectAll(); }
+  deselect(): void { this.commands.deselect(); }
+  nudgeSelection(dx: number, dy: number): boolean { return this.commands.nudgeSelection(dx, dy); }
+  cutSelection(): void { this.clipboard.cutSelection(); }
+  cloneInPlace(objects: FabricObject[]): Promise<FabricObject[]> { return this.clipboard.cloneInPlace(objects); }
+  duplicateSelection(): Promise<FabricObject[]> { return this.clipboard.duplicateSelection(); }
+  ungroupSelection(): FabricObject[] { return this.commands.ungroupSelection(); }
+  alignSelection(edge: AlignEdge): void { this.commands.alignSelection(edge); }
+  distributeSelection(axis: DistributeAxis): void { this.commands.distributeSelection(axis); }
+  deleteSelection(): void { this.commands.deleteSelection(); }
 
   /**
    * Trouve l'image ou ImageFrame situé sous un point donné (coordonnées canvas)
@@ -613,40 +767,35 @@ export class FabricEditor {
    */
   findImageAtPoint(x: number, y: number): FabricImage | ImageFrame | null {
     const target = this.findDropTargetAtPoint(x, y);
-    if (!target || target.layerType === "shape") return null;
+    if (!target || rulesOf(target, { ignoreLock: true }).onToolboxImage !== "replaceImage") return null;
     return target as FabricImage | ImageFrame;
   }
 
   /**
-   * Trouve l'objet "droppable" sous un point : ImageFrame, FabricImage, ou shape.
-   * Utilisé par ImageDropHandler pour le drop d'images sur images ET sur formes.
+   * Trouve la cible d'une image de la toolbox sous un point : le plus haut objet opaque
+   * (une forme la prend en fond, une forme-image remplace la sienne — voir rulesOf). Il
+   * peut ne pas réagir (verrouillé, groupe de paths) : DropHandler n'arme alors pas le
+   * remplacement, et l'image est ajoutée.
    */
-  findDropTargetAtPoint(x: number, y: number): FabricObject | null {
+  findDropTargetAtPoint(x: number, y: number, exclude?: FabricObject): FabricObject | null {
     const point = new Point(x, y);
 
     // Parcourir les objets du dessus vers le dessous
     const objects = this.canvas.getObjects().slice().reverse();
 
     for (const obj of objects) {
-      // Ignorer l'image de fond
-      if (obj.get("layerId") === "originalImage") continue;
-
-      const layerType = (obj as { layerType?: string }).layerType;
-
-      // ImageFrame
-      if (layerType === "imageFrame" && obj.containsPoint(point)) {
-        return obj;
-      }
-
-      // Shape (rect, circle, heart, hexagon, rounded)
-      if (layerType === "shape" && obj.containsPoint(point)) {
-        return obj;
-      }
-
-      // Image legacy
-      if (obj instanceof FabricImage && obj.containsPoint(point)) {
-        return obj;
-      }
+      // La preview de drag suit le curseur : elle matcherait toujours — l'objet qu'on
+      // glisse (exclude) aussi
+      if (obj === exclude || obj.get(DRAG_PREVIEW_KEY)) continue;
+      // Le fond (legacy, promu, passthrough) est hors-jeu : un fond réactif au drop,
+      // plein cadre, capterait tous les drops — il se change par le drop en bord ou
+      // la promotion, jamais par le drop direct. Le verrou est ignoré ici : un objet
+      // verrouillé reste opaque (l'armement du remplacement, lui, le lit).
+      // Opaque aussi : une forme qui ne prend pas d'image (groupe de paths) — l'image ne
+      // va pas remplir la forme cachée dessous. Un texte, lui, reste transparent.
+      const rules = rulesOf(obj, { ignoreLock: true });
+      if (!rules.onToolboxImage && !rules.hosts) continue;
+      if (obj.containsPoint(point)) return obj;
     }
 
     return null;
@@ -659,6 +808,9 @@ export class FabricEditor {
     this._resizeObserver?.disconnect();
     this._resizeObserver = null;
     this._resizeCallbacks = [];
+    this.gestures.dispose();
+    this.shortcuts.dispose();
+    this.crop.dispose();
     this.snapping.dispose();
     this.selection.dispose();
     this.canvas.dispose();
@@ -672,41 +824,26 @@ export class FabricEditor {
   private extendFabricObject(): void {
     if (FabricEditor._toObjectExtended) return;
     FabricEditor._toObjectExtended = true;
+    installGhostRendering(FabricObject.prototype);
+    installDisplayStyleRendering(FabricObject.prototype);
 
+    // Dans une sélection multiple, Fabric donne des positions relatives à la sélection :
+    // un calque exporté (historique, copie, overlays de l'hôte) garde sa place sur le canvas.
+    // La sélection n'a ni poignées de taille ni rotation (SelectionManager) : seule la
+    // translation diffère.
     const originalToObject = FabricObject.prototype.toObject;
-    FabricObject.prototype.toObject = function (propertiesToInclude) {
-      return originalToObject.call(
+    FabricObject.prototype.toObject = function(propertiesToInclude) {
+      const data = originalToObject.call(
         this,
-        ["layerId"].concat(propertiesToInclude || [])
+        ["layerId", "layout", "bindings"].concat(propertiesToInclude || [])
       );
+      if (this.group instanceof ActiveSelection) {
+        const { x, y } = this.getXY();
+        Object.assign(data, { left: x, top: y });
+      }
+      return data;
     };
   }
 
-  /**
-   * Déplace le contrôle de rotation (mtr) sur le côté droit de l'objet
-   * pour éviter le conflit avec la barre de contrôles positionnée au-dessus
-   *
-   * En Fabric.js v6, les contrôles sont créés par instance, donc on écoute
-   * l'événement object:added pour modifier chaque nouvel objet.
-   */
-  private configureRotationControl(): void {
-    const createSideRotationControl = () =>
-      new Control({
-        x: 0.5,
-        y: 0,
-        offsetX: 30,
-        offsetY: 0,
-        actionHandler: controlsUtils.rotationWithSnapping,
-        cursorStyleHandler: controlsUtils.rotationStyleHandler,
-        withConnection: true,
-        actionName: "rotate",
-      });
-
-    // Modifier les contrôles de chaque objet ajouté au canvas
-    this.canvas.on("object:added", (e) => {
-      if (e.target?.controls?.mtr) {
-        e.target.controls.mtr = createSideRotationControl();
-      }
-    });
-  }
 }
+

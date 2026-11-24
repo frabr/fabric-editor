@@ -5,31 +5,77 @@
 
 // Classe principale
 export { FabricEditor } from "./FabricEditor";
+export { forgetFontMeasures } from "./fonts";
+export type { GradientStop } from "./editor/style-commands";
+export { DesignCanvas, type FrameRect, type WorkspaceOptions } from "./DesignCanvas";
+export { PreviewCanvas } from "./PreviewCanvas";
 
 // Managers
-export { LayerManager } from "./LayerManager";
+export { LayerManager, LAYER_PROPS } from "./LayerManager";
 export { SelectionManager } from "./SelectionManager";
 export { MaskManager } from "./MaskManager";
 export { PersistenceManager } from "./PersistenceManager";
 export { HistoryManager } from "./HistoryManager";
 export { SnappingManager } from "./SnappingManager";
+export { LayoutManager } from "./LayoutManager";
+export { CanvasGuides } from "./ui/guides";
 
 // Handlers
-export { ImageDropHandler } from "./ImageDropHandler";
+export { DropHandler, canvasImageSource } from "./DropHandler";
+export type { DropHandlerConfig, DragPayload, DropResult } from "./DropHandler";
 export { PendingUploadsManager } from "./PendingUploadsManager";
 
-// ImageFrame
-export { ImageFrame } from "./ImageFrame";
+// ImageFrame, et son recadrage
+export { ImageFrame, type ImageFit } from "./ImageFrame";
+export { CropMode } from "./CropMode";
+export { NO_CROP, MAX_CROP_SCALE, isCropped, photoRect, cropFromRect, panCrop, zoomCrop } from "./crop";
+export type { Crop } from "./crop";
 
-// Shapes
+// OOP shape classes
+export { FabRect, FabCircle, FabPath, FabGroup, type Lockable } from "./shapes";
+export { rulesOf, kindOf, type ObjectRules, type ObjectKind, type ToolboxImageReaction } from "./capabilities";
+export { toolsFor, selectionKindOf, type ToolId, type SelectionKind } from "./tools";
+
+// Raccourcis : le gestionnaire, la table du canvas, les types d'entrée
+export { ShortcutManager, type ShortcutManagerOptions } from "./shortcuts/ShortcutManager";
+export { CANVAS_SHORTCUTS, isKeyShortcut } from "./shortcuts/table";
+export { GestureManager, ROTATION_STEP } from "./gestures";
+export type { ShortcutEntry, KeyShortcut, GestureShortcut, ShortcutContext, ShortcutGroup, ShortcutScope } from "./shortcuts/table";
+export { parseCombo, formatCombo, formatModifier, detectPlatform, type Platform, type Modifier } from "./shortcuts/keys";
+
+// Shape factories (return Fab* instances)
 export {
   createRect,
-  createRoundedRect,
   createCircle,
-  createHeart,
-  createHexagon,
   createImage,
   createShape,
+  createPathShape,
+  createPathsShape,
+  getShapeCatalog,
+  type ShapeCatalogEntry,
+} from "./shapes";
+
+// Shape registry — injected by the host app (EditorConfig.shapes or registerShapes)
+export {
+  registerShapes,
+  registeredShapes,
+  getCatalogShape,
+  isMonoPath,
+  clipDataFor,
+  type CatalogShape,
+  type CatalogShapeInput,
+  type ShapePathData,
+  type ClipData,
+} from "./shapes";
+
+// Normalisation d'un SVG « forme » (paths dans une boîte 100x100) : le mécanisme que la
+// lib garde pour les catalogues de l'hôte, utilisable aussi dans le navigateur (dépôt de SVG).
+export { normalizeShape, type NormalizedShape, type NormalizedShapePath } from "./shapes/svgShapes";
+
+// @legacy — shape switching, old path strings, standalone clip functions
+export {
+  createHeart,
+  createHexagon,
   switchShape,
   nextShape,
   isValidShape,
@@ -37,14 +83,11 @@ export {
   HEART_PATH,
   HEXAGON_PATH,
 } from "./shapes";
-
-// Clipping
 export {
   antiScale,
   addCircleClip,
   addHeartClip,
   addHexagonClip,
-  addRoundedClip,
   switchClip,
   applyClip,
 } from "./clipping";
@@ -61,6 +104,26 @@ export {
 
 // Controls
 export { addCropControls, removeCropControls, CustomTextbox } from "./controls";
+
+// Layout
+export { runLayout } from "./layout";
+export { ResizeSession, StackResizeSession, ScaleSession, FreeResizeSession } from "./layout";
+export type { LayoutData, SizingData, TextOverflow, ContainerData, ChildData, SizeMode, AlignSelf, AlignItems, JustifyContent, FlexDirection } from "./layout";
+export { MIN_PAD } from "./layout";
+// Les groupes (containers libres) : leur boîte suit leurs enfants
+export { isFreeContainer, stackParentOf, fitFreeContainer } from "./layout";
+export type { Arrangement } from "./layout";
+// L'arbre de layout sur calques sérialisés (apibots : tracks, suppression ; creatorstudio : rendu).
+export { layoutParents, layoutRoot, layoutChildren, layoutDescendants, stackBlock } from "./layout";
+export type { TreeLayer, LayoutParents } from "./layout";
+export { scaledSize, topLeft, pointInObject, clampTopLeft, hasExceededOffset } from "./layout";
+export { ContainerizeSession, InsertChildSession, wrapContainerAroundChild, createDropSession } from "./layout";
+export type { LayoutSession } from "./layout";
+export { initYoga, yogaLayout } from "./layout";
+
+// Aligner, répartir
+export { alignAxis, alignDelta, distributeDeltas, unionBox } from "./align";
+export type { AlignEdge, DistributeAxis, Box, Delta } from "./align";
 
 // HTML Renderer
 export { fabricToHtml, layerToHtmlStandalone } from "./html";
@@ -86,3 +149,24 @@ export type {
 
 export type { HistoryState, HistoryCallbacks } from "./HistoryManager";
 export type { SnappingConfig, ResizeSnapResult } from "./SnappingManager";
+export type { LayoutManagerCallbacks, SizePreset } from "./LayoutManager";
+export {
+  pendingBindings, hasPendingBindings, setTextContent, drawBindingBadge, bindingBadgeLabel,
+  mediaLabel, DRAW_MEDIA,
+} from "./bindings";
+export { drawFrameBadge, badgeLabel, type BadgeLabeler } from "./ui/badges";
+export { fontFamiliesOf, isBold, summarizeStyles, summarizeObject, MIXED, TEXT_STYLE_KEYS } from "./text-styles";
+export type { TextStyleState, TextStyleKey, TextStyleValue } from "./text-styles";
+// Les unités d'un texte (lignes, mots, caractères) rendues séparément : animations de texte
+export { textUnits, renderTextRange, textUnitTiles, textParts, tilePadding } from "./text-units";
+export type { TextUnit, TextUnitBox, TextUnitKind, TextTile, TextUnitTiles, TextLayerPart, RenderRangeOptions } from "./text-units";
+export { isGhost, setGhost, isEclipsed, setEclipsed, GHOST_OPACITY } from "./ghost";
+export { displayFill, setDisplayFill } from "./displayStyle";
+export type { Bindings, BindingSpec, BindingLabels, MediaLabels } from "./bindings";
+export { isUserSlot, userSlotHint, userSlotBinding, USER_SCOPE, USER_SLOT_FIELD } from "./userSlots";
+export { isUserText, isUserOwnedText, userTextBinding, USER_TEXT_FIELD } from "./userTexts";
+export { collectUserInputs, userInputKindOf } from "./userInputs";
+export type { UserInput, UserInputKind } from "./userInputs";
+export { imageSlotBinding, slotMark, drawImageSlot, imageSlotDataUrl, IMAGE_SLOT_FIELD, EACH_MEDIA } from "./imageSlots";
+export type { SlotGlyph, SlotMark } from "./imageSlots";
+export { DEFAULT_GUIDE_COLOR, DEFAULT_SNAP_GUIDE_COLOR } from "./ui/color";

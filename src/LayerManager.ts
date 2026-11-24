@@ -1,27 +1,55 @@
-import {
-  Canvas,
-  FabricImage,
-  FabricObject,
-  Group,
-  Rect,
-  Path,
-  Circle,
-} from "#fabric";
+import { FabricImage, FabricObject, Group, Path, Point, util } from "#fabric";
+import type { DesignCanvas } from "./DesignCanvas";
 import { CustomTextbox } from "./controls/CustomTextbox";
-import { createRect, createShape, createImage } from "./shapes/factories";
+import { migrateLegacyLayout } from "./layout/legacy";
+import { bringBlocksForward, sendBlocksBackward } from "./layout/z-order";
+import { kindOf, rulesOf } from "./capabilities";
+import { createShape as createShapeObject, createPathsShape, createImage } from "./shapes/factories";
+import { FabRect } from "./shapes/FabRect";
+import { FabCircle } from "./shapes/FabCircle";
+import { FabPath } from "./shapes/FabPath";
+import { FabGroup } from "./shapes/FabGroup";
 import { isValidShape } from "./shapes";
+import { clipDataFor, type ClipData } from "./shapes/registry";
+import { scaledSize, setShapeSize } from "./layout/geometry";
 import { applyLockMode, getLockMode, type LockMode } from "./locking";
-import { ImageFrame, type ImageFrameData } from "./ImageFrame";
+import { ImageFrame, type ImageFrameData, type ImageMeta } from "./ImageFrame";
 import type { LayerData, TextLayerOptions, ImageLayerOptions, ShapeLayerOptions, ShapeType } from "./types";
+import { restoreBindings, type Bindings } from "./bindings";
+import { resolveUserSlot, USER_SCOPE, USER_SLOT_FIELD } from "./userSlots";
+import { releaseUserText, requestUserText } from "./userTexts";
+import { isTextObject } from "./layout/text";
+import { imageSlotBinding, IMAGE_SLOT_FIELD } from "./imageSlots";
+import { BACKGROUND_ID, LEGACY_BACKGROUND_ID, layoutOf } from "./layout/model";
+import { findById } from "./layout/hierarchy";
+import { relayoutAncestors } from "./layout/run";
 
-const BACKGROUND_LAYER_ID = "originalImage";
+/** La part du document (par côté) qu'occupe un calque neuf sans dimension. */
+const NEW_LAYER_RATIO = 0.4;
+
+const BACKGROUND_LAYER_ID = LEGACY_BACKGROUND_ID;
+
+/** Le fill d'une forme posée sans couleur : le gris placeholder, qui se lit « à remplacer ». */
+export const DEFAULT_SHAPE_FILL = "#d9d9d9";
 
 /**
  * Gère les calques (layers) du canvas Fabric.js
  * Responsable de l'ajout, suppression et organisation des objets
  */
+/**
+ * Les propriétés de l'éditeur qu'un calque sérialise en plus de celles de Fabric — la liste
+ * que tout hôte qui sérialise un objet seul doit passer à `toObject`. `bindingSegments` : la
+ * carte d'interpolation d'un texte lié affiché (apibots), le temps d'un snapshot ; l'export
+ * du document la consomme et la retire.
+ */
+export const LAYER_PROPS = ["layerId", "lockMode", "lockContent", "layout", "bindings", "bindingSegments"] as const;
+
 export class LayerManager {
-  constructor(private canvas: Canvas) { }
+  /** La dernière valeur demandée pour chaque cadre lié (showImageValue) : un chargement
+   *  dépassé ne s'affiche pas. */
+  private valueRequests = new WeakMap<ImageFrame, string | null>();
+
+  constructor(private canvas: DesignCanvas) { }
 
   /**
    * Retourne tous les calques (excluant l'image de fond)
@@ -45,7 +73,7 @@ export class LayerManager {
    * Trouve un calque par son ID
    */
   findById(layerId: string): FabricObject | undefined {
-    return this.canvas.getObjects().find((obj) => obj.get("layerId") === layerId);
+    return findById(this.canvas.getObjects(), layerId);
   }
 
   /**
@@ -73,18 +101,31 @@ export class LayerManager {
   }
 
   /**
-   * Charge plusieurs calques depuis leurs données JSON
+   * Désérialise plusieurs calques sans les ajouter au canvas — la moitié asynchrone
+   * (chargement d'images compris) du chargement, pour que l'appelant puisse faire le swap
+   * ancien/nouveau contenu de façon synchrone (anti-flicker).
    */
-  async loadLayers(layers: LayerData[]): Promise<FabricObject[]> {
+  async deserializeAll(layers: LayerData[]): Promise<(FabricObject | null)[]> {
     const objects = await Promise.all(layers.map((l) => this.deserialize(l)));
     objects.forEach((obj, i) => {
       if (!obj) return;
-      // Restaurer selectable/evented depuis le JSON (non gérés par fromObject)
+      // Restaurer selectable/evented depuis le JSON (non gérés par fromObject). Un FOND
+      // (layerId "bg") est inerte PAR CONVENTION — répare aussi les docs sauvés pendant que
+      // ImageFrame#toObject perdait ces flags.
       const data = layers[i];
-      if ((data as any).selectable === false) obj.selectable = false;
-      if ((data as any).evented === false) obj.evented = false;
-      this.add(obj);
+      const isBackground = (data as any).layerId === BACKGROUND_ID;
+      if (isBackground || (data as any).selectable === false) obj.selectable = false;
+      if (isBackground || (data as any).evented === false) obj.evented = false;
     });
+    return objects;
+  }
+
+  /**
+   * Charge plusieurs calques depuis leurs données JSON
+   */
+  async loadLayers(layers: LayerData[]): Promise<FabricObject[]> {
+    const objects = await this.deserializeAll(layers);
+    objects.forEach((obj) => obj && this.add(obj));
     return objects.filter(Boolean) as FabricObject[];
   }
 
@@ -99,6 +140,34 @@ export class LayerManager {
       this.canvas.setActiveObject(obj);
     }
     return obj;
+  }
+
+  /** Le centre du document. */
+  private get center(): Point {
+    return new Point(this.canvas.width / 2, this.canvas.height / 2);
+  }
+
+  /**
+   * La boîte d'un calque neuf (forme, image) : NEW_LAYER_RATIO du document dans chaque sens.
+   * Un calque y entre en gardant ses proportions. 40 % depuis le 2026-10-28 (c'était la
+   * moitié : trop grand, surtout pour une icône).
+   */
+  private get newLayerBox(): { w: number; h: number } {
+    return { w: this.canvas.width * NEW_LAYER_RATIO, h: this.canvas.height * NEW_LAYER_RATIO };
+  }
+
+  private fitNewLayerBox(obj: FabricObject): void {
+    const { w, h } = scaledSize(obj);
+    const box = this.newLayerBox;
+    const scale = Math.min(box.w / w, box.h / h);
+    setShapeSize(obj, w * scale, h * scale);
+  }
+
+  /** Un calque ajouté sans position (un clic, pas un lâcher) se pose au centre du document. */
+  private centerUnplaced(obj: FabricObject, options: { left?: number; top?: number }): void {
+    if (options.left != null || options.top != null) return;
+    obj.setPositionByOrigin(this.center, "center", "center");
+    obj.setCoords();
   }
 
   /**
@@ -116,37 +185,50 @@ export class LayerManager {
   }
 
   /**
-   * Monte l'objet d'un niveau (vers l'avant)
+   * Monte l'objet (ou les objets) devant le premier objet de même niveau qui le
+   * chevauche. Un container emmène ses descendants (toujours au-dessus de lui) ; un enfant
+   * reste parmi les enfants de son container ; des objets montés ensemble ne se doublent pas.
    */
-  bringForward(obj: FabricObject): void {
-    this.canvas.bringObjectForward(obj, true);
-    this.canvas.renderAll();
+  bringForward(obj: FabricObject | FabricObject[]): void {
+    const moved = Array.isArray(obj) ? obj : [obj];
+    const order = bringBlocksForward(this.canvas.getObjects(), moved, (a, b) => a.isOverlapping(b));
+    if (order) this.applyStackOrder(order);
   }
 
   /**
-   * Descend l'objet d'un niveau (vers l'arrière)
-   * Ne peut pas descendre en dessous de l'image de fond
+   * Descend l'objet (ou les objets) d'un niveau, mêmes règles de blocs que bringForward.
+   * Ne peut pas descendre en dessous de l'image de fond.
    */
-  sendBackward(obj: FabricObject): void {
-    const index = this.canvas._objects.indexOf(obj);
-    if (index > 1) {
-      this.canvas.sendObjectBackwards(obj);
-      this.canvas.renderAll();
-    }
+  sendBackward(obj: FabricObject | FabricObject[]): void {
+    const moved = Array.isArray(obj) ? obj : [obj];
+    const order = sendBlocksBackward(this.canvas.getObjects(), moved);
+    if (order) this.applyStackOrder(order);
+  }
+
+  private applyStackOrder(order: FabricObject[]): void {
+    order.forEach((obj, index) => this.canvas.moveObjectTo(obj, index));
+    this.canvas.renderAll();
   }
 
   /**
    * Crée et ajoute un calque texte
    */
-  addText(options: TextLayerOptions = {}): CustomTextbox {
+  /**
+   * Crée un calque texte sans l'ajouter au canvas.
+   * Source unique des défauts texte — utilisé par addText et par le
+   * drag externe (DropHandler).
+   */
+  createText(options: TextLayerOptions = {}): CustomTextbox {
     const {
       text = "Tapez votre texte ici",
       left = 100,
       top = 100,
-      fontFamily = "InterRegular",
+      fontFamily = "Inter",
       fontSize = 32,
+      fontWeight = "normal",
       fill = "#000000",
       layerId = this.generateId(),
+      placeholder = false,
     } = options;
 
     const textObj = new CustomTextbox(text, {
@@ -154,10 +236,17 @@ export class LayerManager {
       top,
       fontFamily,
       fontSize,
+      fontWeight,
       fill,
     });
     textObj.set("layerId" as keyof typeof textObj, layerId);
+    if (placeholder) textObj.placeholder = true;
+    return textObj;
+  }
 
+  addText(options: TextLayerOptions = {}): CustomTextbox {
+    const textObj = this.createText(options);
+    this.centerUnplaced(textObj, options);
     this.add(textObj);
     return textObj;
   }
@@ -166,18 +255,16 @@ export class LayerManager {
    * Crée et ajoute un calque image dans un ImageFrame
    */
   async addImage(url: string, options: ImageLayerOptions = {}): Promise<ImageFrame> {
-    const { left = 100, top = 100, layerId = this.generateId() } = options;
+    const center = this.center;
+    const { left = center.x, top = center.y, layerId = this.generateId(), imageMeta } = options;
 
     const img = await FabricImage.fromURL(url, { crossOrigin: "anonymous" });
 
-    // Calculer le scale pour limiter à 300px max
-    // Ce scale sera appliqué au frame, pas à l'image
-    let frameScale = 1;
-    if (img.width > 300 || img.height > 300) {
-      frameScale = Math.min(300 / img.width, 300 / img.height);
-    }
+    // Appliqué au frame, pas à l'image
+    const box = this.newLayerBox;
+    const frameScale = Math.min(box.w / img.width, box.h / img.height);
 
-    const frame = new ImageFrame(img, { left, top, layerId, frameScale });
+    const frame = new ImageFrame(img, { left, top, layerId, frameScale, imageMeta });
     this.add(frame);
     return frame;
   }
@@ -199,30 +286,74 @@ export class LayerManager {
    * Supporte à la fois ImageFrame et FabricImage legacy
    *
    * @param options.opacity - Opacité à appliquer (utile si target.opacity est temporairement modifiée)
+   * @param options.imageMeta - Les clés de la nouvelle source (une forme-image seulement)
+   * @param options.select - Sélectionner l'image remplacée (défaut)
+   *
+   * C'est un geste d'auteur : « cette image-ci, ici ». Un cadre dont la source était liée
+   * (imageSlots) se délie — sinon la liaison reprendrait la main au prochain affichage, et à
+   * l'expansion. L'hôte qui pose une image liée relie après (son binding), et montre la valeur
+   * d'une liaison par showImageValue, jamais par ici.
    */
   async replaceImageSource(
     target: ImageFrame | FabricImage,
     newUrl: string,
-    options?: { opacity?: number }
+    options?: { opacity?: number; imageMeta?: ImageMeta; select?: boolean }
   ): Promise<ImageFrame | FabricImage> {
-    // Si c'est un ImageFrame, déléguer à sa méthode (vérifier via layerType)
-    const layerType = (target as { layerType?: string }).layerType;
-    if (layerType === "imageFrame" || target instanceof ImageFrame) {
+    // Une forme-image : déléguer à sa méthode
+    if (kindOf(target as FabricObject) === "imageShape") {
       const frame = target as ImageFrame;
       const newImg = await FabricImage.fromURL(newUrl, { crossOrigin: "anonymous" });
-      await frame.replaceImage(newImg);
+      frame.replaceImage(newImg, options?.imageMeta);
+      this._reflowContained(frame);
+      if (imageSlotBinding(frame as unknown as FabricObject)) {
+        const { [IMAGE_SLOT_FIELD]: _unbound, ...bindings } = (frame.get("bindings") ?? {}) as Bindings;
+        frame.set("bindings", bindings);
+      }
 
       if (options?.opacity !== undefined) {
         frame.opacity = options.opacity;
       }
 
-      this.canvas.setActiveObject(frame);
+      // Un calque inerte (le fond) ne se sélectionne pas — même remplacé.
+      if (frame.selectable !== false && options?.select !== false) this.canvas.setActiveObject(frame);
       this.canvas.renderAll();
       return frame;
     }
 
     // Fallback pour les images legacy (FabricImage directe)
     return this._replaceImageSourceLegacy(target as FabricImage, newUrl, options);
+  }
+
+  /**
+   * Montre dans une forme-image la VALEUR de sa source liée (imageSlots) pour le lecteur du
+   * moment — ou, sans valeur (`null`), la vide : le cadre se dessine alors en emplacement.
+   * Affichage seul : rien n'entre dans le document (le cadre reste en attente, sauvé sans
+   * `src`), la sélection ne bouge pas. Sans effet sur ce qui n'est pas une forme-image.
+   */
+  async showImageValue(target: FabricObject, url: string | null): Promise<void> {
+    if (kindOf(target) !== "imageShape") return;
+    const frame = target as unknown as ImageFrame;
+    this.valueRequests.set(frame, url);
+
+    if (!url) {
+      if (frame.displayedSrc) frame.clearSource();
+    } else if (url === frame.displayedSrc) {
+      // Déjà à l'écran (une carte posée avec l'image du lecteur) : elle devient la valeur
+      if (!frame.pending) frame.showValue();
+    } else {
+      const image = await FabricImage.fromURL(url, { crossOrigin: "anonymous" });
+      // Le temps du chargement, une autre valeur a été demandée, ou l'auteur a repris la
+      // main (image posée, cadre délié) : celle-ci n'a plus cours
+      if (this.valueRequests.get(frame) !== url || !imageSlotBinding(target)) return;
+      frame.showValue(image);
+    }
+    this._reflowContained(frame);
+    this.canvas.requestRenderAll();
+  }
+
+  /** Un cadre en contain change de taille avec son image : ses containers s'y refont. */
+  private _reflowContained(frame: ImageFrame): void {
+    if (frame.fit === "contain") relayoutAncestors(frame as unknown as FabricObject, this.canvas.getObjects());
   }
 
   /**
@@ -286,12 +417,12 @@ export class LayerManager {
     });
 
     // Remplacer l'ancienne image par la nouvelle
-    const index = this.canvas._objects.indexOf(target);
+    const index = this.canvas.getObjects().indexOf(target);
     this.canvas.remove(target);
     this.canvas.add(newImg);
 
     // Restaurer la position dans la pile des calques
-    if (index >= 0 && index < this.canvas._objects.length) {
+    if (index >= 0 && index < this.canvas.getObjects().length) {
       this.canvas.moveObjectTo(newImg, index);
     }
 
@@ -314,19 +445,14 @@ export class LayerManager {
    */
   async replaceShapeWithImage(
     shape: FabricObject,
-    imageUrl: string
+    imageUrl: string,
+    imageMeta?: ImageMeta
   ): Promise<ImageFrame> {
-    // Déterminer le clipShape depuis l'id de la shape (les factories le positionnent)
-    const shapeId = (shape as { id?: string }).id || "";
-    const clipShape = isValidShape(shapeId) ? shapeId : "rect";
+    const { clipShape, clipData, cornerRadius } = clipOfShape(shape);
 
     // Récupérer les dimensions affichées (scaled)
-    const displayedWidth = shape.width * (shape.scaleX || 1);
-    const displayedHeight = shape.height * (shape.scaleY || 1);
-    const center = shape.getCenterPoint();
-
-    // Sauvegarder le z-index
-    const zIndex = this.canvas._objects.indexOf(shape);
+    const { w: displayedWidth, h: displayedHeight } = scaledSize(shape);
+    const center = shape.getRelativeCenterPoint();
 
     // Charger l'image
     const img = await FabricImage.fromURL(imageUrl, { crossOrigin: "anonymous" });
@@ -338,46 +464,151 @@ export class LayerManager {
       angle: shape.angle,
       layerId: (shape as { layerId?: string }).layerId || this.generateId(),
       clipShape,
+      clipData,
+      imageMeta,
       frameWidth: displayedWidth,
       frameHeight: displayedHeight,
+      cornerRadius,
     });
 
-    // Supprimer la shape et insérer l'ImageFrame au même z-index
-    this.canvas.remove(shape);
-    this.canvas.add(frame);
-    if (zIndex >= 0 && zIndex < this.canvas._objects.length) {
-      this.canvas.moveObjectTo(frame, zIndex);
-    }
-
-    this.canvas.setActiveObject(frame);
-    this.canvas.renderAll();
+    // Ses bindings suivent ; une image à fournir est, du coup, fournie
+    const bindings = resolveUserSlot(shape.get("bindings") as Bindings | undefined);
+    if (bindings) frame.set("bindings", bindings);
+    this.takeOver(shape, frame);
 
     return frame;
   }
 
   /**
+   * Demande l'image à l'utilisateur final (userSlots) : le calque devient une forme liée à
+   * une image à fournir, avec sa consigne. Une forme le reste ; une forme-image redevient la
+   * forme de sa découpe, aux mêmes dimensions — son image est abandonnée (pas d'exemple :
+   * le damier dit « à fournir »), ses autres bindings la suivent.
+   *
+   * Rend la forme, ou null si le calque ne peut pas recevoir d'image (texte, groupe de paths).
+   */
+  requestUserImage(obj: FabricObject, hint = ""): FabricObject | null {
+    const bindings = {
+      ...((obj.get("bindings") as Bindings) || {}),
+      [USER_SLOT_FIELD]: { scope: USER_SCOPE, hint },
+    };
+
+    if (obj instanceof ImageFrame) {
+      const shape = shapeOfFrame(obj);
+      shape.set({
+        layerId: obj.get("layerId") || this.generateId(),
+        layerType: "shape",
+        angle: obj.angle,
+        bindings,
+      });
+      shape.setPositionByOrigin(obj.getRelativeCenterPoint(), "center", "center");
+      this.takeOver(obj, shape);
+      return shape;
+    }
+
+    if (rulesOf(obj, { ignoreLock: true }).onToolboxImage !== "fill") return null;
+
+    obj.set({ bindings });
+    this.canvas.requestRenderAll();
+    return obj;
+  }
+
+  /**
+   * Donne un texte à personnaliser à l'utilisateur final (userTexts), ou le reprend
+   * (`requested: false`) : le texte du calque devient — ou cesse d'être — l'exemple. Un texte
+   * lié à une expression cesse de l'être. Son verrou est réappliqué : un texte à personnaliser
+   * s'édite même verrouillé.
+   *
+   * Rend le texte, ou null si le calque n'en est pas un.
+   */
+  setUserText(obj: FabricObject, requested = true): FabricObject | null {
+    if (!isTextObject(obj)) return null;
+
+    const bindings = obj.get("bindings") as Bindings | undefined;
+    obj.set({ bindings: requested ? requestUserText(bindings) : releaseUserText(bindings) });
+    applyLockMode(obj, getLockMode(obj));
+    this.canvas.requestRenderAll();
+    return obj;
+  }
+
+  /**
+   * Un calque en remplace un autre à sa place : son layout (container, enfant) et son
+   * verrouillage — sinon ses enfants restent orphelins, ou il sort de son container — et
+   * son rang dans la pile (sous ses enfants).
+   */
+  private takeOver(previous: FabricObject, next: FabricObject): void {
+    const layout = layoutOf(previous);
+    if (layout) next.set("layout", JSON.parse(JSON.stringify(layout)));
+    const lockMode = getLockMode(previous);
+    if (lockMode !== "free") applyLockMode(next, lockMode);
+
+    const zIndex = this.canvas.getObjects().indexOf(previous);
+    this.canvas.remove(previous);
+    this.canvas.add(next);
+    if (zIndex >= 0 && zIndex < this.canvas.getObjects().length) {
+      this.canvas.moveObjectTo(next, zIndex);
+    }
+
+    this.canvas.setActiveObject(next);
+    this.canvas.renderAll();
+  }
+
+  /**
    * Crée et ajoute un calque forme (rectangle par défaut)
    */
-  addShape(options: ShapeLayerOptions = {}): FabricObject {
+  /**
+   * Crée un calque forme sans l'ajouter au canvas.
+   * Source unique des défauts forme — utilisé par addShape et par le
+   * drag externe (DropHandler).
+   */
+  createShape(options: ShapeLayerOptions = {}): FabricObject {
     const {
       left = 100,
       top = 100,
-      width = 300,
-      height = 300,
-      fill = "#ffffff",
+      fill = DEFAULT_SHAPE_FILL,
+      stroke,
       shapeType = "rect",
       layerId = this.generateId(),
     } = options;
 
-    const shape = createShape(shapeType, { fill, left, top, width, height, radius: Math.min(width, height) / 2 });
+    // Des paths inline (payload toolbox) priment sur l'id : l'asset est déjà du
+    // contenu, aucune résolution de catalogue. fill = défaut générique, les fills
+    // d'auteur des paths gagnent (cf. FabPath.fromPathData).
+    const common = { fill, stroke, left, top, width: options.width, height: options.height };
+    const shape = options.paths?.length
+      ? createPathsShape(options.paths, { id: shapeType, ...common })
+      : createShapeObject(shapeType, common);
     shape.set({ layerId, layerType: "shape" });
+    if (options.width == null && options.height == null) this.fitNewLayerBox(shape);
+    return shape;
+  }
 
+  /** Crée un cadre à fournir (un rect lié, cf. userSlots) sans l'ajouter au canvas. */
+  createUserSlot(options: ShapeLayerOptions & { hint?: string } = {}): FabricObject {
+    const { hint = "", ...shapeOptions } = options;
+    const shape = this.createShape({ fill: "#ffffff", ...shapeOptions, shapeType: "rect" });
+    shape.set({ bindings: { [USER_SLOT_FIELD]: { scope: USER_SCOPE, hint } } });
+    return shape;
+  }
+
+  addUserSlot(options: ShapeLayerOptions & { hint?: string } = {}): FabricObject {
+    const shape = this.createUserSlot(options);
+    this.centerUnplaced(shape, options);
+    this.add(shape);
+    return shape;
+  }
+
+  addShape(options: ShapeLayerOptions = {}): FabricObject {
+    const shape = this.createShape(options);
+    this.centerUnplaced(shape, options);
     this.add(shape);
     return shape;
   }
 
   /**
-   * Groupe plusieurs objets ensemble
+   * @legacy Fusionne des objets dans un `fabric.Group` (éditeur SAFTI legacy, « fusionner
+   * les calques »). Pour grouper dans l'éditeur : `FabricEditor.groupSelection` (un groupe
+   * libre, ses objets restent des calques).
    */
   groupObjects(objects: FabricObject[]): Group {
     const group = new Group(objects);
@@ -396,19 +627,21 @@ export class LayerManager {
    * Inclut les propriétés custom : layerId, lockMode, lockContent
    */
   serialize(): LayerData[] {
-    return this.all.map((obj) => obj.toObject(["layerId", "lockMode", "lockContent"]) as LayerData);
+    return this.all.map((obj) => obj.toObject([...LAYER_PROPS]) as LayerData);
   }
 
   /**
    * Désérialise un calque depuis ses données JSON
    * Les images legacy (type "Image") sont automatiquement migrées vers ImageFrame
    */
-  private async deserialize(layer: LayerData): Promise<FabricObject | null> {
+  async deserialize(layer: LayerData): Promise<FabricObject | null> {
     let obj: FabricObject | null = null;
 
     switch (layer.type) {
       case "IText":
-      case "i-text": {
+      case "i-text":
+      case "Textbox":
+      case "textbox": {
         const text = await CustomTextbox.fromObject(layer);
         text.charSpacing = text.charSpacing || 1;
         obj = text;
@@ -444,22 +677,23 @@ export class LayerManager {
 
       case "Group":
       case "group":
-        obj = await Group.fromObject(layer);
+        obj = await FabGroup.fromObject(layer);
         break;
 
       case "Rect":
       case "rect":
-        obj = (await Rect.fromObject(layer)) as unknown as FabricObject;
+        obj = (await FabRect.fromObject(layer)) as unknown as FabricObject;
         break;
 
       case "Path":
       case "path":
-        obj = (await Path.fromObject(layer)) as unknown as FabricObject;
+        // FabPath constructor installs the resize handler automatically
+        obj = (await FabPath.fromObject(layer)) as unknown as FabricObject;
         break;
 
       case "Circle":
       case "circle":
-        obj = (await Circle.fromObject(layer)) as unknown as FabricObject;
+        obj = (await FabCircle.fromObject(layer)) as unknown as FabricObject;
         break;
 
       default:
@@ -467,9 +701,21 @@ export class LayerManager {
         return null;
     }
 
+    // Données de layout d'avant layout.sizing
+    const migrated = obj && migrateLegacyLayout(layoutOf(obj));
+    if (obj && migrated) obj.set("layout", migrated);
+
+    // Les bindings avant le verrou : un texte à personnaliser s'édite même verrouillé
+    if (obj) restoreBindings(obj, layer);
+
     // Appliquer les propriétés de verrouillage si présentes
     if (obj && layer.lockMode) {
-      applyLockMode(obj, layer.lockMode as LockMode);
+      const mode = layer.lockMode as LockMode;
+      if ("applyLockMode" in obj && typeof (obj as any).applyLockMode === "function") {
+        (obj as any).applyLockMode(mode);
+      } else {
+        applyLockMode(obj, mode);
+      }
     }
 
     return obj;
@@ -498,7 +744,7 @@ export class LayerManager {
     if (!clipPath) return undefined;
 
     // 1. Priorité à l'ID custom si présent
-    if (clipPath.id && ["rounded", "circle", "heart", "hexagon"].includes(clipPath.id)) {
+    if (clipPath.id && isValidShape(clipPath.id)) {
       return clipPath.id as ShapeType;
     }
 
@@ -510,10 +756,6 @@ export class LayerManager {
     }
 
     if (type === "rect") {
-      // Rect avec rx/ry = rounded, sinon rect simple (pas de clip spécial)
-      if (clipPath.rx || clipPath.ry) {
-        return "rounded";
-      }
       return "rect";
     }
 
@@ -565,3 +807,42 @@ export class LayerManager {
   }
 }
 
+/** La forme d'une découpe de forme-image, à ses dimensions affichées — l'inverse de clipOfShape. */
+function shapeOfFrame(frame: ImageFrame): FabricObject {
+  const { w, h } = scaledSize(frame);
+  // Pas de contour : le défaut fabric (1) déborderait du cadre
+  const fill = "#ffffff";
+  const strokeWidth = 0;
+  const clipShape = frame.clipShape || "rect";
+
+  if (clipShape === "circle") {
+    const circle = new FabCircle({ radius: Math.min(w, h) / 2, fill, strokeWidth });
+    circle.setSize(w, h);
+    return circle;
+  }
+
+  const clipData = clipShape === "rect" ? undefined : frame.clipData ?? clipDataFor(clipShape);
+  if (clipData) return FabPath.fromPathData({ d: clipData.d }, { id: clipShape, fill, strokeWidth, width: w, height: h });
+
+  return new FabRect({ width: w, height: h, rx: frame.cornerRadius, ry: frame.cornerRadius, fill, strokeWidth });
+}
+
+/**
+ * La découpe de la forme-image, prise sur la géométrie de la forme elle-même — pas
+ * sur son id dans le catalogue, qui peut ne pas y être (paths insérés en ligne, forme
+ * de groupe absente du registre de cet éditeur) et donnait un rectangle.
+ * Un groupe de paths (plusieurs régions) n'a pas de découpe unique : rectangle.
+ */
+function clipOfShape(shape: FabricObject): { clipShape: ShapeType; clipData?: ClipData; cornerRadius: number } {
+  if (shape instanceof FabRect) return { clipShape: "rect", cornerRadius: shape.getCornerRadius() };
+  if (shape instanceof FabCircle) return { clipShape: "circle", cornerRadius: 0 };
+  if (shape instanceof FabPath) {
+    const id = (shape as { id?: string }).id;
+    const clipData: ClipData = {
+      d: util.joinPath(shape.path), width: shape.width, height: shape.height,
+      ...(shape.fillRule === "evenodd" ? { fillRule: "evenodd" as const } : {}),
+    };
+    return { clipShape: id && isValidShape(id) ? id : (id || "custom"), clipData, cornerRadius: 0 };
+  }
+  return { clipShape: "rect", cornerRadius: 0 };
+}
